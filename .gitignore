@@ -59,3 +59,7 @@ $RECYCLE.BIN/
 .vercel
 .env*.local
 .env.preview
+
+node_modules/
+dist/
+.vercel/
