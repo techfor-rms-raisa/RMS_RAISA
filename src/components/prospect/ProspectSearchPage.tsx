@@ -130,11 +130,11 @@ const ProspectSearchPage: React.FC = () => {
     const [filtroStatus, setFiltroStatus]               = useState('');
     const [filtroEmpresa, setFiltroEmpresa]             = useState('');
 
-    // BUG 3 FIX: controle de quantidade máxima de resultados (configurável)
-    const [maxResultados, setMaxResultados]             = useState(25);
-
     // Seleção
     const [todosSelecionados, setTodosSelecionados]     = useState(false);
+
+    // BUG 3 FIX: controle de quantidade máxima de resultados (configurável)
+    const [maxResultados, setMaxResultados]             = useState(25);
 
     // ============================================
     // TOGGLES
@@ -651,34 +651,33 @@ const ProspectSearchPage: React.FC = () => {
                             ))}
                         </div>
                     </div>
-                </div>
 
-                {/* ── Máximo de resultados ── */}
-                <div className="md:col-span-2 pt-4 border-t border-gray-100">
-                    <label className="block text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5">
-                        <i className="fa-solid fa-list-ol text-blue-400"></i>
-                        Máximo de resultados por busca:
-                        <span className="ml-1 font-bold text-blue-700">{maxResultados}</span>
-                        <span className="text-gray-400 font-normal ml-1">(mais resultados = busca mais lenta)</span>
-                    </label>
-                    <input
-                        type="range"
-                        min={10}
-                        max={50}
-                        step={5}
-                        value={maxResultados}
-                        onChange={e => setMaxResultados(Number(e.target.value))}
-                        className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                    />
-                    <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-                        <span>10 (rápido)</span>
-                        <span>25 (padrão)</span>
-                        <span>50 (completo)</span>
+                    {/* ── Máximo de resultados ── */}
+                    <div className="md:col-span-2 pt-4 border-t border-gray-100">
+                        <label className="block text-xs font-medium text-gray-500 mb-2 flex items-center gap-1.5">
+                            <i className="fa-solid fa-list-ol text-blue-400"></i>
+                            Máximo de resultados por busca:
+                            <span className="ml-1 font-bold text-blue-700">{maxResultados}</span>
+                            <span className="text-gray-400 font-normal ml-1">(mais resultados = busca mais lenta)</span>
+                        </label>
+                        <input
+                            type="range"
+                            min={10}
+                            max={50}
+                            step={5}
+                            value={maxResultados}
+                            onChange={e => setMaxResultados(Number(e.target.value))}
+                            className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                        />
+                        <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                            <span>10 (rápido)</span>
+                            <span>25 (padrão)</span>
+                            <span>50 (completo)</span>
+                        </div>
                     </div>
-                </div>
 
+                </div>
             </div>
-        </div>
 
             {/* Info empresa + queries Google */}
             {empresaInfo && (
