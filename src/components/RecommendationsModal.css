@@ -1,0 +1,260 @@
+/* ============================================================================
+   RECOMMENDATIONS MODAL - Estilos para Modal de Recomendações
+   ============================================================================ */
+
+/* Overlay */
+.recommendations-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+/* Modal Content */
+.recommendations-modal-content {
+  background-color: white;
+  border-radius: 0.75rem;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  max-width: 800px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: slideUp 0.3s ease-out;
+}
+
+/* Header */
+.recommendations-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 1.5rem;
+  border-bottom: 1px solid #e5e7eb;
+  background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+}
+
+.recommendations-modal-title-section {
+  flex: 1;
+}
+
+.recommendations-modal-title {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #1f2937;
+  margin: 0;
+  margin-bottom: 0.5rem;
+}
+
+.recommendations-modal-consultant {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin: 0;
+}
+
+.recommendations-modal-score {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 1rem;
+}
+
+.recommendations-modal-score-circle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: 50%;
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.recommendations-modal-score-number {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.recommendations-modal-score-label {
+  font-size: 0.625rem;
+  margin-top: 0.25rem;
+}
+
+.recommendations-modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 0;
+  width: 2rem;
+  height: 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s ease;
+}
+
+.recommendations-modal-close:hover {
+  color: #374151;
+}
+
+/* Body */
+.recommendations-modal-body {
+  padding: 2rem 1.5rem;
+  min-height: 200px;
+}
+
+.recommendations-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+}
+
+.recommendation-card {
+  padding: 1.25rem;
+  border-left: 4px solid;
+  border-radius: 0.5rem;
+  background-color: #f9fafb;
+  transition: all 0.2s ease;
+  border-top: 1px solid #e5e7eb;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.recommendation-card:hover {
+  background-color: #f3f4f6;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  transform: translateY(-2px);
+}
+
+.recommendation-category {
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.75rem;
+}
+
+.recommendation-description {
+  font-size: 0.875rem;
+  color: #374151;
+  line-height: 1.5;
+}
+
+.recommendations-empty {
+  text-align: center;
+  padding: 3rem 1rem;
+  color: #9ca3af;
+}
+
+.recommendations-empty p {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+/* Footer */
+.recommendations-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1rem;
+  padding: 1.5rem;
+  border-top: 1px solid #e5e7eb;
+  background-color: #f9fafb;
+}
+
+.recommendations-modal-button {
+  padding: 0.625rem 1.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  background-color: white;
+  color: #374151;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.875rem;
+}
+
+.recommendations-modal-button:hover {
+  background-color: #f3f4f6;
+  border-color: #9ca3af;
+}
+
+.recommendations-modal-button:active {
+  background-color: #e5e7eb;
+}
+
+/* Animações */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .recommendations-modal-content {
+    width: 95%;
+    max-height: 95vh;
+  }
+
+  .recommendations-modal-header {
+    flex-direction: column;
+    padding: 1rem;
+  }
+
+  .recommendations-modal-score {
+    margin: 1rem 0 0 0;
+  }
+
+  .recommendations-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .recommendations-modal-body {
+    padding: 1.5rem 1rem;
+  }
+
+  .recommendations-modal-footer {
+    padding: 1rem;
+  }
+}
+
+/* Scrollbar Customizado */
+.recommendations-modal-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.recommendations-modal-content::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+.recommendations-modal-content::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.recommendations-modal-content::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
