@@ -5,7 +5,7 @@
  * Isso mantém a API key segura no servidor.
  */
 
-import { AIAnalysisResult, RiskScore, Recommendation, BehavioralFlag } from '../src/components/types';
+import type { AIAnalysisResult, RiskScore, BehavioralFlag } from '../src/components/types';
 
 // URL da API backend (Vercel)
 const API_BASE_URL = '/api/gemini-analyze';
@@ -15,6 +15,8 @@ const API_BASE_URL = '/api/gemini-analyze';
  */
 async function callBackendAPI(action: string, payload: any): Promise<any> {
   try {
+    console.log(`🔗 Chamando API backend: ${action}`);
+    
     const response = await fetch(API_BASE_URL, {
       method: 'POST',
       headers: {
@@ -24,7 +26,7 @@ async function callBackendAPI(action: string, payload: any): Promise<any> {
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
       throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
     }
 
@@ -34,9 +36,10 @@ async function callBackendAPI(action: string, payload: any): Promise<any> {
       throw new Error(result.error || 'Unknown error from backend');
     }
 
+    console.log(`✅ API backend respondeu com sucesso`);
     return result.data;
   } catch (error: any) {
-    console.error(`[geminiService] Erro ao chamar backend (${action}):`, error);
+    console.error(`❌ Erro ao chamar backend (${action}):`, error.message);
     throw error;
   }
 }
@@ -61,8 +64,8 @@ export async function extractBehavioralFlags(reportText: string): Promise<Omit<B
     }
     
     return [];
-  } catch (error) {
-    console.error('❌ Erro ao extrair flags:', error);
+  } catch (error: any) {
+    console.error('❌ Erro ao extrair flags:', error.message);
     return [];
   }
 }
@@ -91,7 +94,7 @@ export async function analyzeReport(
       clientName: extractClientName(reportText) || 'Não informado',
       month: month,
       year: year,
-      riskScore: result.riskScore as RiskScore,
+      riskScore: (result.riskScore || 3) as RiskScore,
       summary: result.summary || 'Análise não disponível',
       negativePattern: result.negativePattern || 'Nenhum',
       predictiveAlert: result.predictiveAlert || 'Nenhum',
@@ -103,7 +106,7 @@ export async function analyzeReport(
     
     return analysis;
   } catch (error: any) {
-    console.error(`❌ Erro ao analisar relatório de ${consultantName}:`, error);
+    console.error(`❌ Erro ao analisar relatório de ${consultantName}:`, error.message);
     
     // Retornar análise padrão em caso de erro
     return {
@@ -160,8 +163,11 @@ export async function analyzeFullReport(
   year: number
 ): Promise<AIAnalysisResult> {
   try {
+    console.log(`📊 Iniciando análise completa de ${consultantName}...`);
+    
     // 1. Extrair flags comportamentais
     const flags = await extractBehavioralFlags(reportText);
+    console.log(`🏁 ${flags.length} flags extraídas`);
     
     // 2. Fazer análise de risco
     const analysis = await analyzeReport(consultantName, reportText, month, year);
@@ -169,19 +175,22 @@ export async function analyzeFullReport(
     // 3. Combinar resultados
     analysis.behavioralFlags = flags;
     
+    console.log(`✅ Análise completa finalizada`);
     return analysis;
   } catch (error: any) {
-    console.error('❌ Erro na análise completa:', error);
+    console.error('❌ Erro na análise completa:', error.message);
     throw error;
   }
 }
 
 // ========================================
-// EXPORT DEFAULT
+// EXPORT DEFAULT (para compatibilidade)
 // ========================================
 
-export default {
+const geminiService = {
   extractBehavioralFlags,
   analyzeReport,
   analyzeFullReport,
 };
+
+export default geminiService;
