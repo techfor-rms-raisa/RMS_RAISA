@@ -1,0 +1,131 @@
+/**
+ * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
+ * Usa Gemini AI para identificar consultores e analisar riscos automaticamente
+ */
+
+import { GoogleGenAI } from '@google/genai';
+
+// Tentar múltiplas fontes de API key
+const apiKey = process.env.GEMINI_API_KEY || 
+               process.env.VITE_GEMINI_API_KEY || 
+               process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
+               '';
+
+if (!apiKey) {
+  console.error('❌ GEMINI_API_KEY não configurada!');
+}
+
+const genAI = new GoogleGenAI({ apiKey });
+
+export default async function handler(req: any, res: any) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method Not Allowed' });
+  }
+
+  try {
+    const { reportText, gestorName } = req.body;
+
+    if (!reportText) {
+      return res.status(400).json({ error: 'reportText é obrigatório' });
+    }
+
+    console.log('🤖 Iniciando análise de relatório com Gemini AI...');
+
+    const prompt = `
+Você é um especialista em análise de relatórios de atividades de consultores de TI.
+
+**TAREFA:**
+Analise o relatório abaixo e identifique TODOS os consultores mencionados, extraindo:
+1. Nome completo do consultor
+2. Cliente/empresa onde trabalha
+3. Nível de risco (1-5) baseado no tom e conteúdo
+4. Resumo da situação
+5. Padrões negativos identificados
+6. Alertas preditivos
+7. Recomendações
+
+**FORMATO DO RELATÓRIO:**
+O relatório segue o padrão:
+\`\`\`
+◆ [NOME DO CONSULTOR] | [CLIENTE]
+[Texto livre descrevendo atividades e situação...]
+\`\`\`
+
+**ESCALA DE RISCO:**
+- **1 (Muito Baixo):** Consultor altamente satisfeito, engajado, produtivo. Palavras-chave: "satisfeito", "excelente", "positiva", "colaborativo", "boa sintonia", "entregando bem", "motivado"
+
+- **2 (Baixo):** Consultor estável, enfrentando desafios normais. Palavras-chave: "apesar", "desafiador", "cobranças", "métricas exigentes", "adaptação"
+
+- **3 (Médio):** Consultor com problemas operacionais ou comportamentais. Palavras-chave: "atraso", "impactando", "problemas", "ausente", "sem justificativa", "vamos monitorar"
+
+- **4 (Alto):** Consultor com alta probabilidade de saída. Palavras-chave: "insatisfeito", "desmotivado", "buscando oportunidades", "proposta"
+
+- **5 (Crítico):** Saída confirmada ou iminente. Palavras-chave: "rescisão", "saída", "último dia", "proposta de mercado aceita", "não faria mais sentido", "optou sua saída"
+
+**RELATÓRIO:**
+\`\`\`
+${reportText}
+\`\`\`
+
+**GESTOR:** ${gestorName}
+
+**RESPONDA EM JSON:**
+\`\`\`json
+{
+  "results": [
+    {
+      "consultantName": "Nome Completo",
+      "clientName": "Nome do Cliente",
+      "managerName": "${gestorName}",
+      "reportMonth": 11,
+      "riskScore": 1-5,
+      "summary": "Resumo em 1-2 frases",
+      "negativePattern": "Padrão negativo identificado ou 'Nenhum'",
+      "predictiveAlert": "Alerta preditivo ou 'Nenhum'",
+      "recommendations": "Recomendações de ação",
+      "details": "Texto completo das atividades"
+    }
+  ]
+}
+\`\`\`
+
+**IMPORTANTE:**
+- Identifique TODOS os consultores mencionados (pode haver vários)
+- Extraia o mês do cabeçalho do relatório (ex: "03.11.2025 a 07.11.2025" → mês 11)
+- Analise o TOM do texto, não apenas palavras isoladas
+- Se houver coordenadores ou gestores mencionados, NÃO os inclua como consultores
+- Retorne APENAS o JSON, sem texto adicional
+`;
+
+    const result = await genAI.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: prompt
+    });
+    const text = result.text;
+
+    console.log('📝 Resposta da IA:', text);
+
+    // Extrair JSON da resposta
+    const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
+    
+    if (!jsonMatch) {
+      throw new Error('Resposta da IA não contém JSON válido');
+    }
+
+    const jsonText = jsonMatch[1] || jsonMatch[0];
+    const analysis = JSON.parse(jsonText);
+
+    console.log(`✅ ${analysis.results.length} consultores identificados`);
+
+    return res.status(200).json(analysis);
+
+  } catch (error: any) {
+    console.error('[API] Erro ao analisar relatório:', error);
+
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: error.message || 'Erro ao processar relatório',
+      timestamp: new Date().toISOString()
+    });
+  }
+}

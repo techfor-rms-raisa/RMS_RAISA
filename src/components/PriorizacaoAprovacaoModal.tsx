@@ -1,0 +1,257 @@
+/**
+ * COMPONENTE: MODAL DE APROVAÇÃO DE PRIORIZAÇÃO
+ * Permite ao Gestor aprovar ou ajustar a priorização calculada pela IA
+ */
+
+import React, { useState, useEffect } from 'react';
+import { X, CheckCircle, Target, TrendingUp, Clock, DollarSign } from 'lucide-react';
+import { vagaWorkflowService } from '../services/vagaWorkflowService';
+import { useAuth } from '../contexts/AuthContext';
+
+interface PriorizacaoAprovacaoModalProps {
+  vagaId: number;
+  onClose: () => void;
+  onAprovado: () => void;
+}
+
+export function PriorizacaoAprovacaoModal({ 
+  vagaId, 
+  onClose, 
+  onAprovado 
+}: PriorizacaoAprovacaoModalProps) {
+  const { user } = useAuth();
+  
+  const [priorizacao, setPriorizacao] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    carregarPriorizacao();
+  }, [vagaId]);
+
+  const carregarPriorizacao = async () => {
+    // TODO: Buscar priorização da vaga
+    // Por enquanto, simulação
+    setPriorizacao({
+      score_prioridade: 85,
+      nivel_prioridade: 'Alta',
+      sla_dias: 15,
+      justificativa: 'Vaga de alta prioridade devido ao cliente VIP e prazo apertado.',
+      fatores_considerados: {
+        urgencia_prazo: 90,
+        valor_faturamento: 85,
+        cliente_vip: true,
+        tempo_vaga_aberta: 5,
+        complexidade_stack: 70
+      }
+    });
+  };
+
+  const handleAprovar = async () => {
+    if (!user) return;
+    
+    setLoading(true);
+    try {
+      await vagaWorkflowService.aprovarPriorizacao(vagaId, user.id);
+      onAprovado();
+    } catch (error) {
+      console.error('Erro ao aprovar priorização:', error);
+      alert('Erro ao aprovar priorização. Tente novamente.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getNivelColor = (nivel: string) => {
+    switch (nivel) {
+      case 'Alta':
+        return 'text-red-600 bg-red-100';
+      case 'Média':
+        return 'text-yellow-600 bg-yellow-100';
+      case 'Baixa':
+        return 'text-green-600 bg-green-100';
+      default:
+        return 'text-gray-600 bg-gray-100';
+    }
+  };
+
+  const getScoreColor = (score: number) => {
+    if (score >= 80) return 'text-red-600';
+    if (score >= 50) return 'text-yellow-600';
+    return 'text-green-600';
+  };
+
+  if (!priorizacao) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+          <div className="flex items-center gap-3">
+            <Target className="w-6 h-6 text-blue-600" />
+            <h2 className="text-xl font-semibold text-gray-900">
+              Revisar Priorização Calculada pela IA
+            </h2>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+          >
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {/* Score e Nível */}
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-lg p-4 border border-blue-200">
+              <div className="flex items-center gap-2 mb-2">
+                <TrendingUp className="w-5 h-5 text-blue-600" />
+                <span className="text-sm font-medium text-blue-900">Score de Prioridade</span>
+              </div>
+              <div className={`text-3xl font-bold ${getScoreColor(priorizacao.score_prioridade)}`}>
+                {priorizacao.score_prioridade}
+                <span className="text-lg text-gray-500">/100</span>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg p-4 border-2 border-gray-200">
+              <div className="flex items-center gap-2 mb-2">
+                <Target className="w-5 h-5 text-gray-600" />
+                <span className="text-sm font-medium text-gray-700">Nível de Prioridade</span>
+              </div>
+              <div>
+                <span className={`inline-flex px-3 py-1 rounded-full text-sm font-semibold ${getNivelColor(priorizacao.nivel_prioridade)}`}>
+                  {priorizacao.nivel_prioridade}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4 border border-purple-200">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-5 h-5 text-purple-600" />
+                <span className="text-sm font-medium text-purple-900">SLA Sugerido</span>
+              </div>
+              <div className="text-3xl font-bold text-purple-600">
+                {priorizacao.sla_dias}
+                <span className="text-lg text-gray-500"> dias</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Justificativa */}
+          <div className="mb-6">
+            <h3 className="text-sm font-semibold text-gray-700 mb-2">
+              Justificativa da IA
+            </h3>
+            <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+              <p className="text-sm text-gray-700">
+                {priorizacao.justificativa}
+              </p>
+            </div>
+          </div>
+
+          {/* Fatores Considerados */}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-700 mb-3">
+              Fatores Considerados
+            </h3>
+            <div className="space-y-3">
+              {/* Urgência do Prazo */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-gray-700">Urgência do Prazo</span>
+                  <span className="text-sm font-semibold text-gray-900">
+                    {priorizacao.fatores_considerados.urgencia_prazo}/100
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-red-500 h-2 rounded-full transition-all"
+                    style={{ width: `${priorizacao.fatores_considerados.urgencia_prazo}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Valor de Faturamento */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-gray-700">Valor de Faturamento</span>
+                  <span className="text-sm font-semibold text-gray-900">
+                    {priorizacao.fatores_considerados.valor_faturamento}/100
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-green-500 h-2 rounded-full transition-all"
+                    style={{ width: `${priorizacao.fatores_considerados.valor_faturamento}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Cliente VIP */}
+              <div className="flex items-center justify-between p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <span className="text-sm font-medium text-gray-700">Cliente VIP</span>
+                <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                  priorizacao.fatores_considerados.cliente_vip 
+                    ? 'bg-yellow-200 text-yellow-800' 
+                    : 'bg-gray-200 text-gray-600'
+                }`}>
+                  {priorizacao.fatores_considerados.cliente_vip ? 'SIM (+20 pontos)' : 'NÃO'}
+                </span>
+              </div>
+
+              {/* Tempo em Aberto */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-gray-700">Tempo em Aberto</span>
+                  <span className="text-sm font-semibold text-gray-900">
+                    {priorizacao.fatores_considerados.tempo_vaga_aberta} dias
+                  </span>
+                </div>
+              </div>
+
+              {/* Complexidade da Stack */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-gray-700">Complexidade da Stack</span>
+                  <span className="text-sm font-semibold text-gray-900">
+                    {priorizacao.fatores_considerados.complexidade_stack}/100
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-500 h-2 rounded-full transition-all"
+                    style={{ width: `${priorizacao.fatores_considerados.complexidade_stack}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 p-6 border-t border-gray-200 bg-gray-50">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            Cancelar
+          </button>
+          
+          <button
+            onClick={handleAprovar}
+            disabled={loading}
+            className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+          >
+            <CheckCircle className="w-4 h-4" />
+            {loading ? 'Aprovando...' : 'Aprovar Priorização'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

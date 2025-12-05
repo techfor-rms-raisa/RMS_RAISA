@@ -1,0 +1,16 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/repriorizacao",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/cron/analise-mensal",
+      "schedule": "0 0 1 * *"
+    },
+    {
+      "path": "/api/cron/limpeza-notificacoes",
+      "schedule": "0 0 * * 0"
+    }
+  ]
+}
