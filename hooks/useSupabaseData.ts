@@ -12,6 +12,7 @@ import {
   FeedbackRequest, FeedbackResponse, RHAction, BehavioralFlag, 
   LearningFeedbackLoop, Vaga, Pessoa, Candidatura
 } from '../src/components/types';
+import { analyzeReport, extractBehavioralFlags, generatePredictiveAlert } from '../services/geminiService';
 
 export const useSupabaseData = () => {
   // ============================================
@@ -1492,9 +1493,7 @@ const saveBehavioralFlags = async (consultantName: string, flags: Omit<Behaviora
 
   } catch (error) {
     console.error(`❌ Erro ao salvar flags de ${consultantName}:`, error);
-  }
-};
-export { processReportAnalysis };
+  };
 
   const addFeedbackResponse = async (response: FeedbackResponse) => {
     console.warn('⚠️ addFeedbackResponse: Não implementado');
