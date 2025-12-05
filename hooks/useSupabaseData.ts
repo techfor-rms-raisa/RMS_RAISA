@@ -12,7 +12,7 @@ import {
   FeedbackRequest, FeedbackResponse, RHAction, BehavioralFlag, 
   LearningFeedbackLoop, Vaga, Pessoa, Candidatura
 } from '../src/components/types';
-import { analyzeReport, extractBehavioralFlags, generatePredictiveAlert } from '../services/geminiService';
+import { analyzeReport, extractBehavioralFlags } from '../services/geminiService';
 
 export const useSupabaseData = () => {
   // ============================================
@@ -1294,205 +1294,98 @@ export const useSupabaseData = () => {
     console.warn('⚠️ updateConsultantScore: Não implementado');
   };
 
- // ============================================
-// FUNÇÃO COMPLETA
-// ============================================
-
-const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
-  try {
-    console.log('📊 Iniciando processamento de relatórios...');
-    console.log('📄 Texto recebido:', text.substring(0, 200) + '...');
-
-    // Parse do texto: formato esperado é "CONSULTOR | GESTOR | MÊS | ATIVIDADES"
-    const lines = text.split('\n').filter(line => line.trim() !== '');
-    console.log(`📋 Total de linhas encontradas: ${lines.length}`);
-
-    const reports: Array<{
-      consultantName: string;
-      managerName: string;
-      month: number;
-      activities: string;
-    }> = [];
-
-    // Processar cada linha
-    for (const line of lines) {
-      // Ignorar cabeçalho se existir
-      if (line.toUpperCase().includes('CONSULTOR') && line.toUpperCase().includes('GESTOR')) {
-        console.log('⏭️ Ignorando linha de cabeçalho:', line);
-        continue;
-      }
-
-      // Split por pipe (|)
-      const parts = line.split('|').map(p => p.trim());
-
-      if (parts.length < 4) {
-        console.warn('⚠️ Linha ignorada (formato inválido):', line);
-        continue;
-      }
-
-      const [consultantName, managerName, monthStr, ...activitiesParts] = parts;
-      const month = parseInt(monthStr, 10);
-      const activities = activitiesParts.join('|').trim(); // Rejunta caso haja pipes nas atividades
-
-      if (!consultantName || !activities) {
-        console.warn('⚠️ Linha ignorada (dados incompletos):', line);
-        continue;
-      }
-
-      if (isNaN(month) || month < 1 || month > 12) {
-        console.warn('⚠️ Linha ignorada (mês inválido):', line);
-        continue;
-      }
-
-      reports.push({
-        consultantName,
-        managerName: managerName || gestorName || 'Não informado',
-        month,
-        activities
-      });
-
-      console.log(`✅ Relatório parseado: ${consultantName} - Mês ${month}`);
-    }
-
-    if (reports.length === 0) {
-      console.error('❌ Nenhum relatório válido encontrado após o parse');
-      return [];
-    }
-
-    console.log(`✅ Total de relatórios válidos: ${reports.length}`);
-
-    // Processar cada relatório com IA
-    const results: AIAnalysisResult[] = [];
-
-    for (const report of reports) {
-      try {
-        console.log(`🤖 Analisando relatório de ${report.consultantName}...`);
-
-        // Chamar a IA para analisar o texto das atividades
-        const aiResults = await analyzeReport(report.activities);
-
-        if (aiResults && aiResults.length > 0) {
-          // Pegar o primeiro resultado (normalmente a IA retorna um array)
-          const aiResult = aiResults[0];
-
-          // Enriquecer com dados do parse
-          const enrichedResult: AIAnalysisResult = {
-            ...aiResult,
-            consultantName: report.consultantName,
-            managerName: report.managerName,
-            reportMonth: report.month
-          };
-
-          results.push(enrichedResult);
-          console.log(`✅ Análise concluída para ${report.consultantName}: Risco ${enrichedResult.riskScore}`);
-
-          // Atualizar score do consultor no banco
-          await updateConsultantScoreInDB(report.consultantName, enrichedResult.riskScore);
-
-          // Extrair e salvar flags comportamentais
-          const flags = await extractBehavioralFlags(report.activities);
-          if (flags.length > 0) {
-            await saveBehavioralFlags(report.consultantName, flags);
-          }
-
-        } else {
-          console.warn(`⚠️ IA não retornou resultados para ${report.consultantName}`);
-        }
-
-      } catch (error) {
-        console.error(`❌ Erro ao processar relatório de ${report.consultantName}:`, error);
-        // Continua processando os outros relatórios
-      }
-    }
-
-    console.log(`🎉 Processamento concluído: ${results.length} relatórios analisados com sucesso`);
-    return results;
-
-  } catch (error) {
-    console.error('❌ Erro geral no processamento de relatórios:', error);
-    throw error;
-  }
-};
-
-// ============================================
-// FUNÇÕES AUXILIARES
-// ============================================
-
-const updateConsultantScoreInDB = async (consultantName: string, riskScore: number) => {
-  try {
-    // Buscar consultor pelo nome
-    const { data: consultant, error: searchError } = await supabase
-      .from('consultores')
-      .select('id, score_risco')
-      .ilike('nome', consultantName)
-      .single();
-
-    if (searchError || !consultant) {
-      console.warn(`⚠️ Consultor não encontrado: ${consultantName}`);
-      return;
-    }
-
-    // Atualizar score de risco
-    const { error: updateError } = await supabase
-      .from('consultores')
-      .update({ 
-        score_risco: riskScore,
-        quarentena: riskScore <= 2 // Quarentena para riscos crítico (1) e alto (2)
-      })
-      .eq('id', consultant.id);
-
-    if (updateError) {
-      console.error(`❌ Erro ao atualizar score de ${consultantName}:`, updateError);
-    } else {
-      console.log(`✅ Score atualizado para ${consultantName}: ${riskScore}`);
+  const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
+    try {
+      console.log('📊 Iniciando processamento de relatórios...');
       
-      // Atualizar estado local
-      setConsultants(prev => prev.map(c => 
-        c.id === consultant.id 
-          ? { ...c, scoreRisco: riskScore, quarentena: riskScore <= 2 }
-          : c
-      ));
+      const lines = text.split('\n').filter(line => line.trim() !== '');
+      const reports: Array<{ consultantName: string; managerName: string; month: number; activities: string; }> = [];
+
+      for (const line of lines) {
+        if (line.toUpperCase().includes('CONSULTOR') && line.toUpperCase().includes('GESTOR')) continue;
+        
+        const parts = line.split('|').map(p => p.trim());
+        if (parts.length < 4) continue;
+
+        const [consultantName, managerName, monthStr, ...activitiesParts] = parts;
+        const month = parseInt(monthStr, 10);
+        const activities = activitiesParts.join('|').trim();
+
+        if (!consultantName || !activities || isNaN(month) || month < 1 || month > 12) continue;
+
+        reports.push({ consultantName, managerName: managerName || gestorName || 'Não informado', month, activities });
+      }
+
+      if (reports.length === 0) {
+        console.error('❌ Nenhum relatório válido encontrado');
+        return [];
+      }
+
+      const results: AIAnalysisResult[] = [];
+
+      for (const report of reports) {
+        try {
+          const aiResults = await analyzeReport(report.activities);
+          
+          if (aiResults && aiResults.length > 0) {
+            const aiResult = aiResults[0];
+            const enrichedResult: AIAnalysisResult = {
+              ...aiResult,
+              consultantName: report.consultantName,
+              managerName: report.managerName,
+              reportMonth: report.month
+            };
+            
+            results.push(enrichedResult);
+
+            // Atualizar score no banco
+            const { data: consultant } = await supabase
+              .from('consultores')
+              .select('id')
+              .ilike('nome', report.consultantName)
+              .single();
+
+            if (consultant) {
+              await supabase
+                .from('consultores')
+                .update({ 
+                  score_risco: enrichedResult.riskScore,
+                  quarentena: enrichedResult.riskScore <= 2
+                })
+                .eq('id', consultant.id);
+
+              setConsultants(prev => prev.map(c => 
+                c.id === consultant.id 
+                  ? { ...c, scoreRisco: enrichedResult.riskScore, quarentena: enrichedResult.riskScore <= 2 }
+                  : c
+              ));
+
+              // Salvar flags comportamentais
+              const flags = await extractBehavioralFlags(report.activities);
+              if (flags.length > 0) {
+                const flagsToInsert = flags.map(flag => ({
+                  consultor_id: consultant.id,
+                  flag_type: flag.flagType,
+                  description: flag.description,
+                  flag_date: flag.flagDate
+                }));
+                
+                await supabase.from('behavioral_flags').insert(flagsToInsert);
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`❌ Erro ao processar ${report.consultantName}:`, error);
+        }
+      }
+
+      console.log(`🎉 Processamento concluído: ${results.length} relatórios`);
+      return results;
+
+    } catch (error) {
+      console.error('❌ Erro geral no processamento:', error);
+      throw error;
     }
-
-  } catch (error) {
-    console.error(`❌ Erro ao atualizar consultor ${consultantName}:`, error);
-  }
-};
-
-const saveBehavioralFlags = async (consultantName: string, flags: Omit<BehavioralFlag, 'id' | 'consultantId'>[]) => {
-  try {
-    // Buscar consultor pelo nome
-    const { data: consultant, error: searchError } = await supabase
-      .from('consultores')
-      .select('id')
-      .ilike('nome', consultantName)
-      .single();
-
-    if (searchError || !consultant) {
-      console.warn(`⚠️ Consultor não encontrado para salvar flags: ${consultantName}`);
-      return;
-    }
-
-    // Salvar flags no banco
-    const flagsToInsert = flags.map(flag => ({
-      consultor_id: consultant.id,
-      flag_type: flag.flagType,
-      description: flag.description,
-      flag_date: flag.flagDate
-    }));
-
-    const { error: insertError } = await supabase
-      .from('behavioral_flags')
-      .insert(flagsToInsert);
-
-    if (insertError) {
-      console.error(`❌ Erro ao salvar flags de ${consultantName}:`, insertError);
-    } else {
-      console.log(`✅ ${flags.length} flags salvas para ${consultantName}`);
-    }
-
-  } catch (error) {
-    console.error(`❌ Erro ao salvar flags de ${consultantName}:`, error);
   };
 
   const addFeedbackResponse = async (response: FeedbackResponse) => {
