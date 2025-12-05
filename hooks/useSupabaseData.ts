@@ -1350,9 +1350,25 @@ const processReportAnalysis = async (text: string, gestorName?: string): Promise
         // ========================================
         console.log('📄 Formato detectado: PDF narrativo');
         
-        // Extrair nome do consultor (primeira linha ou linha com nome destacado)
-        const nameMatch = text.match(/^([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+(?:\s+[A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+)+)/m);
-        const consultantName = nameMatch ? nameMatch[1].trim() : 'Não identificado';
+        // Extrair nome do consultor - buscar em qualquer parte do texto
+        // Padrão: Nome Completo (pelo menos 2 palavras com primeira letra maiúscula)
+        let consultantName = 'Não identificado';
+        
+        // Tentar extrair de várias formas:
+        // 1. Buscar após "Consultor:" ou similar
+        const consultorMatch = text.match(/(?:Consultor|Colaborador|Nome)\s*:\s*([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+(?:\s+[A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+)+)/i);
+        
+        if (consultorMatch) {
+          consultantName = consultorMatch[1].trim();
+        } else {
+          // 2. Buscar nome completo (2+ palavras com maiúsculas) em qualquer linha
+          const nameMatch = text.match(/([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+(?:\s+[a-záàâãéèêíïóôõöúçñ]+)*\s+[A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+)/);
+          if (nameMatch) {
+            consultantName = nameMatch[1].trim();
+          }
+        }
+        
+        console.log(`🔍 Nome extraído: "${consultantName}"`);
         
         // Extrair período (datas)
         const periodMatch = text.match(/(\d{2})\.(\d{2})\.(\d{4})\s*a\s*(\d{2})\.(\d{2})\.(\d{4})/);
@@ -1364,12 +1380,16 @@ const processReportAnalysis = async (text: string, gestorName?: string): Promise
           const startYear = parseInt(periodMatch[3]);
           month = startMonth;
           year = startYear;
+          console.log(`📅 Período extraído: ${month}/${year}`);
+        } else {
+          console.log(`⚠️ Período não encontrado, usando atual: ${month}/${year}`);
         }
         
         // Extrair atividades (todo o texto é considerado atividades)
         const activities = text.trim();
         
         if (consultantName !== 'Não identificado' && activities) {
+          console.log(`✅ Relatório PDF adicionado: ${consultantName} - ${month}/${year}`);
           reports.push({
             consultantName,
             managerName: gestorName || 'Não informado',
@@ -1377,6 +1397,8 @@ const processReportAnalysis = async (text: string, gestorName?: string): Promise
             year,
             activities
           });
+        } else {
+          console.warn(`❌ Relatório PDF rejeitado: nome="${consultantName}", atividades=${activities ? 'OK' : 'VAZIO'}`);
         }
       }
 
