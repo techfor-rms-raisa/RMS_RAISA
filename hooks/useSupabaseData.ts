@@ -1460,7 +1460,6 @@ const processReportAnalysis = async (text: string, gestorName?: string): Promise
       throw error;
     }
   };
-  };
 
   const addFeedbackResponse = async (response: FeedbackResponse) => {
     console.warn('⚠️ addFeedbackResponse: Não implementado');
