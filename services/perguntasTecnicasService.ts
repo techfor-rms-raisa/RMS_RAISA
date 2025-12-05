@@ -1,10 +1,21 @@
 
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import type { Type, Schema } from "@google/genai";
 import { AI_MODEL_NAME } from '../constants';
 import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '../src/components/types';
 
-const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY;
-const ai = new GoogleGenAI({ apiKey: apiKey || "" });
+// Import dinâmico para evitar erro de build
+let GoogleGenAI: any;
+let ai: any;
+
+async function initializeAI() {
+  if (!GoogleGenAI) {
+    const module = await import('@google/genai');
+    GoogleGenAI = module.GoogleGenAI;
+    const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY;
+    ai = new GoogleGenAI({ apiKey: apiKey || "" });
+  }
+  return ai;
+}
 
 export const perguntasTecnicasService = {
   
@@ -62,7 +73,8 @@ Retorne JSON com "perguntas".
     };
 
     try {
-        const response = await ai.models.generateContent({
+        const aiInstance = await initializeAI();
+        const response = await aiInstance.models.generateContent({
             model: model,
             contents: prompt,
             config: { responseMimeType: "application/json", responseSchema: schema }
@@ -134,7 +146,8 @@ Avalie o candidato e retorne JSON.
     };
 
     try {
-        const response = await ai.models.generateContent({
+        const aiInstance = await initializeAI();
+        const response = await aiInstance.models.generateContent({
             model: model,
             contents: prompt,
             config: { responseMimeType: "application/json", responseSchema: schema }

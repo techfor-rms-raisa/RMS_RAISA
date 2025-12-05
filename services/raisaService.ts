@@ -1,15 +1,25 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import type { Type, Schema } from "@google/genai";
 import { RiskFactor } from '../src/components/types';
 import { AI_MODEL_NAME } from '../constants';
 
-// Access API Key
-const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY;
+// Import dinâmico para evitar erro de build
+let GoogleGenAI: any;
+let ai: any;
 
-if (!apiKey) {
-    console.warn("API Key is missing for RAISA Service.");
+async function initializeAI() {
+  if (!GoogleGenAI) {
+    const module = await import('@google/genai');
+    GoogleGenAI = module.GoogleGenAI;
+    const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY;
+    
+    if (!apiKey) {
+      console.warn("API Key is missing for RAISA Service.");
+    }
+    
+    ai = new GoogleGenAI({ apiKey: apiKey || "" });
+  }
+  return ai;
 }
-
-const ai = new GoogleGenAI({ apiKey: apiKey || "" });
 
 export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFactor[]> => {
   const model = AI_MODEL_NAME;
@@ -40,7 +50,8 @@ export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFact
   };
 
   try {
-    const response = await ai.models.generateContent({
+    const aiInstance = await initializeAI();
+    const response = await aiInstance.models.generateContent({
       model: model,
       contents: prompt,
       config: {
