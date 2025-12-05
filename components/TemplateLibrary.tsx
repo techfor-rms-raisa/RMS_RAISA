@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { EmailTemplate, User, TemplateStatus } from '../src/components/types';
-import { generateTemplateContent } from '../services/geminiService';
+import { generateTemplateContent } from '../src/services/geminiService';
 
 interface TemplateLibraryProps {
     templates: EmailTemplate[];

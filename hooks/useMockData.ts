@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport, AIAnalysisResult, EmailTemplate, ComplianceCampaign, FeedbackRequest, FeedbackResponse, RHAction, BehavioralFlag, LearningFeedbackLoop, Vaga, Pessoa, Candidatura, CandidaturaEnvio, CandidaturaAprovacao, PerguntaTecnica, RespostaCandidato, MatrizQualificacao, AvaliacaoIA } from '../src/components/types';
 import { sendRiskAlertEmail } from '../services/emailService';
-import { extractBehavioralFlags, generatePredictiveAlert, analyzeReport } from '../services/geminiService';
+import { extractBehavioralFlags, generatePredictiveAlert, analyzeReport } from '../src/services/geminiService';
 import { perguntasTecnicasService } from '../services/perguntasTecnicasService';
 
 // --- INITIALIZATION ---

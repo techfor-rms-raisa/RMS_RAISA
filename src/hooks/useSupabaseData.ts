@@ -12,6 +12,7 @@ import {
   FeedbackRequest, FeedbackResponse, RHAction, BehavioralFlag, 
   LearningFeedbackLoop, Vaga, Pessoa, Candidatura
 } from '../src/components/types';
+import { analyzeReport, extractBehavioralFlags } from '../src/services/geminiService';
 
 export const useSupabaseData = () => {
   // ============================================
@@ -53,8 +54,6 @@ export const useSupabaseData = () => {
         loadUsers(),
         loadClients(),
         loadConsultants(),
-        loadUsuariosCliente(),
-        loadCoordenadoresCliente(),
         loadTemplates(),
         loadCampaigns(),
         loadVagas(),
@@ -101,7 +100,7 @@ export const useSupabaseData = () => {
         senha_usuario: user.senha_usuario,
         ativo_usuario: user.ativo_usuario,
         receber_alertas_email: user.receber_alertas_email,
-        tipo_usuario: user.tipo_usuario || 'Consulta',
+        tipo_usuario: user.perfil?.nome_perfil || user.tipo_usuario || 'Consulta',
         gestor_rs_id: user.gestor_rs_id,
         perfil_id: user.perfil_id,
         perfil: user.perfil
@@ -153,7 +152,7 @@ export const useSupabaseData = () => {
         senha_usuario: data.senha_usuario,
         ativo_usuario: data.ativo_usuario,
         receber_alertas_email: data.receber_alertas_email,
-        tipo_usuario: data.tipo_usuario || 'Consulta',
+        tipo_usuario: data.perfil?.nome_perfil || data.tipo_usuario || 'Consulta',
         gestor_rs_id: data.gestor_rs_id,
         perfil_id: data.perfil_id,
         perfil: data.perfil
@@ -180,7 +179,6 @@ export const useSupabaseData = () => {
           nome_usuario: updates.nome_usuario,
           email_usuario: updates.email_usuario,
           senha_usuario: updates.senha_usuario,
-          tipo_usuario: updates.tipo_usuario,
           ativo_usuario: updates.ativo_usuario,
           receber_alertas_email: updates.receber_alertas_email,
           perfil_id: updates.perfil_id,
@@ -209,7 +207,7 @@ export const useSupabaseData = () => {
         senha_usuario: data.senha_usuario,
         ativo_usuario: data.ativo_usuario,
         receber_alertas_email: data.receber_alertas_email,
-        tipo_usuario: data.tipo_usuario || 'Consulta',
+        tipo_usuario: data.perfil?.nome_perfil || data.tipo_usuario || 'Consulta',
         gestor_rs_id: data.gestor_rs_id,
         perfil_id: data.perfil_id,
         perfil: data.perfil
@@ -376,363 +374,6 @@ export const useSupabaseData = () => {
       throw err;
     }
   };
-  // ============================================
-  // GESTORES DE CLIENTES (USUARIOS_CLIENTE)
-  // ============================================
-
-  const loadUsuariosCliente = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('usuarios_cliente')
-        .select(`
-          *,
-          cliente:id_cliente (
-            id,
-            razao_social_cliente
-          ),
-          gestor_rs:gestor_rs_id (
-            id,
-            nome_usuario,
-            email_usuario
-          )
-        `)
-        .order('id', { ascending: true });
-
-      if (error) throw error;
-
-      const mappedUsuarios: UsuarioCliente[] = (data || []).map((uc: any) => ({
-        id: uc.id,
-        id_cliente: uc.id_cliente,
-        nome_gestor_cliente: uc.nome_gestor_cliente,
-        cargo_gestor: uc.cargo_gestor,
-        ativo: uc.ativo,
-        gestor_rs_id: uc.gestor_rs_id
-      }));
-
-      setUsuariosCliente(mappedUsuarios);
-      console.log(`✅ ${mappedUsuarios.length} gestores de clientes carregados`);
-    } catch (err: any) {
-      console.error('❌ Erro ao carregar gestores de clientes:', err);
-      throw err;
-    }
-  };
-
-  const addUsuarioCliente = async (newUsuario: Omit<UsuarioCliente, 'id'>) => {
-    try {
-      console.log('➕ Criando gestor de cliente:', newUsuario);
-
-      const { data, error } = await supabase
-        .from('usuarios_cliente')
-        .insert([{
-          id_cliente: newUsuario.id_cliente,
-          nome_gestor_cliente: newUsuario.nome_gestor_cliente,
-          cargo_gestor: newUsuario.cargo_gestor || 'Gestor',
-          ativo: newUsuario.ativo ?? true,
-          gestor_rs_id: newUsuario.gestor_rs_id || null
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const createdUsuario: UsuarioCliente = {
-        id: data.id,
-        id_cliente: data.id_cliente,
-        nome_gestor_cliente: data.nome_gestor_cliente,
-        cargo_gestor: data.cargo_gestor,
-        ativo: data.ativo,
-        gestor_rs_id: data.gestor_rs_id
-      };
-
-      setUsuariosCliente(prev => [...prev, createdUsuario]);
-      console.log('✅ Gestor de cliente criado:', createdUsuario);
-      
-      return createdUsuario;
-    } catch (err: any) {
-      console.error('❌ Erro ao criar gestor de cliente:', err);
-      alert(`Erro ao criar gestor: ${err.message}`);
-      throw err;
-    }
-  };
-
-  const updateUsuarioCliente = async (id: number, updates: Partial<UsuarioCliente>) => {
-    try {
-      console.log('📝 Atualizando gestor de cliente:', id, updates);
-
-      const { data, error } = await supabase
-        .from('usuarios_cliente')
-        .update({
-          nome_gestor_cliente: updates.nome_gestor_cliente,
-          cargo_gestor: updates.cargo_gestor,
-          ativo: updates.ativo,
-          gestor_rs_id: updates.gestor_rs_id
-        })
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const updatedUsuario: UsuarioCliente = {
-        id: data.id,
-        id_cliente: data.id_cliente,
-        nome_gestor_cliente: data.nome_gestor_cliente,
-        cargo_gestor: data.cargo_gestor,
-        ativo: data.ativo,
-        gestor_rs_id: data.gestor_rs_id
-      };
-
-      setUsuariosCliente(prev => prev.map(u => u.id === id ? updatedUsuario : u));
-      console.log('✅ Gestor de cliente atualizado:', updatedUsuario);
-      
-      return updatedUsuario;
-    } catch (err: any) {
-      console.error('❌ Erro ao atualizar gestor de cliente:', err);
-      alert(`Erro ao atualizar gestor: ${err.message}`);
-      throw err;
-    }
-  };
-
-  const batchAddManagers = async (newManagers: Omit<UsuarioCliente, 'id'>[]) => {
-    try {
-      console.log(`➕ Criando ${newManagers.length} gestores em lote...`);
-
-      // Preparar dados para inserção
-      const insertData = newManagers.map(m => ({
-        id_cliente: m.id_cliente,
-        nome_gestor_cliente: m.nome_gestor_cliente,
-        cargo_gestor: m.cargo_gestor || 'Gestor',
-        ativo: m.ativo ?? true,
-        gestor_rs_id: m.gestor_rs_id || null
-      }));
-
-      const { data, error } = await supabase
-        .from('usuarios_cliente')
-        .insert(insertData)
-        .select();
-
-      if (error) throw error;
-
-      const createdManagers: UsuarioCliente[] = (data || []).map((uc: any) => ({
-        id: uc.id,
-        id_cliente: uc.id_cliente,
-        nome_gestor_cliente: uc.nome_gestor_cliente,
-        cargo_gestor: uc.cargo_gestor,
-        ativo: uc.ativo,
-        gestor_rs_id: uc.gestor_rs_id
-      }));
-
-      setUsuariosCliente(prev => [...prev, ...createdManagers]);
-      console.log(`✅ ${createdManagers.length} gestores criados com sucesso!`);
-      
-      return createdManagers;
-    } catch (err: any) {
-      console.error('❌ Erro ao criar gestores em lote:', err);
-      alert(`Erro ao criar gestores: ${err.message}`);
-      throw err;
-    }
-  };
-
-  // ============================================
-
-  // Inativar Gestor (ao invés de deletar)
-  const inactivateGestor = async (id: number) => {
-    try {
-      console.log(`⏸️ Inativando gestor ${id}...`);
-      
-      const { data, error } = await supabase
-        .from('usuarios_cliente')
-        .update({ ativo: false })
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const inactivatedGestor: UsuarioCliente = data as UsuarioCliente;
-      setUsuariosCliente(prev => prev.map(g => g.id === id ? inactivatedGestor : g));
-      console.log(`✅ Gestor ${id} inativado com sucesso!`);
-      
-      return inactivatedGestor;
-    } catch (error) {
-      console.error('❌ Erro ao inativar gestor:', error);
-      throw error;
-    }
-  };
-
-  // Inativar Coordenador (ao invés de deletar)
-  const inactivateCoordenador = async (id: number) => {
-    try {
-      console.log(`⏸️ Inativando coordenador ${id}...`);
-      
-      const { data, error } = await supabase
-        .from('coordenadores_cliente')
-        .update({ ativo: false })
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const inactivatedCoordenador: CoordenadorCliente = data as CoordenadorCliente;
-      setCoordenadoresCliente(prev => prev.map(c => c.id === id ? inactivatedCoordenador : c));
-      console.log(`✅ Coordenador ${id} inativado com sucesso!`);
-      
-      return inactivatedCoordenador;
-    } catch (error) {
-      console.error('❌ Erro ao inativar coordenador:', error);
-      throw error;
-    }
-  };
-  // COORDENADORES DE CLIENTES (COORDENADORES_CLIENTE)
-  // ============================================
-
-  const loadCoordenadoresCliente = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('coordenadores_cliente')
-        .select(`
-          *,
-          gestor:id_gestor_cliente (
-            id,
-            nome_gestor_cliente,
-            id_cliente,
-            cliente:id_cliente (
-              id,
-              razao_social_cliente
-            )
-          )
-        `)
-        .order('id', { ascending: true });
-
-      if (error) throw error;
-
-      const mappedCoordenadores: CoordenadorCliente[] = (data || []).map((cc: any) => ({
-        id: cc.id,
-        id_gestor_cliente: cc.id_gestor_cliente,
-        nome_coordenador_cliente: cc.nome_coordenador_cliente,
-        cargo_coordenador_cliente: cc.cargo_coordenador_cliente,
-        ativo: cc.ativo
-      }));
-
-      setCoordenadoresCliente(mappedCoordenadores);
-      console.log(`✅ ${mappedCoordenadores.length} coordenadores de clientes carregados`);
-    } catch (err: any) {
-      console.error('❌ Erro ao carregar coordenadores de clientes:', err);
-      throw err;
-    }
-  };
-
-  const addCoordenadorCliente = async (newCoordenador: Omit<CoordenadorCliente, 'id'>) => {
-    try {
-      console.log('➕ Criando coordenador de cliente:', newCoordenador);
-
-      const { data, error } = await supabase
-        .from('coordenadores_cliente')
-        .insert([{
-          id_gestor_cliente: newCoordenador.id_gestor_cliente,
-          nome_coordenador_cliente: newCoordenador.nome_coordenador_cliente,
-          cargo_coordenador_cliente: newCoordenador.cargo_coordenador_cliente || 'Coordenador',
-          ativo: newCoordenador.ativo ?? true
-        }])
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const createdCoordenador: CoordenadorCliente = {
-        id: data.id,
-        id_gestor_cliente: data.id_gestor_cliente,
-        nome_coordenador_cliente: data.nome_coordenador_cliente,
-        cargo_coordenador_cliente: data.cargo_coordenador_cliente,
-        ativo: data.ativo
-      };
-
-      setCoordenadoresCliente(prev => [...prev, createdCoordenador]);
-      console.log('✅ Coordenador de cliente criado:', createdCoordenador);
-      
-      return createdCoordenador;
-    } catch (err: any) {
-      console.error('❌ Erro ao criar coordenador de cliente:', err);
-      alert(`Erro ao criar coordenador: ${err.message}`);
-      throw err;
-    }
-  };
-
-  const updateCoordenadorCliente = async (id: number, updates: Partial<CoordenadorCliente>) => {
-    try {
-      console.log('📝 Atualizando coordenador de cliente:', id, updates);
-
-      const { data, error } = await supabase
-        .from('coordenadores_cliente')
-        .update({
-          nome_coordenador_cliente: updates.nome_coordenador_cliente,
-          cargo_coordenador_cliente: updates.cargo_coordenador_cliente,
-          ativo: updates.ativo
-        })
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const updatedCoordenador: CoordenadorCliente = {
-        id: data.id,
-        id_gestor_cliente: data.id_gestor_cliente,
-        nome_coordenador_cliente: data.nome_coordenador_cliente,
-        cargo_coordenador_cliente: data.cargo_coordenador_cliente,
-        ativo: data.ativo
-      };
-
-      setCoordenadoresCliente(prev => prev.map(c => c.id === id ? updatedCoordenador : c));
-      console.log('✅ Coordenador de cliente atualizado:', updatedCoordenador);
-      
-      return updatedCoordenador;
-    } catch (err: any) {
-      console.error('❌ Erro ao atualizar coordenador de cliente:', err);
-      alert(`Erro ao atualizar coordenador: ${err.message}`);
-      throw err;
-    }
-  };
-
-  const batchAddCoordinators = async (newCoordinators: Omit<CoordenadorCliente, 'id'>[]) => {
-    try {
-      console.log(`➕ Criando ${newCoordinators.length} coordenadores em lote...`);
-
-      // Preparar dados para inserção
-      const insertData = newCoordinators.map(c => ({
-        id_gestor_cliente: c.id_gestor_cliente,
-        nome_coordenador_cliente: c.nome_coordenador_cliente,
-        cargo_coordenador_cliente: c.cargo_coordenador_cliente || 'Coordenador',
-        ativo: c.ativo ?? true
-      }));
-
-      const { data, error } = await supabase
-        .from('coordenadores_cliente')
-        .insert(insertData)
-        .select();
-
-      if (error) throw error;
-
-      const createdCoordinators: CoordenadorCliente[] = (data || []).map((cc: any) => ({
-        id: cc.id,
-        id_gestor_cliente: cc.id_gestor_cliente,
-        nome_coordenador_cliente: cc.nome_coordenador_cliente,
-        cargo_coordenador_cliente: cc.cargo_coordenador_cliente,
-        ativo: cc.ativo
-      }));
-
-      setCoordenadoresCliente(prev => [...prev, ...createdCoordinators]);
-      console.log(`✅ ${createdCoordinators.length} coordenadores criados com sucesso!`);
-      
-      return createdCoordinators;
-    } catch (err: any) {
-      console.error('❌ Erro ao criar coordenadores em lote:', err);
-      alert(`Erro ao criar coordenadores: ${err.message}`);
-      throw err;
-    }
-  };
-
 
   // ============================================
   // CONSULTORES (CONSULTANTS)
@@ -790,52 +431,7 @@ export const useSupabaseData = () => {
 
   const addConsultant = async (newConsultant: Omit<Consultant, 'id'>) => {
     try {
-      console.log('➥ Criando consultor:', newConsultant);
-      
-      // 🔍 RECUPERAÇÃO AUTOMÁTICA DE CV
-      let cvData: { pessoa_id?: number; candidatura_id?: number; curriculo_url?: string; curriculo_filename?: string } = {};
-      
-      // Buscar pessoa no banco de talentos por CPF ou Email
-      if (newConsultant.cpf || newConsultant.email_consultor) {
-        console.log('🔍 Buscando CV do candidato...');
-        
-        let pessoaQuery = supabase.from('pessoas').select('*');
-        
-        if (newConsultant.cpf) {
-          pessoaQuery = pessoaQuery.eq('cpf', newConsultant.cpf);
-        } else if (newConsultant.email_consultor) {
-          pessoaQuery = pessoaQuery.eq('email', newConsultant.email_consultor);
-        }
-        
-        const { data: pessoaData, error: pessoaError } = await pessoaQuery.single();
-        
-        if (!pessoaError && pessoaData) {
-          console.log('✅ Pessoa encontrada no banco de talentos:', pessoaData.nome);
-          cvData.pessoa_id = pessoaData.id;
-          cvData.curriculo_url = pessoaData.curriculo_url;
-          
-          // Buscar candidatura aprovada desta pessoa
-          const { data: candidaturaData } = await supabase
-            .from('candidaturas')
-            .select('*')
-            .eq('pessoa_id', String(pessoaData.id))
-            .in('status', ['aprovado_cliente', 'aprovado'])
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .single();
-          
-          if (candidaturaData) {
-            console.log('✅ Candidatura aprovada encontrada');
-            cvData.candidatura_id = parseInt(candidaturaData.id);
-          }
-          
-          if (cvData.curriculo_url) {
-            console.log('📎 CV recuperado automaticamente:', cvData.curriculo_url);
-          }
-        } else {
-          console.log('⚠️ Pessoa não encontrada no banco de talentos');
-        }
-      }
+      console.log('➕ Criando consultor:', newConsultant);
 
       const { data, error } = await supabase
         .from('consultants')
@@ -850,12 +446,7 @@ export const useSupabaseData = () => {
           gestor_imediato_id: newConsultant.gestor_imediato_id,
           coordenador_id: newConsultant.coordenador_id,
           gestor_rs_id: newConsultant.gestor_rs_id,
-          id_gestao_de_pessoas: newConsultant.id_gestao_de_pessoas,
-          // Campos de CV recuperados automaticamente
-          pessoa_id: cvData.pessoa_id || null,
-          candidatura_id: cvData.candidatura_id || null,
-          curriculo_url: cvData.curriculo_url || null,
-          curriculo_uploaded_at: cvData.curriculo_url ? new Date().toISOString() : null
+          id_gestao_de_pessoas: newConsultant.id_gestao_de_pessoas
         }])
         .select()
         .single();
@@ -922,56 +513,23 @@ export const useSupabaseData = () => {
 
   const batchAddConsultants = async (newConsultants: Omit<Consultant, 'id'>[]) => {
     try {
-      console.log(`➥ Criando ${newConsultants.length} consultores em lote...`);
-      
-      // 🔍 RECUPERAÇÃO AUTOMÁTICA DE CVs EM LOTE
-      console.log('🔍 Buscando CVs dos candidatos em lote...');
-      
-      // Buscar todas as pessoas de uma vez
-      const cpfs = newConsultants.filter(c => c.cpf).map(c => c.cpf);
-      const emails = newConsultants.filter(c => c.email_consultor).map(c => c.email_consultor);
-      
-      const { data: pessoasData } = await supabase
-        .from('pessoas')
-        .select('*')
-        .or(`cpf.in.(${cpfs.join(',')}),email.in.(${emails.join(',')})`);
-      
-      // Criar mapa de CVs por CPF e Email
-      const cvMap = new Map<string, any>();
-      if (pessoasData) {
-        for (const pessoa of pessoasData) {
-          if (pessoa.cpf) cvMap.set(`cpf:${pessoa.cpf}`, pessoa);
-          if (pessoa.email) cvMap.set(`email:${pessoa.email}`, pessoa);
-        }
-        console.log(`✅ ${pessoasData.length} pessoas encontradas no banco de talentos`);
-      }
+      console.log(`➕ Criando ${newConsultants.length} consultores em lote...`);
 
       const { data, error } = await supabase
         .from('consultants')
-        .insert(newConsultants.map(c => {
-          // Buscar CV para este consultor
-          let pessoa = null;
-          if (c.cpf) pessoa = cvMap.get(`cpf:${c.cpf}`);
-          if (!pessoa && c.email_consultor) pessoa = cvMap.get(`email:${c.email_consultor}`);
-          
-          return {
-            nome_consultores: c.nome_consultores,
-            email_consultor: c.email_consultor,
-            cpf: c.cpf,
-            cargo_consultores: c.cargo_consultores,
-            data_inclusao_consultores: c.data_inclusao_consultores,
-            status: c.status || 'Ativo',
-            valor_faturamento: c.valor_faturamento,
-            gestor_imediato_id: c.gestor_imediato_id,
-            coordenador_id: c.coordenador_id,
-            gestor_rs_id: c.gestor_rs_id,
-            id_gestao_de_pessoas: c.id_gestao_de_pessoas,
-            // Campos de CV recuperados automaticamente
-            pessoa_id: pessoa?.id || null,
-            curriculo_url: pessoa?.curriculo_url || null,
-            curriculo_uploaded_at: pessoa?.curriculo_url ? new Date().toISOString() : null
-          };
-        }))
+        .insert(newConsultants.map(c => ({
+          nome_consultores: c.nome_consultores,
+          email_consultor: c.email_consultor,
+          cpf: c.cpf,
+          cargo_consultores: c.cargo_consultores,
+          data_inclusao_consultores: c.data_inclusao_consultores,
+          status: c.status || 'Ativo',
+          valor_faturamento: c.valor_faturamento,
+          gestor_imediato_id: c.gestor_imediato_id,
+          coordenador_id: c.coordenador_id,
+          gestor_rs_id: c.gestor_rs_id,
+          id_gestao_de_pessoas: c.id_gestao_de_pessoas
+        })))
         .select();
 
       if (error) throw error;
@@ -993,39 +551,6 @@ export const useSupabaseData = () => {
   };
 
   // ============================================
-
-  // Inativar Consultor (ao invés de deletar)
-  const inactivateConsultant = async (id: number, dataDesligamento: string, motivoDesligamento?: string) => {
-    try {
-      console.log(`⏸️ Inativando consultor ${id}...`);
-      
-      const { data, error } = await supabase
-        .from('consultants')
-        .update({
-          status: 'Encerrado',
-          data_saida: dataDesligamento,
-          motivo_desligamento: motivoDesligamento || undefined
-        })
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      const updatedConsultant: Consultant = {
-        ...data,
-        reports: []
-      };
-
-      setConsultants(prev => prev.map(c => c.id === id ? updatedConsultant : c));
-      console.log(`✅ Consultor ${id} inativado com sucesso!`);
-      
-      return updatedConsultant;
-    } catch (error) {
-      console.error('❌ Erro ao inativar consultor:', error);
-      throw error;
-    }
-  };
   // TEMPLATES (EMAIL_TEMPLATES)
   // ============================================
 
@@ -1729,218 +1254,138 @@ export const useSupabaseData = () => {
   // FUNÇÕES STUB (Compatibilidade)
   // ============================================
 
-
-
-  const updateConsultantScore = async (result: AIAnalysisResult) => {
-    try {
-      console.log(`📊 Atualizando score do consultor: ${result.consultantName}`);
-      
-      // Buscar consultor pelo nome
-      const consultant = consultants.find(c => 
-        c.nome_consultores.toLowerCase() === result.consultantName.toLowerCase()
-      );
-      
-      if (!consultant) {
-        console.warn(`⚠️ Consultor não encontrado: ${result.consultantName}`);
-        return;
-      }
-      
-      // Preparar campo do mês (parecer_1_consultor, parecer_2_consultor, etc)
-      const monthField = `parecer_${result.reportMonth}_consultor` as keyof Consultant;
-      
-      // Criar objeto de relatório
-      const newReport: ConsultantReport = {
-        id: `${consultant.id}_${result.reportMonth}_${Date.now()}`,
-        month: result.reportMonth,
-        year: new Date().getFullYear(),
-        riskScore: result.riskScore,
-        summary: result.summary,
-        negativePattern: result.negativePattern,
-        predictiveAlert: result.predictiveAlert,
-        recommendations: result.recommendations,
-        content: result.details,
-        createdAt: new Date().toISOString(),
-        generatedBy: 'manual',
-        aiJustification: 'Análise baseada em relatório de atividades manual'
-      };
-      
-      // Atualizar consultor no Supabase
-      const updates: any = {
-        [monthField]: result.riskScore,
-        parecer_final_consultor: result.riskScore
-      };
-      
-      const { data, error } = await supabase
-        .from('consultants')
-        .update(updates)
-        .eq('id', consultant.id)
-        .select()
-        .single();
-      
-      if (error) throw error;
-      
-      // Atualizar estado local
-      const updatedConsultant: Consultant = {
-        ...consultant,
-        ...updates,
-        reports: [...(consultant.reports || []), newReport]
-      };
-      
-      setConsultants(prev => prev.map(c => 
-        c.id === consultant.id ? updatedConsultant : c
-      ));
-      
-      console.log(`✅ Score atualizado: ${result.consultantName} - Mês ${result.reportMonth} - Risco ${result.riskScore}`);
-      
-      // Verificar se deve ir para quarentena
-      if (result.riskScore === 1 || result.riskScore === 2) {
-        console.log(`⚠️ Consultor em QUARENTENA: ${result.consultantName}`);
-      }
-      
-    } catch (err: any) {
-      console.error('❌ Erro ao atualizar score:', err);
-      alert(`Erro ao atualizar score do consultor: ${err.message}`);
-    }
+  const addUsuarioCliente = async (newUsuario: Omit<UsuarioCliente, 'id'>) => {
+    console.warn('⚠️ addUsuarioCliente: Não implementado (tabela não existe no Supabase)');
+    const usuario = { ...newUsuario, id: Date.now() } as UsuarioCliente;
+    setUsuariosCliente(prev => [...prev, usuario]);
+    return usuario;
   };
 
-  const processReportAnalysis = async (text: string): Promise<AIAnalysisResult[]> => {
+  const updateUsuarioCliente = async (id: number, updates: Partial<UsuarioCliente>) => {
+    console.warn('⚠️ updateUsuarioCliente: Não implementado (tabela não existe no Supabase)');
+    setUsuariosCliente(prev => prev.map(u => u.id === id ? { ...u, ...updates } : u));
+  };
+
+  const batchAddManagers = async (newManagers: Omit<UsuarioCliente, 'id'>[]) => {
+    console.warn('⚠️ batchAddManagers: Não implementado (tabela não existe no Supabase)');
+    const managers = newManagers.map((m, i) => ({ ...m, id: Date.now() + i } as UsuarioCliente));
+    setUsuariosCliente(prev => [...prev, ...managers]);
+  };
+
+  const addCoordenadorCliente = async (newCoordenador: Omit<CoordenadorCliente, 'id'>) => {
+    console.warn('⚠️ addCoordenadorCliente: Não implementado (tabela não existe no Supabase)');
+    const coordenador = { ...newCoordenador, id: Date.now() } as CoordenadorCliente;
+    setCoordenadoresCliente(prev => [...prev, coordenador]);
+    return coordenador;
+  };
+
+  const updateCoordenadorCliente = async (id: number, updates: Partial<CoordenadorCliente>) => {
+    console.warn('⚠️ updateCoordenadorCliente: Não implementado (tabela não existe no Supabase)');
+    setCoordenadoresCliente(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
+  };
+
+  const batchAddCoordinators = async (newCoordinators: Omit<CoordenadorCliente, 'id'>[]) => {
+    console.warn('⚠️ batchAddCoordinators: Não implementado (tabela não existe no Supabase)');
+    const coordinators = newCoordinators.map((c, i) => ({ ...c, id: Date.now() + i } as CoordenadorCliente));
+    setCoordenadoresCliente(prev => [...prev, ...coordinators]);
+  };
+
+  const updateConsultantScore = (result: AIAnalysisResult) => {
+    console.warn('⚠️ updateConsultantScore: Não implementado');
+  };
+
+  const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
     try {
-      console.log('🤖 Processando análise de relatório com IA...');
+      console.log('📊 Iniciando processamento de relatórios...');
       
-      // Extrair informações do texto do relatório
-      const lines = text.split('\n').filter(l => l.trim());
-      const results: AIAnalysisResult[] = [];
-      
-      // Processar cada linha do relatório
+      const lines = text.split('\n').filter(line => line.trim() !== '');
+      const reports: Array<{ consultantName: string; managerName: string; month: number; activities: string; }> = [];
+
       for (const line of lines) {
-        // Formato esperado: "CONSULTOR | GESTOR | MÊS | ATIVIDADES"
+        if (line.toUpperCase().includes('CONSULTOR') && line.toUpperCase().includes('GESTOR')) continue;
+        
         const parts = line.split('|').map(p => p.trim());
-        
         if (parts.length < 4) continue;
-        
-        const [consultantName, managerName, monthStr, activities] = parts;
-        const month = parseInt(monthStr);
-        
-        if (!consultantName || !month || !activities) continue;
-        
-        // Análise de risco baseada em palavras-chave
-        const riskScore = analyzeRiskFromActivities(activities);
-        const { summary, negativePattern, predictiveAlert, recommendations } = generateAnalysis(activities, riskScore);
-        
-        results.push({
-          consultantName,
-          managerName,
-          reportMonth: month,
-          riskScore,
-          summary,
-          negativePattern,
-          predictiveAlert,
-          recommendations,
-          details: activities
-        });
+
+        const [consultantName, managerName, monthStr, ...activitiesParts] = parts;
+        const month = parseInt(monthStr, 10);
+        const activities = activitiesParts.join('|').trim();
+
+        if (!consultantName || !activities || isNaN(month) || month < 1 || month > 12) continue;
+
+        reports.push({ consultantName, managerName: managerName || gestorName || 'Não informado', month, activities });
       }
-      
-      console.log(`✅ ${results.length} relatórios analisados`);
+
+      if (reports.length === 0) {
+        console.error('❌ Nenhum relatório válido encontrado');
+        return [];
+      }
+
+      const results: AIAnalysisResult[] = [];
+
+      for (const report of reports) {
+        try {
+          const aiResults = await analyzeReport(report.activities);
+          
+          if (aiResults && aiResults.length > 0) {
+            const aiResult = aiResults[0];
+            const enrichedResult: AIAnalysisResult = {
+              ...aiResult,
+              consultantName: report.consultantName,
+              managerName: report.managerName,
+              reportMonth: report.month
+            };
+            
+            results.push(enrichedResult);
+
+            // Atualizar score no banco
+            const { data: consultant } = await supabase
+              .from('consultores')
+              .select('id')
+              .ilike('nome', report.consultantName)
+              .single();
+
+            if (consultant) {
+              await supabase
+                .from('consultores')
+                .update({ 
+                  score_risco: enrichedResult.riskScore,
+                  quarentena: enrichedResult.riskScore >= 4
+                })
+                .eq('id', consultant.id);
+
+              setConsultants(prev => prev.map(c => 
+                c.id === consultant.id 
+                  ? { ...c, scoreRisco: enrichedResult.riskScore, quarentena: enrichedResult.riskScore >= 4 }
+                  : c
+              ));
+
+              // Salvar flags comportamentais
+              const flags = await extractBehavioralFlags(report.activities);
+              if (flags.length > 0) {
+                const flagsToInsert = flags.map(flag => ({
+                  consultor_id: consultant.id,
+                  flag_type: flag.flagType,
+                  description: flag.description,
+                  flag_date: flag.flagDate
+                }));
+                
+                await supabase.from('behavioral_flags').insert(flagsToInsert);
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`❌ Erro ao processar ${report.consultantName}:`, error);
+        }
+      }
+
+      console.log(`🎉 Processamento concluído: ${results.length} relatórios`);
       return results;
-      
-    } catch (err: any) {
-      console.error('❌ Erro ao processar análise:', err);
-      alert(`Erro ao processar relatório: ${err.message}`);
-      return [];
+
+    } catch (error) {
+      console.error('❌ Erro geral no processamento:', error);
+      throw error;
     }
-  };
-  
-  // Função auxiliar: Analisar risco baseado em atividades
-  const analyzeRiskFromActivities = (activities: string): RiskScore => {
-    const lowerActivities = activities.toLowerCase();
-    
-    // Palavras-chave de alto risco
-    const highRiskKeywords = ['falta', 'atraso', 'não entregou', 'problema', 'conflito', 'reclamação', 'insatisfação', 'demissão', 'advertencia'];
-    const mediumRiskKeywords = ['dificuldade', 'desafio', 'atenção', 'melhorar', 'ajuste', 'revisão'];
-    const positiveKeywords = ['ótimo', 'excelente', 'sucesso', 'entregou', 'superou', 'destaque', 'elogio', 'promoção'];
-    
-    let highRiskCount = 0;
-    let mediumRiskCount = 0;
-    let positiveCount = 0;
-    
-    highRiskKeywords.forEach(keyword => {
-      if (lowerActivities.includes(keyword)) highRiskCount++;
-    });
-    
-    mediumRiskKeywords.forEach(keyword => {
-      if (lowerActivities.includes(keyword)) mediumRiskCount++;
-    });
-    
-    positiveKeywords.forEach(keyword => {
-      if (lowerActivities.includes(keyword)) positiveCount++;
-    });
-    
-    // Determinar score de risco
-    if (highRiskCount >= 2) return 1; // Risco Crítico
-    if (highRiskCount >= 1 || mediumRiskCount >= 3) return 2; // Risco Alto
-    if (mediumRiskCount >= 1 || positiveCount === 0) return 3; // Risco Médio
-    return 4; // Baixo Risco
-  };
-  
-  // Função auxiliar: Gerar análise textual
-  const generateAnalysis = (activities: string, riskScore: RiskScore) => {
-    let summary = '';
-    let negativePattern = '';
-    let predictiveAlert = '';
-    const recommendations: Recommendation[] = [];
-    
-    switch (riskScore) {
-      case 1: // Crítico
-        summary = 'Situação crítica identificada. Problemas graves detectados nas atividades.';
-        negativePattern = 'Padrão negativo recorrente: problemas de performance, comportamento ou entregas.';
-        predictiveAlert = '⚠️ ALERTA: Alto risco de desligamento. Ação imediata necessária.';
-        recommendations.push({
-          tipo: 'AcaoImediata',
-          foco: 'Consultor',
-          descricao: 'Reunião urgente com consultor e gestor para plano de ação imediato'
-        });
-        recommendations.push({
-          tipo: 'AcaoImediata',
-          foco: 'Cliente',
-          descricao: 'Comunicar cliente sobre situação e propor soluções'
-        });
-        break;
-        
-      case 2: // Alto
-        summary = 'Situação de atenção. Problemas significativos identificados.';
-        negativePattern = 'Dificuldades recorrentes que precisam ser endereçadas.';
-        predictiveAlert = '⚠️ Risco elevado. Monitoramento próximo recomendado.';
-        recommendations.push({
-          tipo: 'QuestaoSondagem',
-          foco: 'Consultor',
-          descricao: 'Investigar causas dos problemas e oferecer suporte'
-        });
-        break;
-        
-      case 3: // Médio
-        summary = 'Performance dentro do esperado, com pontos de melhoria.';
-        negativePattern = 'Alguns desafios identificados, mas controláveis.';
-        predictiveAlert = 'Monitoramento regular recomendado.';
-        recommendations.push({
-          tipo: 'RecomendacaoEstrategica',
-          foco: 'ProcessoInterno',
-          descricao: 'Acompanhamento mensal para garantir evolução'
-        });
-        break;
-        
-      case 4: // Baixo
-        summary = 'Performance positiva. Consultor demonstra bom desempenho.';
-        negativePattern = 'Nenhum padrão negativo identificado.';
-        predictiveAlert = 'Baixo risco. Manter acompanhamento regular.';
-        recommendations.push({
-          tipo: 'RecomendacaoEstrategica',
-          foco: 'Consultor',
-          descricao: 'Reconhecer bom desempenho e manter engajamento'
-        });
-        break;
-    }
-    
-    return { summary, negativePattern, predictiveAlert, recommendations };
   };
 
   const addFeedbackResponse = async (response: FeedbackResponse) => {
@@ -1991,25 +1436,16 @@ export const useSupabaseData = () => {
     addConsultant,
     updateConsultant,
     batchAddConsultants,
-    inactivateConsultant,
     updateConsultantScore,
     processReportAnalysis,
 
-    // Gestores de Clientes (✅ Implementado)
-    usuariosCliente,
-    loadUsuariosCliente,
+    // Gestores/Coordenadores (⚠️ Não implementado - tabelas não existem)
     addUsuarioCliente,
     updateUsuarioCliente,
     batchAddManagers,
-    inactivateGestor,
-
-    // Coordenadores de Clientes (✅ Implementado)
-    coordenadoresCliente,
-    loadCoordenadoresCliente,
     addCoordenadorCliente,
     updateCoordenadorCliente,
     batchAddCoordinators,
-    inactivateCoordenador,
 
     // Templates (✅ Completo)
     addTemplate,

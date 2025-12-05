@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { analyzeFeedback } from '../services/geminiService';
+import { analyzeFeedback } from '../src/services/geminiService';
 import { FeedbackResponse, RHAction } from '../src/components/types';
 
 interface PortalProps {

@@ -12,7 +12,7 @@ import {
   FeedbackRequest, FeedbackResponse, RHAction, BehavioralFlag, 
   LearningFeedbackLoop, Vaga, Pessoa, Candidatura
 } from '../src/components/types';
-
+import { analyzeReport, extractBehavioralFlags, generatePredictiveAlert } from '../src/services/geminiService';
 export const useSupabaseData = () => {
   // ============================================
   // ESTADO

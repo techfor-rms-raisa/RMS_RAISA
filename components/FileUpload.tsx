@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { analyzeReport } from '../services/geminiService';
+import { analyzeReport } from '../src/services/geminiService';
 import { AIAnalysisResult } from '../src/components/types';
 import * as pdfjsLib from 'pdfjs-dist';
 
