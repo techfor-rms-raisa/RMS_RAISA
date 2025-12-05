@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { AIAnalysisResult, RiskScore, Recommendation, BehavioralFlag } from '../src/components/types';
-import { AI_MODEL_NAME } from '../constants';
+import { AIAnalysisResult, RiskScore, Recommendation, BehavioralFlag } from '../components/types';
+import { AI_MODEL_NAME } from '../../constants';
 
 // Access API Key - supporting Vercel/Vite environment variables
 const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY;
@@ -311,7 +311,7 @@ export async function summarizeInterview(transcript: string, jobDescription: str
     }
 }
 
-import { Vaga, Candidatura } from '../src/components/types';
+import { Vaga, Candidatura } from '../components/types';
 
 // Tipos locais (TODO: Mover para types.ts)
 interface FinalAssessment {
