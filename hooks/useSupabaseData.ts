@@ -1305,7 +1305,22 @@ const processReportAnalysis = async (text: string, gestorName?: string): Promise
       // ========================================
       
       // Formato 1: CSV com pipe (|)
-      const linesWithPipe = text.split('\n').filter(line => line.includes('|') && !line.toUpperCase().includes('CONSULTOR') && !line.toUpperCase().includes('GESTOR'));
+      // Detectar CSV: deve ter pelo menos 3 pipes por linha E formato consistente
+      const csvLines = text.split('
+').filter(line => {
+        const pipeCount = (line.match(/\|/g) || []).length;
+        // CSV deve ter pelo menos 3 pipes (4 colunas mínimas: consultor|gestor|mês|atividades)
+        return pipeCount >= 3 && 
+               !line.toUpperCase().includes('CONSULTOR') && 
+               !line.toUpperCase().includes('GESTOR');
+      });
+      
+      // Validar se é realmente CSV: pelo menos 50% das linhas devem ter 3+ pipes
+      const totalLines = text.split('
+').filter(l => l.trim().length > 0).length;
+      const isCSV = csvLines.length > 0 && (csvLines.length / totalLines) > 0.5;
+      
+      const linesWithPipe = isCSV ? csvLines : [];
       
       if (linesWithPipe.length > 0) {
         // ========================================
