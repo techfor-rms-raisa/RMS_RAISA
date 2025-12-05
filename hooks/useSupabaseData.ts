@@ -1294,37 +1294,104 @@ export const useSupabaseData = () => {
     console.warn('⚠️ updateConsultantScore: Não implementado');
   };
 
-  const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
+const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
     try {
       console.log('📊 Iniciando processamento de relatórios...');
       
-      const lines = text.split('\n').filter(line => line.trim() !== '');
-      const reports: Array<{ consultantName: string; managerName: string; month: number; activities: string; }> = [];
+      const reports: Array<{ consultantName: string; managerName: string; month: number; year: number; activities: string; }> = [];
 
-      for (const line of lines) {
-        if (line.toUpperCase().includes('CONSULTOR') && line.toUpperCase().includes('GESTOR')) continue;
+      // ========================================
+      // DETECTAR FORMATO DO TEXTO
+      // ========================================
+      
+      // Formato 1: CSV com pipe (|)
+      const linesWithPipe = text.split('\n').filter(line => line.includes('|') && !line.toUpperCase().includes('CONSULTOR') && !line.toUpperCase().includes('GESTOR'));
+      
+      if (linesWithPipe.length > 0) {
+        // ========================================
+        // PROCESSAR FORMATO CSV
+        // ========================================
+        console.log('📋 Formato detectado: CSV com pipe');
         
-        const parts = line.split('|').map(p => p.trim());
-        if (parts.length < 4) continue;
+        for (const line of linesWithPipe) {
+          const parts = line.split('|').map(p => p.trim());
+          if (parts.length < 4) continue;
 
-        const [consultantName, managerName, monthStr, ...activitiesParts] = parts;
-        const month = parseInt(monthStr, 10);
-        const activities = activitiesParts.join('|').trim();
+          const [consultantName, managerName, monthStr, ...activitiesParts] = parts;
+          const month = parseInt(monthStr, 10);
+          const activities = activitiesParts.join('|').trim();
 
-        if (!consultantName || !activities || isNaN(month) || month < 1 || month > 12) continue;
+          if (!consultantName || !activities || isNaN(month) || month < 1 || month > 12) continue;
 
-        reports.push({ consultantName, managerName: managerName || gestorName || 'Não informado', month, activities });
+          reports.push({ 
+            consultantName, 
+            managerName: managerName || gestorName || 'Não informado', 
+            month, 
+            year: new Date().getFullYear(),
+            activities 
+          });
+        }
+      } else {
+        // ========================================
+        // PROCESSAR FORMATO PDF NARRATIVO
+        // ========================================
+        console.log('📄 Formato detectado: PDF narrativo');
+        
+        // Extrair nome do consultor (primeira linha ou linha com nome destacado)
+        const nameMatch = text.match(/^([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+(?:\s+[A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÇÑ][a-záàâãéèêíïóôõöúçñ]+)+)/m);
+        const consultantName = nameMatch ? nameMatch[1].trim() : 'Não identificado';
+        
+        // Extrair período (datas)
+        const periodMatch = text.match(/(\d{2})\.(\d{2})\.(\d{4})\s*a\s*(\d{2})\.(\d{2})\.(\d{4})/);
+        let month = new Date().getMonth() + 1;
+        let year = new Date().getFullYear();
+        
+        if (periodMatch) {
+          const startMonth = parseInt(periodMatch[2]);
+          const startYear = parseInt(periodMatch[3]);
+          month = startMonth;
+          year = startYear;
+        }
+        
+        // Extrair atividades (todo o texto é considerado atividades)
+        const activities = text.trim();
+        
+        if (consultantName !== 'Não identificado' && activities) {
+          reports.push({
+            consultantName,
+            managerName: gestorName || 'Não informado',
+            month,
+            year,
+            activities
+          });
+        }
       }
 
+      // ========================================
+      // VALIDAR SE ENCONTROU RELATÓRIOS
+      // ========================================
+      
       if (reports.length === 0) {
         console.error('❌ Nenhum relatório válido encontrado');
+        console.log('💡 Dica: Verifique se o arquivo contém:');
+        console.log('   - Nome do consultor');
+        console.log('   - Período (datas)');
+        console.log('   - Atividades detalhadas');
         return [];
       }
 
+      console.log(`✅ ${reports.length} relatório(s) encontrado(s)`);
+
+      // ========================================
+      // PROCESSAR CADA RELATÓRIO COM IA
+      // ========================================
+      
       const results: AIAnalysisResult[] = [];
 
       for (const report of reports) {
         try {
+          console.log(`🔍 Analisando: ${report.consultantName} (${report.month}/${report.year})`);
+          
           const aiResults = await analyzeReport(report.activities);
           
           if (aiResults && aiResults.length > 0) {
@@ -1333,12 +1400,16 @@ export const useSupabaseData = () => {
               ...aiResult,
               consultantName: report.consultantName,
               managerName: report.managerName,
-              reportMonth: report.month
+              reportMonth: report.month,
+              reportYear: report.year
             };
             
             results.push(enrichedResult);
 
-            // Atualizar score no banco
+            // ========================================
+            // ATUALIZAR SCORE NO BANCO
+            // ========================================
+            
             const { data: consultant } = await supabase
               .from('consultores')
               .select('id')
@@ -1350,13 +1421,13 @@ export const useSupabaseData = () => {
                 .from('consultores')
                 .update({ 
                   score_risco: enrichedResult.riskScore,
-                  quarentena: enrichedResult.riskScore <= 2
+                  quarentena: enrichedResult.riskScore >= 4  // ✅ ESCALA 1-5: 4 e 5 = QUARENTENA
                 })
                 .eq('id', consultant.id);
 
               setConsultants(prev => prev.map(c => 
                 c.id === consultant.id 
-                  ? { ...c, scoreRisco: enrichedResult.riskScore, quarentena: enrichedResult.riskScore <= 2 }
+                  ? { ...c, scoreRisco: enrichedResult.riskScore, quarentena: enrichedResult.riskScore >= 4 }
                   : c
               ));
 
@@ -1372,6 +1443,8 @@ export const useSupabaseData = () => {
                 
                 await supabase.from('behavioral_flags').insert(flagsToInsert);
               }
+            } else {
+              console.warn(`⚠️ Consultor não encontrado no banco: ${report.consultantName}`);
             }
           }
         } catch (error) {
@@ -1379,13 +1452,14 @@ export const useSupabaseData = () => {
         }
       }
 
-      console.log(`🎉 Processamento concluído: ${results.length} relatórios`);
+      console.log(`🎉 Processamento concluído: ${results.length} relatórios analisados`);
       return results;
 
     } catch (error) {
       console.error('❌ Erro geral no processamento:', error);
       throw error;
     }
+  };
   };
 
   const addFeedbackResponse = async (response: FeedbackResponse) => {
