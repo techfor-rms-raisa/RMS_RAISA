@@ -1,11 +1,11 @@
 {
-  "name": "rms_raisa",
+  "name": "corbit.ai--v.1--em-testes_27-11-2025_18-07-pos-dashboard+raisa",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "npx vite build",
+    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
