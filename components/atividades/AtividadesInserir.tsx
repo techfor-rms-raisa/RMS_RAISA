@@ -31,6 +31,9 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     const filteredConsultants = useMemo(() => {
         if (!selectedClient) return [];
         
+        // Verificação de segurança para evitar erro de null
+        if (!clients || !consultants || !usuariosCliente) return [];
+        
         const client = clients.find(c => c.razao_social_cliente === selectedClient);
         if (!client) return [];
 
