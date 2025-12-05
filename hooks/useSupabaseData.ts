@@ -1494,10 +1494,6 @@ const saveBehavioralFlags = async (consultantName: string, flags: Omit<Behaviora
     console.error(`❌ Erro ao salvar flags de ${consultantName}:`, error);
   }
 };
-
-// ============================================
-// EXPORT
-// ============================================
 export { processReportAnalysis };
 
   const addFeedbackResponse = async (response: FeedbackResponse) => {
