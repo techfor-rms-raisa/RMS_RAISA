@@ -13,7 +13,7 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], usuariosCliente = [], coordenadoresCliente = [], currentUser, users, isQuarantineView = false }) => {
-  // TESTE DE ALTERAÇÃO PARA FORÇAR COMMIT - DEBUG V46
+  
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedManager, setSelectedManager] = useState<string>('all');
   const [selectedConsultant, setSelectedConsultant] = useState<string>('all');
@@ -21,6 +21,11 @@ const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], u
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
   const availableYears = useMemo(() => [...new Set(consultants.map(c => c.ano_vigencia))].sort((a: number, b: number) => b - a), [consultants]);
+
+  // Adicionar verificação de carregamento para evitar renderização antes dos dados
+  if (consultants.length === 0 || clients.length === 0) {
+      return <div className="p-6 text-center text-gray-500">Carregando dados do Supabase...</div>;
+  }
 
   useEffect(() => {
     if (availableYears.length > 0 && availableYears[0] > selectedYear) setSelectedYear(availableYears[0]);
@@ -37,9 +42,7 @@ const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], u
   };
 
   const structuredData = useMemo(() => {
-    console.log('DEBUG: clients is', clients);
-    console.log('DEBUG: consultants is', consultants);
-    console.log('DEBUG: usuariosCliente is', usuariosCliente);
+
     let relevantClients = clients.filter(c => c.ativo_cliente);
     if (selectedClient !== 'all') relevantClients = relevantClients.filter(c => c.razao_social_cliente === selectedClient);
     const { todayStr, cutoffStr } = getReferenceDates();
