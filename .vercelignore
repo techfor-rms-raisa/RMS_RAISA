@@ -1,0 +1,3 @@
+# Ignorar package-lock.json para forçar regeneração limpa no Vercel
+package-lock.json
+node_modules/
