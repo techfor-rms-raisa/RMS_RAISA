@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LOGO_BASE64, APP_TITLE, APP_VERSION, AI_MODEL_NAME } from '../constants';
+import { APP_TITLE, APP_VERSION, AI_MODEL_NAME } from '../constants';
 import { User } from '../components/types';
 import { sendPasswordRecoveryEmail } from '../services/emailService';
 
@@ -52,7 +52,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin, users, updateUser })
     <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-2xl p-8 space-y-8 relative">
         <div className="text-center">
-          <img className="mx-auto h-12" src={LOGO_BASE64} alt="TechFor Logo" />
+          {/* <img className="mx-auto h-12" src={LOGO_BASE64} alt="TechFor Logo" /> */}
           <h2 className="mt-6 text-3xl font-extrabold text-[#4D5253]">{APP_TITLE}</h2>
           <p className="mt-2 text-xs text-[#494D51] font-normal">{APP_VERSION} • {AI_MODEL_NAME}</p>
         </div>

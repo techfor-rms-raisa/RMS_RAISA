@@ -1,5 +1,5 @@
 import React from 'react';
-import { LOGO_BASE64, APP_TITLE, APP_SUBTITLE, APP_VERSION, AI_MODEL_NAME } from '../constants';
+import { APP_TITLE, APP_SUBTITLE, APP_VERSION, AI_MODEL_NAME } from '../constants';
 import { User } from '../components/types';
 
 interface HeaderProps {
@@ -14,7 +14,7 @@ const Header: React.FC<HeaderProps> = ({ currentUser, onLogout }) => {
         
         {/* LADO ESQUERDO: Logo + Título + Powered By */}
         <div className="flex items-center z-10">
-          <img src={LOGO_BASE64} alt="Logo" className="h-10 mr-4 hidden sm:block" />
+          {/* <img src={LOGO_BASE64} alt="Logo" className="h-10 mr-4 hidden sm:block" /> */}
           <div className="flex flex-col">
               <div className="flex items-center">
                   <h1 className="text-xl md:text-2xl font-bold tracking-wider leading-none flex items-center">

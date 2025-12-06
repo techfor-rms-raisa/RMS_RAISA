@@ -1,4 +1,4 @@
-import { RiskScore } from './types';
+import { RiskScore } from './components/types';
 
 // ========================================
 // ESCALA DE RISCO: 5 NÍVEIS
@@ -42,4 +42,5 @@ export const APP_VERSION = "V2.0";
 // Variable AI Model
 export const AI_MODEL_NAME = "gemini-2.5-flash"; 
 
-// Base64 encoded logo (Removido para corrigir ERR_INVALID_URL)
+// export const LOGO_BASE64 = 'data:image/png;base64,...'; // Removido para corrigir ERR_INVALID_URL
+
