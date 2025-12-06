@@ -27,9 +27,9 @@ export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFact
     // Schema removed - not supported by @google/generative-ai
 
   try {
-    const response = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
+    const response = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
 
-    const text = response.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+    const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
     return JSON.parse(text || '[]');
   } catch (error) {
     console.error('Erro na análise RAISA:', error);

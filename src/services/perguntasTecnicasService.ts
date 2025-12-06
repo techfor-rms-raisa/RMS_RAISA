@@ -32,9 +32,9 @@ Retorne JSON com "perguntas".
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const response = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
+        const response = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
         
-        const text = response.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         const data = JSON.parse(text || '{ "perguntas": [] }');
         
         return data.perguntas.map((p: any, index: number) => ({
@@ -85,9 +85,9 @@ Avalie o candidato e retorne JSON.
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const response = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
+        const response = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
         
-        const text = response.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro na avaliação:", error);
