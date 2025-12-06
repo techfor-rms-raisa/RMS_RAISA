@@ -2,10 +2,10 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para identificar consultores e analisar riscos automaticamente
  * 
- * v21 - Corrigido para usar @google/generative-ai (pacote oficial)
+ * v21 - Corrigido para usar @google/genai (pacote oficial)
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
 // Tentar múltiplas fontes de API key (incluindo VITE_GEMINI_API!)
 const apiKey = process.env.VITE_GEMINI_API ||           // ✅ NOME CORRETO!
@@ -20,7 +20,7 @@ if (!apiKey) {
   console.log('✅ API Key encontrada! Tamanho:', apiKey.length, 'caracteres');
 }
 
-const genAI = new GoogleGenerativeAI(apiKey);
+const ai = new GoogleGenAI({ apiKey });
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -104,11 +104,9 @@ ${reportText}
 - Retorne APENAS o JSON, sem texto adicional
 `;
 
-    // Usar sintaxe correta do @google/generative-ai
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    // Usar sintaxe correta do @google/genai
+    const response = await ai.models.generateContent({ model: 'gemini-2.0-flash-exp', contents: prompt });
+    const text = response.text;
 
     console.log('📝 Resposta da IA (primeiros 200 caracteres):', text.substring(0, 200) + '...');
 

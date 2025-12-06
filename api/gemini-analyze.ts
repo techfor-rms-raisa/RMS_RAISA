@@ -5,7 +5,7 @@
  * mantendo a API key escondida no servidor.
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
 // Buscar API key de múltiplas fontes (prioridade)
 const getApiKey = (): string => {
@@ -28,7 +28,7 @@ if (!apiKey) {
   console.log('✅ API Key carregada com sucesso');
 }
 
-const genAI = new GoogleGenerativeAI({ apiKey });
+const ai = new GoogleGenAI({ apiKey });
 
 export default async function handler(req: any, res: any) {
   // CORS headers
@@ -120,7 +120,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await genAI.models.generateContent({
+  const result = await ai.models.generateContent({
     model: 'gemini-2.0-flash-exp',
     contents: prompt
   });
@@ -178,7 +178,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await genAI.models.generateContent({
+  const result = await ai.models.generateContent({
     model: 'gemini-2.0-flash-exp',
     contents: prompt
   });
@@ -195,7 +195,7 @@ ${reportText}
 }
 
 async function generateContent(model: string, prompt: string) {
-  const result = await genAI.models.generateContent({
+  const result = await ai.models.generateContent({
     model: model || 'gemini-2.0-flash-exp',
     contents: prompt
   });
