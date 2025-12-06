@@ -7,7 +7,7 @@ import { supabase } from '../config/supabase';
 import { 
     recommendCandidateDecision, 
     identifyRedFlags 
-} from '../../services/geminiService';
+} from './geminiService';
 import { aiConfig } from '../config/aiConfig';
 
 export interface RecomendacaoIA {

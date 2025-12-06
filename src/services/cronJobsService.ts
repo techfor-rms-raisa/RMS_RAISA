@@ -4,7 +4,7 @@
  */
 
 import { supabase } from '../config/supabase';
-import { suggestReprioritization } from '../../services/geminiService';
+import { suggestReprioritization } from './geminiService';
 import { notificacaoService } from './notificacaoService';
 import { priorizacaoAprendizadoService } from './priorizacaoAprendizadoService';
 

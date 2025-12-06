@@ -4,7 +4,7 @@
  */
 
 import { supabase } from '../config/supabase';
-import { analyzeRejectionPatterns } from '../../services/geminiService';
+import { analyzeRejectionPatterns } from './geminiService';
 import { atualizarBancoQuestoes } from './questoesInteligentesService';
 import { aiConfig, checkDataSufficiency } from '../config/aiConfig';
 

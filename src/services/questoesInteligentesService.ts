@@ -4,7 +4,7 @@
  */
 
 import { supabase } from '../config/supabase';
-import { recommendQuestionsForVaga } from '../../services/geminiService';
+import { recommendQuestionsForVaga } from './geminiService';
 import { aiConfig } from '../config/aiConfig';
 
 export interface Questao {

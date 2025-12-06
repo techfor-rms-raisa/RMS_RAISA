@@ -4,7 +4,7 @@
  */
 
 import { supabase } from '../config/supabase';
-import { predictCandidateRisk } from '../../services/geminiService';
+import { predictCandidateRisk } from './geminiService';
 import { aiConfig, checkDataSufficiency } from '../config/aiConfig';
 
 export interface PredicaoRisco {
