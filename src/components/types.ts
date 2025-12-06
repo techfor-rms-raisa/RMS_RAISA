@@ -1,5 +1,5 @@
 
-export type RiskScore = 1 | 2 | 3 | 4;
+export type RiskScore = 1 | 2 | 3 | 4 | 5;
 
 export type UserRole = 'Administrador' | 'Gestão Comercial' | 'Gestão de Pessoas' | 'Analista de R&S' | 'Consulta' | 'Cliente';
 
