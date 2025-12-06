@@ -7,26 +7,17 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// DEBUG: Verificar TODAS as variáveis de ambiente
-console.log('🔍 [DEBUG] Verificando variáveis de ambiente:');
-console.log('  - process.env.GEMINI_API_KEY:', process.env.GEMINI_API_KEY ? `✅ Existe (${process.env.GEMINI_API_KEY.substring(0, 10)}...)` : '❌ Não existe');
-console.log('  - process.env.VITE_GEMINI_API_KEY:', process.env.VITE_GEMINI_API_KEY ? `✅ Existe` : '❌ Não existe');
-console.log('  - process.env.VITE_GEMINI_API:', process.env.VITE_GEMINI_API ? `✅ Existe` : '❌ Não existe');
-console.log('  - process.env.NEXT_PUBLIC_GEMINI_API_KEY:', process.env.NEXT_PUBLIC_GEMINI_API_KEY ? `✅ Existe` : '❌ Não existe');
-
 // Priorizar GEMINI_API_KEY (configurada no Vercel)
 const apiKey = process.env.GEMINI_API_KEY || 
                process.env.VITE_GEMINI_API_KEY || 
                process.env.VITE_GEMINI_API ||
                process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
-               // FALLBACK TEMPORÁRIO (remover após debug)
-               'AIzaSyB0qAQbSdym6tLTsYbWMaNb1gnnNTdzW7k';
+               '';
 
-console.log('🔑 [DEBUG] API Key final:', apiKey ? `✅ Carregada (${apiKey.length} caracteres, começa com: ${apiKey.substring(0, 10)}...)` : '❌ VAZIA!');
-
-if (!apiKey || apiKey.length < 30) {
-  console.error('❌ ERRO CRÍTICO: API Key inválida ou não configurada!');
-  console.error('📋 Verifique se GEMINI_API_KEY está configurada no Vercel em Production');
+if (!apiKey) {
+  console.error('❌ GEMINI API KEY não configurada!');
+} else {
+  console.log('✅ API Key encontrada! Tamanho:', apiKey.length, 'caracteres');
 }
 
 // Inicializar com STRING DIRETA (sintaxe correta)
@@ -113,7 +104,7 @@ ${reportText}
 - Retorne APENAS o JSON, sem texto adicional
 `;
 
-    console.log('🔑 API Key presente?', !!apiKey);
+    // console.log('🔑 API Key presente?', !!apiKey); // Removido para performance
     console.log('🤖 Chamando Gemini API...');
     
     // Sintaxe CORRETA do @google/generative-ai
