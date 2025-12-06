@@ -2,13 +2,13 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para identificar consultores e analisar riscos automaticamente
  * 
- * v21 - Corrigido para usar @google/genai (pacote oficial)
+ * v35 - Usando @google/generative-ai com sintaxe CORRETA do Google AI Studio
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Tentar múltiplas fontes de API key (incluindo VITE_GEMINI_API!)
-const apiKey = process.env.VITE_GEMINI_API ||           // ✅ NOME CORRETO!
+// Tentar múltiplas fontes de API key
+const apiKey = process.env.VITE_GEMINI_API ||
                process.env.GEMINI_API_KEY || 
                process.env.VITE_GEMINI_API_KEY || 
                process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
@@ -20,7 +20,8 @@ if (!apiKey) {
   console.log('✅ API Key encontrada! Tamanho:', apiKey.length, 'caracteres');
 }
 
-const ai = new GoogleGenAI({ apiKey });
+// Inicializar com STRING DIRETA (sintaxe correta)
+const genAI = new GoogleGenerativeAI(apiKey);
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -36,7 +37,6 @@ export default async function handler(req: any, res: any) {
 
     console.log('🤖 Iniciando análise de relatório com Gemini AI...');
     console.log('📝 Tamanho do texto:', reportText.length, 'caracteres');
-    console.log('📋 Primeiros 100 caracteres:', reportText.substring(0, 100));
 
     const prompt = `
 Você é um especialista em análise de relatórios de atividades de consultores de TI.
@@ -104,10 +104,16 @@ ${reportText}
 - Retorne APENAS o JSON, sem texto adicional
 `;
 
-    // Usar sintaxe correta do @google/genai
-    const response = await ai.models.generateContent({ model: 'gemini-2.0-flash-exp', contents: prompt });
-    const text = response.text;
-
+    console.log('🔑 API Key presente?', !!apiKey);
+    console.log('🤖 Chamando Gemini API...');
+    
+    // Sintaxe CORRETA do @google/generative-ai
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
+    
+    console.log('✅ Resposta recebida da API!');
     console.log('📝 Resposta da IA (primeiros 200 caracteres):', text.substring(0, 200) + '...');
 
     // Extrair JSON da resposta
