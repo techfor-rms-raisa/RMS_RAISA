@@ -13,7 +13,7 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], usuariosCliente = [], coordenadoresCliente = [], currentUser, users, isQuarantineView = false }) => {
-  // TESTE DE ALTERAÇÃO PARA FORÇAR COMMIT
+  // TESTE DE ALTERAÇÃO PARA FORÇAR COMMIT - DEBUG V46
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedManager, setSelectedManager] = useState<string>('all');
   const [selectedConsultant, setSelectedConsultant] = useState<string>('all');
@@ -37,6 +37,9 @@ const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], u
   };
 
   const structuredData = useMemo(() => {
+    console.log('DEBUG: clients is', clients);
+    console.log('DEBUG: consultants is', consultants);
+    console.log('DEBUG: usuariosCliente is', usuariosCliente);
     let relevantClients = clients.filter(c => c.ativo_cliente);
     if (selectedClient !== 'all') relevantClients = relevantClients.filter(c => c.razao_social_cliente === selectedClient);
     const { todayStr, cutoffStr } = getReferenceDates();
