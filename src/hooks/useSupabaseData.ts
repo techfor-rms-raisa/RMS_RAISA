@@ -1805,175 +1805,43 @@ export const useSupabaseData = () => {
 
   const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
     try {
-      console.log('🤖 Processando análise de relatório com IA...');
+      console.log('🤖 Processando análise de relatório com IA Gemini...');
+      console.log('📝 Tamanho do texto:', text.length, 'caracteres');
+      console.log('📋 Primeiros 100 caracteres:', text.substring(0, 100));
       
-      // Detectar formato do relatório
-      const hasSymbol = text.includes('◆');
+      // SEMPRE usar API Gemini para análise inteligente
+      const response = await fetch('/api/analyze-activity-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          reportText: text,
+          gestorName: gestorName || 'Não especificado'
+        })
+      });
       
-      if (hasSymbol) {
-        // FORMATO LIVRE (◆ NOME | CLIENTE) - Usar API com Gemini AI
-        console.log('📋 Formato detectado: Texto livre (◆). Chamando API Gemini...');
-        
-        try {
-          const response = await fetch('/api/analyze-activity-report', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              reportText: text,
-              gestorName: gestorName || 'Não especificado'
-            })
-          });
-          
-          if (!response.ok) {
-            throw new Error(`API retornou ${response.status}`);
-          }
-          
-          const data = await response.json();
-          console.log(`✅ ${data.results.length} relatórios analisados pela IA`);
-          return data.results;
-          
-        } catch (apiError: any) {
-          console.error('❌ Erro ao chamar API:', apiError);
-          alert(`Erro ao processar com IA: ${apiError.message}`);
-          return [];
-        }
-        
-      } else {
-        // FORMATO PIPE (CONSULTOR | GESTOR | MÊS | ATIVIDADES) - Processar localmente
-        console.log('📋 Formato detectado: Pipe (|). Processando localmente...');
-        
-        const lines = text.split('\n').filter(l => l.trim());
-        const results: AIAnalysisResult[] = [];
-        
-        for (const line of lines) {
-          const parts = line.split('|').map(p => p.trim());
-          
-          if (parts.length < 4) continue;
-          
-          const [consultantName, managerName, monthStr, activities] = parts;
-          const month = parseInt(monthStr);
-          
-          if (!consultantName || !month || !activities) continue;
-          
-          const riskScore = analyzeRiskFromActivities(activities);
-          const { summary, negativePattern, predictiveAlert, recommendations } = generateAnalysis(activities, riskScore);
-          
-          results.push({
-            consultantName,
-            managerName,
-            reportMonth: month,
-            riskScore,
-            summary,
-            negativePattern,
-            predictiveAlert,
-            recommendations,
-            details: activities
-          });
-        }
-        
-        console.log(`✅ ${results.length} relatórios analisados`);
-        return results;
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API retornou ${response.status}: ${errorText}`);
       }
       
+      const data = await response.json();
+      console.log(`✅ ${data.results.length} relatórios analisados pela IA Gemini`);
+      
+      if (data.results.length === 0) {
+        console.warn('⚠️ IA não encontrou relatórios válidos no texto fornecido');
+        alert('⚠️ Nenhum relatório válido encontrado. Verifique o formato do texto.');
+      }
+      
+      return data.results;
+      
     } catch (err: any) {
-      console.error('❌ Erro ao processar análise:', err);
-      alert(`Erro ao processar relatório: ${err.message}`);
+      console.error('❌ Erro ao processar análise com IA:', err);
+      alert(`Erro ao processar relatório com IA: ${err.message}`);
       return [];
     }
   };
   
-  // Função auxiliar: Analisar risco baseado em atividades
-  const analyzeRiskFromActivities = (activities: string): RiskScore => {
-    const lowerActivities = activities.toLowerCase();
-    
-    // Palavras-chave de alto risco
-    const highRiskKeywords = ['falta', 'atraso', 'não entregou', 'problema', 'conflito', 'reclamação', 'insatisfação', 'demissão', 'advertencia'];
-    const mediumRiskKeywords = ['dificuldade', 'desafio', 'atenção', 'melhorar', 'ajuste', 'revisão'];
-    const positiveKeywords = ['ótimo', 'excelente', 'sucesso', 'entregou', 'superou', 'destaque', 'elogio', 'promoção'];
-    
-    let highRiskCount = 0;
-    let mediumRiskCount = 0;
-    let positiveCount = 0;
-    
-    highRiskKeywords.forEach(keyword => {
-      if (lowerActivities.includes(keyword)) highRiskCount++;
-    });
-    
-    mediumRiskKeywords.forEach(keyword => {
-      if (lowerActivities.includes(keyword)) mediumRiskCount++;
-    });
-    
-    positiveKeywords.forEach(keyword => {
-      if (lowerActivities.includes(keyword)) positiveCount++;
-    });
-    
-    // Determinar score de risco
-    if (highRiskCount >= 2) return 1; // Risco Crítico
-    if (highRiskCount >= 1 || mediumRiskCount >= 3) return 2; // Risco Alto
-    if (mediumRiskCount >= 1 || positiveCount === 0) return 3; // Risco Médio
-    return 4; // Baixo Risco
-  };
-  
-  // Função auxiliar: Gerar análise textual
-  const generateAnalysis = (activities: string, riskScore: RiskScore) => {
-    let summary = '';
-    let negativePattern = '';
-    let predictiveAlert = '';
-    const recommendations: Recommendation[] = [];
-    
-    switch (riskScore) {
-      case 1: // Crítico
-        summary = 'Situação crítica identificada. Problemas graves detectados nas atividades.';
-        negativePattern = 'Padrão negativo recorrente: problemas de performance, comportamento ou entregas.';
-        predictiveAlert = '⚠️ ALERTA: Alto risco de desligamento. Ação imediata necessária.';
-        recommendations.push({
-          tipo: 'AcaoImediata',
-          foco: 'Consultor',
-          descricao: 'Reunião urgente com consultor e gestor para plano de ação imediato'
-        });
-        recommendations.push({
-          tipo: 'AcaoImediata',
-          foco: 'Cliente',
-          descricao: 'Comunicar cliente sobre situação e propor soluções'
-        });
-        break;
-        
-      case 2: // Alto
-        summary = 'Situação de atenção. Problemas significativos identificados.';
-        negativePattern = 'Dificuldades recorrentes que precisam ser endereçadas.';
-        predictiveAlert = '⚠️ Risco elevado. Monitoramento próximo recomendado.';
-        recommendations.push({
-          tipo: 'QuestaoSondagem',
-          foco: 'Consultor',
-          descricao: 'Investigar causas dos problemas e oferecer suporte'
-        });
-        break;
-        
-      case 3: // Médio
-        summary = 'Performance dentro do esperado, com pontos de melhoria.';
-        negativePattern = 'Alguns desafios identificados, mas controláveis.';
-        predictiveAlert = 'Monitoramento regular recomendado.';
-        recommendations.push({
-          tipo: 'RecomendacaoEstrategica',
-          foco: 'ProcessoInterno',
-          descricao: 'Acompanhamento mensal para garantir evolução'
-        });
-        break;
-        
-      case 4: // Baixo
-        summary = 'Performance positiva. Consultor demonstra bom desempenho.';
-        negativePattern = 'Nenhum padrão negativo identificado.';
-        predictiveAlert = 'Baixo risco. Manter acompanhamento regular.';
-        recommendations.push({
-          tipo: 'RecomendacaoEstrategica',
-          foco: 'Consultor',
-          descricao: 'Reconhecer bom desempenho e manter engajamento'
-        });
-        break;
-    }
-    
-    return { summary, negativePattern, predictiveAlert, recommendations };
-  };
+  // Funções auxiliares removidas - Toda análise agora é feita pela IA Gemini
 
   const addFeedbackResponse = async (response: FeedbackResponse) => {
     console.warn('⚠️ addFeedbackResponse: Não implementado');

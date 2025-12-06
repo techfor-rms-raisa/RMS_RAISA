@@ -153,16 +153,31 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     };
 
     const downloadTemplate = () => {
-        const template = `Relatório de Atividades – Período de 01.12.2025 a 05.12.2025
+        const template = `INSTRUÇÕES - Relatório de Atividades (Análise com IA Gemini)
+
+Formato: Texto livre - A IA identifica automaticamente consultores e calcula riscos
+
+Estrutura:
+- Cada consultor começa com ◆ (losango)
+- Formato: ◆ NOME DO CONSULTOR | NOME DO CLIENTE
+- Escreva livremente sobre as atividades, desempenho e observações
+- A IA Gemini fará a análise completa e atribuirá o score de risco
+
+================================================================================
+RELATÓRIO DE ATIVIDADES - DEZEMBRO/2025
+================================================================================
 
 ◆ João Silva | AUTO AVALIAR
-Está bastante satisfeito com a equipe, com o projeto e com a empresa. Tem conseguido entregar as demandas dentro do prazo e com qualidade. Recebeu feedback positivo do cliente sobre suas entregas.
+Está bastante satisfeito com a equipe, com o projeto e com a empresa. Tem conseguido entregar as demandas dentro do prazo e com qualidade. Recebeu feedback positivo do cliente sobre suas entregas. Demonstra proatividade e boa comunicação.
 
-◆ Pedro Oliveira | AUTO AVALIAR
-O CAC me acionou informando que o cliente relatou 2 faltas não justificadas no mês. Conversei com o consultor que informou estar passando por problemas pessoais. Orientei sobre a importância de comunicar ausências previamente.
+◆ Pedro Oliveira | CLIENTE ABC
+O CAC me acionou informando que o cliente relatou 2 faltas não justificadas no mês. Conversei com o consultor que informou estar passando por problemas pessoais. Orientei sobre a importância de comunicar ausências previamente. Cliente demonstrou insatisfação.
 
 ◆ Maria Santos | CLIENTE XYZ
-Apresentou excelente desempenho no mês. Participou ativamente das reuniões, entregou todas as tarefas no prazo e recebeu elogios do cliente pela qualidade técnica. Demonstra proatividade e boa comunicação com a equipe.`;
+Apresentou excelente desempenho no mês. Participou ativamente das reuniões, entregou todas as tarefas no prazo e recebeu elogios do cliente pela qualidade técnica. Demonstra proatividade e boa comunicação com a equipe. Sugerida para promoção.
+
+◆ Carlos Mendes | CLIENTE DEF
+Não entregou projeto no prazo acordado. Cliente relatou problemas de comunicação e qualidade do código. Aplicada advertência formal. Necessário acompanhamento próximo nas próximas semanas.`;
 
         const blob = new Blob([template], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
