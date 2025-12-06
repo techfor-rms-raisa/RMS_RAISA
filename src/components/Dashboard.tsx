@@ -13,6 +13,7 @@ interface DashboardProps {
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], usuariosCliente = [], coordenadoresCliente = [], currentUser, users, isQuarantineView = false }) => {
+  // TESTE DE ALTERAÇÃO PARA FORÇAR COMMIT
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedManager, setSelectedManager] = useState<string>('all');
   const [selectedConsultant, setSelectedConsultant] = useState<string>('all');
