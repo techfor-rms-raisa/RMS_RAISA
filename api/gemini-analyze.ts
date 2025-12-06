@@ -5,7 +5,7 @@
  * mantendo a API key escondida no servidor.
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Buscar API key de múltiplas fontes (prioridade)
 const getApiKey = (): string => {
@@ -28,7 +28,7 @@ if (!apiKey) {
   console.log('✅ API Key carregada com sucesso');
 }
 
-const genAI = new GoogleGenAI({ apiKey });
+const genAI = new GoogleGenerativeAI({ apiKey });
 
 export default async function handler(req: any, res: any) {
   // CORS headers

@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { GoogleGenerativeAI, Type, Schema } from "@google/generative-ai";
 import { RiskFactor } from '../components/types';
 import { AI_MODEL_NAME } from '../constants';
 
@@ -9,7 +9,7 @@ if (!apiKey) {
     console.warn("API Key is missing for RAISA Service.");
 }
 
-const ai = new GoogleGenAI({ apiKey });
+const ai = new GoogleGenerativeAI({ apiKey });
 
 export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFactor[]> => {
   const model = AI_MODEL_NAME;

@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { GoogleGenerativeAI, Type, Schema } from "@google/generative-ai";
 import { AIAnalysisResult, RiskScore, Recommendation, BehavioralFlag } from '../components/types';
 import { AI_MODEL_NAME } from '../constants';
 
@@ -9,7 +9,7 @@ if (!apiKey) {
     console.warn("API Key is missing. Please check your environment variables.");
 }
 
-const ai = new GoogleGenAI({ apiKey });
+const ai = new GoogleGenerativeAI({ apiKey });
 
 // Existing Schema for Full Analysis (Legacy/Fallback)
 const analysisSchema: Schema = {
