@@ -1,18 +1,23 @@
 /**
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para identificar consultores e analisar riscos automaticamente
+ * 
+ * v13.2 - Corrigido para buscar VITE_GEMINI_API
  */
 
 import { GoogleGenAI } from '@google/genai';
 
-// Tentar múltiplas fontes de API key
-const apiKey = process.env.GEMINI_API_KEY || 
+// Tentar múltiplas fontes de API key (incluindo VITE_GEMINI_API!)
+const apiKey = process.env.VITE_GEMINI_API ||           // ✅ NOME CORRETO!
+               process.env.GEMINI_API_KEY || 
                process.env.VITE_GEMINI_API_KEY || 
                process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
                '';
 
 if (!apiKey) {
-  console.error('❌ GEMINI_API_KEY não configurada!');
+  console.error('❌ GEMINI API KEY não configurada!');
+} else {
+  console.log('✅ API Key encontrada! Tamanho:', apiKey.length, 'caracteres');
 }
 
 const ai = new GoogleGenAI({ apiKey });
@@ -107,13 +112,14 @@ ${reportText}
 
     const text = response.text;
 
-    console.log('📝 Resposta da IA:', text.substring(0, 200) + '...');
+    console.log('📝 Resposta da IA (primeiros 200 caracteres):', text.substring(0, 200) + '...');
 
     // Extrair JSON da resposta
     const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
     
     if (!jsonMatch) {
-      console.error('❌ Resposta da IA não contém JSON:', text);
+      console.error('❌ Resposta da IA não contém JSON válido!');
+      console.error('📄 Resposta completa:', text);
       throw new Error('Resposta da IA não contém JSON válido');
     }
 
@@ -125,8 +131,9 @@ ${reportText}
     return res.status(200).json(analysis);
 
   } catch (error: any) {
-    console.error('[API] Erro ao analisar relatório:', error);
-    console.error('[API] Stack:', error.stack);
+    console.error('❌ Erro ao analisar relatório:', error);
+    console.error('📋 Mensagem:', error.message);
+    console.error('📋 Stack:', error.stack);
 
     return res.status(500).json({
       error: 'Internal Server Error',
