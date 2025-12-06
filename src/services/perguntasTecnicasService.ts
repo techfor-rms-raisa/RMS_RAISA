@@ -1,10 +1,10 @@
 
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { AI_MODEL_NAME } from '../constants';
 import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '../components/types';
 
 const apiKey = import.meta.env?.VITE_API_KEY || "";
-const genAI = new GoogleGenerativeAI(apiKey);
+const ai = new GoogleGenAI({ apiKey });
 
 export const perguntasTecnicasService = {
   
@@ -32,12 +32,9 @@ Retorne JSON com "perguntas".
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
-            prompt,
-            { generationConfig: { responseMimeType: "application/json" }
-        });
+        const response = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
         
-        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         const data = JSON.parse(text || '{ "perguntas": [] }');
         
         return data.perguntas.map((p: any, index: number) => ({
@@ -88,12 +85,9 @@ Avalie o candidato e retorne JSON.
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
-            prompt,
-            { generationConfig: { responseMimeType: "application/json" }
-        });
+        const response = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
         
-        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro na avaliação:", error);
