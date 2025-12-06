@@ -3,7 +3,7 @@
  * Usa Gemini AI para identificar consultores e analisar riscos automaticamente
  */
 
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Tentar múltiplas fontes de API key
 const apiKey = process.env.GEMINI_API_KEY || 
@@ -15,7 +15,7 @@ if (!apiKey) {
   console.error('❌ GEMINI_API_KEY não configurada!');
 }
 
-const genAI = new GoogleGenAI({ apiKey });
+const genAI = new GoogleGenerativeAI(apiKey);
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -30,6 +30,7 @@ export default async function handler(req: any, res: any) {
     }
 
     console.log('🤖 Iniciando análise de relatório com Gemini AI...');
+    console.log('📝 Tamanho do texto:', reportText.length, 'caracteres');
 
     const prompt = `
 Você é um especialista em análise de relatórios de atividades de consultores de TI.
@@ -97,34 +98,37 @@ ${reportText}
 - Retorne APENAS o JSON, sem texto adicional
 `;
 
-    const result = await genAI.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
-      contents: prompt
-    });
-    const text = result.text;
+    // Obter modelo e gerar conteúdo
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const text = response.text();
 
-    console.log('📝 Resposta da IA:', text);
+    console.log('📝 Resposta da IA:', text.substring(0, 200) + '...');
 
     // Extrair JSON da resposta
     const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
     
     if (!jsonMatch) {
+      console.error('❌ Resposta da IA não contém JSON:', text);
       throw new Error('Resposta da IA não contém JSON válido');
     }
 
     const jsonText = jsonMatch[1] || jsonMatch[0];
     const analysis = JSON.parse(jsonText);
 
-    console.log(`✅ ${analysis.results.length} consultores identificados`);
+    console.log(`✅ ${analysis.results.length} consultores identificados pela IA`);
 
     return res.status(200).json(analysis);
 
   } catch (error: any) {
     console.error('[API] Erro ao analisar relatório:', error);
+    console.error('[API] Stack:', error.stack);
 
     return res.status(500).json({
       error: 'Internal Server Error',
       message: error.message || 'Erro ao processar relatório',
+      details: error.toString(),
       timestamp: new Date().toISOString()
     });
   }
