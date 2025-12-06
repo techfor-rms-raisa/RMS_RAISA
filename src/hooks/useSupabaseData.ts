@@ -1966,8 +1966,6 @@ export const useSupabaseData = () => {
     users,
     clients,
     consultants,
-    usuariosCliente,
-    coordenadoresCliente,
     templates,
     campaigns,
     feedbackResponses,

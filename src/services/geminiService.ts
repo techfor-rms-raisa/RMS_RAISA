@@ -1,21 +1,15 @@
-import type { Type, Schema } from "@google/genai";
-
-// Dynamic import to avoid Rollup bundling issues
-let GoogleGenAI: any;
-if (typeof window !== 'undefined') {
-    GoogleGenAI = (await import('@google/genai')).GoogleGenAI;
-}
+import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { AIAnalysisResult, RiskScore, Recommendation, BehavioralFlag } from '../components/types';
 import { AI_MODEL_NAME } from '../constants';
 
 // Access API Key - supporting Vercel/Vite environment variables
-const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY;
+const apiKey = import.meta.env?.VITE_API_KEY || "";
 
 if (!apiKey) {
     console.warn("API Key is missing. Please check your environment variables.");
 }
 
-const ai = new GoogleGenAI({ apiKey: apiKey || "" });
+const ai = new GoogleGenAI({ apiKey });
 
 // Existing Schema for Full Analysis (Legacy/Fallback)
 const analysisSchema: Schema = {

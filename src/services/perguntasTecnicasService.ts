@@ -1,16 +1,10 @@
 
-import type { Type, Schema } from "@google/genai";
-
-// Dynamic import to avoid Rollup bundling issues
-let GoogleGenAI: any;
-if (typeof window !== 'undefined') {
-    GoogleGenAI = (await import('@google/genai')).GoogleGenAI;
-}
+import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { AI_MODEL_NAME } from '../constants';
 import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '../components/types';
 
-const apiKey = process.env.API_KEY || (import.meta as any).env?.VITE_API_KEY;
-const ai = new GoogleGenAI({ apiKey: apiKey || "" });
+const apiKey = import.meta.env?.VITE_API_KEY || "";
+const ai = new GoogleGenAI({ apiKey });
 
 export const perguntasTecnicasService = {
   
