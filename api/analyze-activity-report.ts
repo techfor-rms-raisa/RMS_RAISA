@@ -7,10 +7,10 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Tentar múltiplas fontes de API key
-const apiKey = process.env.VITE_GEMINI_API ||
-               process.env.GEMINI_API_KEY || 
+// Priorizar GEMINI_API_KEY (configurada no Vercel)
+const apiKey = process.env.GEMINI_API_KEY || 
                process.env.VITE_GEMINI_API_KEY || 
+               process.env.VITE_GEMINI_API ||
                process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
                '';
 

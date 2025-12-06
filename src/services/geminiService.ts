@@ -2,8 +2,11 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AIAnalysisResult, RiskScore, Recommendation, BehavioralFlag } from '../components/types';
 import { AI_MODEL_NAME } from '../constants';
 
-// Access API Key - supporting Vercel/Vite environment variables
-const apiKey = import.meta.env?.VITE_API_KEY || "";
+// Access API Key - supporting both Backend (Vercel) and Frontend (Vite)
+const apiKey = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) ||
+               import.meta.env?.VITE_GEMINI_API_KEY ||
+               import.meta.env?.VITE_API_KEY ||
+               "";
 
 if (!apiKey) {
     console.warn("API Key is missing. Please check your environment variables.");

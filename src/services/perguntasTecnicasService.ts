@@ -3,7 +3,11 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AI_MODEL_NAME } from '../constants';
 import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '../components/types';
 
-const apiKey = import.meta.env?.VITE_API_KEY || "";
+// Access API Key - supporting both Backend (Vercel) and Frontend (Vite)
+const apiKey = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) ||
+               import.meta.env?.VITE_GEMINI_API_KEY ||
+               import.meta.env?.VITE_API_KEY ||
+               "";
 const ai = new GoogleGenerativeAI(apiKey);
 
 export const perguntasTecnicasService = {
