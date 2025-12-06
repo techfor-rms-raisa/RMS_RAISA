@@ -12,7 +12,7 @@ interface DashboardProps {
   isQuarantineView?: boolean;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ consultants, clients, usuariosCliente, coordenadoresCliente, currentUser, users, isQuarantineView = false }) => {
+const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], usuariosCliente = [], coordenadoresCliente = [], currentUser, users, isQuarantineView = false }) => {
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedManager, setSelectedManager] = useState<string>('all');
   const [selectedConsultant, setSelectedConsultant] = useState<string>('all');
