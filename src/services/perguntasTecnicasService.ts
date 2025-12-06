@@ -32,7 +32,9 @@ Retorne JSON com "perguntas".
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const response = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+
+        const response = await result.response;
         
         const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         const data = JSON.parse(text || '{ "perguntas": [] }');
@@ -85,7 +87,9 @@ Avalie o candidato e retorne JSON.
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const response = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+
+        const response = await result.response;
         
         const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');

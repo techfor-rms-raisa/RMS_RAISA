@@ -27,7 +27,9 @@ export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFact
     // Schema removed - not supported by @google/generative-ai
 
   try {
-    const response = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+    const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+
+    const response = await result.response;
 
     const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
     return JSON.parse(text || '[]');

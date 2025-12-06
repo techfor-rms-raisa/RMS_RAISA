@@ -9,18 +9,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
+    "@emailjs/browser": "3.11.0",
     "@google/generative-ai": "^0.21.0",
     "@supabase/supabase-js": "^2.39.0",
-    "recharts": "2.15.0",
-    "pdfjs-dist": "3.11.174",
     "jspdf": "2.5.1",
-    "xlsx": "0.18.5",
-    "@emailjs/browser": "3.11.0"
+    "pdfjs-dist": "3.11.174",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "2.15.0",
+    "xlsx": "0.18.5"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
+    "@vercel/node": "^5.5.15",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"

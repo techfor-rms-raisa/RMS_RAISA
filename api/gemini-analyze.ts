@@ -1,36 +1,16 @@
-/**
- * API ENDPOINT: ANÁLISE GEMINI (BACKEND SEGURO)
- * 
- * Esta API recebe requisições do frontend e chama o Gemini API de forma segura,
- * mantendo a API key escondida no servidor.
- */
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-import { GoogleGenAI } from '@google/genai';
-
-// Buscar API key de múltiplas fontes (prioridade)
-const getApiKey = (): string => {
-  return process.env.VITE_API_KEY || 
-         process.env.GEMINI_API_KEY || 
-         process.env.VITE_GEMINI_API_KEY || 
-         process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
-         '';
-};
-
-const apiKey = getApiKey();
+// Usar GEMINI_API_KEY do ambiente Vercel (backend)
+const apiKey = process.env.GEMINI_API_KEY || '';
 
 if (!apiKey) {
-  console.error('❌ API Key não encontrada! Variáveis verificadas:');
-  console.error('  - VITE_API_KEY');
-  console.error('  - GEMINI_API_KEY');
-  console.error('  - VITE_GEMINI_API_KEY');
-  console.error('  - NEXT_PUBLIC_GEMINI_API_KEY');
+  console.error('❌ GEMINI_API_KEY não encontrada no ambiente Vercel!');
 } else {
-  console.log('✅ API Key carregada com sucesso');
+  console.log('✅ GEMINI_API_KEY carregada com sucesso');
 }
 
-const ai = new GoogleGenAI({ apiKey });
-
-export default async function handler(req: any, res: any) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -55,7 +35,7 @@ export default async function handler(req: any, res: any) {
 
     // Verificar se API key está disponível
     if (!apiKey) {
-      throw new Error('API key is missing. Please provide a valid API key.');
+      throw new Error('API key is missing. Please configure GEMINI_API_KEY in Vercel environment variables.');
     }
 
     let result;
@@ -81,7 +61,6 @@ export default async function handler(req: any, res: any) {
 
   } catch (error: any) {
     console.error('[Gemini API] Erro:', error);
-
     return res.status(500).json({
       success: false,
       error: error.message || 'Erro ao processar requisição',
@@ -120,12 +99,13 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await ai.models.generateContent({
-    model: 'gemini-2.0-flash-exp',
-    contents: prompt
-  });
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+  
+  const result = await model.generateContent(prompt);
+  const response = await result.response;
+  const text = response.text();
 
-  const text = result.text;
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
   
   if (!jsonMatch) {
@@ -178,12 +158,13 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await ai.models.generateContent({
-    model: 'gemini-2.0-flash-exp',
-    contents: prompt
-  });
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+  
+  const result = await model.generateContent(prompt);
+  const response = await result.response;
+  const text = response.text();
 
-  const text = result.text;
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
   
   if (!jsonMatch) {
@@ -195,10 +176,12 @@ ${reportText}
 }
 
 async function generateContent(model: string, prompt: string) {
-  const result = await ai.models.generateContent({
-    model: model || 'gemini-2.0-flash-exp',
-    contents: prompt
-  });
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const geminiModel = genAI.getGenerativeModel({ model: model || 'gemini-2.0-flash-exp' });
+  
+  const result = await geminiModel.generateContent(prompt);
+  const response = await result.response;
+  const text = response.text();
 
-  return { text: result.text };
+  return { text };
 }
