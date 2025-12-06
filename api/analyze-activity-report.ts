@@ -3,7 +3,7 @@
  * Usa Gemini AI para identificar consultores e analisar riscos automaticamente
  */
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
 // Tentar múltiplas fontes de API key
 const apiKey = process.env.GEMINI_API_KEY || 
@@ -15,7 +15,7 @@ if (!apiKey) {
   console.error('❌ GEMINI_API_KEY não configurada!');
 }
 
-const genAI = new GoogleGenerativeAI(apiKey);
+const ai = new GoogleGenAI({ apiKey });
 
 export default async function handler(req: any, res: any) {
   if (req.method !== 'POST') {
@@ -31,6 +31,7 @@ export default async function handler(req: any, res: any) {
 
     console.log('🤖 Iniciando análise de relatório com Gemini AI...');
     console.log('📝 Tamanho do texto:', reportText.length, 'caracteres');
+    console.log('📋 Primeiros 100 caracteres:', reportText.substring(0, 100));
 
     const prompt = `
 Você é um especialista em análise de relatórios de atividades de consultores de TI.
@@ -98,11 +99,13 @@ ${reportText}
 - Retorne APENAS o JSON, sem texto adicional
 `;
 
-    // Obter modelo e gerar conteúdo
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
+    // Gerar conteúdo usando sintaxe correta do @google/genai
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: prompt,
+    });
+
+    const text = response.text;
 
     console.log('📝 Resposta da IA:', text.substring(0, 200) + '...');
 
@@ -117,7 +120,7 @@ ${reportText}
     const jsonText = jsonMatch[1] || jsonMatch[0];
     const analysis = JSON.parse(jsonText);
 
-    console.log(`✅ ${analysis.results.length} consultores identificados pela IA`);
+    console.log(`✅ ${analysis.results.length} consultores identificados pela IA Gemini`);
 
     return res.status(200).json(analysis);
 
