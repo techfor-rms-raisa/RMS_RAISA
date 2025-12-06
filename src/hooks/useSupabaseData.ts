@@ -1803,45 +1803,77 @@ export const useSupabaseData = () => {
     }
   };
 
-  const processReportAnalysis = async (text: string): Promise<AIAnalysisResult[]> => {
+  const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
     try {
       console.log('🤖 Processando análise de relatório com IA...');
       
-      // Extrair informações do texto do relatório
-      const lines = text.split('\n').filter(l => l.trim());
-      const results: AIAnalysisResult[] = [];
+      // Detectar formato do relatório
+      const hasSymbol = text.includes('◆');
       
-      // Processar cada linha do relatório
-      for (const line of lines) {
-        // Formato esperado: "CONSULTOR | GESTOR | MÊS | ATIVIDADES"
-        const parts = line.split('|').map(p => p.trim());
+      if (hasSymbol) {
+        // FORMATO LIVRE (◆ NOME | CLIENTE) - Usar API com Gemini AI
+        console.log('📋 Formato detectado: Texto livre (◆). Chamando API Gemini...');
         
-        if (parts.length < 4) continue;
+        try {
+          const response = await fetch('/api/analyze-activity-report', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              reportText: text,
+              gestorName: gestorName || 'Não especificado'
+            })
+          });
+          
+          if (!response.ok) {
+            throw new Error(`API retornou ${response.status}`);
+          }
+          
+          const data = await response.json();
+          console.log(`✅ ${data.results.length} relatórios analisados pela IA`);
+          return data.results;
+          
+        } catch (apiError: any) {
+          console.error('❌ Erro ao chamar API:', apiError);
+          alert(`Erro ao processar com IA: ${apiError.message}`);
+          return [];
+        }
         
-        const [consultantName, managerName, monthStr, activities] = parts;
-        const month = parseInt(monthStr);
+      } else {
+        // FORMATO PIPE (CONSULTOR | GESTOR | MÊS | ATIVIDADES) - Processar localmente
+        console.log('📋 Formato detectado: Pipe (|). Processando localmente...');
         
-        if (!consultantName || !month || !activities) continue;
+        const lines = text.split('\n').filter(l => l.trim());
+        const results: AIAnalysisResult[] = [];
         
-        // Análise de risco baseada em palavras-chave
-        const riskScore = analyzeRiskFromActivities(activities);
-        const { summary, negativePattern, predictiveAlert, recommendations } = generateAnalysis(activities, riskScore);
+        for (const line of lines) {
+          const parts = line.split('|').map(p => p.trim());
+          
+          if (parts.length < 4) continue;
+          
+          const [consultantName, managerName, monthStr, activities] = parts;
+          const month = parseInt(monthStr);
+          
+          if (!consultantName || !month || !activities) continue;
+          
+          const riskScore = analyzeRiskFromActivities(activities);
+          const { summary, negativePattern, predictiveAlert, recommendations } = generateAnalysis(activities, riskScore);
+          
+          results.push({
+            consultantName,
+            managerName,
+            reportMonth: month,
+            riskScore,
+            summary,
+            negativePattern,
+            predictiveAlert,
+            recommendations,
+            details: activities
+          });
+        }
         
-        results.push({
-          consultantName,
-          managerName,
-          reportMonth: month,
-          riskScore,
-          summary,
-          negativePattern,
-          predictiveAlert,
-          recommendations,
-          details: activities
-        });
+        console.log(`✅ ${results.length} relatórios analisados`);
+        return results;
       }
-      
-      console.log(`✅ ${results.length} relatórios analisados`);
-      return results;
       
     } catch (err: any) {
       console.error('❌ Erro ao processar análise:', err);
