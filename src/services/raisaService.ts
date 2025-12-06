@@ -9,7 +9,7 @@ if (!apiKey) {
     console.warn("API Key is missing for RAISA Service.");
 }
 
-const ai = new GoogleGenerativeAI({ apiKey });
+const ai = new GoogleGenerativeAI(apiKey);
 
 export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFactor[]> => {
   const model = AI_MODEL_NAME;

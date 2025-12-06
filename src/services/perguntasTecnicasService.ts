@@ -4,7 +4,7 @@ import { AI_MODEL_NAME } from '../constants';
 import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '../components/types';
 
 const apiKey = import.meta.env?.VITE_API_KEY || "";
-const ai = new GoogleGenerativeAI({ apiKey });
+const ai = new GoogleGenerativeAI(apiKey);
 
 export const perguntasTecnicasService = {
   

@@ -9,7 +9,7 @@ if (!apiKey) {
     console.warn("API Key is missing. Please check your environment variables.");
 }
 
-const ai = new GoogleGenerativeAI({ apiKey });
+const ai = new GoogleGenerativeAI(apiKey);
 
 // Existing Schema for Full Analysis (Legacy/Fallback)
     // Schema removed for compatibility with @google/generative-ai
