@@ -29,37 +29,7 @@ Gere 5 perguntas técnicas:
 Retorne JSON com "perguntas".
 `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            perguntas: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        pergunta_texto: { type: Type.STRING },
-                        categoria: { type: Type.STRING, enum: ["tecnica", "comportamental", "experiencia"] },
-                        tecnologia_relacionada: { type: Type.STRING },
-                        nivel_dificuldade: { type: Type.STRING, enum: ["junior", "pleno", "senior"] },
-                        resposta_esperada: { type: Type.STRING },
-                        pontos_chave: {
-                            type: Type.ARRAY,
-                            items: {
-                                type: Type.OBJECT,
-                                properties: {
-                                    ponto: { type: Type.STRING },
-                                    importancia: { type: Type.STRING, enum: ["alta", "media", "baixa"] }
-                                },
-                                required: ["ponto", "importancia"]
-                            }
-                        }
-                    },
-                    required: ["pergunta_texto", "categoria", "resposta_esperada"]
-                }
-            }
-        },
-        required: ["perguntas"]
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -67,7 +37,7 @@ Retorne JSON com "perguntas".
             { generationConfig: { responseMimeType: "application/json" }
         });
         
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         const data = JSON.parse(text || '{ "perguntas": [] }');
         
         return data.perguntas.map((p: any, index: number) => ({
@@ -115,22 +85,7 @@ Resposta Esperada: ${r.resposta_esperada}
 Avalie o candidato e retorne JSON.
 `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            score_geral: { type: Type.INTEGER },
-            score_tecnico: { type: Type.INTEGER },
-            score_experiencia: { type: Type.INTEGER },
-            score_fit_cultural: { type: Type.INTEGER },
-            recomendacao: { type: Type.STRING, enum: ["aprovado", "reprovado", "condicional"] },
-            pontos_fortes: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { aspecto: { type: Type.STRING }, justificativa: { type: Type.STRING } } } },
-            gaps_identificados: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { gap: { type: Type.STRING }, severidade: { type: Type.STRING }, impacto: { type: Type.STRING } } } },
-            requisitos_atendidos: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { requisito: { type: Type.STRING }, atendido: { type: Type.BOOLEAN }, justificativa: { type: Type.STRING } } } },
-            taxa_atendimento: { type: Type.INTEGER },
-            justificativa: { type: Type.STRING }
-        },
-        required: ["score_geral", "recomendacao", "justificativa", "pontos_fortes", "gaps_identificados"]
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -138,7 +93,7 @@ Avalie o candidato e retorne JSON.
             { generationConfig: { responseMimeType: "application/json" }
         });
         
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro na avaliação:", error);

@@ -13,33 +13,6 @@ const genAI = new GoogleGenerativeAI(apiKey);
 
 // Existing Schema for Full Analysis (Legacy/Fallback)
     // Schema removed for compatibility with @google/generative-ai
-    /* /* const analysisSchema: Schema = {
-        type: Type.ARRAY,
-        items: {
-            type: Type.OBJECT,
-            properties: {
-                consultorNome: { type: Type.STRING },
-                clienteNome: { type: Type.STRING },
-                riscoConfirmado: { type: Type.INTEGER },
-                resumoSituacao: { type: Type.STRING },
-                padraoNegativoIdentificado: { type: Type.STRING },
-                alertaPreditivo: { type: Type.STRING },
-                recomendacoes: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.OBJECT,
-                        properties: {
-                            tipo: { type: Type.STRING, enum: ["AcaoImediata", "QuestaoSondagem", "RecomendacaoEstrategica"] },
-                            foco: { type: Type.STRING, enum: ["Consultor", "Cliente", "ProcessoInterno"] },
-                            descricao: { type: Type.STRING }
-                        },
-                        required: ["tipo", "foco", "descricao"]
-                    }
-                }
-            },
-            required: ["consultorNome", "clienteNome", "riscoConfirmado", "resumoSituacao", "padraoNegativoIdentificado", "alertaPreditivo", "recomendacoes"]
-        }
-    }; */
 
 // --- STEP 1: BEHAVIORAL FLAG EXTRACTION ---
 export async function extractBehavioralFlags(reportText: string): Promise<Omit<BehavioralFlag, 'id' | 'consultantId'>[]> {
@@ -58,25 +31,14 @@ export async function extractBehavioralFlags(reportText: string): Promise<Omit<B
         - flagDate (use a data de hoje YYYY-MM-DD se não houver data explícita no texto)
     `;
 
-    const schema: Schema = {
-        type: Type.ARRAY,
-        items: {
-            type: Type.OBJECT,
-            properties: {
-                flagType: { type: Type.STRING, enum: ['ATTENDANCE', 'COMMUNICATION', 'QUALITY', 'ENGAGEMENT', 'OTHER'] },
-                description: { type: Type.STRING },
-                flagDate: { type: Type.STRING }
-            },
-            required: ["flagType", "description", "flagDate"]
-        }
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
             prompt,
             { generationConfig: { responseMimeType: "application/json" }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '[]');
     } catch (error) {
         console.error("Error extracting flags:", error);
@@ -106,7 +68,7 @@ export async function generatePredictiveAlert(recentFlags: BehavioralFlag[]): Pr
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
             prompt
         );
-        return response.response.text() || "Análise preditiva inconclusiva.";
+        return response.text() || "Análise preditiva inconclusiva.";
     } catch (error) {
         console.error("Error generating alert:", error);
         return "Erro na geração do alerta preditivo.";
@@ -141,7 +103,7 @@ export async function analyzeReport(reportText: string): Promise<AIAnalysisResul
       }
     });
     
-    const jsonString = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+    const jsonString = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
     const rawResults = JSON.parse(jsonString || '[]');
 
     if (!Array.isArray(rawResults)) {
@@ -175,14 +137,7 @@ export async function generateTemplateContent(context: string): Promise<{ subjec
         Retorne JSON com "subject" e "body". Use {{nome_consultor}} como variável.
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            subject: { type: Type.STRING },
-            body: { type: Type.STRING }
-        },
-        required: ["subject", "body"]
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -191,7 +146,7 @@ export async function generateTemplateContent(context: string): Promise<{ subjec
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"subject": "", "body": ""}');
     } catch (error) {
         console.error("Template Gen Error", error);
@@ -206,16 +161,7 @@ export async function analyzeFeedback(feedbackText: string, score: number): Prom
         Retorne JSON: sentiment (Positivo/Neutro/Negativo), riskLevel (Baixo/Médio/Alto), keyPoints (array string), suggestedAction (string).
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            sentiment: { type: Type.STRING, enum: ["Positivo", "Neutro", "Negativo"] },
-            riskLevel: { type: Type.STRING, enum: ["Baixo", "Médio", "Alto"] },
-            keyPoints: { type: Type.ARRAY, items: { type: Type.STRING } },
-            suggestedAction: { type: Type.STRING }
-        },
-        required: ["sentiment", "riskLevel", "keyPoints", "suggestedAction"]
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -224,7 +170,7 @@ export async function analyzeFeedback(feedbackText: string, score: number): Prom
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Feedback Analysis Error", error);
@@ -245,28 +191,7 @@ interface InterviewSummary {
 export async function summarizeInterview(transcript: string, jobDescription: string): Promise<InterviewSummary> {
     const model = AI_MODEL_NAME;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            narrativeSummary: { type: Type.STRING },
-            strengths: { type: Type.ARRAY, items: { type: Type.STRING } },
-            areasForDevelopment: { type: Type.ARRAY, items: { type: Type.STRING } },
-            culturalFitScore: { type: Type.INTEGER, minimum: 1, maximum: 5 },
-            keyQuotes: { 
-                type: Type.ARRAY, 
-                items: { 
-                    type: Type.OBJECT, 
-                    properties: { 
-                        quote: { type: Type.STRING }, 
-                        speaker: { type: Type.STRING, enum: ['Analista', 'Candidato'] } 
-                    },
-                    required: ['quote', 'speaker']
-                } 
-            },
-            nextStepRecommendation: { type: Type.STRING, enum: ['Avançar para a próxima fase', 'Rejeitar', 'Reentrevista', 'Aguardando Cliente'] }
-        },
-        required: ["narrativeSummary", "strengths", "areasForDevelopment", "culturalFitScore", "keyQuotes", "nextStepRecommendation"]
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     const prompt = `
         Você é um **Analista de People Analytics Sênior** especializado em Recrutamento e Seleção. Sua tarefa é analisar a transcrição de uma entrevista de emprego e gerar um resumo estruturado em JSON, focado na adequação do candidato à vaga.
@@ -294,7 +219,7 @@ export async function summarizeInterview(transcript: string, jobDescription: str
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}') as InterviewSummary;
     } catch (error) {
         console.error("Interview Summarization Error:", error);
@@ -321,20 +246,7 @@ export async function generateFinalAssessment(
 ): Promise<FinalAssessment> {
     const model = AI_MODEL_NAME;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            overallScore: { type: Type.INTEGER, minimum: 0, maximum: 100 },
-            suitabilityRating: { type: Type.STRING, enum: ['Excelente', 'Bom', 'Mediano', 'Baixo'] },
-            keyStrengths: { type: Type.ARRAY, items: { type: Type.STRING } },
-            keyGaps: { type: Type.ARRAY, items: { type: Type.STRING } },
-            culturalFitSummary: { type: Type.STRING },
-            technicalFitSummary: { type: Type.STRING },
-            finalRecommendation: { type: Type.STRING, enum: ['Contratar', 'Rejeitar', 'Revisão Adicional'] },
-            justification: { type: Type.STRING }
-        },
-        required: ["overallScore", "suitabilityRating", "keyStrengths", "keyGaps", "culturalFitSummary", "technicalFitSummary", "finalRecommendation", "justification"]
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     const prompt = `
         Você é um **Algoritmo de Avaliação de Candidatos Sênior** do Corbit.ai. Sua tarefa é realizar uma avaliação final de adequação do candidato à vaga, combinando os dados do currículo (CV) e o resumo da entrevista.
@@ -373,7 +285,7 @@ export async function generateFinalAssessment(
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}') as FinalAssessment;
     } catch (error) {
         console.error("Final Assessment Error:", error);
@@ -428,27 +340,7 @@ export async function calculateVagaPriority(dados: any): Promise<any> {
         Retorne um JSON com a estrutura especificada.
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            score_prioridade: { type: Type.INTEGER },
-            nivel_prioridade: { type: Type.STRING, enum: ['Alta', 'Média', 'Baixa'] },
-            sla_dias: { type: Type.INTEGER },
-            justificativa: { type: Type.STRING },
-            fatores_considerados: {
-                type: Type.OBJECT,
-                properties: {
-                    urgencia_prazo: { type: Type.INTEGER },
-                    valor_faturamento: { type: Type.INTEGER },
-                    cliente_vip: { type: Type.BOOLEAN },
-                    tempo_vaga_aberta: { type: Type.INTEGER },
-                    complexidade_stack: { type: Type.INTEGER }
-                },
-                required: ['urgencia_prazo', 'valor_faturamento', 'cliente_vip', 'tempo_vaga_aberta', 'complexidade_stack']
-            }
-        },
-        required: ['score_prioridade', 'nivel_prioridade', 'sla_dias', 'justificativa', 'fatores_considerados']
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -457,7 +349,7 @@ export async function calculateVagaPriority(dados: any): Promise<any> {
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro ao calcular prioridade da vaga:", error);
@@ -519,32 +411,7 @@ export async function recommendAnalyst(dados: any): Promise<any> {
         **IMPORTANTE:** Retorne um ARRAY com o score de TODOS os analistas, ordenado do maior para o menor score.
     `;
 
-    const schema: Schema = {
-        type: Type.ARRAY,
-        items: {
-            type: Type.OBJECT,
-            properties: {
-                analista_id: { type: Type.INTEGER },
-                analista_nome: { type: Type.STRING },
-                score_match: { type: Type.INTEGER },
-                nivel_adequacao: { type: Type.STRING, enum: ['Excelente', 'Bom', 'Regular', 'Baixo'] },
-                justificativa_match: { type: Type.STRING },
-                fatores_match: {
-                    type: Type.OBJECT,
-                    properties: {
-                        fit_stack_tecnologica: { type: Type.INTEGER },
-                        fit_cliente: { type: Type.INTEGER },
-                        disponibilidade: { type: Type.INTEGER },
-                        taxa_sucesso_historica: { type: Type.INTEGER }
-                    },
-                    required: ['fit_stack_tecnologica', 'fit_cliente', 'disponibilidade', 'taxa_sucesso_historica']
-                },
-                tempo_estimado_fechamento_dias: { type: Type.INTEGER },
-                recomendacao: { type: Type.STRING, enum: ['Altamente Recomendado', 'Recomendado', 'Adequado', 'Não Recomendado'] }
-            },
-            required: ['analista_id', 'analista_nome', 'score_match', 'nivel_adequacao', 'justificativa_match', 'fatores_match', 'tempo_estimado_fechamento_dias', 'recomendacao']
-        }
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -553,7 +420,7 @@ export async function recommendAnalyst(dados: any): Promise<any> {
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '[]');
     } catch (error) {
         console.error("Erro ao recomendar analista:", error);
@@ -641,26 +508,7 @@ export async function improveJobDescription(
         2. 'mudancas_sugeridas': Array de objetos com tipo, antes, depois e motivo de cada mudança significativa
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            descricao_melhorada: { type: Type.STRING },
-            mudancas_sugeridas: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        tipo: { type: Type.STRING, enum: ['Estrutura', 'Linguagem', 'Clareza', 'Atratividade', 'SEO', 'Inclusão'] },
-                        antes: { type: Type.STRING },
-                        depois: { type: Type.STRING },
-                        motivo: { type: Type.STRING }
-                    },
-                    required: ['tipo', 'antes', 'depois', 'motivo']
-                }
-            }
-        },
-        required: ['descricao_melhorada', 'mudancas_sugeridas']
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -669,7 +517,7 @@ export async function improveJobDescription(
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"descricao_melhorada": "", "mudancas_sugeridas": []}');
     } catch (error) {
         console.error("Erro ao melhorar descrição da vaga:", error);
@@ -738,18 +586,7 @@ export async function suggestReprioritization(dados: {
         Se não, retorne 'deve_reprioritizar: false'.
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            deve_reprioritizar: { type: Type.BOOLEAN },
-            score_sugerido: { type: Type.INTEGER },
-            nivel_sugerido: { type: Type.STRING, enum: ['Alta', 'Média', 'Baixa'] },
-            sla_sugerido: { type: Type.INTEGER },
-            motivo_mudanca: { type: Type.STRING },
-            urgencia: { type: Type.STRING, enum: ['Alta', 'Média', 'Baixa'] }
-        },
-        required: ['deve_reprioritizar']
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -758,7 +595,7 @@ export async function suggestReprioritization(dados: {
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"deve_reprioritizar": false}');
     } catch (error) {
         console.error("Erro ao sugerir repriorização:", error);
@@ -840,31 +677,7 @@ export async function recommendQuestionsForVaga(dados: {
         - Indique se a questão foi baseada em reprovação anterior
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            questoes: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        questao: { type: Type.STRING },
-                        categoria: { type: Type.STRING, enum: ['tecnica', 'comportamental', 'cultural'] },
-                        subcategoria: { type: Type.STRING },
-                        relevancia: { type: Type.INTEGER, minimum: 0, maximum: 100 },
-                        motivo: { type: Type.STRING },
-                        baseado_em_reprovacao: { type: Type.BOOLEAN }
-                    },
-                    required: ['questao', 'categoria', 'subcategoria', 'relevancia', 'motivo', 'baseado_em_reprovacao']
-                }
-            },
-            insights: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-            }
-        },
-        required: ['questoes', 'insights']
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -873,7 +686,7 @@ export async function recommendQuestionsForVaga(dados: {
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"questoes": [], "insights": []}');
     } catch (error) {
         console.error("Erro ao recomendar questões:", error);
@@ -973,32 +786,7 @@ export async function recommendCandidateDecision(dados: {
         - Liste 3-5 pontos fortes concretos
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            recomendacao: { type: Type.STRING, enum: ['aprovar', 'rejeitar', 'reavaliar'] },
-            score_confianca: { type: Type.INTEGER, minimum: 0, maximum: 100 },
-            justificativa: { type: Type.STRING },
-            red_flags: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        tipo: { type: Type.STRING },
-                        descricao: { type: Type.STRING },
-                        severidade: { type: Type.INTEGER, minimum: 1, maximum: 5 }
-                    },
-                    required: ['tipo', 'descricao', 'severidade']
-                }
-            },
-            pontos_fortes: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-            },
-            probabilidade_aprovacao_cliente: { type: Type.INTEGER, minimum: 0, maximum: 100 }
-        },
-        required: ['recomendacao', 'score_confianca', 'justificativa', 'red_flags', 'pontos_fortes', 'probabilidade_aprovacao_cliente']
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -1007,7 +795,7 @@ export async function recommendCandidateDecision(dados: {
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro ao recomendar decisão:", error);
@@ -1070,26 +858,7 @@ export async function identifyRedFlags(dados: {
         - Não invente problemas, apenas identifique padrões reais
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            flags: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        tipo: { type: Type.STRING, enum: ['tecnico', 'comportamental', 'comunicacao', 'experiencia', 'cultural'] },
-                        descricao: { type: Type.STRING },
-                        severidade: { type: Type.INTEGER, minimum: 1, maximum: 5 },
-                        fonte: { type: Type.STRING },
-                        trecho_original: { type: Type.STRING }
-                    },
-                    required: ['tipo', 'descricao', 'severidade', 'fonte', 'trecho_original']
-                }
-            }
-        },
-        required: ['flags']
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -1098,7 +867,7 @@ export async function identifyRedFlags(dados: {
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"flags": []}');
     } catch (error) {
         console.error("Erro ao identificar red flags:", error);
@@ -1188,79 +957,7 @@ export async function analyzeRejectionPatterns(dados: {
         - Foque em padrões acionáveis
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            padroes_tecnicos: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        padrao: { type: Type.STRING },
-                        frequencia: { type: Type.INTEGER },
-                        exemplos: { type: Type.ARRAY, items: { type: Type.STRING } }
-                    },
-                    required: ['padrao', 'frequencia', 'exemplos']
-                }
-            },
-            padroes_comportamentais: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        padrao: { type: Type.STRING },
-                        frequencia: { type: Type.INTEGER },
-                        exemplos: { type: Type.ARRAY, items: { type: Type.STRING } }
-                    },
-                    required: ['padrao', 'frequencia', 'exemplos']
-                }
-            },
-            padroes_culturais: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        padrao: { type: Type.STRING },
-                        frequencia: { type: Type.INTEGER },
-                        exemplos: { type: Type.ARRAY, items: { type: Type.STRING } }
-                    },
-                    required: ['padrao', 'frequencia', 'exemplos']
-                }
-            },
-            questoes_ineficazes: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        questao: { type: Type.STRING },
-                        motivo: { type: Type.STRING }
-                    },
-                    required: ['questao', 'motivo']
-                }
-            },
-            questoes_novas_sugeridas: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        questao: { type: Type.STRING },
-                        categoria: { type: Type.STRING },
-                        motivo: { type: Type.STRING }
-                    },
-                    required: ['questao', 'categoria', 'motivo']
-                }
-            },
-            recomendacoes_melhoria: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-            },
-            insights: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-            }
-        },
-        required: ['padroes_tecnicos', 'padroes_comportamentais', 'padroes_culturais', 'questoes_ineficazes', 'questoes_novas_sugeridas', 'recomendacoes_melhoria', 'insights']
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -1269,7 +966,7 @@ export async function analyzeRejectionPatterns(dados: {
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro ao analisar padrões de reprovação:", error);
@@ -1342,23 +1039,7 @@ export async function predictCandidateRisk(dados: {
         - Seja específico nas ações de preparação
     `;
 
-    const schema: Schema = {
-        type: Type.OBJECT,
-        properties: {
-            risco_reprovacao: { type: Type.INTEGER, minimum: 0, maximum: 100 },
-            nivel_risco: { type: Type.STRING, enum: ['Baixo', 'Médio', 'Alto', 'Crítico'] },
-            motivos_risco: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-            },
-            recomendacoes_preparacao: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING }
-            },
-            deve_enviar: { type: Type.BOOLEAN }
-        },
-        required: ['risco_reprovacao', 'nivel_risco', 'motivos_risco', 'recomendacoes_preparacao', 'deve_enviar']
-    };
+    // Schema removed - not supported by @google/generative-ai
 
     try {
         const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -1367,7 +1048,7 @@ export async function predictCandidateRisk(dados: {
                 responseMimeType: "application/json"
             }
         });
-        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro ao prever risco:", error);

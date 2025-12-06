@@ -24,20 +24,7 @@ export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFact
     Retorne um JSON Array com fatores de risco.
   `;
 
-  const schema: Schema = {
-      type: Type.ARRAY,
-      items: {
-          type: Type.OBJECT,
-          properties: {
-            risk_type: { type: Type.STRING },
-            risk_level: { type: Type.STRING, enum: ['low', 'medium', 'high'] },
-            detected_pattern: { type: Type.STRING },
-            evidence: { type: Type.STRING },
-            ai_confidence: { type: Type.NUMBER },
-          },
-          required: ["risk_type", "risk_level", "detected_pattern", "evidence", "ai_confidence"]
-      }
-  };
+    // Schema removed - not supported by @google/generative-ai
 
   try {
     const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
@@ -47,7 +34,7 @@ export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFact
       }
     });
 
-    const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+    const text = response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
     return JSON.parse(text || '[]');
   } catch (error) {
     console.error('Erro na análise RAISA:', error);
