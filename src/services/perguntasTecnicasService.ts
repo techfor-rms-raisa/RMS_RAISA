@@ -1,10 +1,10 @@
 
-import { GoogleGenerativeAI, Type, Schema } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AI_MODEL_NAME } from '../constants';
 import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '../components/types';
 
 const apiKey = import.meta.env?.VITE_API_KEY || "";
-const ai = new GoogleGenerativeAI({ apiKey });
+const genAI = new GoogleGenerativeAI(apiKey);
 
 export const perguntasTecnicasService = {
   
@@ -62,13 +62,12 @@ Retorne JSON com "perguntas".
     };
 
     try {
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: prompt,
-            config: { responseMimeType: "application/json", responseSchema: schema }
+        const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
+            prompt,
+            { generationConfig: { responseMimeType: "application/json" }
         });
         
-        const text = response.text?.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         const data = JSON.parse(text || '{ "perguntas": [] }');
         
         return data.perguntas.map((p: any, index: number) => ({
@@ -134,13 +133,12 @@ Avalie o candidato e retorne JSON.
     };
 
     try {
-        const response = await ai.models.generateContent({
-            model: model,
-            contents: prompt,
-            config: { responseMimeType: "application/json", responseSchema: schema }
+        const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
+            prompt,
+            { generationConfig: { responseMimeType: "application/json" }
         });
         
-        const text = response.text?.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro na avaliação:", error);

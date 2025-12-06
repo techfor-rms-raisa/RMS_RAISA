@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, Type, Schema } from "@google/generative-ai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { RiskFactor } from '../components/types';
 import { AI_MODEL_NAME } from '../constants';
 
@@ -9,7 +9,7 @@ if (!apiKey) {
     console.warn("API Key is missing for RAISA Service.");
 }
 
-const ai = new GoogleGenerativeAI({ apiKey });
+const genAI = new GoogleGenerativeAI(apiKey);
 
 export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFactor[]> => {
   const model = AI_MODEL_NAME;
@@ -40,16 +40,14 @@ export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFact
   };
 
   try {
-    const response = await ai.models.generateContent({
-      model: model,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: schema
+    const response = await genAI.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(
+      prompt,
+      { generationConfig: {
+        responseMimeType: "application/json"
       }
     });
 
-    const text = response.text?.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+    const text = response.response.response.text()().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
     return JSON.parse(text || '[]');
   } catch (error) {
     console.error('Erro na análise RAISA:', error);
