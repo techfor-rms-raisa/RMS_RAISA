@@ -196,36 +196,36 @@ export function RecomendacaoIACard({ candidaturaId, analistaId, onAcaoRealizada 
                 {/* Red Flags */}
                 {recomendacao.red_flags && recomendacao.red_flags.length > 0 && (
                     <div className="mb-4">
-	                        <h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-	                            <AlertTriangle className="w-4 h-4 text-red-600" />
-	                            Red Flags Identificados
-	                        </h4>
-	                        <div className="flex flex-wrap gap-2">
-	                            {recomendacao.red_flags.map((flag: any, index: number) => (
-	                                <span key={index} className="flex items-center gap-1 text-xs px-3 py-1 bg-red-100 text-red-800 rounded-full border border-red-300">
-	                                    <AlertTriangle className="w-3 h-3" />
-	                                    {flag.tipo} ({flag.severidade}/5)
-	                                </span>
-	                            ))}
-	                        </div>
+<h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
+		                            <AlertTriangle className="w-4 h-4 text-red-600" />
+		                            Red Flags
+		                        </h4>
+		                        <div className="flex flex-wrap gap-2">
+		                            {recomendacao.red_flags.map((flag: any, index: number) => (
+		                                <span key={index} className="flex items-center gap-1 text-xs px-3 py-1 bg-red-100 text-red-800 rounded-full border border-red-300">
+		                                    <AlertTriangle className="w-3 h-3" />
+		                                    {flag.tipo} ({flag.severidade}/5)
+		                                </span>
+		                            ))}
+		                        </div>
                     </div>
                 )}
 
                 {/* Pontos Fortes */}
                 {recomendacao.pontos_fortes && recomendacao.pontos_fortes.length > 0 && (
                     <div className="mb-4">
-	                        <h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-	                            <CheckCircle className="w-4 h-4 text-green-600" />
-	                            Pontos Fortes
-	                        </h4>
-	                        <div className="flex flex-wrap gap-2">
-	                            {recomendacao.pontos_fortes.map((ponto: string, index: number) => (
-	                                <span key={index} className="flex items-center gap-1 text-xs px-3 py-1 bg-green-100 text-green-800 rounded-full border border-green-300">
-	                                    <CheckCircle className="w-3 h-3" />
-	                                    {ponto}
-	                                </span>
-	                            ))}
-	                        </div>
+<h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
+		                            <CheckCircle className="w-4 h-4 text-green-600" />
+		                            Pontos Fortes
+		                        </h4>
+		                        <div className="flex flex-wrap gap-2">
+		                            {recomendacao.pontos_fortes.map((ponto: string, index: number) => (
+		                                <span key={index} className="flex items-center gap-1 text-xs px-3 py-1 bg-green-100 text-green-800 rounded-full border border-green-300">
+		                                    <CheckCircle className="w-3 h-3" />
+		                                    {ponto}
+		                                </span>
+		                            ))}
+		                        </div>
                     </div>
                 )}
 
