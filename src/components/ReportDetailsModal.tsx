@@ -1,6 +1,6 @@
 import React from 'react';
 import { ConsultantReport, Recommendation } from './types';
-import { AlertTriangle, CheckCircle, MessageSquare, BookOpen } from 'lucide-react';
+import { AlertTriangle, CheckCircle, MessageSquare, BookOpen } from 'lucide-react'; // Re-import para forçar resolução no Vercel
 
 interface ReportDetailsModalProps {
     report: ConsultantReport | null;
