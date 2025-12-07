@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore } from '../components/types';
 import StatusCircle from './StatusCircle';
+import ReportDetailsModal from './ReportDetailsModal';
 
 interface DashboardProps {
   consultants: Consultant[];
@@ -128,59 +129,30 @@ const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], u
                                     {manager.consultants.map(consultant => (
                                         <tr key={consultant.id}>
                                             <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">{consultant.nome_consultores}</td>
-                                            {[...Array(12)].map((_, i) => {
-                                                const month = i + 1;
-                                                const report = getReportForMonth(consultant, month);
-                                                return (
-                                                    <td key={i} className="px-2 py-2 text-center">
-                                                        <StatusCircle score={consultant[`parecer_${month}_consultor` as keyof Consultant] as RiskScore | null} onClick={report ? () => setViewingReport(report) : undefined} />
-                                                    </td>
-                                                );
-                                            })}
-                                            <td className="px-4 py-2 text-center"><StatusCircle score={consultant.parecer_final_consultor} /></td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                ))}
-              </div>
-            )
-        ))}
-      </div>
-
-      {viewingReport && (
-          <div className="fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto p-6">
-                  <div className="flex justify-between mb-4">
-                      <h3 className="text-xl font-bold">Detalhes do Relatório ({viewingReport.month}/{viewingReport.year})</h3>
-                      <button onClick={() => setViewingReport(null)} className="text-2xl">&times;</button>
-                  </div>
-                  <div className="space-y-4">
-                      <div className="p-4 bg-blue-50 rounded border-l-4 border-blue-500">
-                          <h4 className="font-bold text-blue-800">Resumo</h4>
-                          <p>{viewingReport.summary}</p>
-                      </div>
-                      {viewingReport.negativePattern && (
-                          <div className="p-4 bg-red-50 rounded border-l-4 border-red-500">
-                              <h4 className="font-bold text-red-800">Padrão Negativo</h4>
-                              <p>{viewingReport.negativePattern}</p>
-                          </div>
-                      )}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {viewingReport.recommendations?.map((rec, i) => (
-                              <div key={i} className="p-3 border rounded shadow-sm">
-                                  <span className="text-xs font-bold uppercase bg-gray-200 px-2 py-1 rounded">{rec.tipo}</span>
-                                  <p className="mt-2 text-sm">{rec.descricao}</p>
-                              </div>
-                          ))}
-                      </div>
-                  </div>
-              </div>
-          </div>
-      )}
-    </div>
+	                                            {[...Array(12)].map((_, i) => {
+	                                                const month = i + 1;
+	                                                const report = getReportForMonth(consultant, month);
+	                                                return (
+	                                                    <td key={i} className="px-2 py-2 text-center">
+	                                                        <StatusCircle score={consultant[`parecer_${month}_consultor` as keyof Consultant] as RiskScore | null} onClick={report ? () => setViewingReport(report) : undefined} />
+	                                                    </td>
+	                                                );
+	                                            })}
+	                                            <td className="px-4 py-2 text-center"><StatusCircle score={consultant.parecer_final_consultor} /></td>
+	                                        </tr>
+	                                    ))}
+	                                </tbody>
+	                            </table>
+	                        </div>
+	                    </div>
+	                ))}
+	              </div>
+	            )
+	        ))}
+	      </div>
+	
+	      <ReportDetailsModal report={viewingReport} onClose={() => setViewingReport(null)} isQuarantineView={isQuarantineView} />
+	    </div>
   );
 };
 
