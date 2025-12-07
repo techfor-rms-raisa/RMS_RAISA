@@ -20,12 +20,7 @@ const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], u
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
 
-  const availableYears = useMemo(() => {
-    const yearsFromData = consultants.map(c => c.ano_vigencia).filter(y => y !== null && y !== undefined);
-    const currentYear = new Date().getFullYear();
-    const allYears = [...new Set([...yearsFromData, currentYear])];
-    return allYears.sort((a: number, b: number) => b - a);
-  }, [consultants]);
+  const availableYears = useMemo(() => [...new Set(consultants.map(c => c.ano_vigencia))].sort((a: number, b: number) => b - a), [consultants]);
 
   // Adicionar verificação de carregamento para evitar renderização antes dos dados
   if (consultants.length === 0 || clients.length === 0) {
@@ -58,7 +53,14 @@ const Dashboard: React.FC<DashboardProps> = ({ consultants = [], clients = [], u
         
         const managers = clientManagers.map(manager => {
             let managerConsultants = consultants.filter(c => c.gestor_imediato_id === manager.id && c.status === 'Ativo');
-            if (!isQuarantineView) managerConsultants = managerConsultants.filter(c => c.ano_vigencia === selectedYear);
+            
+            if (!isQuarantineView) {
+                // Apenas filtre por ano se o ano selecionado não for o ano atual.
+                // Isso garante que o Dashboard não fique vazio quando o ano atual é o padrão e ainda não há dados de ano_vigencia.
+                if (selectedYear !== new Date().getFullYear()) {
+                    managerConsultants = managerConsultants.filter(c => c.ano_vigencia === selectedYear);
+                }
+            }
             else managerConsultants = managerConsultants.filter(c => {
                 const isRecent = c.data_inclusao_consultores >= cutoffStr && c.data_inclusao_consultores <= todayStr;
                 const isRisk = c.parecer_final_consultor === 1 || c.parecer_final_consultor === 2;
