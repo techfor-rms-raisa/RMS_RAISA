@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { APP_TITLE, APP_VERSION, AI_MODEL_NAME } from '../constants';
 import { User } from '../components/types';
-import { supabase } from '../config/supabase'; // Importar Supabase
+import { supabase } from '../config/supabase';
 
 interface LoginScreenProps {
   onLogin: (user: User) => void;
@@ -30,7 +30,17 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
       }
 
       if (data && data.ativo) {
-        onLogin(data as User);
+        const user: User = {
+          id: data.id,
+          nome_usuario: data.nome,
+          email_usuario: data.email,
+          senha_usuario: data.senha,
+          ativo_usuario: data.ativo,
+          tipo_usuario: data.tipo,
+          receber_alertas_email: data.receber_alertas_email || false,
+          gestor_rs_id: data.gestor_rs_id || null,
+        };
+        onLogin(user);
       } else if (data && !data.ativo) {
         setError('Este usuário está inativo.');
       } else {
