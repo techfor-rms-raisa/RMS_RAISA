@@ -554,7 +554,11 @@ export const useSupabaseData = () => {
   // ATUALIZAR SCORE DO CONSULTOR (NOVO)
   // ============================================
 
-  const updateConsultantScore = async (result: AIAnalysisResult, reportText: string) => {
+ export const updateConsultantScore = async (result: AIAnalysisResult, reportText: string): Promise<{ success: boolean; consultantName: string; error?: string }> =>     if (!result.consultantName) {
+        console.warn('⚠️ updateConsultantScore: Nome do consultor não retornado pela IA. Ignorando registro.');
+        return { success: false, consultantName: 'undefined', error: 'Nome do consultor não retornado pela IA' };
+    }
+
     try {
       console.log('🔄 Atualizando score do consultor:', result.consultantName);
 
@@ -565,8 +569,9 @@ export const useSupabaseData = () => {
         .eq('nome_consultores', result.consultantName)
         .single();
 
-      if (consultantError || !consultantData) {
-        throw new Error(`Consultor '${result.consultantName}' não encontrado.`);
+            if (consultantError || !consultantData) {
+        console.warn(`⚠️ Consultor '${result.consultantName}' não encontrado no banco de dados. Ignorando registro.`);
+        return { success: false, consultantName: result.consultantName, error: 'Consultor não encontrado no banco de dados' };
       }
 
       const consultantId = consultantData.id;
@@ -590,8 +595,9 @@ export const useSupabaseData = () => {
         .select()
         .single();
 
-      if (reportError) {
-        throw new Error(`Erro ao salvar o relatório: ${reportError.message}`);
+            if (reportError) {
+        console.error(`❌ Erro ao salvar relatório para '${result.consultantName}':`, reportError);
+        return { success: false, consultantName: result.consultantName, error: `Erro ao salvar o relatório: ${reportError.message}` };
       }
 
       console.log('✅ Relatório de análise salvo:', reportData);
@@ -608,8 +614,9 @@ export const useSupabaseData = () => {
         .select()
         .single();
 
-      if (updateError) {
-        throw new Error(`Erro ao atualizar o score do consultor: ${updateError.message}`);
+            if (updateError) {
+        console.error(`❌ Erro ao atualizar score para '${result.consultantName}':`, updateError);
+        return { success: false, consultantName: result.consultantName, error: `Erro ao atualizar o score: ${updateError.message}` };
       }
 
       console.log('✅ Score do consultor atualizado:', updatedConsultant);
@@ -623,9 +630,10 @@ export const useSupabaseData = () => {
         return c;
       }));
 
+      return { success: true, consultantName: result.consultantName };
+
     } catch (err: any) {
-      console.error('❌ Erro em updateConsultantScore:', err);
-      alert(`Erro ao atualizar score: ${err.message}`);
-      throw err;
+      console.error('❌ Erro inesperado em updateConsultantScore:', err);
+      return { success: false, consultantName: result.consultantName, error: err.message };
     }
   };
