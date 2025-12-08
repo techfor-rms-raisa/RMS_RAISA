@@ -41,7 +41,7 @@ import AtividadesExportar from './components/atividades/AtividadesExportar';
 import { PermissionsProvider } from './hooks/usePermissions';
 import { useSupabaseData } from './hooks/useSupabaseData';
 import { AIAnalysisResult, User, View, FeedbackResponse, RHAction } from './types';
-import { processReportAnalysis } from './services/geminiService'; // Importar a função
+import { analyzeReport } from './services/geminiService'; // Importar a função
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -74,7 +74,7 @@ const App: React.FC = () => {
   const handleManualAnalysis = async (text: string, gestorName?: string) => {
       try {
           console.log('📊 Iniciando análise de relatórios...');
-          const results = await processReportAnalysis(text, gestorName);
+          const results = await analyzeReport(text, gestorName);
           
           if (results.length === 0) {
               alert('⚠️ Nenhum relatório válido encontrado. Verifique o formato do arquivo.');
