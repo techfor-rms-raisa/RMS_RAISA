@@ -630,9 +630,10 @@ export const useSupabaseData = () => {
           return { ...c, ...updatedConsultant, reports: newReports };
         }
         return c;
-       });
+      }));
 
       return { success: true, consultantName: result.consultantName };
+
 
     } catch (err: any) {
       console.error('❌ Erro inesperado em updateConsultantScore:', err);
