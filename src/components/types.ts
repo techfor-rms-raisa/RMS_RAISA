@@ -8,8 +8,12 @@ export type View =
   | 'dashboard' | 'quarantine' | 'recommendations' | 'users' | 'clients' 
   | 'consultants' | 'analytics' | 'import' | 'export' | 'templates' | 'campaigns' 
   | 'compliance_dashboard' | 'feedback_portal'
+  // ATIVIDADES Views
+  | 'atividades_inserir' | 'atividades_consultar' | 'atividades_exportar'
   // RAISA Views (NOVOS)
-  | 'vagas' | 'candidaturas' | 'analise_risco' | 'pipeline' | 'talentos' | 'controle_envios' | 'entrevista_tecnica';
+  | 'vagas' | 'candidaturas' | 'analise_risco' | 'pipeline' | 'talentos' | 'controle_envios' | 'entrevista_tecnica'
+  // RAISA Dashboard Views
+  | 'dashboard_funil' | 'dashboard_aprovacao' | 'dashboard_analistas' | 'dashboard_geral' | 'dashboard_clientes' | 'dashboard_tempo';
 
 export type ConsultantStatus = 'Ativo' | 'Perdido' | 'Encerrado';
 
