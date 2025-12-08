@@ -555,7 +555,6 @@ export const useSupabaseData = () => {
   // ============================================
 
   const updateConsultantScore = async (result: AIAnalysisResult, reportText: string): Promise<{ success: boolean; consultantName: string; error?: string }> => {
-    // Validação inicial
     if (!result.consultantName) {
       console.warn('⚠️ updateConsultantScore: Nome do consultor não retornado pela IA. Ignorando registro.');
       return { success: false, consultantName: 'undefined', error: 'Nome do consultor não retornado pela IA' };
@@ -634,9 +633,9 @@ export const useSupabaseData = () => {
 
       return { success: true, consultantName: result.consultantName };
 
-
     } catch (err: any) {
       console.error('❌ Erro inesperado em updateConsultantScore:', err);
       return { success: false, consultantName: result.consultantName, error: err.message };
     }
   };
+
