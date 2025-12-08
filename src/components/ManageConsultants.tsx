@@ -95,43 +95,79 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
         <div className="bg-white p-6 rounded-lg shadow-md">
             {!isReadOnly && <InclusionImport clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} onImport={addConsultant} />}
             
-            <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold">Gerenciar Consultores</h2>
+            <div className="flex justify-between items-center mb-8">
+                <h2 className="section-title">Gerenciar Consultores</h2>
                 {!isReadOnly && (
-                    <button onClick={() => { setEditingConsultant(null); setIsFormOpen(true); }} className="bg-[#533738] text-white px-6 py-3 rounded shadow">+ Novo Consultor</button>
+                    <button 
+                        onClick={() => { setEditingConsultant(null); setIsFormOpen(true); }} 
+                        className="bg-[#533738] text-white px-6 py-3 rounded shadow hover:bg-[#6b4546] transition-colors btn"
+                    >
+                        + Novo Consultor
+                    </button>
                 )}
             </div>
 
             {isFormOpen && (
                 <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
                     <div className="bg-white rounded-lg p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-                        <h3 className="text-xl font-bold mb-4">{editingConsultant ? 'Editar' : 'Novo'} Consultor</h3>
+                        <h3 className="card-title mb-6">
+                            {editingConsultant ? 'Editar' : 'Novo'} Consultor
+                        </h3>
                         <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
-                                <input className="border p-2 rounded w-full" placeholder="Nome" value={formData.nome_consultores} onChange={e => setFormData({...formData, nome_consultores: e.target.value})} required />
+                                <label className="block mb-1">Nome</label>
+                                <input 
+                                    className="border p-2 rounded w-full" 
+                                    placeholder="Nome" 
+                                    value={formData.nome_consultores} 
+                                    onChange={e => setFormData({...formData, nome_consultores: e.target.value})} 
+                                    required
+                                />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                                <input className="border p-2 rounded w-full" placeholder="Email" type="email" value={formData.email_consultor} onChange={e => setFormData({...formData, email_consultor: e.target.value})} />
+                                <label className="block mb-1">Email</label>
+                                <input 
+                                    className="border p-2 rounded w-full" 
+                                    placeholder="Email" 
+                                    type="email" 
+                                    value={formData.email_consultor} 
+                                    onChange={e => setFormData({...formData, email_consultor: e.target.value})}
+                                />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Cargo</label>
-                                <input className="border p-2 rounded w-full" placeholder="Cargo" value={formData.cargo_consultores} onChange={e => setFormData({...formData, cargo_consultores: e.target.value})} required />
+                                <label className="block mb-1">Cargo</label>
+                                <input 
+                                    className="border p-2 rounded w-full" 
+                                    placeholder="Cargo" 
+                                    value={formData.cargo_consultores} 
+                                    onChange={e => setFormData({...formData, cargo_consultores: e.target.value})} 
+                                    required
+                                />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Data de Inclusão</label>
-                                <input className="border p-2 rounded w-full" type="date" value={formData.data_inclusao_consultores} onChange={e => setFormData({...formData, data_inclusao_consultores: e.target.value})} required />
+                                <label className="block mb-1">Data de Inclusão</label>
+                                <input 
+                                    className="border p-2 rounded w-full" 
+                                    type="date" 
+                                    value={formData.data_inclusao_consultores} 
+                                    onChange={e => setFormData({...formData, data_inclusao_consultores: e.target.value})} 
+                                    required
+                                />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Gestor</label>
-                                <select className="border p-2 rounded w-full" value={formData.gestor_imediato_id} onChange={e => setFormData({...formData, gestor_imediato_id: e.target.value})} required>
+                                <label className="block mb-1">Gestor</label>
+                                <select 
+                                    className="border p-2 rounded w-full" 
+                                    value={formData.gestor_imediato_id} 
+                                    onChange={e => setFormData({...formData, gestor_imediato_id: e.target.value})} 
+                                    required
+                                >
                                     <option value="">Selecione...</option>
                                     {usuariosCliente.filter(u => u.ativo).map(u => <option key={u.id} value={u.id}>{u.nome_gestor_cliente}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
+                                <label className="block mb-1">Cliente</label>
                                 <input 
                                     className="border p-2 rounded w-full bg-gray-100" 
                                     value={(() => {
@@ -144,12 +180,21 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Faturamento</label>
-                                <input className="border p-2 rounded w-full" placeholder="R$ 0,00" value={formData.valor_faturamento} onChange={e => setFormData({...formData, valor_faturamento: e.target.value})} />
+                                <label className="block mb-1">Faturamento</label>
+                                <input 
+                                    className="border p-2 rounded w-full" 
+                                    placeholder="R$ 0,00" 
+                                    value={formData.valor_faturamento} 
+                                    onChange={e => setFormData({...formData, valor_faturamento: e.target.value})}
+                                />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                                <select className="border p-2 rounded w-full" value={formData.status} onChange={e => setFormData({...formData, status: e.target.value as any})}>
+                                <label className="block mb-1">Status</label>
+                                <select 
+                                    className="border p-2 rounded w-full" 
+                                    value={formData.status} 
+                                    onChange={e => setFormData({...formData, status: e.target.value as any})}
+                                >
                                     <option value="Ativo">Ativo</option>
                                     <option value="Perdido">Perdido</option>
                                     <option value="Encerrado">Encerrado</option>
@@ -158,12 +203,22 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                             {(formData.status === 'Perdido' || formData.status === 'Encerrado') && (
                                 <>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Data de Saída</label>
-                                        <input className="border p-2 rounded w-full" type="date" value={formData.data_saida} onChange={e => setFormData({...formData, data_saida: e.target.value})} required />
+                                        <label className="block mb-1">Data de Saída</label>
+                                        <input 
+                                            className="border p-2 rounded w-full" 
+                                            type="date" 
+                                            value={formData.data_saida} 
+                                            onChange={e => setFormData({...formData, data_saida: e.target.value})} 
+                                            required
+                                        />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Motivo de Desligamento</label>
-                                        <select className="border p-2 rounded w-full" value={formData.motivo_desligamento} onChange={e => setFormData({...formData, motivo_desligamento: e.target.value as any})}>
+                                        <label className="block mb-1">Motivo de Desligamento</label>
+                                        <select 
+                                            className="border p-2 rounded w-full" 
+                                            value={formData.motivo_desligamento} 
+                                            onChange={e => setFormData({...formData, motivo_desligamento: e.target.value as any})}
+                                        >
                                             <option value="">Selecione...</option>
                                             {TERMINATION_REASONS.map(r => <option key={r.value} value={r.value}>{r.value}</option>)}
                                         </select>
@@ -172,8 +227,19 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                             )}
                             
                             <div className="col-span-2 flex gap-4 justify-end pt-4 border-t">
-                                <button type="button" onClick={() => { setIsFormOpen(false); setEditingConsultant(null); }} className="px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400">Cancelar</button>
-                                <button type="submit" className="px-4 py-2 bg-[#533738] text-white rounded hover:bg-[#6b4546]">Salvar</button>
+                                <button 
+                                    type="button" 
+                                    onClick={() => { setIsFormOpen(false); setEditingConsultant(null); }} 
+                                    className="px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400 transition-colors btn"
+                                >
+                                    Cancelar
+                                </button>
+                                <button 
+                                    type="submit" 
+                                    className="px-4 py-2 bg-[#533738] text-white rounded hover:bg-[#6b4546] transition-colors btn"
+                                >
+                                    Salvar
+                                </button>
                             </div>
                         </form>
                     </div>
@@ -203,10 +269,19 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                     <td className="px-4 py-3">{cliente?.razao_social_cliente || '-'}</td>
                                     <td className="px-4 py-3">{c.cargo_consultores}</td>
                                     <td className="px-4 py-3">{dataInclusao}</td>
-                                    <td className="px-4 py-3"><span className={`px-2 py-1 rounded text-xs ${c.status === 'Ativo' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{c.status}</span></td>
+                                    <td className="px-4 py-3">
+                                        <span className={`px-2 py-1 rounded text-xs status-badge ${c.status === 'Ativo' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                            {c.status}
+                                        </span>
+                                    </td>
                                     <td className="px-4 py-3">
                                         <div className="flex gap-2">
-                                            <button onClick={() => setEditingConsultant(c)} className="text-blue-600 hover:text-blue-800 font-medium">Editar</button>
+                                            <button 
+                                                onClick={() => setEditingConsultant(c)} 
+                                                className="text-blue-600 hover:text-blue-800 font-medium"
+                                            >
+                                                Editar
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
