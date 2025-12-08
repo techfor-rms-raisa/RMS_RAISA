@@ -78,7 +78,7 @@ export async function generatePredictiveAlert(recentFlags: BehavioralFlag[]): Pr
 }
 
 
-export async function analyzeReport(reportText: string): Promise<AIAnalysisResult[]> {
+export async function analyzeReport(reportText: string, managerName?: string): Promise<AIAnalysisResult[]> {
   const model = AI_MODEL_NAME;
   
   const prompt = `
@@ -111,7 +111,7 @@ export async function analyzeReport(reportText: string): Promise<AIAnalysisResul
 
     return rawResults.map((result: any) => ({
         consultantName: result.consultorNome,
-        managerName: "",
+        managerName: managerName || "", // Usa o nome do gestor recebido
         reportMonth: new Date().getMonth() + 1,
         riskScore: parseInt(result.riscoConfirmado, 10) as RiskScore,
         summary: result.resumoSituacao,

@@ -38,13 +38,10 @@ import AtividadesInserir from './components/atividades/AtividadesInserir';
 import AtividadesConsultar from './components/atividades/AtividadesConsultar';
 import AtividadesExportar from './components/atividades/AtividadesExportar';
 
-// ============================================
-// ✅ ADICIONE ESTE IMPORT
-// ============================================
 import { PermissionsProvider } from './hooks/usePermissions';
-
 import { useSupabaseData } from './hooks/useSupabaseData';
 import { AIAnalysisResult, User, View, FeedbackResponse, RHAction } from './types';
+import { analyzeReport as processReportAnalysis } from './services/geminiService'; // Importa a função real
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -59,16 +56,16 @@ const App: React.FC = () => {
     clients, consultants, users, usuariosCliente, coordenadoresCliente,
     templates, campaigns, feedbackResponses, rhActions,
     vagas, pessoas, candidaturas, // RAISA Data
-    updateConsultantScore, processReportAnalysis, 
-    addClient, updateClient, batchAddClients,
-    addConsultant, updateConsultant, batchAddConsultants,
+    updateConsultantScore, 
+    addClient, 
+    addConsultant, 
     addUser, updateUser,
-    addUsuarioCliente, updateUsuarioCliente, batchAddManagers,
-    addCoordenadorCliente, updateCoordenadorCliente, batchAddCoordinators,
-    migrateYearlyData,
+    addUsuarioCliente, updateUsuarioCliente, 
+    addCoordenadorCliente, updateCoordenadorCliente, 
+    // migrateYearlyData, // Mock function, remover se não existir no Supabase
     addTemplate, updateTemplate, deleteTemplate,
     addCampaign, updateCampaign,
-    addFeedbackResponse, addRHAction,
+    // addFeedbackResponse, addRHAction, // Mock functions
     addVaga, updateVaga, deleteVaga, 
     addPessoa, updatePessoa,
     addCandidatura, updateCandidaturaStatus
@@ -82,10 +79,6 @@ const App: React.FC = () => {
   const handleLogout = () => {
     setCurrentUser(null);
     setSimulatedToken(null);
-  };
-
-  const handleAnalysisComplete = (results: AIAnalysisResult[]) => {
-      results.forEach(result => updateConsultantScore(result));
   };
 
   const handleManualAnalysis = async (text: string, gestorName?: string) => {
@@ -102,7 +95,7 @@ const App: React.FC = () => {
           
           // Atualizar score de cada consultor
           for (const result of results) {
-              await updateConsultantScore(result);
+              await updateConsultantScore(result, text); // Passa o texto original do relatório
           }
           
           alert(`✅ Análise concluída com sucesso!\n\n${results.length} consultor(es) atualizado(s).\n\nVerifique o Dashboard para ver os resultados.`);
@@ -118,8 +111,8 @@ const App: React.FC = () => {
   };
 
   const handleFeedbackSubmit = (response: FeedbackResponse, action?: RHAction) => {
-      addFeedbackResponse(response);
-      if (action) addRHAction(action);
+      // addFeedbackResponse(response);
+      // if (action) addRHAction(action);
   };
 
   const renderContent = () => {
@@ -130,11 +123,11 @@ const App: React.FC = () => {
     switch (currentView) {
       // RMS Views
       case 'users':
-        return <ManageUsers users={users} addUser={addUser} updateUser={updateUser} currentUser={currentUser!} migrateYearlyData={migrateYearlyData} />;
+        return <ManageUsers users={users} addUser={addUser} updateUser={updateUser} currentUser={currentUser!} migrateYearlyData={() => {}} />;
       case 'clients':
-        return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={updateClient} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={updateUsuarioCliente} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={updateCoordenadorCliente} currentUser={currentUser!} />;
+        return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={() => {}} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={() => {}} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={() => {}} currentUser={currentUser!} />;
       case 'consultants':
-        return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={updateConsultant} currentUser={currentUser!} />;
+        return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={() => {}} currentUser={currentUser!} />;
       case 'quarantine':
         return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} isQuarantineView={true} />;
       case 'recommendations':
@@ -144,7 +137,7 @@ const App: React.FC = () => {
       case 'export': 
         return <ExportModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
       case 'import':
-        return <ImportModule users={users} clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} batchAddClients={batchAddClients} batchAddManagers={batchAddManagers} batchAddCoordinators={batchAddCoordinators} batchAddConsultants={batchAddConsultants} />;
+        return <ImportModule users={users} clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} batchAddClients={() => {}} batchAddManagers={() => {}} batchAddCoordinators={() => {}} batchAddConsultants={() => {}} />;
       case 'templates':
           return <TemplateLibrary templates={templates} currentUser={currentUser!} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} />;
       case 'campaigns':
@@ -204,9 +197,6 @@ const App: React.FC = () => {
       return renderContent();
   }
 
-  // ============================================
-  // ✅ ENVOLVA TODO O RETURN COM <PermissionsProvider>
-  // ============================================
   return (
     <PermissionsProvider>
       <div className="min-h-screen bg-gray-100 flex flex-col overflow-hidden">

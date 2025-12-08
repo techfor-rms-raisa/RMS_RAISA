@@ -544,6 +544,88 @@ export const useSupabaseData = () => {
     addConsultant,
 
     // Métodos de carregamento
-    loadAllData
+    loadAllData,
+    updateConsultantScore, // Adicionado
   };
 };
+
+
+  // ============================================
+  // ATUALIZAR SCORE DO CONSULTOR (NOVO)
+  // ============================================
+
+  const updateConsultantScore = async (result: AIAnalysisResult, reportText: string) => {
+    try {
+      console.log('🔄 Atualizando score do consultor:', result.consultantName);
+
+      // 1. Encontrar o consultor pelo nome
+      const { data: consultantData, error: consultantError } = await supabase
+        .from('consultants')
+        .select('id')
+        .eq('nome_consultores', result.consultantName)
+        .single();
+
+      if (consultantError || !consultantData) {
+        throw new Error(`Consultor '${result.consultantName}' não encontrado.`);
+      }
+
+      const consultantId = consultantData.id;
+
+      // 2. Inserir o novo relatório em consultant_reports
+      const { data: reportData, error: reportError } = await supabase
+        .from('consultant_reports')
+        .insert([{
+          consultant_id: consultantId,
+          month: result.reportMonth,
+          year: new Date().getFullYear(),
+          risk_score: result.riskScore,
+          summary: result.summary,
+          negative_pattern: result.negativePattern,
+          predictive_alert: result.predictiveAlert,
+          recommendations: result.recommendations,
+          content: reportText, // Salva o conteúdo original do relatório
+          generated_by: 'ia_automatica',
+          ai_justification: result.summary, // Pode ser mais detalhado se a API fornecer
+        }])
+        .select()
+        .single();
+
+      if (reportError) {
+        throw new Error(`Erro ao salvar o relatório: ${reportError.message}`);
+      }
+
+      console.log('✅ Relatório de análise salvo:', reportData);
+
+      // 3. Atualizar a tabela consultants com o novo score
+      const monthField = `parecer_${result.reportMonth}_consultor`;
+      const { data: updatedConsultant, error: updateError } = await supabase
+        .from('consultants')
+        .update({ 
+            [monthField]: result.riskScore,
+            parecer_final_consultor: result.riskScore // Lógica simplificada, pode ser melhorada
+         })
+        .eq('id', consultantId)
+        .select()
+        .single();
+
+      if (updateError) {
+        throw new Error(`Erro ao atualizar o score do consultor: ${updateError.message}`);
+      }
+
+      console.log('✅ Score do consultor atualizado:', updatedConsultant);
+
+      // 4. Atualizar o estado local para refletir as mudanças na UI
+      setConsultants(prev => prev.map(c => {
+        if (c.id === consultantId) {
+          const newReports = [...c.reports, reportData as ConsultantReport];
+          return { ...c, ...updatedConsultant, reports: newReports };
+        }
+        return c;
+      }));
+
+    } catch (err: any) {
+      console.error('❌ Erro em updateConsultantScore:', err);
+      alert(`Erro ao atualizar score: ${err.message}`);
+      throw err;
+    }
+  };
