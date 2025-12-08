@@ -104,7 +104,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
 
             {isFormOpen && (
                 <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg p-8 max-w-3xl w-full">
+                    <div className="bg-white rounded-lg p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
                         <h3 className="text-xl font-bold mb-4">{editingConsultant ? 'Editar' : 'Novo'} Consultor</h3>
                         <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
                             <div>
@@ -135,7 +135,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 <input 
                                     className="border p-2 rounded w-full bg-gray-100" 
                                     value={(() => {
-                                        const gestor = usuariosCliente.find(u => u.id === formData.gestor_imediato_id);
+                                        const gestor = usuariosCliente.find(u => u.id === parseInt(formData.gestor_imediato_id));
                                         const cliente = gestor ? clients.find(cl => cl.id === gestor.id_cliente) : null;
                                         return cliente?.razao_social_cliente || '';
                                     })()} 
@@ -171,52 +171,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 </>
                             )}
                             
-                            {/* Campo de CV */}
-                            <div className="col-span-2 border-t pt-4 mt-2">
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    📎 Currículo (CV)
-                                </label>
-                                {editingConsultant?.curriculo_url ? (
-                                    <div className="flex items-center gap-3 p-3 bg-gray-50 rounded border">
-                                        <svg className="w-8 h-8 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-                                            <path d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"/>
-                                        </svg>
-                                        <div className="flex-1">
-                                            <p className="text-sm font-medium text-gray-900">
-                                                {editingConsultant.curriculo_filename || 'Currículo.pdf'}
-                                            </p>
-                                            <p className="text-xs text-gray-500">
-                                                {editingConsultant.curriculo_uploaded_at 
-                                                    ? `Enviado em ${new Date(editingConsultant.curriculo_uploaded_at).toLocaleDateString('pt-BR')}`
-                                                    : 'Recuperado do banco de talentos'
-                                                }
-                                            </p>
-                                        </div>
-                                        <a 
-                                            href={editingConsultant.curriculo_url} 
-                                            target="_blank" 
-                                            rel="noopener noreferrer"
-                                            className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 transition"
-                                        >
-                                            👁️ Ver CV
-                                        </a>
-                                    </div>
-                                ) : (
-                                    <div className="p-4 bg-gray-50 rounded border border-dashed border-gray-300 text-center">
-                                        <svg className="w-12 h-12 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                        </svg>
-                                        <p className="text-sm text-gray-600 mb-2">Nenhum CV vinculado</p>
-                                        <p className="text-xs text-gray-500">
-                                            O CV será recuperado automaticamente se o consultor foi aprovado como candidato
-                                        </p>
-                                    </div>
-                                )}
-                            </div>
-                            
-                            <div className="col-span-2 flex justify-end gap-2 mt-4">
-                                <button type="button" onClick={() => setIsFormOpen(false)} className="bg-gray-300 px-4 py-2 rounded">Cancelar</button>
-                                <button type="submit" className="bg-green-600 text-white px-4 py-2 rounded">Salvar</button>
+                            <div className="col-span-2 flex gap-4 justify-end pt-4 border-t">
+                                <button type="button" onClick={() => { setIsFormOpen(false); setEditingConsultant(null); }} className="px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400">Cancelar</button>
+                                <button type="submit" className="px-4 py-2 bg-[#533738] text-white rounded hover:bg-[#6b4546]">Salvar</button>
                             </div>
                         </form>
                     </div>
@@ -224,25 +181,24 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
             )}
 
             <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                        <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Consultor</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cargo</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Data de Inclusão</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ações</th>
+                <table className="w-full border-collapse">
+                    <thead>
+                        <tr className="bg-gray-100">
+                            <th className="border px-4 py-3 text-left">Nome</th>
+                            <th className="border px-4 py-3 text-left">Cliente</th>
+                            <th className="border px-4 py-3 text-left">Cargo</th>
+                            <th className="border px-4 py-3 text-left">Data Inclusão</th>
+                            <th className="border px-4 py-3 text-left">Status</th>
+                            <th className="border px-4 py-3 text-left">Ações</th>
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {consultants.map(c => {
+                    <tbody>
+                        {consultants.map((c) => {
                             const gestor = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
                             const cliente = gestor ? clients.find(cl => cl.id === gestor.id_cliente) : null;
-                            const dataInclusao = c.data_inclusao_consultores ? new Date(c.data_inclusao_consultores).toLocaleDateString('pt-BR') : '-';
-                            
+                            const dataInclusao = new Date(c.data_inclusao_consultores).toLocaleDateString('pt-BR');
                             return (
-                                <tr key={c.id}>
+                                <tr key={c.id} className="border-b hover:bg-gray-50">
                                     <td className="px-4 py-3">{c.nome_consultores}</td>
                                     <td className="px-4 py-3">{cliente?.razao_social_cliente || '-'}</td>
                                     <td className="px-4 py-3">{c.cargo_consultores}</td>
@@ -250,19 +206,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                     <td className="px-4 py-3"><span className={`px-2 py-1 rounded text-xs ${c.status === 'Ativo' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{c.status}</span></td>
                                     <td className="px-4 py-3">
                                         <div className="flex gap-2">
-                                            <button onClick={() => setEditingConsultant(c)} className="text-blue-600 hover:text-blue-800">Editar</button>
-                                            {!isReadOnly && onManualReport && (
-                                                <button 
-                                                    onClick={() => {
-                                                        setReportingConsultant(c);
-                                                        setIsReportModalOpen(true);
-                                                    }} 
-                                                    className="text-green-600 hover:text-green-800"
-                                                    title="Adicionar Relatório de Atividades"
-                                                >
-                                                    📋 Relatório
-                                                </button>
-                                            )}
+                                            <button onClick={() => setEditingConsultant(c)} className="text-blue-600 hover:text-blue-800 font-medium">Editar</button>
                                         </div>
                                     </td>
                                 </tr>
