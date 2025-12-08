@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { Client, Consultant, UsuarioCliente } from '../../src/components/types';
+import { Client, Consultant, UsuarioCliente } from '../types';
 
 interface AtividadesInserirProps {
     clients: Client[];
