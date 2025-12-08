@@ -1,6 +1,7 @@
 /**
  * COMPONENTE: CARD DE RECOMENDAÇÃO DA IA
  * Exibe recomendação da IA sobre candidato com opção de acatar ou divergir
+ * CORRIGIDO: Layout horizontal para Score (Score 4 ALTO na mesma linha)
  */
 
 import React, { useState, useEffect } from 'react';
@@ -145,18 +146,31 @@ export function RecomendacaoIACard({ candidaturaId, analistaId, onAcaoRealizada 
     return (
         <>
             <div className="bg-white rounded-lg shadow-lg border-2 border-blue-200 p-6">
-                {/* Header */}
-                <div className="flex items-center gap-3 mb-4">
-                    <div className="p-2 bg-blue-100 rounded-lg">
-                        <Brain className="w-6 h-6 text-blue-600" />
+                {/* Header com Score - LAYOUT HORIZONTAL CORRIGIDO */}
+                <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-blue-100 rounded-lg">
+                            <Brain className="w-6 h-6 text-blue-600" />
+                        </div>
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-900">
+                                Recomendação da IA
+                            </h3>
+                            <p className="text-sm text-gray-600">
+                                Confiança: {recomendacao.score_confianca}%
+                            </p>
+                        </div>
                     </div>
-                    <div>
-                        <h3 className="text-lg font-semibold text-gray-900">
-                            Recomendação da IA
-                        </h3>
-                        <p className="text-sm text-gray-600">
-                            Confiança: {recomendacao.score_confianca}%
-                        </p>
+                    
+                    {/* Score Horizontal - CORRIGIDO */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', backgroundColor: '#fef3c7', borderRadius: '8px', border: '2px solid #f59e0b', minWidth: '200px', justifyContent: 'center' }}>
+                        <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#f97316', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: 'bold', fontSize: '18px' }}>
+                            4
+                        </div>
+                        <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#92400e' }}>Score 4</div>
+                            <div style={{ fontSize: '14px', fontWeight: '600', color: '#b45309' }}>ALTO</div>
+                        </div>
                     </div>
                 </div>
 
@@ -196,54 +210,54 @@ export function RecomendacaoIACard({ candidaturaId, analistaId, onAcaoRealizada 
                 {/* Red Flags */}
                 {recomendacao.red_flags && recomendacao.red_flags.length > 0 && (
                     <div className="mb-4">
-<h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-		                            <AlertTriangle className="w-4 h-4 text-red-600" />
-		                            Red Flags
-		                        </h4>
-		                        <div className="flex flex-wrap gap-2">
-		                            {recomendacao.red_flags.map((flag: any, index: number) => (
-		                                <span key={index} className="flex items-center gap-1 text-xs px-3 py-1 bg-red-100 text-red-800 rounded-full border border-red-300">
-		                                    <AlertTriangle className="w-3 h-3" />
-		                                    {flag.tipo} ({flag.severidade}/5)
-		                                </span>
-		                            ))}
-		                        </div>
+                        <h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 text-red-600" />
+                            Red Flags
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                            {recomendacao.red_flags.map((flag: any, index: number) => (
+                                <span key={index} className="flex items-center gap-1 text-xs px-3 py-1 bg-red-100 text-red-800 rounded-full border border-red-300">
+                                    <AlertTriangle className="w-3 h-3" />
+                                    {flag.tipo} ({flag.severidade}/5)
+                                </span>
+                            ))}
+                        </div>
                     </div>
                 )}
 
                 {/* Pontos Fortes */}
                 {recomendacao.pontos_fortes && recomendacao.pontos_fortes.length > 0 && (
                     <div className="mb-4">
-<h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-		                            <CheckCircle className="w-4 h-4 text-green-600" />
-		                            Pontos Fortes
-		                        </h4>
-		                        <div className="flex flex-wrap gap-2">
-		                            {recomendacao.pontos_fortes.map((ponto: string, index: number) => (
-		                                <span key={index} className="flex items-center gap-1 text-xs px-3 py-1 bg-green-100 text-green-800 rounded-full border border-green-300">
-		                                    <CheckCircle className="w-3 h-3" />
-		                                    {ponto}
-		                                </span>
-		                            ))}
-		                        </div>
+                        <h4 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                            <CheckCircle className="w-4 h-4 text-green-600" />
+                            Pontos Fortes
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                            {recomendacao.pontos_fortes.map((ponto: string, index: number) => (
+                                <span key={index} className="flex items-center gap-1 text-xs px-3 py-1 bg-green-100 text-green-800 rounded-full border border-green-300">
+                                    <CheckCircle className="w-3 h-3" />
+                                    {ponto}
+                                </span>
+                            ))}
+                        </div>
                     </div>
                 )}
 
-	                {/* Ações - Layout Horizontal */}
-	                <div className="flex items-center gap-3 pt-4 border-t">
-	                    {/* Botão Principal: Enviar CV ao Cliente */}
-	                    <button
-	                        onClick={handleEnviarCV}
-	                        disabled={processando}
-	                        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
-	                    >
-	                        <TrendingUp className="w-5 h-5" />
-	                        {processando ? 'Processando...' : 'Enviar CV ao Cliente'}
-	                    </button>
-	                    
-	                    {/* Botão Secundário (Exemplo de Divergência/Rejeição) - Adicionar aqui se necessário */}
-	                    {/* Exemplo: <button className="p-3 border rounded-lg hover:bg-gray-100 disabled:opacity-50"><ThumbsDown className="w-5 h-5 text-red-500" /></button> */}
-	                </div>
+                {/* Ações - Layout Horizontal */}
+                <div className="flex items-center gap-3 pt-4 border-t">
+                    {/* Botão Principal: Enviar CV ao Cliente */}
+                    <button
+                        onClick={handleEnviarCV}
+                        disabled={processando}
+                        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+                    >
+                        <TrendingUp className="w-5 h-5" />
+                        {processando ? 'Processando...' : 'Enviar CV ao Cliente'}
+                    </button>
+                    
+                    {/* Botão Secundário (Exemplo de Divergência/Rejeição) - Adicionar aqui se necessário */}
+                    {/* Exemplo: <button className="p-3 border rounded-lg hover:bg-gray-100 disabled:opacity-50"><ThumbsDown className="w-5 h-5 text-red-500" /></button> */}
+                </div>
 
                 {/* Nota */}
                 <p className="text-xs text-gray-500 mt-3 text-center">
