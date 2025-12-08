@@ -512,6 +512,92 @@ export const useSupabaseData = () => {
   };
 
   // ============================================
+  // ATUALIZAR SCORE DO CONSULTOR
+  // ============================================
+
+  const updateConsultantScore = async (result: AIAnalysisResult, reportText?: string): Promise<{ success: boolean; consultantName: string; error?: string }> => {
+    if (!result.consultantName) {
+      console.warn('⚠️ updateConsultantScore: Nome do consultor não retornado pela IA. Ignorando registro.');
+      return { success: false, consultantName: 'undefined', error: 'Nome do consultor não retornado pela IA' };
+    }
+
+    try {
+      console.log('🔄 Atualizando score do consultor:', result.consultantName);
+
+      // 1. Encontrar o consultor pelo nome
+      const { data: consultantData, error: consultantError } = await supabase
+        .from('consultants')
+        .select('id')
+        .eq('nome_consultores', result.consultantName)
+        .single();
+
+      if (consultantError || !consultantData) {
+        console.warn(`⚠️ Consultor '${result.consultantName}' não encontrado no banco de dados. Ignorando registro.`);
+        return { success: false, consultantName: result.consultantName, error: 'Consultor não encontrado no banco de dados' };
+      }
+
+      const consultantId = consultantData.id;
+
+      // 2. Inserir o novo relatório em consultant_reports (se reportText fornecido)
+      if (reportText) {
+        const { error: reportError } = await supabase
+          .from('consultant_reports')
+          .insert([{
+            consultant_id: consultantId,
+            month: result.reportMonth,
+            year: new Date().getFullYear(),
+            risk_score: result.riskScore,
+            summary: result.summary,
+            negative_pattern: result.negativePattern,
+            predictive_alert: result.predictiveAlert,
+            recommendations: result.recommendations,
+            content: reportText,
+            generated_by: 'ia_automatica',
+            ai_justification: result.summary,
+          }]);
+
+        if (reportError) {
+          console.error(`❌ Erro ao salvar relatório para '${result.consultantName}':`, reportError);
+          return { success: false, consultantName: result.consultantName, error: `Erro ao salvar o relatório: ${reportError.message}` };
+        }
+      }
+
+      // 3. Atualizar a tabela consultants com o novo score
+      const monthField = `parecer_${result.reportMonth}_consultor`;
+      const { data: updatedConsultant, error: updateError } = await supabase
+        .from('consultants')
+        .update({ 
+            [monthField]: result.riskScore,
+            parecer_final_consultor: result.riskScore
+         })
+        .eq('id', consultantId)
+        .select()
+        .single();
+
+      if (updateError) {
+        console.error(`❌ Erro ao atualizar score para '${result.consultantName}':`, updateError);
+        return { success: false, consultantName: result.consultantName, error: `Erro ao atualizar o score: ${updateError.message}` };
+      }
+
+      console.log('✅ Score do consultor atualizado:', updatedConsultant);
+
+      // 4. Atualizar o estado local
+      setConsultants(prev => prev.map(c => {
+        if (c.id === consultantId) {
+          return { ...c, ...updatedConsultant };
+        }
+        return c;
+      }));
+
+      return { success: true, consultantName: result.consultantName };
+
+    } catch (err: any) {
+      console.error('❌ Erro inesperado em updateConsultantScore:', err);
+      return { success: false, consultantName: result.consultantName, error: err.message };
+    }
+  };
+
+  // ============================================
   // RETORNO DO HOOK
   // ============================================
 
@@ -542,100 +628,9 @@ export const useSupabaseData = () => {
     // Métodos de consultores
     loadConsultants,  // Exportar para recarregar manualmente se necessário
     addConsultant,
+    updateConsultantScore,  // Nova função para atualizar scores
 
     // Métodos de carregamento
-    loadAllData,
-    updateConsultantScore, // Adicionado
+    loadAllData
   };
 };
-
-
-  // ============================================
-  // ATUALIZAR SCORE DO CONSULTOR (NOVO)
-  // ============================================
-
-  const updateConsultantScore = async (result: AIAnalysisResult, reportText: string): Promise<{ success: boolean; consultantName: string; error?: string }> => {
-    if (!result.consultantName) {
-      console.warn('⚠️ updateConsultantScore: Nome do consultor não retornado pela IA. Ignorando registro.');
-      return { success: false, consultantName: 'undefined', error: 'Nome do consultor não retornado pela IA' };
-    }
-
-    try {
-      console.log('🔄 Atualizando score do consultor:', result.consultantName);
-
-      // 1. Encontrar o consultor pelo nome
-      const { data: consultantData, error: consultantError } = await supabase
-        .from('consultants')
-        .select('id')
-        .eq('nome_consultores', result.consultantName)
-        .single();
-
-      if (consultantError || !consultantData) {
-        console.warn(`⚠️ Consultor '${result.consultantName}' não encontrado no banco de dados. Ignorando registro.`);
-        return { success: false, consultantName: result.consultantName, error: 'Consultor não encontrado no banco de dados' };
-      }
-
-      const consultantId = consultantData.id;
-
-      // 2. Inserir o novo relatório em consultant_reports
-      const { data: reportData, error: reportError } = await supabase
-        .from('consultant_reports')
-        .insert([{
-          consultant_id: consultantId,
-          month: result.reportMonth,
-          year: new Date().getFullYear(),
-          risk_score: result.riskScore,
-          summary: result.summary,
-          negative_pattern: result.negativePattern,
-          predictive_alert: result.predictiveAlert,
-          recommendations: result.recommendations,
-          content: reportText, // Salva o conteúdo original do relatório
-          generated_by: 'ia_automatica',
-          ai_justification: result.summary, // Pode ser mais detalhado se a API fornecer
-        }])
-        .select()
-        .single();
-
-      if (reportError) {
-        console.error(`❌ Erro ao salvar relatório para '${result.consultantName}':`, reportError);
-        return { success: false, consultantName: result.consultantName, error: `Erro ao salvar o relatório: ${reportError.message}` };
-      }
-
-      console.log('✅ Relatório de análise salvo:', reportData);
-
-      // 3. Atualizar a tabela consultants com o novo score
-      const monthField = `parecer_${result.reportMonth}_consultor`;
-      const { data: updatedConsultant, error: updateError } = await supabase
-        .from('consultants')
-        .update({ 
-            [monthField]: result.riskScore,
-            parecer_final_consultor: result.riskScore // Lógica simplificada, pode ser melhorada
-         })
-        .eq('id', consultantId)
-        .select()
-        .single();
-
-      if (updateError) {
-        console.error(`❌ Erro ao atualizar score para '${result.consultantName}':`, updateError);
-        return { success: false, consultantName: result.consultantName, error: `Erro ao atualizar o score: ${updateError.message}` };
-      }
-
-      console.log('✅ Score do consultor atualizado:', updatedConsultant);
-
-      // 4. Atualizar o estado local para refletir as mudanças na UI
-      setConsultants(prev => prev.map(c => {
-        if (c.id === consultantId) {
-          const newReports = [...c.reports, reportData as ConsultantReport];
-          return { ...c, ...updatedConsultant, reports: newReports };
-        }
-        return c;
-      }));
-
-      return { success: true, consultantName: result.consultantName };
-
-    } catch (err: any) {
-      console.error('❌ Erro inesperado em updateConsultantScore:', err);
-      return { success: false, consultantName: result.consultantName, error: err.message };
-    }
-  };
-
