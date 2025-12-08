@@ -1884,7 +1884,8 @@ ${text}`;
       predictiveAlert: analysis.predictiveAlert || '',
       recommendations: analysis.recommendations || [],
       details: analysis.details || analysis.summary
-    });
+    }));
+    
     
     if (results.length === 0) {
       console.warn('⚠️ IA não encontrou relatórios válidos no texto fornecido');
