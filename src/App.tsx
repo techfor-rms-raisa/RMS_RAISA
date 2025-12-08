@@ -121,43 +121,116 @@ const App: React.FC = () => {
   const renderContent = () => {
     // RMS Views
     if (currentView === 'dashboard') {
-      return <Dashboard consultants={consultants} />;
+      return (
+        <Dashboard 
+          consultants={consultants} 
+          clients={clients}
+          usuariosCliente={usuariosCliente}
+          coordenadoresCliente={coordenadoresCliente}
+          currentUser={currentUser!}
+          users={users}
+        />
+      );
     }
     if (currentView === 'quarantine') {
-      return <div className="p-4"><h2 className="text-2xl font-bold">Quarentena</h2><p>Módulo de Quarentena em desenvolvimento...</p></div>;
+      return (
+        <Dashboard 
+          consultants={consultants} 
+          clients={clients}
+          usuariosCliente={usuariosCliente}
+          coordenadoresCliente={coordenadoresCliente}
+          currentUser={currentUser!}
+          users={users}
+          isQuarantineView={true}
+        />
+      );
     }
     if (currentView === 'recommendations') {
-      return <RecommendationModule consultants={consultants} />;
+      return (
+        <RecommendationModule 
+          consultants={consultants}
+          clients={clients}
+          usuariosCliente={usuariosCliente}
+        />
+      );
     }
     if (currentView === 'users') {
-      return <ManageUsers users={users} onAddUser={addUser} />;
+      return (
+        <ManageUsers 
+          users={users} 
+          onAddUser={addUser} 
+        />
+      );
     }
     if (currentView === 'clients') {
-      return <ManageClients clients={clients} onAddClient={addClient} />;
+      return (
+        <ManageClients 
+          clients={clients} 
+          onAddClient={addClient} 
+        />
+      );
     }
     if (currentView === 'consultants') {
-      return <ManageConsultants consultants={consultants} onAddConsultant={addConsultant} />;
+      return (
+        <ManageConsultants 
+          consultants={consultants}
+          usuariosCliente={usuariosCliente}
+          clients={clients}
+          coordenadoresCliente={coordenadoresCliente}
+          users={users}
+          addConsultant={addConsultant}
+          updateConsultant={() => {}}
+          currentUser={currentUser!}
+        />
+      );
     }
     if (currentView === 'analytics') {
-      return <Analytics consultants={consultants} />;
+      return (
+        <Analytics 
+          consultants={consultants}
+          clients={clients}
+          usuariosCliente={usuariosCliente}
+        />
+      );
     }
     if (currentView === 'import') {
-      return <AtividadesInserir onAnalyze={handleManualAnalysis} />;
+      return (
+        <AtividadesInserir 
+          onAnalyze={handleManualAnalysis} 
+        />
+      );
     }
     if (currentView === 'export') {
-      return <ExportModule consultants={consultants} />;
+      return (
+        <ExportModule 
+          consultants={consultants} 
+        />
+      );
     }
     if (currentView === 'templates') {
-      return <TemplateLibrary templates={templates} />;
+      return (
+        <TemplateLibrary 
+          templates={templates} 
+        />
+      );
     }
     if (currentView === 'campaigns') {
-      return <ComplianceCampaigns campaigns={campaigns} />;
+      return (
+        <ComplianceCampaigns 
+          campaigns={campaigns} 
+        />
+      );
     }
     if (currentView === 'compliance_dashboard') {
       return <ComplianceDashboard />;
     }
     if (currentView === 'feedback_portal') {
-      return <FeedbackPortal token={simulatedToken} onSubmit={handleFeedbackSubmit} />;
+      return (
+        <FeedbackPortal 
+          token={simulatedToken} 
+          onSubmit={handleFeedbackSubmit} 
+        />
+      );
     }
 
     // RAISA Views
@@ -184,7 +257,16 @@ const App: React.FC = () => {
     }
 
     // Default fallback
-    return <Dashboard consultants={consultants} />;
+    return (
+      <Dashboard 
+        consultants={consultants} 
+        clients={clients}
+        usuariosCliente={usuariosCliente}
+        coordenadoresCliente={coordenadoresCliente}
+        currentUser={currentUser!}
+        users={users}
+      />
+    );
   };
 
   if (!currentUser && currentView !== 'feedback_portal') {
