@@ -38,10 +38,13 @@ import AtividadesInserir from './components/atividades/AtividadesInserir';
 import AtividadesConsultar from './components/atividades/AtividadesConsultar';
 import AtividadesExportar from './components/atividades/AtividadesExportar';
 
+// ============================================
+// ✅ ADICIONE ESTE IMPORT
+// ============================================
 import { PermissionsProvider } from './hooks/usePermissions';
+
 import { useSupabaseData } from './hooks/useSupabaseData';
 import { AIAnalysisResult, User, View, FeedbackResponse, RHAction } from './types';
-import { analyzeReport } from './services/geminiService'; // Importar a função
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -55,15 +58,28 @@ const App: React.FC = () => {
   const { 
     clients, consultants, users, usuariosCliente, coordenadoresCliente,
     templates, campaigns, feedbackResponses, rhActions,
-    vagas, pessoas, candidaturas,
-    updateConsultantScore, 
-    addClient, addConsultant, addUser,
-    loadAllData
+    vagas, pessoas, candidaturas, // RAISA Data
+    updateConsultantScore, processReportAnalysis, 
+    addClient, updateClient, batchAddClients,
+    addConsultant, updateConsultant, batchAddConsultants,
+    addUser, updateUser,
+    addUsuarioCliente, updateUsuarioCliente, batchAddManagers,
+    addCoordenadorCliente, updateCoordenadorCliente, batchAddCoordinators,
+    migrateYearlyData,
+    addTemplate, updateTemplate, deleteTemplate,
+    addCampaign, updateCampaign,
+    addFeedbackResponse, addRHAction,
+    addVaga, updateVaga, deleteVaga, 
+    addPessoa, updatePessoa,
+    addCandidatura, updateCandidaturaStatus,
+    reload: loadAllData  // ✅ Adicionar função para carregar dados
   } = useSupabaseData();
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
     setCurrentView('dashboard');
+    // ✅ Carregar dados APÓS autenticação bem-sucedida
+    loadAllData();
   };
   
   const handleLogout = () => {
@@ -71,10 +87,14 @@ const App: React.FC = () => {
     setSimulatedToken(null);
   };
 
+  const handleAnalysisComplete = (results: AIAnalysisResult[]) => {
+      results.forEach(result => updateConsultantScore(result));
+  };
+
   const handleManualAnalysis = async (text: string, gestorName?: string) => {
       try {
           console.log('📊 Iniciando análise de relatórios...');
-          const results = await analyzeReport(text, gestorName);
+          const results = await processReportAnalysis(text, gestorName);
           
           if (results.length === 0) {
               alert('⚠️ Nenhum relatório válido encontrado. Verifique o formato do arquivo.');
@@ -83,29 +103,15 @@ const App: React.FC = () => {
           
           console.log(`✅ ${results.length} relatório(s) analisado(s). Atualizando consultores...`);
           
-          const processed = [];
-          const ignored = [];
-
+          // Atualizar score de cada consultor
           for (const result of results) {
-              const updateResult = await updateConsultantScore(result, text);
-              if (updateResult.success) {
-                  processed.push(result.consultantName);
-              } else {
-                  ignored.push({ name: result.consultantName, error: updateResult.error });
-              }
+              await updateConsultantScore(result);
           }
           
-          let alertMessage = `✅ Análise concluída!\n\n${processed.length} consultor(es) atualizado(s) com sucesso:\n- ${processed.join("\n- ")}`;
-
-          if (ignored.length > 0) {
-              const ignoredText = ignored.map(item => `${item.name} (Motivo: ${item.error})`).join("\n- ");
-              alertMessage += `\n\n⚠️ ${ignored.length} consultor(es) foram ignorados:\n- ${ignoredText}\n\nPor favor, verifique os nomes e faça a inserção manual se necessário.`;
-          }
-
-          alert(alertMessage);
+          alert(`✅ Análise concluída com sucesso!\n\n${results.length} consultor(es) atualizado(s).\n\nVerifique o Dashboard para ver os resultados.`);
       } catch (error) {
           console.error("❌ Erro na análise manual:", error);
-          alert("Ocorreu um erro inesperado durante a análise. Verifique o console para mais detalhes.");
+          throw error; 
       }
   };
   
@@ -115,164 +121,95 @@ const App: React.FC = () => {
   };
 
   const handleFeedbackSubmit = (response: FeedbackResponse, action?: RHAction) => {
-      console.log('Feedback recebido:', response);
+      addFeedbackResponse(response);
+      if (action) addRHAction(action);
   };
 
   const renderContent = () => {
-    // RMS Views
-    if (currentView === 'dashboard') {
-      return (
-        <Dashboard 
-          consultants={consultants} 
-          clients={clients}
-          usuariosCliente={usuariosCliente}
-          coordenadoresCliente={coordenadoresCliente}
-          currentUser={currentUser!}
-          users={users}
-        />
-      );
-    }
-    if (currentView === 'quarantine') {
-      return (
-        <Dashboard 
-          consultants={consultants} 
-          clients={clients}
-          usuariosCliente={usuariosCliente}
-          coordenadoresCliente={coordenadoresCliente}
-          currentUser={currentUser!}
-          users={users}
-          isQuarantineView={true}
-        />
-      );
-    }
-    if (currentView === 'recommendations') {
-      return (
-        <RecommendationModule 
-          consultants={consultants}
-          clients={clients}
-          usuariosCliente={usuariosCliente}
-        />
-      );
-    }
-    if (currentView === 'users') {
-      return (
-        <ManageUsers 
-          users={users} 
-          onAddUser={addUser} 
-        />
-      );
-    }
-    if (currentView === 'clients') {
-      return (
-        <ManageClients 
-          clients={clients} 
-          onAddClient={addClient} 
-        />
-      );
-    }
-    if (currentView === 'consultants') {
-      return (
-        <ManageConsultants 
-          consultants={consultants}
-          usuariosCliente={usuariosCliente}
-          clients={clients}
-          coordenadoresCliente={coordenadoresCliente}
-          users={users}
-          addConsultant={addConsultant}
-          updateConsultant={() => {}}
-          currentUser={currentUser!}
-        />
-      );
-    }
-    if (currentView === 'analytics') {
-      return (
-        <Analytics 
-          consultants={consultants}
-          clients={clients}
-          usuariosCliente={usuariosCliente}
-        />
-      );
-    }
-    if (currentView === 'import') {
-      return (
-        <AtividadesInserir 
-          onAnalyze={handleManualAnalysis} 
-        />
-      );
-    }
-    if (currentView === 'export') {
-      return (
-        <ExportModule 
-          consultants={consultants} 
-        />
-      );
-    }
-    if (currentView === 'templates') {
-      return (
-        <TemplateLibrary 
-          templates={templates} 
-        />
-      );
-    }
-    if (currentView === 'campaigns') {
-      return (
-        <ComplianceCampaigns 
-          campaigns={campaigns} 
-        />
-      );
-    }
-    if (currentView === 'compliance_dashboard') {
-      return <ComplianceDashboard />;
-    }
-    if (currentView === 'feedback_portal') {
-      return (
-        <FeedbackPortal 
-          token={simulatedToken} 
-          onSubmit={handleFeedbackSubmit} 
-        />
-      );
+    if (currentView === 'feedback_portal' && simulatedToken) {
+        return <FeedbackPortal token={simulatedToken} onSubmit={handleFeedbackSubmit} onClose={() => { setSimulatedToken(null); setCurrentView('campaigns'); }} />;
     }
 
-    // RAISA Views
-    if (currentView === 'vagas') {
-      return <Vagas vagas={vagas} />;
-    }
-    if (currentView === 'candidaturas') {
-      return <Candidaturas candidaturas={candidaturas} />;
-    }
-    if (currentView === 'analise_risco') {
-      return <AnaliseRisco candidaturas={candidaturas} />;
-    }
-    if (currentView === 'pipeline') {
-      return <Pipeline candidaturas={candidaturas} />;
-    }
-    if (currentView === 'talentos') {
-      return <BancoTalentos pessoas={pessoas} />;
-    }
-    if (currentView === 'controle_envios') {
-      return <ControleEnvios />;
-    }
-    if (currentView === 'entrevista_tecnica') {
-      return <EntrevistaTecnica />;
-    }
+    switch (currentView) {
+      // RMS Views
+      case 'users':
+        return <ManageUsers users={users} addUser={addUser} updateUser={updateUser} currentUser={currentUser!} migrateYearlyData={migrateYearlyData} />;
+      case 'clients':
+        return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={updateClient} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={updateUsuarioCliente} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={updateCoordenadorCliente} currentUser={currentUser!} />;
+      case 'consultants':
+        return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={updateConsultant} currentUser={currentUser!} />;
+      case 'quarantine':
+        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} isQuarantineView={true} />;
+      case 'recommendations':
+        return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} />;
+      case 'analytics':
+        return <Analytics consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
+      case 'export': 
+        return <ExportModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
+      case 'import':
+        return <ImportModule users={users} clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} batchAddClients={batchAddClients} batchAddManagers={batchAddManagers} batchAddCoordinators={batchAddCoordinators} batchAddConsultants={batchAddConsultants} />;
+      case 'templates':
+          return <TemplateLibrary templates={templates} currentUser={currentUser!} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} />;
+      case 'campaigns':
+          return <ComplianceCampaigns campaigns={campaigns} templates={templates} consultants={consultants} addCampaign={addCampaign} onSimulateLink={handleSimulateLink} />;
+      case 'compliance_dashboard':
+          return <ComplianceDashboard rhActions={rhActions} feedbackResponses={feedbackResponses} />;
+      
+      // Atividades Views
+      case 'atividades_inserir':
+          return <AtividadesInserir clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} onManualReport={handleManualAnalysis} />;
+      case 'atividades_consultar':
+          return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} />;
+      case 'atividades_exportar':
+          return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} />;
+      
+      // RAISA Views
+      case 'vagas':
+          return <Vagas vagas={vagas} addVaga={addVaga} updateVaga={updateVaga} deleteVaga={deleteVaga} />;
+      case 'candidaturas':
+          return <Candidaturas candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} updateStatus={updateCandidaturaStatus} />;
+      case 'analise_risco':
+          return <AnaliseRisco />;
+      case 'pipeline':
+          return <Pipeline candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} />;
+      case 'talentos':
+          return <BancoTalentos pessoas={pessoas} addPessoa={addPessoa} updatePessoa={updatePessoa} />;
+      case 'controle_envios':
+          return <ControleEnvios currentUser={currentUser!} />;
+      case 'entrevista_tecnica':
+          return <EntrevistaTecnica />;
+      
+      // RAISA Dashboard Views
+      case 'dashboard_funil':
+          return <DashboardFunilConversao />;
+      case 'dashboard_aprovacao':
+          return <DashboardAprovacaoReprovacao />;
+      case 'dashboard_analistas':
+          return <DashboardPerformanceAnalista />;
+      case 'dashboard_geral':
+          return <DashboardPerformanceGeral />;
+      case 'dashboard_clientes':
+          return <DashboardPerformanceCliente />;
+      case 'dashboard_tempo':
+          return <DashboardAnaliseTempo />;
 
-    // Default fallback
-    return (
-      <Dashboard 
-        consultants={consultants} 
-        clients={clients}
-        usuariosCliente={usuariosCliente}
-        coordenadoresCliente={coordenadoresCliente}
-        currentUser={currentUser!}
-        users={users}
-      />
-    );
+      case 'dashboard':
+      default:
+        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} isQuarantineView={false} />;
+    }
   };
 
   if (!currentUser && currentView !== 'feedback_portal') {
-    return <LoginScreen onLogin={handleLogin} />;
+    return <LoginScreen onLogin={handleLogin} users={users} updateUser={updateUser} />;
   }
 
+  if (currentView === 'feedback_portal') {
+      return renderContent();
+  }
+
+  // ============================================
+  // ✅ ENVOLVA TODO O RETURN COM <PermissionsProvider>
+  // ============================================
   return (
     <PermissionsProvider>
       <div className="min-h-screen bg-gray-100 flex flex-col overflow-hidden">
