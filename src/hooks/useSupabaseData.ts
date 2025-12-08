@@ -1796,6 +1796,31 @@ export const useSupabaseData = () => {
       
       if (error) throw error;
       
+      // ✅ Salvar relatório integral na tabela consultant_reports
+      const { data: reportData, error: reportError } = await supabase
+        .from('consultant_reports')
+        .insert([{
+          consultant_id: consultant.id,
+          month: newReport.month,
+          year: newReport.year,
+          risk_score: newReport.riskScore,
+          summary: newReport.summary,
+          negative_pattern: newReport.negativePattern,
+          predictive_alert: newReport.predictiveAlert,
+          recommendations: JSON.stringify(newReport.recommendations),
+          content: newReport.content,  // ← Relatório integral
+          created_at: newReport.createdAt,
+          generated_by: newReport.generatedBy,
+          ai_justification: newReport.aiJustification
+        }]);
+      
+      if (reportError) {
+        console.error('❌ Erro ao salvar relatório:', reportError);
+        throw reportError;
+      }
+      
+      console.log(`✅ Relatório salvo: ${consultant.nome_consultores} - Mês ${newReport.month}`);
+      
       // Atualizar estado local
       const updatedConsultant: Consultant = {
         ...consultant,
@@ -1839,17 +1864,58 @@ const processReportAnalysis = async (text: string, gestorName?: string): Promise
     const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     
     // Prompt para análise de relatórios
-    const analysisPrompt = `Analise o seguinte relatório de atividades e extraia informações sobre cada consultor.
+    const analysisPrompt = `Você é um especialista em Gestão de Riscos e Recursos Humanos com 15+ anos de experiência.
 
-Para cada consultor encontrado, retorne um JSON com a seguinte estrutura:
+TAREFA: Analisar relatório de atividades de consultores e atribuir score de risco preciso.
+
+MATRIZ DE RISCO COMPLETA:
+
+Score 5 (CRÍTICO) - Risco Iminente:
+- Reincidência de reclamação pelo gestor (2+ vezes)
+- Faltas não justificadas (3+ ocorrências)
+- Insubordinação ou desrespeito
+- Fraude ou violação de políticas
+
+Score 4 (ALTO) - Problemas Graves:
+- Não abre câmera nas reuniões (padrão recorrente)
+- Problemas graves de desempenho
+- Feedback negativo consistente do cliente
+- Absenteísmo (2+ faltas em 30 dias)
+- Falta de comunicação com gestor
+
+Score 3 (MODERADO) - Atenção Necessária:
+- Adaptação lenta ao cliente
+- Feedback misto (positivo e negativo)
+- Pequenos atrasos em prazos
+- Comunicação ocasionalmente deficiente
+
+Score 2 (BAIXO) - Desempenho Adequado:
+- Desempenho adequado às expectativas
+- Feedback positivo do cliente
+- Pontualidade e assiduidade
+- Boa comunicação com gestor
+
+Score 1 (MÍNIMO) - Desempenho Excelente:
+- Desempenho excelente
+- Feedback muito positivo do cliente
+- Assiduidade perfeita
+- Proatividade e iniciativa
+
+PARA CADA CONSULTOR, RETORNE JSON:
 {
-  "consultantName": "Nome do Consultor",
-  "clientName": "Nome do Cliente",
+  "consultantName": "Nome",
+  "managerName": "Gestor",
+  "reportMonth": <número 1-12>,
   "riskScore": <1-5>,
-  "summary": "Resumo da análise",
-  "recommendations": ["Recomendação 1", "Recomendação 2"],
-  "month": ${new Date().getMonth() + 1},
-  "year": ${new Date().getFullYear()}
+  "summary": "Resumo conciso da análise",
+  "negativePattern": "Padrão negativo identificado ou null",
+  "predictiveAlert": "Alerta preditivo ou null",
+  "recommendations": [
+    { "tipo": "ACAO IMEDIATA", "descricao": "Ação urgente" },
+    { "tipo": "RECOMENDACAO ESTRATEGICA", "descricao": "Ação de longo prazo" },
+    { "tipo": "QUESTAO SONDAGEM", "descricao": "Pergunta para investigação" }
+  ],
+  "details": "Relatório completo com análise detalhada"
 }
 
 Retorne um array JSON com todos os consultores encontrados.
@@ -1877,12 +1943,17 @@ ${text}`;
     const results: AIAnalysisResult[] = analysisResults.map((analysis: any) => ({
       consultantName: analysis.consultantName,
       managerName: analysis.managerName,
-      reportMonth: analysis.month || new Date().getMonth() + 1,
+      reportMonth: analysis.reportMonth || new Date().getMonth() + 1,
       riskScore: Math.max(1, Math.min(5, analysis.riskScore)) as 1 | 2 | 3 | 4 | 5,
       summary: analysis.summary,
-      negativePattern: analysis.negativePattern || '',
-      predictiveAlert: analysis.predictiveAlert || '',
-      recommendations: analysis.recommendations || [],
+      negativePattern: analysis.negativePattern || null,
+      predictiveAlert: analysis.predictiveAlert || null,
+      recommendations: (analysis.recommendations || []).map((rec: any) => {
+        if (typeof rec === 'string') {
+          return { tipo: 'RECOMENDACAO', descricao: rec };
+        }
+        return rec;
+      }),
       details: analysis.details || analysis.summary
     }));
     
