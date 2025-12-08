@@ -1876,13 +1876,15 @@ ${text}`;
     // Mapear resultados para AIAnalysisResult
     const results: AIAnalysisResult[] = analysisResults.map((analysis: any) => ({
       consultantName: analysis.consultantName,
-      clientName: analysis.clientName,
+      managerName: analysis.managerName,
+      reportMonth: analysis.month || new Date().getMonth() + 1,
       riskScore: Math.max(1, Math.min(5, analysis.riskScore)) as 1 | 2 | 3 | 4 | 5,
       summary: analysis.summary,
+      negativePattern: analysis.negativePattern || '',
+      predictiveAlert: analysis.predictiveAlert || '',
       recommendations: analysis.recommendations || [],
-      month: analysis.month || new Date().getMonth() + 1,
-      year: analysis.year || new Date().getFullYear()
-    }));
+      details: analysis.details || analysis.summary
+    });
     
     if (results.length === 0) {
       console.warn('⚠️ IA não encontrou relatórios válidos no texto fornecido');
