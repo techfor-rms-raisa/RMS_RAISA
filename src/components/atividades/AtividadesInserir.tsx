@@ -164,7 +164,45 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
 
             {mode === 'manual' ? (
                 <form onSubmit={handleManualSubmit} className="space-y-6">
-                    {/* Campos para Cliente, Consultor, Mês, Atividades */}
+                    {/* Cliente */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
+                        <select value={selectedClient} onChange={(e) => { setSelectedClient(e.target.value); setSelectedConsultant(''); }} className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            <option value="">Selecione um cliente...</option>
+                            {clients.map(c => <option key={c.id} value={c.razao_social_cliente}>{c.razao_social_cliente}</option>)}
+                        </select>
+                    </div>
+
+                    {/* Consultor */}
+                    {selectedClient && (
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Consultor</label>
+                            <select value={selectedConsultant} onChange={(e) => setSelectedConsultant(e.target.value)} className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                                <option value="">Selecione um consultor...</option>
+                                {filteredConsultants.map(c => <option key={c.id} value={c.nome_consultores}>{c.nome_consultores}</option>)}
+                            </select>
+                        </div>
+                    )}
+
+                    {/* Mês */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Mês</label>
+                        <select value={month} onChange={(e) => setMonth(parseInt(e.target.value))} className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                        </select>
+                    </div>
+
+                    {/* Atividades */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Atividades e Observações</label>
+                        <textarea value={activities} onChange={(e) => setActivities(e.target.value)} placeholder="Descreva as atividades, desempenho e observações sobre o consultor..." className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent" rows={10} />
+                    </div>
+
+                    {/* Botão Enviar */}
+                    <div className="flex justify-end gap-3">
+                        <button type="button" onClick={() => { setSelectedClient(''); setSelectedConsultant(''); setMonth(new Date().getMonth() + 1); setActivities(''); }} className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition font-medium">Limpar</button>
+                        <button type="submit" disabled={isSubmitting || !selectedConsultant} className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-gray-400 font-medium">{isSubmitting ? 'Processando...' : 'Enviar Relatório'}</button>
+                    </div>
                 </form>
             ) : (
                 <div className="space-y-6">

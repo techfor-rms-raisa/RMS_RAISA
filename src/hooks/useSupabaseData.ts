@@ -1820,43 +1820,84 @@ export const useSupabaseData = () => {
     }
   };
 
-  const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
-    try {
-      console.log('🤖 Processando análise de relatório com IA Gemini...');
-      console.log('📝 Tamanho do texto:', text.length, 'caracteres');
-      console.log('📋 Primeiros 100 caracteres:', text.substring(0, 100));
-      
-      // SEMPRE usar API Gemini para análise inteligente
-      const response = await fetch('/api/analyze-activity-report', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          reportText: text,
-          gestorName: gestorName || 'Não especificado'
-        })
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`API retornou ${response.status}: ${errorText}`);
-      }
-      
-      const data = await response.json();
-      console.log(`✅ ${data.results.length} relatórios analisados pela IA Gemini`);
-      
-      if (data.results.length === 0) {
-        console.warn('⚠️ IA não encontrou relatórios válidos no texto fornecido');
-        alert('⚠️ Nenhum relatório válido encontrado. Verifique o formato do texto.');
-      }
-      
-      return data.results;
-      
-    } catch (err: any) {
-      console.error('❌ Erro ao processar análise com IA:', err);
-      alert(`Erro ao processar relatório com IA: ${err.message}`);
+  // Função corrigida para chamar Gemini diretamente
+const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
+  try {
+    console.log('🤖 Processando análise de relatório com IA Gemini...');
+    console.log('📝 Tamanho do texto:', text.length, 'caracteres');
+    console.log('📋 Primeiros 100 caracteres:', text.substring(0, 100));
+    
+    // Importar GoogleGenerativeAI
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    
+    if (!apiKey) {
+      throw new Error('Chave de API Gemini não configurada. Configure VITE_GEMINI_API_KEY no .env.local');
+    }
+    
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    
+    // Prompt para análise de relatórios
+    const analysisPrompt = `Analise o seguinte relatório de atividades e extraia informações sobre cada consultor.
+
+Para cada consultor encontrado, retorne um JSON com a seguinte estrutura:
+{
+  "consultantName": "Nome do Consultor",
+  "clientName": "Nome do Cliente",
+  "riskScore": <1-5>,
+  "summary": "Resumo da análise",
+  "recommendations": ["Recomendação 1", "Recomendação 2"],
+  "month": ${new Date().getMonth() + 1},
+  "year": ${new Date().getFullYear()}
+}
+
+Retorne um array JSON com todos os consultores encontrados.
+
+Relatório:
+${text}`;
+    
+    const result = await model.generateContent(analysisPrompt);
+    const responseText = result.response.text();
+    
+    console.log('🤖 Resposta da IA:', responseText.substring(0, 200));
+    
+    // Extrair JSON da resposta
+    const jsonMatch = responseText.match(/\[\s*\{[\s\S]*\}\s*\]/);  
+    if (!jsonMatch) {
+      console.warn('⚠️ IA não retornou JSON válido');
+      console.log('Resposta completa:', responseText);
       return [];
     }
-  };
+    
+    const analysisResults = JSON.parse(jsonMatch[0]);
+    console.log(`✅ ${analysisResults.length} relatório(s) analisado(s) pela IA Gemini`);
+    
+    // Mapear resultados para AIAnalysisResult
+    const results: AIAnalysisResult[] = analysisResults.map((analysis: any) => ({
+      consultantName: analysis.consultantName,
+      clientName: analysis.clientName,
+      riskScore: Math.max(1, Math.min(5, analysis.riskScore)) as 1 | 2 | 3 | 4 | 5,
+      summary: analysis.summary,
+      recommendations: analysis.recommendations || [],
+      month: analysis.month || new Date().getMonth() + 1,
+      year: analysis.year || new Date().getFullYear()
+    }));
+    
+    if (results.length === 0) {
+      console.warn('⚠️ IA não encontrou relatórios válidos no texto fornecido');
+      alert('⚠️ Nenhum relatório válido encontrado. Verifique o formato do texto.');
+    }
+    
+    return results;
+    
+  } catch (err: any) {
+    console.error('❌ Erro ao processar análise com IA:', err);
+    alert(`Erro ao processar relatório com IA: ${err.message}`);
+    return [];
+  }
+};
+
   
   // Funções auxiliares removidas - Toda análise agora é feita pela IA Gemini
 
