@@ -119,11 +119,76 @@ const App: React.FC = () => {
   };
 
   const renderContent = () => {
-    // ... (código de renderização)
+    // RMS Views
+    if (currentView === 'dashboard') {
+      return <Dashboard consultants={consultants} />;
+    }
+    if (currentView === 'quarantine') {
+      return <div className="p-4"><h2 className="text-2xl font-bold">Quarentena</h2><p>Módulo de Quarentena em desenvolvimento...</p></div>;
+    }
+    if (currentView === 'recommendations') {
+      return <RecommendationModule consultants={consultants} />;
+    }
+    if (currentView === 'users') {
+      return <ManageUsers users={users} onAddUser={addUser} />;
+    }
+    if (currentView === 'clients') {
+      return <ManageClients clients={clients} onAddClient={addClient} />;
+    }
+    if (currentView === 'consultants') {
+      return <ManageConsultants consultants={consultants} onAddConsultant={addConsultant} />;
+    }
+    if (currentView === 'analytics') {
+      return <Analytics consultants={consultants} />;
+    }
+    if (currentView === 'import') {
+      return <AtividadesInserir onAnalyze={handleManualAnalysis} />;
+    }
+    if (currentView === 'export') {
+      return <ExportModule consultants={consultants} />;
+    }
+    if (currentView === 'templates') {
+      return <TemplateLibrary templates={templates} />;
+    }
+    if (currentView === 'campaigns') {
+      return <ComplianceCampaigns campaigns={campaigns} />;
+    }
+    if (currentView === 'compliance_dashboard') {
+      return <ComplianceDashboard />;
+    }
+    if (currentView === 'feedback_portal') {
+      return <FeedbackPortal token={simulatedToken} onSubmit={handleFeedbackSubmit} />;
+    }
+
+    // RAISA Views
+    if (currentView === 'vagas') {
+      return <Vagas vagas={vagas} />;
+    }
+    if (currentView === 'candidaturas') {
+      return <Candidaturas candidaturas={candidaturas} />;
+    }
+    if (currentView === 'analise_risco') {
+      return <AnaliseRisco candidaturas={candidaturas} />;
+    }
+    if (currentView === 'pipeline') {
+      return <Pipeline candidaturas={candidaturas} />;
+    }
+    if (currentView === 'talentos') {
+      return <BancoTalentos pessoas={pessoas} />;
+    }
+    if (currentView === 'controle_envios') {
+      return <ControleEnvios />;
+    }
+    if (currentView === 'entrevista_tecnica') {
+      return <EntrevistaTecnica />;
+    }
+
+    // Default fallback
+    return <Dashboard consultants={consultants} />;
   };
 
   if (!currentUser && currentView !== 'feedback_portal') {
-    return <LoginScreen onLogin={handleLogin} users={users} updateUser={() => {}} />;
+    return <LoginScreen onLogin={handleLogin} />;
   }
 
   return (
