@@ -554,7 +554,8 @@ export const useSupabaseData = () => {
   // ATUALIZAR SCORE DO CONSULTOR (NOVO)
   // ============================================
 
- export const updateConsultantScore = async (result: AIAnalysisResult, reportText: string): Promise<{ success: boolean; consultantName: string; error?: string }> =>     if (!result.consultantName) {
+  export const updateConsultantScore = async (result: AIAnalysisResult, reportText: string): Promise<{ success: boolean; consultantName: string; error?: string }> => {
+    if (!result.consultantName) {
         console.warn('⚠️ updateConsultantScore: Nome do consultor não retornado pela IA. Ignorando registro.');
         return { success: false, consultantName: 'undefined', error: 'Nome do consultor não retornado pela IA' };
     }
