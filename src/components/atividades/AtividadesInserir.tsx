@@ -5,7 +5,7 @@ interface AtividadesInserirProps {
     clients: Client[];
     consultants: Consultant[];
     usuariosCliente: UsuarioCliente[];
-    onManualReport: (text: string, gestorName?: string) => Promise<void>;
+    onManualReport: (text: string, gestorName?: string, consultantName?: string) => Promise<void>;
 }
 
 const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
@@ -26,8 +26,12 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     const [uploadedFile, setUploadedFile] = useState<File | null>(null);
     const [extractedText, setExtractedText] = useState<string>('');
     const [isExtracting, setIsExtracting] = useState(false);
+    
+    // Estado para seleção de consultor em modo importação
+    const [importSelectedClient, setImportSelectedClient] = useState<string>('');
+    const [importSelectedConsultant, setImportSelectedConsultant] = useState<string>('');
 
-    // Filtrar consultores pelo cliente selecionado
+    // Filtrar consultores pelo cliente selecionado (Modo Manual)
     const filteredConsultants = useMemo(() => {
         if (!selectedClient) return [];
         
@@ -43,6 +47,23 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             managerIds.includes(c.gestor_imediato_id)
         ).sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores));
     }, [selectedClient, clients, consultants, usuariosCliente]);
+
+    // Filtrar consultores pelo cliente selecionado (Modo Importação)
+    const filteredImportConsultants = useMemo(() => {
+        if (!importSelectedClient) return [];
+        
+        const client = clients.find(c => c.razao_social_cliente === importSelectedClient);
+        if (!client) return [];
+
+        const clientManagers = usuariosCliente.filter(u => u.id_cliente === client.id);
+        const managerIds = clientManagers.map(m => m.id);
+
+        return consultants.filter(c => 
+            c.status === 'Ativo' && 
+            c.gestor_imediato_id && 
+            managerIds.includes(c.gestor_imediato_id)
+        ).sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores));
+    }, [importSelectedClient, clients, consultants, usuariosCliente]);
 
     // Handler para upload de arquivo
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -94,18 +115,34 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             return;
         }
 
+        if (!importSelectedConsultant) {
+            alert('Por favor, selecione um consultor para o relatório importado.');
+            return;
+        }
+
         setIsSubmitting(true);
 
         try {
-            // Buscar gestor do primeiro cliente encontrado no texto
-            const manager = usuariosCliente[0]; // Simplificado, pode melhorar lógica
+            // Encontrar dados do consultor selecionado
+            const consultant = consultants.find(c => c.nome_consultores === importSelectedConsultant);
+            const manager = consultant ? usuariosCliente.find(u => u.id === consultant.gestor_imediato_id) : null;
+            const client = clients.find(c => c.razao_social_cliente === importSelectedClient);
+
+            const consultantName = consultant?.nome_consultores || 'Não especificado';
+            const clientName = client?.razao_social_cliente || 'Não especificado';
             const gestorName = manager?.nome_gestor_cliente || 'Não especificado';
 
-            await onManualReport(extractedText, gestorName);
+            // Formatar o texto do relatório com o nome do consultor
+            const formattedText = `◆ ${consultantName} | ${clientName}\n${extractedText}`;
+
+            // Chamar onManualReport com o nome do consultor
+            await onManualReport(formattedText, gestorName, consultantName);
 
             // Limpar
             setUploadedFile(null);
             setExtractedText('');
+            setImportSelectedClient('');
+            setImportSelectedConsultant('');
             
             alert('Relatório importado e processado com sucesso!');
         } catch (error) {
@@ -138,7 +175,8 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             const reportText = `◆ ${consultantName} | ${clientName}\n${activities}`;
             const gestorName = manager?.nome_gestor_cliente || 'Não especificado';
 
-            await onManualReport(reportText, gestorName);
+            // Chamar onManualReport com o nome do consultor
+            await onManualReport(reportText, gestorName, consultantName);
 
             setActivities('');
             setSelectedConsultant('');
@@ -155,36 +193,39 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     const downloadTemplate = () => {
         const template = `INSTRUÇÕES - Relatório de Atividades (Análise com IA Gemini)
 
-Formato: Texto livre - A IA identifica automaticamente consultores e calcula riscos
+Formato: Texto livre - Descreva as atividades do consultor
 
 Estrutura:
-- Cada consultor começa com ◆ (losango)
-- Formato: ◆ NOME DO CONSULTOR | NOME DO CLIENTE
 - Escreva livremente sobre as atividades, desempenho e observações
+- Você selecionará o consultor ANTES de processar
 - A IA Gemini fará a análise completa e atribuirá o score de risco
 
 ================================================================================
 RELATÓRIO DE ATIVIDADES - DEZEMBRO/2025
 ================================================================================
 
-◆ João Silva | AUTO AVALIAR
 Está bastante satisfeito com a equipe, com o projeto e com a empresa. Tem conseguido entregar as demandas dentro do prazo e com qualidade. Recebeu feedback positivo do cliente sobre suas entregas. Demonstra proatividade e boa comunicação.
 
-◆ Pedro Oliveira | CLIENTE ABC
+================================================================================
+
 O CAC me acionou informando que o cliente relatou 2 faltas não justificadas no mês. Conversei com o consultor que informou estar passando por problemas pessoais. Orientei sobre a importância de comunicar ausências previamente. Cliente demonstrou insatisfação.
 
-◆ Maria Santos | CLIENTE XYZ
+================================================================================
+
 Apresentou excelente desempenho no mês. Participou ativamente das reuniões, entregou todas as tarefas no prazo e recebeu elogios do cliente pela qualidade técnica. Demonstra proatividade e boa comunicação com a equipe. Sugerida para promoção.
 
-◆ Carlos Mendes | CLIENTE DEF
+================================================================================
+
 Não entregou projeto no prazo acordado. Cliente relatou problemas de comunicação e qualidade do código. Aplicada advertência formal. Necessário acompanhamento próximo nas próximas semanas.`;
 
         const blob = new Blob([template], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'template_relatorios_atividades.txt';
+        a.download = 'template_relatorio_atividades.txt';
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
     };
 
@@ -319,145 +360,126 @@ Não entregou projeto no prazo acordado. Cliente relatou problemas de comunicaç
                             onChange={(e) => setActivities(e.target.value)}
                             className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             rows={10}
-                            placeholder="Descreva as atividades, entregas, problemas, sucessos, feedbacks do cliente, etc.
-
-Exemplo:
-- Entregou todas as tarefas dentro do prazo
-- Recebeu elogio do cliente pela qualidade do trabalho
-- Apresentou dificuldade em comunicação com a equipe
-- Participou de treinamento técnico
-- 2 faltas não justificadas no mês"
+                            placeholder="Descreva as atividades, entregas, problemas, sucessos, feedbacks do cliente, etc."
                             required
                         />
-                        <p className="text-xs text-gray-500 mt-2">
-                            A IA analisará o texto e identificará automaticamente o nível de risco (1-5)
-                        </p>
                     </div>
 
-                    {/* Legenda */}
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        <h4 className="font-semibold text-gray-800 mb-3">Níveis de Risco:</h4>
-                        <div className="grid grid-cols-2 gap-3 text-sm">
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-green-500"></div>
-                                <span><strong>1 - Excelente:</strong> Performance excepcional</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-blue-500"></div>
-                                <span><strong>2 - Bom:</strong> Performance satisfatória</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-yellow-500"></div>
-                                <span><strong>3 - Médio:</strong> Pontos de atenção</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-orange-500"></div>
-                                <span><strong>4 - Alto:</strong> Problemas significativos</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-red-500"></div>
-                                <span><strong>5 - Crítico:</strong> Situação grave</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Botão */}
-                    <div className="flex justify-end">
-                        <button
-                            type="submit"
-                            className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
-                            disabled={isSubmitting}
-                        >
-                            {isSubmitting ? 'Processando...' : 'Processar Relatório'}
-                        </button>
-                    </div>
+                    {/* Botão de Envio */}
+                    <button
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium py-3 rounded-lg transition"
+                    >
+                        {isSubmitting ? '⏳ Processando...' : '✅ Processar Relatório'}
+                    </button>
                 </form>
             ) : (
                 /* MODO: IMPORTAR ARQUIVO */
                 <div className="space-y-6">
-                    {/* Upload */}
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
-                        <input
-                            type="file"
-                            accept=".pdf,.txt"
-                            onChange={handleFileUpload}
-                            className="hidden"
-                            id="file-upload"
-                        />
-                        <label
-                            htmlFor="file-upload"
-                            className="cursor-pointer inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
-                        >
-                            Selecionar PDF ou TXT
-                        </label>
-                        
-                        {uploadedFile && (
-                            <div className="mt-4 text-sm text-gray-600">
-                                <p><strong>Arquivo:</strong> {uploadedFile.name}</p>
-                                <p><strong>Tamanho:</strong> {(uploadedFile.size / 1024).toFixed(2)} KB</p>
-                            </div>
-                        )}
-                        
-                        {isExtracting && (
-                            <p className="mt-4 text-blue-600">Extraindo texto do arquivo...</p>
-                        )}
+                    {/* Aviso Importante */}
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <p className="text-sm text-blue-800">
+                            <strong>ℹ️ Importante:</strong> Você deve selecionar o consultor ANTES de processar o arquivo. 
+                            O relatório será associado ao consultor selecionado.
+                        </p>
                     </div>
 
-                    {/* Preview do texto extraído */}
+                    {/* Cliente */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Cliente *
+                        </label>
+                        <select
+                            value={importSelectedClient}
+                            onChange={(e) => {
+                                setImportSelectedClient(e.target.value);
+                                setImportSelectedConsultant('');
+                            }}
+                            className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            required
+                        >
+                            <option value="">Selecione um cliente</option>
+                            {clients.map(client => (
+                                <option key={client.id} value={client.razao_social_cliente}>
+                                    {client.razao_social_cliente}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Consultor */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Consultor *
+                        </label>
+                        <select
+                            value={importSelectedConsultant}
+                            onChange={(e) => setImportSelectedConsultant(e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            required
+                            disabled={!importSelectedClient}
+                        >
+                            <option value="">Selecione um cliente primeiro</option>
+                            {filteredImportConsultants.map(consultant => (
+                                <option key={consultant.id} value={consultant.nome_consultores}>
+                                    {consultant.nome_consultores}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Upload */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Upload do Arquivo (PDF ou TXT) *
+                        </label>
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 transition">
+                            <input
+                                type="file"
+                                accept=".pdf,.txt"
+                                onChange={handleFileUpload}
+                                disabled={isExtracting}
+                                className="hidden"
+                                id="file-input"
+                            />
+                            <label htmlFor="file-input" className="cursor-pointer">
+                                {isExtracting ? (
+                                    <p className="text-gray-600">⏳ Processando arquivo...</p>
+                                ) : uploadedFile ? (
+                                    <p className="text-green-600 font-semibold">✅ {uploadedFile.name}</p>
+                                ) : (
+                                    <>
+                                        <p className="text-gray-600 text-lg">📁</p>
+                                        <p className="text-gray-600">Clique para selecionar ou arraste um arquivo PDF/TXT</p>
+                                    </>
+                                )}
+                            </label>
+                        </div>
+                    </div>
+
+                    {/* Prévia */}
                     {extractedText && (
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-2">
-                                Texto Extraído (você pode editar se necessário)
+                                Prévia do Texto Extraído
                             </label>
-                            <textarea
-                                value={extractedText}
-                                onChange={(e) => setExtractedText(e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                rows={15}
-                            />
-                            <p className="text-xs text-gray-500 mt-2">
-                                A IA identificará automaticamente os consultores e analisará os riscos
-                            </p>
+                            <div className="p-4 bg-gray-100 rounded-lg border border-gray-300 max-h-40 overflow-y-auto text-sm whitespace-pre-wrap">
+                                {extractedText.substring(0, 500)}
+                                {extractedText.length > 500 && '...'}
+                            </div>
                         </div>
                     )}
 
-                    {/* Legenda */}
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        <h4 className="font-semibold text-gray-800 mb-3">Níveis de Risco:</h4>
-                        <div className="grid grid-cols-2 gap-3 text-sm">
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-green-500"></div>
-                                <span><strong>1 - Excelente:</strong> Performance excepcional</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-blue-500"></div>
-                                <span><strong>2 - Bom:</strong> Performance satisfatória</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-yellow-500"></div>
-                                <span><strong>3 - Médio:</strong> Pontos de atenção</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-orange-500"></div>
-                                <span><strong>4 - Alto:</strong> Problemas significativos</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 rounded-full bg-red-500"></div>
-                                <span><strong>5 - Crítico:</strong> Situação grave</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Botão Importar */}
-                    <div className="flex justify-end">
-                        <button
-                            onClick={handleImportSubmit}
-                            className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed font-medium"
-                            disabled={isSubmitting || !extractedText}
-                        >
-                            {isSubmitting ? 'Processando...' : 'Importar e Processar'}
-                        </button>
-                    </div>
+                    {/* Botão de Envio */}
+                    <button
+                        type="button"
+                        onClick={handleImportSubmit}
+                        disabled={isSubmitting || !extractedText || !importSelectedConsultant}
+                        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white font-medium py-3 rounded-lg transition"
+                    >
+                        {isSubmitting ? '⏳ Processando...' : '✅ Processar Relatório Importado'}
+                    </button>
                 </div>
             )}
         </div>
