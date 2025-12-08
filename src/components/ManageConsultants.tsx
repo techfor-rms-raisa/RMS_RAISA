@@ -92,15 +92,16 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
     };
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md">
+        <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
             {!isReadOnly && <InclusionImport clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} onImport={addConsultant} />}
             
-            <div className="flex justify-between items-center mb-8">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
                 <h2 className="section-title">Gerenciar Consultores</h2>
                 {!isReadOnly && (
                     <button 
                         onClick={() => { setEditingConsultant(null); setIsFormOpen(true); }} 
-                        className="bg-[#533738] text-white px-6 py-3 rounded shadow hover:bg-[#6b4546] transition-colors btn"
+                        className="btn"
+                        style={{ backgroundColor: '#533738', color: '#ffffff', padding: '12px 24px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
                     >
                         + Novo Consultor
                     </button>
@@ -108,16 +109,16 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
             </div>
 
             {isFormOpen && (
-                <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
-                        <h3 className="card-title mb-6">
+                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(75, 85, 99, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+                    <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', padding: '32px', maxWidth: '900px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
+                        <h3 className="card-title" style={{ marginBottom: '24px' }}>
                             {editingConsultant ? 'Editar' : 'Novo'} Consultor
                         </h3>
-                        <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
+                        <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                             <div>
-                                <label className="block mb-1">Nome</label>
+                                <label className="label">Nome</label>
                                 <input 
-                                    className="border p-2 rounded w-full" 
+                                    className="input"
                                     placeholder="Nome" 
                                     value={formData.nome_consultores} 
                                     onChange={e => setFormData({...formData, nome_consultores: e.target.value})} 
@@ -125,9 +126,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 />
                             </div>
                             <div>
-                                <label className="block mb-1">Email</label>
+                                <label className="label">Email</label>
                                 <input 
-                                    className="border p-2 rounded w-full" 
+                                    className="input"
                                     placeholder="Email" 
                                     type="email" 
                                     value={formData.email_consultor} 
@@ -135,9 +136,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 />
                             </div>
                             <div>
-                                <label className="block mb-1">Cargo</label>
+                                <label className="label">Cargo</label>
                                 <input 
-                                    className="border p-2 rounded w-full" 
+                                    className="input"
                                     placeholder="Cargo" 
                                     value={formData.cargo_consultores} 
                                     onChange={e => setFormData({...formData, cargo_consultores: e.target.value})} 
@@ -145,9 +146,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 />
                             </div>
                             <div>
-                                <label className="block mb-1">Data de Inclusão</label>
+                                <label className="label">Data de Inclusão</label>
                                 <input 
-                                    className="border p-2 rounded w-full" 
+                                    className="input"
                                     type="date" 
                                     value={formData.data_inclusao_consultores} 
                                     onChange={e => setFormData({...formData, data_inclusao_consultores: e.target.value})} 
@@ -155,9 +156,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 />
                             </div>
                             <div>
-                                <label className="block mb-1">Gestor</label>
+                                <label className="label">Gestor</label>
                                 <select 
-                                    className="border p-2 rounded w-full" 
+                                    className="input"
                                     value={formData.gestor_imediato_id} 
                                     onChange={e => setFormData({...formData, gestor_imediato_id: e.target.value})} 
                                     required
@@ -167,9 +168,10 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 </select>
                             </div>
                             <div>
-                                <label className="block mb-1">Cliente</label>
+                                <label className="label">Cliente</label>
                                 <input 
-                                    className="border p-2 rounded w-full bg-gray-100" 
+                                    className="input"
+                                    style={{ backgroundColor: '#f3f4f6' }}
                                     value={(() => {
                                         const gestor = usuariosCliente.find(u => u.id === parseInt(formData.gestor_imediato_id));
                                         const cliente = gestor ? clients.find(cl => cl.id === gestor.id_cliente) : null;
@@ -180,18 +182,18 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 />
                             </div>
                             <div>
-                                <label className="block mb-1">Faturamento</label>
+                                <label className="label">Faturamento</label>
                                 <input 
-                                    className="border p-2 rounded w-full" 
+                                    className="input"
                                     placeholder="R$ 0,00" 
                                     value={formData.valor_faturamento} 
                                     onChange={e => setFormData({...formData, valor_faturamento: e.target.value})}
                                 />
                             </div>
                             <div>
-                                <label className="block mb-1">Status</label>
+                                <label className="label">Status</label>
                                 <select 
-                                    className="border p-2 rounded w-full" 
+                                    className="input"
                                     value={formData.status} 
                                     onChange={e => setFormData({...formData, status: e.target.value as any})}
                                 >
@@ -203,9 +205,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                             {(formData.status === 'Perdido' || formData.status === 'Encerrado') && (
                                 <>
                                     <div>
-                                        <label className="block mb-1">Data de Saída</label>
+                                        <label className="label">Data de Saída</label>
                                         <input 
-                                            className="border p-2 rounded w-full" 
+                                            className="input"
                                             type="date" 
                                             value={formData.data_saida} 
                                             onChange={e => setFormData({...formData, data_saida: e.target.value})} 
@@ -213,9 +215,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                         />
                                     </div>
                                     <div>
-                                        <label className="block mb-1">Motivo de Desligamento</label>
+                                        <label className="label">Motivo de Desligamento</label>
                                         <select 
-                                            className="border p-2 rounded w-full" 
+                                            className="input"
                                             value={formData.motivo_desligamento} 
                                             onChange={e => setFormData({...formData, motivo_desligamento: e.target.value as any})}
                                         >
@@ -226,17 +228,19 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 </>
                             )}
                             
-                            <div className="col-span-2 flex gap-4 justify-end pt-4 border-t">
+                            <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '16px', justifyContent: 'flex-end', paddingTop: '16px', borderTop: '1px solid #e5e7eb' }}>
                                 <button 
                                     type="button" 
                                     onClick={() => { setIsFormOpen(false); setEditingConsultant(null); }} 
-                                    className="px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400 transition-colors btn"
+                                    className="btn"
+                                    style={{ padding: '8px 16px', backgroundColor: '#d1d5db', color: '#1f2937', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
                                 >
                                     Cancelar
                                 </button>
                                 <button 
                                     type="submit" 
-                                    className="px-4 py-2 bg-[#533738] text-white rounded hover:bg-[#6b4546] transition-colors btn"
+                                    className="btn"
+                                    style={{ padding: '8px 16px', backgroundColor: '#533738', color: '#ffffff', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
                                 >
                                     Salvar
                                 </button>
@@ -246,16 +250,16 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                 </div>
             )}
 
-            <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
+            <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                     <thead>
-                        <tr className="bg-gray-100">
-                            <th className="border px-4 py-3 text-left">Nome</th>
-                            <th className="border px-4 py-3 text-left">Cliente</th>
-                            <th className="border px-4 py-3 text-left">Cargo</th>
-                            <th className="border px-4 py-3 text-left">Data Inclusão</th>
-                            <th className="border px-4 py-3 text-left">Status</th>
-                            <th className="border px-4 py-3 text-left">Ações</th>
+                        <tr style={{ backgroundColor: '#f3f4f6' }}>
+                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Nome</th>
+                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Cliente</th>
+                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Cargo</th>
+                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Data Inclusão</th>
+                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Status</th>
+                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Ações</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -264,21 +268,21 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                             const cliente = gestor ? clients.find(cl => cl.id === gestor.id_cliente) : null;
                             const dataInclusao = new Date(c.data_inclusao_consultores).toLocaleDateString('pt-BR');
                             return (
-                                <tr key={c.id} className="border-b hover:bg-gray-50">
-                                    <td className="px-4 py-3">{c.nome_consultores}</td>
-                                    <td className="px-4 py-3">{cliente?.razao_social_cliente || '-'}</td>
-                                    <td className="px-4 py-3">{c.cargo_consultores}</td>
-                                    <td className="px-4 py-3">{dataInclusao}</td>
-                                    <td className="px-4 py-3">
-                                        <span className={`px-2 py-1 rounded text-xs status-badge ${c.status === 'Ativo' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                <tr key={c.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                                    <td style={{ padding: '12px 16px', fontSize: '14px', color: '#1f2937', fontFamily: "'Roboto', sans-serif" }}>{c.nome_consultores}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '14px', color: '#1f2937', fontFamily: "'Roboto', sans-serif" }}>{cliente?.razao_social_cliente || '-'}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '14px', color: '#1f2937', fontFamily: "'Roboto', sans-serif" }}>{c.cargo_consultores}</td>
+                                    <td style={{ padding: '12px 16px', fontSize: '14px', color: '#1f2937', fontFamily: "'Roboto', sans-serif" }}>{dataInclusao}</td>
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <span className="status-badge" style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 700, backgroundColor: c.status === 'Ativo' ? '#dcfce7' : '#fee2e2', color: c.status === 'Ativo' ? '#166534' : '#991b1b' }}>
                                             {c.status}
                                         </span>
                                     </td>
-                                    <td className="px-4 py-3">
-                                        <div className="flex gap-2">
+                                    <td style={{ padding: '12px 16px' }}>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
                                             <button 
                                                 onClick={() => setEditingConsultant(c)} 
-                                                className="text-blue-600 hover:text-blue-800 font-medium"
+                                                style={{ color: '#2563eb', cursor: 'pointer', border: 'none', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 500, fontFamily: "'Roboto', sans-serif" }}
                                             >
                                                 Editar
                                             </button>
