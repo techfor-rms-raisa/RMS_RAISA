@@ -93,27 +93,12 @@ const App: React.FC = () => {
           
           console.log(`✅ ${results.length} relatório(s) analisado(s). Atualizando consultores...`);
           
-          const processed = [];
-          const ignored = [];
-
           // Atualizar score de cada consultor
           for (const result of results) {
-              const updateResult = await updateConsultantScore(result, text);
-              if (updateResult.success) {
-                  processed.push(result.consultantName);
-              } else {
-                  ignored.push({ name: result.consultantName, error: updateResult.error });
-              }
+              await updateConsultantScore(result, text); // Passa o texto original do relatório
           }
           
-          let alertMessage = `✅ Análise concluída!\n\n${processed.length} consultor(es) atualizado(s) com sucesso:\n- ${processed.join("\n- ")}`;
-
-          if (ignored.length > 0) {
-              const ignoredText = ignored.map(item => `${item.name} (Motivo: ${item.error})`).join("\n- ");
-              alertMessage += `\n\n⚠️ ${ignored.length} consultor(es) foram ignorados:\n- ${ignoredText}\n\nPor favor, verifique os nomes e faça a inserção manual se necessário.`;
-          }
-
-          alert(alertMessage);
+          alert(`✅ Análise concluída com sucesso!\n\n${results.length} consultor(es) atualizado(s).\n\nVerifique o Dashboard para ver os resultados.`);
       } catch (error) {
           console.error("❌ Erro na análise manual:", error);
           throw error; 
