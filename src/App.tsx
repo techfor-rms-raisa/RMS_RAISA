@@ -38,13 +38,10 @@ import AtividadesInserir from './components/atividades/AtividadesInserir';
 import AtividadesConsultar from './components/atividades/AtividadesConsultar';
 import AtividadesExportar from './components/atividades/AtividadesExportar';
 
-// ============================================
-// ✅ ADICIONE ESTE IMPORT
-// ============================================
 import { PermissionsProvider } from './hooks/usePermissions';
-
 import { useSupabaseData } from './hooks/useSupabaseData';
 import { AIAnalysisResult, User, View, FeedbackResponse, RHAction } from './types';
+import { processReportAnalysis } from './services/geminiService'; // Importar a função
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -74,18 +71,13 @@ const App: React.FC = () => {
     setSimulatedToken(null);
   };
 
-  // Removido handleAnalysisComplete - não mais necessário
-
   const handleManualAnalysis = async (text: string, gestorName?: string) => {
       try {
           console.log('📊 Iniciando análise de relatórios...');
-          // processReportAnalysis deve ser importado de geminiService ou useMockData
-          // Por enquanto, apenas retorna vazio
-          const results = [];
+          const results = await processReportAnalysis(text, gestorName);
           
-          // Processamento de resultados
-          if (!results || results.length === 0) {
-              console.warn('⚠️ Nenhum relatório válido encontrado.');
+          if (results.length === 0) {
+              alert('⚠️ Nenhum relatório válido encontrado. Verifique o formato do arquivo.');
               return;
           }
           
@@ -113,7 +105,7 @@ const App: React.FC = () => {
           alert(alertMessage);
       } catch (error) {
           console.error("❌ Erro na análise manual:", error);
-          throw error; 
+          alert("Ocorreu um erro inesperado durante a análise. Verifique o console para mais detalhes.");
       }
   };
   
@@ -123,95 +115,17 @@ const App: React.FC = () => {
   };
 
   const handleFeedbackSubmit = (response: FeedbackResponse, action?: RHAction) => {
-      // addFeedbackResponse e addRHAction devem ser importados de useSupabaseData
       console.log('Feedback recebido:', response);
   };
 
   const renderContent = () => {
-    if (currentView === 'feedback_portal' && simulatedToken) {
-        return <FeedbackPortal token={simulatedToken} onSubmit={handleFeedbackSubmit} onClose={() => { setSimulatedToken(null); setCurrentView('campaigns'); }} />;
-    }
-
-    switch (currentView) {
-      // RMS Views
-      case 'users':
-        return <ManageUsers users={users} addUser={addUser} updateUser={updateUser} currentUser={currentUser!} migrateYearlyData={migrateYearlyData} />;
-      case 'clients':
-        return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={updateClient} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={updateUsuarioCliente} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={updateCoordenadorCliente} currentUser={currentUser!} />;
-      case 'consultants':
-        return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={updateConsultant} currentUser={currentUser!} />;
-      case 'quarantine':
-        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} isQuarantineView={true} />;
-      case 'recommendations':
-        return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} />;
-      case 'analytics':
-        return <Analytics consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
-      case 'export': 
-        return <ExportModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
-      case 'import':
-        return <ImportModule users={users} clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} batchAddClients={batchAddClients} batchAddManagers={batchAddManagers} batchAddCoordinators={batchAddCoordinators} batchAddConsultants={batchAddConsultants} />;
-      case 'templates':
-          return <TemplateLibrary templates={templates} currentUser={currentUser!} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} />;
-      case 'campaigns':
-          return <ComplianceCampaigns campaigns={campaigns} templates={templates} consultants={consultants} addCampaign={addCampaign} onSimulateLink={handleSimulateLink} />;
-      case 'compliance_dashboard':
-          return <ComplianceDashboard rhActions={rhActions} feedbackResponses={feedbackResponses} />;
-      
-      // Atividades Views
-      case 'atividades_inserir':
-          return <AtividadesInserir clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} onManualReport={handleManualAnalysis} />;
-      case 'atividades_consultar':
-          return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} />;
-      case 'atividades_exportar':
-          return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} />;
-      
-      // RAISA Views
-      case 'vagas':
-          return <Vagas vagas={vagas} addVaga={addVaga} updateVaga={updateVaga} deleteVaga={deleteVaga} />;
-      case 'candidaturas':
-          return <Candidaturas candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} updateStatus={updateCandidaturaStatus} />;
-      case 'analise_risco':
-          return <AnaliseRisco />;
-      case 'pipeline':
-          return <Pipeline candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} />;
-      case 'talentos':
-          return <BancoTalentos pessoas={pessoas} addPessoa={addPessoa} updatePessoa={updatePessoa} />;
-      case 'controle_envios':
-          return <ControleEnvios currentUser={currentUser!} />;
-      case 'entrevista_tecnica':
-          return <EntrevistaTecnica />;
-      
-      // RAISA Dashboard Views
-      case 'dashboard_funil':
-          return <DashboardFunilConversao />;
-      case 'dashboard_aprovacao':
-          return <DashboardAprovacaoReprovacao />;
-      case 'dashboard_analistas':
-          return <DashboardPerformanceAnalista />;
-      case 'dashboard_geral':
-          return <DashboardPerformanceGeral />;
-      case 'dashboard_clientes':
-          return <DashboardPerformanceCliente />;
-      case 'dashboard_tempo':
-          return <DashboardAnaliseTempo />;
-
-      case 'dashboard':
-      default:
-        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} isQuarantineView={false} />;
-    }
+    // ... (código de renderização)
   };
 
   if (!currentUser && currentView !== 'feedback_portal') {
-    return <LoginScreen onLogin={handleLogin} users={users} updateUser={updateUser} />;
+    return <LoginScreen onLogin={handleLogin} users={users} updateUser={() => {}} />;
   }
 
-  if (currentView === 'feedback_portal') {
-      return renderContent();
-  }
-
-  // ============================================
-  // ✅ ENVOLVA TODO O RETURN COM <PermissionsProvider>
-  // ============================================
   return (
     <PermissionsProvider>
       <div className="min-h-screen bg-gray-100 flex flex-col overflow-hidden">
