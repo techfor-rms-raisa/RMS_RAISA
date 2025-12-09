@@ -248,66 +248,69 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                           className="consultant-container"
                           style={{ borderLeftColor: getScoreColor(finalScore) }}
                         >
-                          {/* Seção de Informações */}
-                          <div className="consultant-info-section">
-                            <div className="consultant-header-info">
-                              <h3 className="consultant-name">
-                                {consultant.nome_consultores}
-                                {isNew && (
-                                  <span 
-                                    className="badge-novo"
-                                    title={`Contratado há ${daysSinceHiring} dias`}
-                                  >
-                                    🆕 Novo
-                                  </span>
+                          {/* Header com Informações e Score */}
+                          <div className="consultant-header-wrapper">
+                            {/* Seção de Informações */}
+                            <div className="consultant-info-section">
+                              <div className="consultant-header-info">
+                                <h3 className="consultant-name">
+                                  {consultant.nome_consultores}
+                                </h3>
+                                <p className="consultant-profession">{consultant.cargo_consultores || 'N/A'}</p>
+                              </div>
+
+                              <div className="consultant-details-grid">
+                                <div className="detail-item">
+                                  <span className="detail-label">E-mail:</span>
+                                  <span className="detail-value">{consultant.email_consultor || 'N/A'}</span>
+                                </div>
+                                <div className="detail-item">
+                                  <span className="detail-label">Cliente:</span>
+                                  <span className="detail-value">{clientInfo?.razao_social_cliente || 'N/A'}</span>
+                                </div>
+                                <div className="detail-item">
+                                  <span className="detail-label">Gestor:</span>
+                                  <span className="detail-value">{manager.nome_gestor_cliente || 'N/A'}</span>
+                                </div>
+                                <div className="detail-item">
+                                  <span className="detail-label">Coordenador:</span>
+                                  <span className="detail-value">{coordenador?.nome_coordenador || 'N/A'}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Score Badge - Lado Direito */}
+                            <div className="consultant-score-section">
+                              <div className="score-info">
+                                {isNew && daysSinceHiring && (
+                                  <div className="contratado-info">
+                                    <span className="contratado-label">Contratado:</span>
+                                    <span className="contratado-dias">{daysSinceHiring} dias</span>
+                                  </div>
                                 )}
-                              </h3>
-                              <p className="consultant-profession">{consultant.cargo_consultores || 'N/A'}</p>
-                            </div>
-
-                            <div className="consultant-details-grid">
-                              <div className="detail-item">
-                                <span className="detail-label">E-mail:</span>
-                                <span className="detail-value">{consultant.email_consultor || 'N/A'}</span>
-                              </div>
-                              <div className="detail-item">
-                                <span className="detail-label">Cliente:</span>
-                                <span className="detail-value">{clientInfo?.razao_social_cliente || 'N/A'}</span>
-                              </div>
-                              <div className="detail-item">
-                                <span className="detail-label">Gestor:</span>
-                                <span className="detail-value">{manager.nome_gestor_cliente || 'N/A'}</span>
-                              </div>
-                              <div className="detail-item">
-                                <span className="detail-label">Coordenador:</span>
-                                <span className="detail-value">{coordenador?.nome_coordenador || 'N/A'}</span>
+                                {finalScore !== null ? (
+                                  <div 
+                                    className="score-badge"
+                                    style={{ backgroundColor: getScoreColor(finalScore) }}
+                                  >
+                                    <span className="score-label-text">{getScoreLabel(finalScore)}</span>
+                                    <span className="score-number">Score {finalScore}</span>
+                                  </div>
+                                ) : (
+                                  <div className="score-badge score-unknown">
+                                    <span className="score-label-text">DESCONHECIDO</span>
+                                    <span className="score-number">-</span>
+                                  </div>
+                                )}
                               </div>
                             </div>
-                          </div>
-
-                          {/* Score Badge */}
-                          <div className="consultant-score-section">
-                            {finalScore !== null ? (
-                              <div 
-                                className="score-badge"
-                                style={{ backgroundColor: getScoreColor(finalScore) }}
-                              >
-                                <span className="score-label-text">{getScoreLabel(finalScore)}</span>
-                                <span className="score-number">Score {finalScore}</span>
-                              </div>
-                            ) : (
-                              <div className="score-badge score-unknown">
-                                <span className="score-label-text">DESCONHECIDO</span>
-                                <span className="score-number">-</span>
-                              </div>
-                            )}
                           </div>
 
                           {/* Seção de Recomendações */}
                           {recommendations.length > 0 && (
                             <div className="recommendations-section">
                               <h4 className="recommendations-title">⚡ Recomendações de Ação:</h4>
-                              <div className="recommendations-grid">
+                              <div className="recommendations-grid-2x2">
                                 {recommendations.map((rec, idx) => (
                                   <div 
                                     key={idx} 
