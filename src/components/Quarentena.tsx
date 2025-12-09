@@ -217,7 +217,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
             <option value="5">Score 5 - CRÍTICO</option>
             <option value="4">Score 4 - ALTO</option>
             <option value="3">Score 3 - MODERADO</option>
-            <option value="new">Novo Consultor (< 45 dias)</option>
+            <option value="new">Novo Consultor (&lt; 45 dias)</option>
           </select>
         </div>
       </div>
