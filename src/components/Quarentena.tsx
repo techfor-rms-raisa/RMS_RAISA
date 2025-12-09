@@ -68,7 +68,21 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     const finalScore = getValidFinalScore(consultant);
     const isNew = isNewConsultant(consultant);
     const hasRiskScore = finalScore !== null && [5, 4, 3].includes(finalScore);
-    return hasRiskScore || isNew;
+    const result = hasRiskScore || isNew;
+    
+    // DEBUG: Mostrar consultores FORA do range
+    if (!result) {
+      const daysSinceHiring = getDaysSinceHiring(consultant.data_inclusao_consultores);
+      console.log(`[Quarentena-Filter] ❌ FORA DO RANGE: ${consultant.nome_consultores}`, {
+        finalScore,
+        isNew,
+        hasRiskScore,
+        daysSinceHiring,
+        status: consultant.status
+      });
+    }
+    
+    return result;
   };
   // Obter relatórios dos últimos 90 dias
   const get90DaysReports = (consultant: Consultant): ConsultantReport[] => {
@@ -408,10 +422,16 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                     <span className="score-number">Score {finalScore}</span>
                                   </button>
                                 ) : (
-                                  <div className="score-badge score-unknown">
-                                    <span className="score-label-text">DESCONHECIDO</span>
-                                    <span className="score-number">-</span>
-                                  </div>
+                                  <button 
+                                    className="score-badge score-badge-button"
+                                    style={{ backgroundColor: '#fbc02d' }}
+                                    onClick={() => handleScoreBadgeClick(consultant)}
+                                    title="Clique para ver histórico de atividades"
+                                  >
+                                    <span className="score-label-text">RISCO</span>
+                                    <span className="score-label-text">MODERADO</span>
+                                    <span className="score-number">Score 3</span>
+                                  </button>
                                 )}
                               </div>
                             </div>
