@@ -96,17 +96,7 @@ export const useSupabaseData = () => {
     try {
       const { data, error } = await supabase
         .from('app_users')
-        .select(`
-          *,
-          perfil:perfil_id (
-            id,
-            nome_perfil,
-            descricao,
-            cor_badge,
-            nivel_acesso,
-            ativo
-          )
-        `)
+        .select('*')
         .order('id', { ascending: true });
 
       if (error) throw error;
@@ -121,7 +111,7 @@ export const useSupabaseData = () => {
         tipo_usuario: user.tipo_usuario || 'Consulta',
         gestor_rs_id: user.gestor_rs_id,
         perfil_id: user.perfil_id,
-        perfil: user.perfil
+        perfil: null
       }));
 
       setUsers(mappedUsers);
@@ -148,17 +138,7 @@ export const useSupabaseData = () => {
           perfil_id: newUser.perfil_id || null,
           gestor_rs_id: newUser.gestor_rs_id || null
         }])
-        .select(`
-          *,
-          perfil:perfil_id (
-            id,
-            nome_perfil,
-            descricao,
-            cor_badge,
-            nivel_acesso,
-            ativo
-          )
-        `)
+        .select('*')
         .single();
 
       if (error) throw error;
@@ -173,7 +153,7 @@ export const useSupabaseData = () => {
         tipo_usuario: data.tipo_usuario || 'Consulta',
         gestor_rs_id: data.gestor_rs_id,
         perfil_id: data.perfil_id,
-        perfil: data.perfil
+        perfil: null
       };
 
       setUsers(prev => [...prev, createdUser]);
@@ -204,17 +184,7 @@ export const useSupabaseData = () => {
           gestor_rs_id: updates.gestor_rs_id
         })
         .eq('id', id)
-        .select(`
-          *,
-          perfil:perfil_id (
-            id,
-            nome_perfil,
-            descricao,
-            cor_badge,
-            nivel_acesso,
-            ativo
-          )
-        `)
+        .select('*')
         .single();
 
       if (error) throw error;
@@ -229,7 +199,7 @@ export const useSupabaseData = () => {
         tipo_usuario: data.tipo_usuario || 'Consulta',
         gestor_rs_id: data.gestor_rs_id,
         perfil_id: data.perfil_id,
-        perfil: data.perfil
+        perfil: null
       };
 
       setUsers(prev => prev.map(u => u.id === id ? updatedUser : u));
@@ -401,18 +371,7 @@ export const useSupabaseData = () => {
     try {
       const { data, error } = await supabase
         .from('usuarios_cliente')
-        .select(`
-          *,
-          cliente:id_cliente (
-            id,
-            razao_social_cliente
-          ),
-          gestor_rs:gestor_rs_id (
-            id,
-            nome_usuario,
-            email_usuario
-          )
-        `)
+        .select('*')
         .order('id', { ascending: true });
 
       if (error) throw error;
@@ -423,7 +382,9 @@ export const useSupabaseData = () => {
         nome_gestor_cliente: uc.nome_gestor_cliente,
         cargo_gestor: uc.cargo_gestor,
         ativo: uc.ativo,
-        gestor_rs_id: uc.gestor_rs_id
+        gestor_rs_id: uc.gestor_rs_id,
+        cliente: undefined,
+        gestor_rs: undefined
       }));
 
       setUsuariosCliente(mappedUsuarios);
@@ -447,7 +408,7 @@ export const useSupabaseData = () => {
           ativo: newUsuario.ativo ?? true,
           gestor_rs_id: newUsuario.gestor_rs_id || null
         }])
-        .select()
+        .select('*')
         .single();
 
       if (error) throw error;
@@ -458,7 +419,9 @@ export const useSupabaseData = () => {
         nome_gestor_cliente: data.nome_gestor_cliente,
         cargo_gestor: data.cargo_gestor,
         ativo: data.ativo,
-        gestor_rs_id: data.gestor_rs_id
+        gestor_rs_id: data.gestor_rs_id,
+        cliente: undefined,
+        gestor_rs: undefined
       };
 
       setUsuariosCliente(prev => [...prev, createdUsuario]);
@@ -485,7 +448,7 @@ export const useSupabaseData = () => {
           gestor_rs_id: updates.gestor_rs_id
         })
         .eq('id', id)
-        .select()
+        .select('*')
         .single();
 
       if (error) throw error;
@@ -496,7 +459,9 @@ export const useSupabaseData = () => {
         nome_gestor_cliente: data.nome_gestor_cliente,
         cargo_gestor: data.cargo_gestor,
         ativo: data.ativo,
-        gestor_rs_id: data.gestor_rs_id
+        gestor_rs_id: data.gestor_rs_id,
+        cliente: undefined,
+        gestor_rs: undefined
       };
 
       setUsuariosCliente(prev => prev.map(u => u.id === id ? updatedUsuario : u));
@@ -608,18 +573,7 @@ export const useSupabaseData = () => {
     try {
       const { data, error } = await supabase
         .from('coordenadores_cliente')
-        .select(`
-          *,
-          gestor:id_gestor_cliente (
-            id,
-            nome_gestor_cliente,
-            id_cliente,
-            cliente:id_cliente (
-              id,
-              razao_social_cliente
-            )
-          )
-        `)
+        .select('*')
         .order('id', { ascending: true });
 
       if (error) throw error;
@@ -629,7 +583,8 @@ export const useSupabaseData = () => {
         id_gestor_cliente: cc.id_gestor_cliente,
         nome_coordenador_cliente: cc.nome_coordenador_cliente,
         cargo_coordenador_cliente: cc.cargo_coordenador_cliente,
-        ativo: cc.ativo
+        ativo: cc.ativo,
+        gestor: undefined
       }));
 
       setCoordenadoresCliente(mappedCoordenadores);
@@ -662,7 +617,8 @@ export const useSupabaseData = () => {
         id_gestor_cliente: data.id_gestor_cliente,
         nome_coordenador_cliente: data.nome_coordenador_cliente,
         cargo_coordenador_cliente: data.cargo_coordenador_cliente,
-        ativo: data.ativo
+        ativo: data.ativo,
+        gestor: undefined
       };
 
       setCoordenadoresCliente(prev => [...prev, createdCoordenador]);
@@ -698,7 +654,8 @@ export const useSupabaseData = () => {
         id_gestor_cliente: data.id_gestor_cliente,
         nome_coordenador_cliente: data.nome_coordenador_cliente,
         cargo_coordenador_cliente: data.cargo_coordenador_cliente,
-        ativo: data.ativo
+        ativo: data.ativo,
+        gestor: undefined
       };
 
       setCoordenadoresCliente(prev => prev.map(c => c.id === id ? updatedCoordenador : c));
