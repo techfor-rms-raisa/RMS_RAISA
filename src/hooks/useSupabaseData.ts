@@ -759,7 +759,10 @@ export const useSupabaseData = () => {
     try {
       const { data, error } = await supabase
         .from('consultants')
-        .select('*')
+        .select(`
+          *,
+          consultant_reports (*)
+        `)
         .order('id', { ascending: true });
 
       if (error) throw error;
@@ -794,7 +797,8 @@ export const useSupabaseData = () => {
         parecer_11_consultor: consultant.parecer_11_consultor,
         parecer_12_consultor: consultant.parecer_12_consultor,
         parecer_final_consultor: consultant.parecer_final_consultor,
-        reports: []
+        reports: [],
+        consultant_reports: consultant.consultant_reports || []
       }));
 
       setConsultants(mappedConsultants);

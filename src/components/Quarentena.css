@@ -309,9 +309,7 @@
   text-align: center;
 }
 
-.score-badge.score-unknown {
-  background-color: #9ca3af;
-}
+/* .score-badge.score-unknown removido - usar inline style backgroundColor */
 
 .score-label-text {
   font-size: 0.65rem;
