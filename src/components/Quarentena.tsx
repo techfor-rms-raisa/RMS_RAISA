@@ -75,6 +75,14 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     const today = new Date();
     const ninetyDaysAgo = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
     
+    // DEBUG: Verificar dados disponíveis
+    console.log(`[Quarentena] Buscando relatórios para ${consultant.nome_consultores}:`, {
+      tem_consultant_reports: !!consultant.consultant_reports,
+      length_consultant_reports: consultant.consultant_reports?.length || 0,
+      tem_reports: !!consultant.reports,
+      length_reports: consultant.reports?.length || 0
+    });
+    
     // 1️⃣ PRIORIDADE: Buscar dados do Supabase (consultant_reports)
     if (consultant.consultant_reports && Array.isArray(consultant.consultant_reports) && consultant.consultant_reports.length > 0) {
       return consultant.consultant_reports
@@ -408,10 +416,15 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                     <span className="score-number">Score {finalScore}</span>
                                   </button>
                                 ) : (
-                                  <div className="score-badge score-unknown">
-                                    <span className="score-label-text">DESCONHECIDO</span>
+                                  <button 
+                                    className="score-badge score-badge-button score-unknown"
+                                    onClick={() => handleScoreBadgeClick(consultant)}
+                                    title="Clique para ver histórico de atividades"
+                                  >
+                                    <span className="score-label-text">SEM</span>
+                                    <span className="score-label-text">SCORE</span>
                                     <span className="score-number">-</span>
-                                  </div>
+                                  </button>
                                 )}
                               </div>
                             </div>

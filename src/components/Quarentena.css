@@ -336,6 +336,30 @@
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
 }
 
+
+/* ===== CORREÇÃO: Melhor contraste para badge sem score ===== */
+.score-badge.score-unknown {
+  background-color: #4b5563 !important;  /* Cinza mais escuro para contraste */
+  border: 2px solid rgba(255, 255, 255, 0.3);
+}
+
+.score-badge.score-unknown .score-label-text,
+.score-badge.score-unknown .score-number {
+  color: white !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* Garantir que o badge button também funcione com score null */
+.score-badge-button.score-unknown {
+  background-color: #4b5563 !important;
+}
+
+.score-badge-button.score-unknown .score-label-text,
+.score-badge-button.score-unknown .score-number {
+  color: white !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5) !important;
+}
+
 /* Seção de Recomendações */
 .recommendations-section {
   padding: 1.25rem;
