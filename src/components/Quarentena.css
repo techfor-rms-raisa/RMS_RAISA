@@ -1,14 +1,15 @@
 /* ============================================================================
-   QUARENTENA.CSS - Estilos para Componente Quarentena
+   QUARENTENA.CSS - Estilos para Componente Quarentena (Redesenhado)
    ============================================================================ */
 
 /* Container Principal */
 .quarentena-container {
   padding: 1.5rem;
   border-radius: 0.5rem;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   border-top: 4px solid #dc2626;
-  background-color: #fef2f2;
+  background-color: #ffffff;
+  animation: fadeIn 0.3s ease-out;
 }
 
 /* Header */
@@ -22,7 +23,7 @@
 .quarentena-title {
   font-size: 1.875rem;
   font-weight: bold;
-  color: #7f1d1d;
+  color: #1f2937;
 }
 
 /* Filtros */
@@ -30,10 +31,11 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 1rem;
-  margin-bottom: 1.5rem;
+  margin-bottom: 2rem;
   padding: 1rem;
-  background-color: #f3f4f6;
+  background-color: #f9fafb;
   border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
 }
 
 .filter-group {
@@ -44,30 +46,31 @@
 .filter-label {
   display: block;
   font-size: 0.875rem;
-  font-weight: bold;
+  font-weight: 600;
   color: #374151;
   margin-bottom: 0.5rem;
 }
 
 .filter-select {
-  padding: 0.5rem;
+  padding: 0.625rem 0.75rem;
   border: 1px solid #d1d5db;
   border-radius: 0.375rem;
   font-size: 0.875rem;
   background-color: white;
   cursor: pointer;
   transition: all 0.2s ease;
+  color: #374151;
 }
 
 .filter-select:hover {
   border-color: #9ca3af;
+  background-color: #f9fafb;
 }
 
 .filter-select:focus {
   outline: none;
-  ring: 2px;
-  ring-color: #dc2626;
   border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
 }
 
 /* Resultados */
@@ -79,81 +82,196 @@
 
 /* Card de Cliente */
 .client-card {
-  padding: 1rem;
-  background-color: #f9fafb;
+  padding: 1.5rem;
+  background-color: #ffffff;
   border-radius: 0.75rem;
   border: 1px solid #e5e7eb;
+  animation: fadeIn 0.4s ease-out;
 }
 
 .client-title {
   font-size: 1.25rem;
-  font-weight: bold;
-  color: #533738;
-  margin-bottom: 1rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #f3f4f6;
 }
 
 /* Manager Section */
 .manager-section {
   margin-bottom: 1.5rem;
   border: 1px solid #e5e7eb;
-  border-radius: 0.375rem;
-  background-color: white;
+  border-radius: 0.5rem;
+  background-color: #f9fafb;
   overflow: hidden;
 }
 
 .manager-header {
   background-color: #f3f4f6;
-  padding: 0.75rem;
-  font-weight: bold;
+  padding: 1rem;
+  font-weight: 600;
   color: #374151;
   border-bottom: 1px solid #e5e7eb;
+  font-size: 0.95rem;
 }
 
-/* Tabela */
-.quarentena-table {
-  width: 100%;
-  border-collapse: collapse;
-  background-color: white;
+/* Container de Cards de Consultores */
+.consultants-cards-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+  background-color: #ffffff;
 }
 
-.quarentena-table thead {
-  background-color: #f9fafb;
+/* Card do Consultor */
+.consultant-card {
+  border-left: 5px solid;
+  border-radius: 0.5rem;
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-top: 1px solid #e5e7eb;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  overflow: hidden;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 
-.quarentena-table th {
-  padding: 0.5rem 1rem;
-  text-align: left;
-  font-size: 0.75rem;
-  font-weight: bold;
-  color: #6b7280;
-  text-transform: uppercase;
+.consultant-card:hover {
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transform: translateY(-2px);
+}
+
+/* Header do Card */
+.consultant-card-header {
+  padding: 1rem;
+  background: linear-gradient(135deg, #f9fafb 0%, #ffffff 100%);
   border-bottom: 1px solid #e5e7eb;
 }
 
-.quarentena-table td {
-  padding: 0.75rem 1rem;
-  border-bottom: 1px solid #e5e7eb;
-  font-size: 0.875rem;
+.consultant-info-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
 }
 
-.quarentena-table tbody tr:hover {
-  background-color: #fef3c7;
-}
-
-/* Célula do Consultor */
-.consultant-cell {
+.consultant-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  font-weight: 500;
-  color: #111827;
+  flex: 1;
+  word-break: break-word;
 }
 
-/* Badge Novo Consultor */
+.consultant-score-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 50%;
+  color: white;
+  font-weight: bold;
+  flex-shrink: 0;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.score-number {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.score-label {
+  font-size: 0.625rem;
+  margin-top: 0.25rem;
+}
+
+/* Detalhes do Consultor */
+.consultant-details {
+  padding: 1rem;
+  flex: 1;
+  background-color: #ffffff;
+}
+
+.detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.75rem;
+  font-size: 0.875rem;
+  gap: 1rem;
+}
+
+.detail-row:last-child {
+  margin-bottom: 0;
+}
+
+.detail-label {
+  font-weight: 600;
+  color: #6b7280;
+  flex-shrink: 0;
+  min-width: 100px;
+}
+
+.detail-value {
+  color: #374151;
+  text-align: right;
+  flex: 1;
+  word-break: break-word;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* Footer do Card */
+.consultant-card-footer {
+  padding: 1rem;
+  background-color: #f9fafb;
+  border-top: 1px solid #e5e7eb;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.btn-recommendations {
+  flex: 1;
+  padding: 0.625rem 1rem;
+  background-color: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 0.375rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-recommendations:hover {
+  background-color: #2563eb;
+  box-shadow: 0 4px 6px rgba(59, 130, 246, 0.2);
+}
+
+.btn-recommendations:active {
+  background-color: #1d4ed8;
+  transform: scale(0.98);
+}
+
+/* Badges */
 .badge-novo {
   display: inline-flex;
   align-items: center;
-  padding: 0.25rem 0.5rem;
+  padding: 0.25rem 0.625rem;
   font-size: 0.75rem;
   font-weight: bold;
   color: white;
@@ -161,151 +279,43 @@
   border-radius: 9999px;
   white-space: nowrap;
   cursor: help;
+  flex-shrink: 0;
 }
 
 .badge-novo:hover {
   background-color: #059669;
 }
 
-/* Badge Alerta */
 .badge-alert {
   display: inline-flex;
   align-items: center;
-  padding: 0.25rem 0.5rem;
+  padding: 0.25rem 0.625rem;
   font-size: 0.75rem;
   font-weight: bold;
   color: white;
   background-color: #f97316;
   border-radius: 9999px;
   white-space: nowrap;
+  margin-left: 0.5rem;
 }
 
 .badge-alert:hover {
   background-color: #ea580c;
 }
 
-/* Score Circle */
-.score-circle {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: 50%;
-  color: white;
-  font-weight: bold;
-  font-size: 0.875rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.score-circle:hover {
-  transform: scale(1.1);
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
-}
-
-.score-circle-label {
-  font-size: 0.625rem;
-  margin-top: 0.125rem;
-}
-
-/* Score Colors */
-.score-5 {
-  background-color: #d32f2f;
-}
-
-.score-4 {
-  background-color: #f57c00;
-}
-
-.score-3 {
-  background-color: #fbc02d;
-  color: #333;
-}
-
-.score-2 {
-  background-color: #388e3c;
-}
-
-.score-1 {
-  background-color: #1976d2;
-}
-
-.score-unknown {
-  background-color: #757575;
-}
-
 /* Empty State */
 .empty-state {
-  padding: 2rem;
+  padding: 3rem 2rem;
   text-align: center;
-  background-color: white;
+  background-color: #f9fafb;
   border-radius: 0.5rem;
   border: 2px dashed #d1d5db;
 }
 
 .empty-state-text {
   color: #9ca3af;
-  font-size: 1.125rem;
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-  .quarentena-filters {
-    grid-template-columns: 1fr;
-  }
-
-  .quarentena-table {
-    font-size: 0.75rem;
-  }
-
-  .quarentena-table th,
-  .quarentena-table td {
-    padding: 0.5rem;
-  }
-
-  .score-circle {
-    width: 2rem;
-    height: 2rem;
-    font-size: 0.75rem;
-  }
-
-  .consultant-cell {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .badge-novo,
-  .badge-alert {
-    font-size: 0.625rem;
-    padding: 0.125rem 0.375rem;
-  }
-}
-
-@media (max-width: 480px) {
-  .quarentena-container {
-    padding: 1rem;
-  }
-
-  .quarentena-title {
-    font-size: 1.5rem;
-  }
-
-  .quarentena-table {
-    font-size: 0.625rem;
-  }
-
-  .quarentena-table th,
-  .quarentena-table td {
-    padding: 0.25rem;
-  }
-
-  .score-circle {
-    width: 1.75rem;
-    height: 1.75rem;
-    font-size: 0.625rem;
-  }
+  font-size: 1rem;
+  margin: 0;
 }
 
 /* Animações */
@@ -320,33 +330,103 @@
   }
 }
 
-.quarentena-container {
-  animation: fadeIn 0.3s ease-out;
+/* Responsive Design */
+@media (max-width: 1024px) {
+  .consultants-cards-container {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
 }
 
-.client-card {
-  animation: fadeIn 0.4s ease-out;
+@media (max-width: 768px) {
+  .quarentena-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .consultants-cards-container {
+    grid-template-columns: 1fr;
+  }
+
+  .consultant-info-top {
+    flex-direction: column;
+  }
+
+  .consultant-score-badge {
+    align-self: flex-start;
+  }
+
+  .detail-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .detail-value {
+    justify-content: flex-start;
+  }
+
+  .quarentena-container {
+    padding: 1rem;
+  }
+
+  .quarentena-title {
+    font-size: 1.5rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .quarentena-container {
+    padding: 0.75rem;
+  }
+
+  .quarentena-title {
+    font-size: 1.25rem;
+  }
+
+  .consultants-cards-container {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    padding: 0.75rem;
+  }
+
+  .consultant-card-header,
+  .consultant-details,
+  .consultant-card-footer {
+    padding: 0.75rem;
+  }
+
+  .consultant-name {
+    font-size: 0.95rem;
+  }
+
+  .detail-label {
+    min-width: 80px;
+    font-size: 0.8rem;
+  }
+
+  .detail-value {
+    font-size: 0.8rem;
+  }
+
+  .btn-recommendations {
+    font-size: 0.75rem;
+    padding: 0.5rem 0.75rem;
+  }
 }
 
 /* Scrollbar Customizado */
-.quarentena-table {
-  overflow-x: auto;
+.quarentena-container::-webkit-scrollbar {
+  width: 8px;
 }
 
-.quarentena-table::-webkit-scrollbar {
-  height: 8px;
-}
-
-.quarentena-table::-webkit-scrollbar-track {
+.quarentena-container::-webkit-scrollbar-track {
   background: #f1f5f9;
 }
 
-.quarentena-table::-webkit-scrollbar-thumb {
+.quarentena-container::-webkit-scrollbar-thumb {
   background: #cbd5e1;
   border-radius: 4px;
 }
 
-.quarentena-table::-webkit-scrollbar-thumb:hover {
+.quarentena-container::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
 
@@ -361,7 +441,8 @@
     border: 1px solid #d1d5db;
   }
 
-  .quarentena-table tbody tr:hover {
-    background-color: transparent;
+  .consultant-card:hover {
+    transform: none;
+    box-shadow: none;
   }
 }
