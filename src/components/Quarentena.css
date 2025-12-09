@@ -77,6 +77,44 @@
 .quarentena-results {
   display: flex;
   flex-direction: column;
+  gap: 2rem;
+}
+
+/* Seção de Cliente */
+.client-section {
+  padding: 1.5rem;
+  background-color: #f9fafb;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+}
+
+.client-title {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #533738;
+  margin: 0 0 1.5rem 0;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+/* Seção de Gestor */
+.manager-section {
+  margin-bottom: 1.5rem;
+}
+
+.manager-title {
+  font-size: 1.125rem;
+  font-weight: bold;
+  color: #374151;
+  margin: 0 0 1rem 0;
+  padding-left: 0.5rem;
+  border-left: 4px solid #dc2626;
+}
+
+/* Grid de Consultores */
+.consultants-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(600px, 1fr));
   gap: 1.5rem;
 }
 
@@ -92,6 +130,8 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   transition: all 0.2s ease;
   animation: fadeIn 0.3s ease-out;
+  display: flex;
+  flex-direction: column;
 }
 
 .consultant-container:hover {
@@ -167,8 +207,8 @@
   justify-content: center;
   padding: 1.25rem;
   background: linear-gradient(135deg, #f9fafb 0%, #ffffff 100%);
-  border-left: 1px solid #e5e7eb;
-  min-width: 140px;
+  border-top: 1px solid #e5e7eb;
+  min-width: 100%;
 }
 
 .score-badge {
@@ -223,7 +263,7 @@
 
 .recommendations-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 1rem;
 }
 
@@ -347,6 +387,10 @@
   .consultant-details-grid {
     grid-template-columns: 1fr;
   }
+
+  .consultants-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 768px) {
@@ -390,6 +434,23 @@
 
   .quarentena-title {
     font-size: 1.5rem;
+  }
+
+  .client-section {
+    padding: 1rem;
+  }
+
+  .client-title {
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+  }
+
+  .manager-title {
+    font-size: 1rem;
+  }
+
+  .consultants-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -449,6 +510,18 @@
 
   .recommendation-description {
     font-size: 0.8rem;
+  }
+
+  .client-section {
+    padding: 0.75rem;
+  }
+
+  .client-title {
+    font-size: 1.125rem;
+  }
+
+  .manager-title {
+    font-size: 0.875rem;
   }
 }
 
