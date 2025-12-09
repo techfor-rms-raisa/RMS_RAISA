@@ -243,21 +243,40 @@
   transform: translateY(-2px);
 }
 
-/* Cores por Categoria */
-.recommendation-card[data-category="Atenção"] {
+/* Cores por Categoria - Atenção */
+.recommendation-atencao {
   border-left-color: #3b82f6;
 }
 
-.recommendation-card[data-category="Feedback"] {
+.recommendation-atencao .recommendation-category {
+  color: #3b82f6;
+}
+
+/* Cores por Categoria - Feedback */
+.recommendation-feedback {
   border-left-color: #8b5cf6;
 }
 
-.recommendation-card[data-category="Treinamento"] {
+.recommendation-feedback .recommendation-category {
+  color: #8b5cf6;
+}
+
+/* Cores por Categoria - Treinamento */
+.recommendation-treinamento {
   border-left-color: #06b6d4;
 }
 
-.recommendation-card[data-category="Acompanhamento"] {
+.recommendation-treinamento .recommendation-category {
+  color: #06b6d4;
+}
+
+/* Cores por Categoria - Acompanhamento */
+.recommendation-acompanhamento {
   border-left-color: #10b981;
+}
+
+.recommendation-acompanhamento .recommendation-category {
+  color: #10b981;
 }
 
 .recommendation-category {
@@ -269,22 +288,6 @@
   display: flex;
   align-items: center;
   gap: 0.5rem;
-}
-
-.recommendation-card[data-category="Atenção"] .recommendation-category {
-  color: #3b82f6;
-}
-
-.recommendation-card[data-category="Feedback"] .recommendation-category {
-  color: #8b5cf6;
-}
-
-.recommendation-card[data-category="Treinamento"] .recommendation-category {
-  color: #06b6d4;
-}
-
-.recommendation-card[data-category="Acompanhamento"] .recommendation-category {
-  color: #10b981;
 }
 
 .recommendation-description {
