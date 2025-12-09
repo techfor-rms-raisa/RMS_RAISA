@@ -521,3 +521,4 @@ const Quarentena: React.FC<QuarentenaProps> = ({
 };
 
 export default Quarentena;
+
