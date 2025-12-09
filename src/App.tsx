@@ -14,6 +14,7 @@ import TemplateLibrary from './components/TemplateLibrary';
 import ComplianceCampaigns from './components/ComplianceCampaigns';
 import ComplianceDashboard from './components/ComplianceDashboard';
 import FeedbackPortal from './components/FeedbackPortal';
+import Quarentena from './components/Quarentena';
 import Sidebar from './components/layout/Sidebar'; 
 
 // RAISA Imports
@@ -139,7 +140,7 @@ const App: React.FC = () => {
       case 'consultants':
         return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={updateConsultant} currentUser={currentUser!} />;
       case 'quarantine':
-        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} isQuarantineView={true} />;
+        return <Quarentena consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} currentUser={currentUser!} />;
       case 'recommendations':
         return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} />;
       case 'analytics':
@@ -195,7 +196,7 @@ const App: React.FC = () => {
 
       case 'dashboard':
       default:
-        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} isQuarantineView={false} />;
+        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} />;
     }
   };
 
