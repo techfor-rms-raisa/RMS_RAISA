@@ -27,6 +27,8 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedScore, setSelectedScore] = useState<string>('all');
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
+  const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
+  const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
 
   // ============================================================================
   // FUNÇÕES AUXILIARES
@@ -68,6 +70,34 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     const hasRiskScore = finalScore !== null && [5, 4, 3].includes(finalScore);
     return hasRiskScore || isNew;
   };
+  // Obter relatórios dos últimos 90 dias
+  const get90DaysReports = (consultant: Consultant): ConsultantReport[] => {
+    if (!consultant.reports || consultant.reports.length === 0) return [];
+    const today = new Date();
+    const ninetyDaysAgo = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
+    
+    return consultant.reports
+      .filter(r => {
+        try {
+          const reportDate = new Date(r.data_relatorio || r.created_at || '');
+          return reportDate >= ninetyDaysAgo && reportDate <= today;
+        } catch {
+          return false;
+        }
+      })
+      .sort((a, b) => {
+        const dateA = new Date(a.data_relatorio || a.created_at || '');
+        const dateB = new Date(b.data_relatorio || b.created_at || '');
+        return dateB.getTime() - dateA.getTime(); // Maior data primeiro
+      });
+  };
+  // Abrir modal de histórico ao clicar no badge
+  const handleScoreBadgeClick = (consultant: Consultant) => {
+    setSelectedConsultantForHistory(consultant);
+    setShowHistoryModal(true);
+  };
+
+
 
   const getScoreColor = (score: number | null): string => {
     if (score === null || score === undefined) return '#757575';
@@ -138,14 +168,14 @@ const Quarentena: React.FC<QuarentenaProps> = ({
         { tipo: 'ATENÇÃO', descricao: 'Agendar reunião com gestor em 1 semana' },
         { tipo: 'FEEDBACK', descricao: 'Sessão de feedback estruturado' },
         { tipo: 'TREINAMENTO', descricao: 'Identificar necessidades de capacitação' },
-        { tipo: 'ACOMPANHAMENTO', descricao: 'Monitoramento quinzenal' }
+        { tipo: 'ACOMPANHAMENTO', descricao: 'Monitoramento Semanal (recomendado pela IA)' }
       ];
     } else if (score === 3) {
       return [
         { tipo: 'OBSERVAÇÃO', descricao: 'Conversa informal com gestor' },
         { tipo: 'DESENVOLVIMENTO', descricao: 'Oferecer oportunidades de melhoria' },
         { tipo: 'SUPORTE', descricao: 'Disponibilizar recursos adicionais' },
-        { tipo: 'PREVENTIVO', descricao: 'Monitoramento mensal' }
+        { tipo: 'PREVENTIVO', descricao: 'Monitoramento Semanal' }
       ];
     } else if (score === 2) {
       return [
@@ -344,13 +374,16 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                   </div>
                                 )}
                                 {finalScore !== null ? (
-                                  <div 
-                                    className="score-badge"
+                                  <button 
+                                    className="score-badge score-badge-button"
                                     style={{ backgroundColor: getScoreColor(finalScore) }}
+                                    onClick={() => handleScoreBadgeClick(consultant)}
+                                    title="Clique para ver histórico de atividades"
                                   >
+                                    <span className="score-label-text">RISCO</span>
                                     <span className="score-label-text">{getScoreLabel(finalScore)}</span>
                                     <span className="score-number">Score {finalScore}</span>
-                                  </div>
+                                  </button>
                                 ) : (
                                   <div className="score-badge score-unknown">
                                     <span className="score-label-text">DESCONHECIDO</span>
@@ -396,6 +429,50 @@ const Quarentena: React.FC<QuarentenaProps> = ({
       )}
 
       <ReportDetailsModal report={viewingReport} onClose={() => setViewingReport(null)} isQuarentineView={true} />
+
+      {/* Modal de Histórico de Atividades */}
+      {showHistoryModal && selectedConsultantForHistory && (
+        <div className="history-modal-overlay" onClick={() => setShowHistoryModal(false)}>
+          <div className="history-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="history-modal-header">
+              <h3>Histórico de Atividades - {selectedConsultantForHistory.nome_consultores}</h3>
+              <button className="history-modal-close" onClick={() => setShowHistoryModal(false)}>×</button>
+            </div>
+            
+            <div className="history-modal-body">
+              {get90DaysReports(selectedConsultantForHistory).length > 0 ? (
+                <div className="history-list">
+                  {get90DaysReports(selectedConsultantForHistory).map((report, idx) => (
+                    <div key={idx} className="history-item">
+                      <div className="history-item-date">
+                        {new Date(report.data_relatorio || report.created_at || "").toLocaleDateString("pt-BR")}
+                      </div>
+                      <div className="history-item-content">
+                        <div className="history-item-title">{report.titulo || "Relatório de Atividade"}</div>
+                        {report.summary && (
+                          <div className="history-item-summary">{report.summary}</div>
+                        )}
+                        {report.riskScore && (
+                          <div className="history-item-risk">
+                            <span className="risk-badge" style={{ backgroundColor: getScoreColor(report.riskScore) }}>
+                              Score {report.riskScore}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="history-empty">
+                  <p>Nenhuma atividade nos últimos 90 dias</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
