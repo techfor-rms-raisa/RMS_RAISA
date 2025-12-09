@@ -606,3 +606,107 @@
     box-shadow: none;
   }
 }
+
+
+/* ============================================================================
+   RECOMENDAÇÕES INLINE - Logo após Coordenador
+   ============================================================================ */
+
+.recommendations-inline {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.recommendations-inline-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 0.75rem 0;
+}
+
+.recommendations-inline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+
+.recommendation-inline-card {
+  padding: 0.75rem;
+  background-color: #f9fafb;
+  border-radius: 0.375rem;
+  border-left: 3px solid #3b82f6;
+  border-top: 1px solid #e5e7eb;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  transition: all 0.2s ease;
+}
+
+.recommendation-inline-card:hover {
+  background-color: #f3f4f6;
+  transform: translateY(-1px);
+}
+
+.recommendation-inline-tipo {
+  font-size: 0.7rem;
+  font-weight: bold;
+  color: #3b82f6;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.25rem;
+}
+
+.recommendation-inline-descricao {
+  font-size: 0.8rem;
+  color: #374151;
+  line-height: 1.4;
+}
+
+/* Responsive para recomendações inline */
+@media (max-width: 768px) {
+  .recommendations-inline-grid {
+    grid-template-columns: 1fr;
+    gap: 0.5rem;
+  }
+
+  .recommendation-inline-card {
+    padding: 0.6rem;
+  }
+
+  .recommendation-inline-tipo {
+    font-size: 0.65rem;
+  }
+
+  .recommendation-inline-descricao {
+    font-size: 0.75rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .recommendations-inline {
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+  }
+
+  .recommendations-inline-title {
+    font-size: 0.85rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .recommendations-inline-grid {
+    grid-template-columns: 1fr;
+    gap: 0.4rem;
+  }
+
+  .recommendation-inline-card {
+    padding: 0.5rem;
+  }
+
+  .recommendation-inline-tipo {
+    font-size: 0.6rem;
+  }
+
+  .recommendation-inline-descricao {
+    font-size: 0.7rem;
+  }
+}

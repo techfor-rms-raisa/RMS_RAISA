@@ -123,7 +123,47 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     } catch {
       return [];
     }
+  }
+  // Gerar recomendações baseadas no score
+  const generateRecommendationsByScore = (score: number): { tipo: string; descricao: string }[] => {
+    if (score === 5) {
+      return [
+        { tipo: 'URGENTE', descricao: 'Reunião imediata com gestor e RH' },
+        { tipo: 'PLANO DE AÇÃO', descricao: 'Criar plano de recuperação em 48h' },
+        { tipo: 'MONITORAMENTO', descricao: 'Acompanhamento semanal obrigatório' },
+        { tipo: 'SUPORTE', descricao: 'Alocar mentor/coach especializado' }
+      ];
+    } else if (score === 4) {
+      return [
+        { tipo: 'ATENÇÃO', descricao: 'Agendar reunião com gestor em 1 semana' },
+        { tipo: 'FEEDBACK', descricao: 'Sessão de feedback estruturado' },
+        { tipo: 'TREINAMENTO', descricao: 'Identificar necessidades de capacitação' },
+        { tipo: 'ACOMPANHAMENTO', descricao: 'Monitoramento quinzenal' }
+      ];
+    } else if (score === 3) {
+      return [
+        { tipo: 'OBSERVAÇÃO', descricao: 'Conversa informal com gestor' },
+        { tipo: 'DESENVOLVIMENTO', descricao: 'Oferecer oportunidades de melhoria' },
+        { tipo: 'SUPORTE', descricao: 'Disponibilizar recursos adicionais' },
+        { tipo: 'PREVENTIVO', descricao: 'Monitoramento mensal' }
+      ];
+    } else if (score === 2) {
+      return [
+        { tipo: 'RECONHECIMENTO', descricao: 'Reconhecer bom desempenho' },
+        { tipo: 'CRESCIMENTO', descricao: 'Explorar oportunidades de desenvolvimento' },
+        { tipo: 'MANUTENÇÃO', descricao: 'Manter nível de suporte atual' }
+      ];
+    } else if (score === 1) {
+      return [
+        { tipo: 'DESTAQUE', descricao: 'Reconhecimento público do desempenho' },
+        { tipo: 'LIDERANÇA', descricao: 'Considerar para posições de liderança' },
+        { tipo: 'MENTORIA', descricao: 'Convidar para mentorar outros consultores' },
+        { tipo: 'RETENÇÃO', descricao: 'Plano de carreira e retenção de talento' }
+      ];
+    }
+    return [{ tipo: 'AVALIAR', descricao: 'Realizar avaliação de desempenho' }];
   };
+;
 
   // ============================================================================
   // LÓGICA DE ESTRUTURA DE DADOS
@@ -277,6 +317,21 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                   <span className="detail-value">{coordenador?.nome_coordenador || 'N/A'}</span>
                                 </div>
                               </div>
+
+                              {/* Recomendações Inline */}
+                              {finalScore !== null && (
+                                <div className="recommendations-inline">
+                                  <h4 className="recommendations-inline-title">⚡ Recomendações de Ação:</h4>
+                                  <div className="recommendations-inline-grid">
+                                    {generateRecommendationsByScore(finalScore).map((rec, idx) => (
+                                      <div key={idx} className="recommendation-inline-card">
+                                        <div className="recommendation-inline-tipo">{rec.tipo}</div>
+                                        <div className="recommendation-inline-descricao">{rec.descricao}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
 
                             {/* Score Badge - Lado Direito */}
