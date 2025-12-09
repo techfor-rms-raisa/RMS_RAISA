@@ -1796,7 +1796,7 @@ export const useSupabaseData = () => {
       
       if (error) throw error;
       
-      // ✅ Salvar relatório integral na tabela consultant_reports
+      // ✅ Salvar relatório integral na tabela consultant_reports (ACUMULATIVO)
       const { data: reportData, error: reportError } = await supabase
         .from('consultant_reports')
         .insert([{
@@ -1819,7 +1819,7 @@ export const useSupabaseData = () => {
         throw reportError;
       }
       
-      console.log(`✅ Relatório salvo: ${consultant.nome_consultores} - Mês ${newReport.month}`);
+      console.log(`✅ Relatório salvo (acumulativo): ${consultant.nome_consultores} - Mês ${newReport.month}`);
       
       // Atualizar estado local
       const updatedConsultant: Consultant = {
