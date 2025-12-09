@@ -259,7 +259,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                 <p className="consultant-profession">{consultant.cargo_consultores || 'N/A'}</p>
                               </div>
 
-                              <div className="consultant-details-grid">
+                              <div className="consultant-details-grid-single">
                                 <div className="detail-item">
                                   <span className="detail-label">E-mail:</span>
                                   <span className="detail-value">{consultant.email_consultor || 'N/A'}</span>
