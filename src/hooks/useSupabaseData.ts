@@ -1809,9 +1809,9 @@ export const useSupabaseData = () => {
           predictive_alert: newReport.predictiveAlert,
           recommendations: JSON.stringify(newReport.recommendations),
           content: newReport.content,  // ← Relatório integral
-          created_at: newReport.createdAt,
           generated_by: newReport.generatedBy,
           ai_justification: newReport.aiJustification
+          // ✅ created_at removido - Supabase gera automaticamente
         }]);
       
       if (reportError) {
