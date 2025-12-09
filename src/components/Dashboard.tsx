@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore } from '../components/types';
 import StatusCircle from './StatusCircle';
 import ReportDetailsModal from './ReportDetailsModal';
@@ -255,12 +255,12 @@ const Dashboard: React.FC<DashboardProps> = ({
                             <td className="px-4 py-2 text-center">
                               {getValidFinalScore(consultant) !== null ? (
                                 <div 
-                                  className="inline-flex flex-col items-center justify-center w-10 h-10 rounded-full text-white font-bold text-sm"
-                                  style={{ backgroundColor: getScoreColor(consultant.parecer_final_consultor) }}
-                                  title={getScoreLabel(consultant.parecer_final_consultor)}
+                                  className="inline-flex flex-col items-center justify-center w-12 h-12 rounded-full text-white font-bold text-sm"
+                                  style={{ backgroundColor: getScoreColor(getValidFinalScore(consultant)) }}
+                                  title={getScoreLabel(getValidFinalScore(consultant))}
                                 >
-                                  <span>{consultant.parecer_final_consultor}</span>
-                                  <span className="text-xs">{getScoreLabel(consultant.parecer_final_consultor).substring(0, 3)}</span>
+                                  <span>{getValidFinalScore(consultant)}</span>
+                                  <span className="text-xs">{getScoreLabel(getValidFinalScore(consultant)).substring(0, 3)}</span>
                                 </div>
                               ) : (
                                 <span className="text-gray-400">-</span>
@@ -278,7 +278,13 @@ const Dashboard: React.FC<DashboardProps> = ({
         ))}
       </div>
 
-      <ReportDetailsModal report={viewingReport} onClose={() => setViewingReport(null)} isQuarantineView={false} />
+      {structuredData.every(c => c.managers.length === 0) && (
+        <div className="p-8 text-center bg-white rounded-lg border-2 border-dashed border-gray-300">
+          <p className="text-gray-500 text-lg">✅ Nenhum consultor encontrado com os filtros selecionados</p>
+        </div>
+      )}
+
+      <ReportDetailsModal report={viewingReport} onClose={() => setViewingReport(null)} />
     </div>
   );
 };
