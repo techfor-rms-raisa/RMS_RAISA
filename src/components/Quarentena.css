@@ -257,6 +257,41 @@
   color: #dc2626;
 }
 
+/* Score Badge Button - Override */
+.score-badge-button {
+  cursor: pointer !important;
+  border: none !important;
+  padding: 0.75rem !important;
+  min-width: 90px !important;
+  min-height: 90px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  transition: all 0.3s ease !important;
+  font-weight: 700 !important;
+  color: white !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+  border-radius: 0.5rem !important;
+  background-color: inherit !important;
+}
+
+.score-badge-button:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
+}
+
+.score-badge-button:active {
+  animation: grow 0.3s ease !important;
+}
+
+@keyframes grow {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
 .score-badge {
   display: flex;
   flex-direction: column;
@@ -1163,31 +1198,36 @@
    SCORE BADGE CLICÁVEL COM ANIMAÇÕES
    ============================================================================ */
 
+/* Score Badge Button - Clicável */
+.consultant-score-section .score-badge-button,
 .score-badge-button {
-  cursor: pointer;
-  border: none;
-  border-radius: 0.5rem;
-  padding: 0.75rem;
-  min-width: 90px;
-  min-height: 90px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 0.25rem;
-  transition: all 0.3s ease;
-  font-weight: 700;
-  color: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  cursor: pointer !important;
+  border: none !important;
+  border-radius: 0.5rem !important;
+  padding: 0.75rem !important;
+  min-width: 90px !important;
+  min-height: 90px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 0.25rem !important;
+  transition: all 0.3s ease !important;
+  font-weight: 700 !important;
+  color: white !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+  background-color: inherit !important;
 }
 
+.consultant-score-section .score-badge-button:hover,
 .score-badge-button:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  transform: translateY(-2px) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25) !important;
 }
 
+.consultant-score-section .score-badge-button:active,
 .score-badge-button:active {
-  animation: grow 0.3s ease;
+  animation: grow 0.3s ease !important;
 }
 
 @keyframes grow {
