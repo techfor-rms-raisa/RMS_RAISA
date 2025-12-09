@@ -72,24 +72,47 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   };
   // Obter relatórios dos últimos 90 dias
   const get90DaysReports = (consultant: Consultant): ConsultantReport[] => {
-    if (!consultant.reports || consultant.reports.length === 0) return [];
     const today = new Date();
     const ninetyDaysAgo = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
     
-    return consultant.reports
-      .filter(r => {
-        try {
-          const reportDate = new Date(r.data_relatorio || r.created_at || '');
-          return reportDate >= ninetyDaysAgo && reportDate <= today;
-        } catch {
-          return false;
-        }
-      })
-      .sort((a, b) => {
-        const dateA = new Date(a.data_relatorio || a.created_at || '');
-        const dateB = new Date(b.data_relatorio || b.created_at || '');
-        return dateB.getTime() - dateA.getTime(); // Maior data primeiro
-      });
+    // 1️⃣ PRIORIDADE: Buscar dados do Supabase (consultant_reports)
+    if (consultant.consultant_reports && Array.isArray(consultant.consultant_reports) && consultant.consultant_reports.length > 0) {
+      return consultant.consultant_reports
+        .filter(r => {
+          try {
+            const reportDate = new Date(r.created_at || '');
+            return reportDate >= ninetyDaysAgo && reportDate <= today;
+          } catch {
+            return false;
+          }
+        })
+        .sort((a, b) => {
+          const dateA = new Date(a.created_at || '');
+          const dateB = new Date(b.created_at || '');
+          return dateB.getTime() - dateA.getTime(); // Maior data primeiro
+        });
+    }
+    
+    // 2️⃣ FALLBACK: Dados locais (consultant.reports)
+    if (consultant.reports && Array.isArray(consultant.reports) && consultant.reports.length > 0) {
+      return consultant.reports
+        .filter(r => {
+          try {
+            const reportDate = new Date(r.data_relatorio || r.created_at || '');
+            return reportDate >= ninetyDaysAgo && reportDate <= today;
+          } catch {
+            return false;
+          }
+        })
+        .sort((a, b) => {
+          const dateA = new Date(a.data_relatorio || a.created_at || '');
+          const dateB = new Date(b.data_relatorio || b.created_at || '');
+          return dateB.getTime() - dateA.getTime(); // Maior data primeiro
+        });
+    }
+    
+    // 3️⃣ FALLBACK FINAL: Retornar array vazio
+    return [];
   };
   // Abrir modal de histórico ao clicar no badge
   const handleScoreBadgeClick = (consultant: Consultant) => {

@@ -276,7 +276,7 @@
   color: white !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
   border-radius: 0.5rem !important;
-  background-color: inherit !important;
+  /* Removido: background-color: inherit - conflitava com backgroundColor dinâmico */
 }
 
 .score-badge-button:hover {
@@ -333,6 +333,7 @@
 .score-badge-button .score-number {
   color: white !important;
   display: block !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
 }
 
 /* Seção de Recomendações */
