@@ -1,15 +1,16 @@
-
+// src/components/atividades/AtividadesInserir.tsx
 import React, { useState, useMemo, useEffect } from 'react';
-import { Client, Consultant, UsuarioCliente, ConsultantReport, CoordenadorCliente } from '../types';
+import { Client, Consultant, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '../types';
+import { User, Phone, Mail, Briefcase, Clock } from 'lucide-react';
 import HistoricoAtividadesModal from '../HistoricoAtividadesModal';
-import { User, Phone, Mail, Briefcase, FileText, Clock } from 'lucide-react';
 
 interface AtividadesInserirProps {
     clients: Client[];
     consultants: Consultant[];
     usuariosCliente: UsuarioCliente[];
-    allReports: ConsultantReport[];
-    loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
+    coordenadoresCliente?: CoordenadorCliente[];
+    allReports?: ConsultantReport[];
+    loadConsultantReports?: (consultantId: number) => Promise<ConsultantReport[]>;
     onManualReport: (text: string, gestorName?: string) => Promise<void>;
     preSelectedClient?: string;
     preSelectedConsultant?: string;
@@ -19,15 +20,16 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     clients,
     consultants,
     usuariosCliente,
-    allReports,
+    coordenadoresCliente = [],
+    allReports = [],
     loadConsultantReports,
     onManualReport,
     preSelectedClient = '',
     preSelectedConsultant = ''
 }) => {
     // Estados do formulário manual
-    const [selectedClient, setSelectedClient] = useState<string>(preSelectedClient);
-    const [selectedConsultant, setSelectedConsultant] = useState<string>(preSelectedConsultant);
+    const [selectedClient, setSelectedClient] = useState<string>('');
+    const [selectedConsultant, setSelectedConsultant] = useState<string>('');
     const [month, setMonth] = useState<number>(new Date().getMonth() + 1);
     const [activities, setActivities] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -37,18 +39,26 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     const [uploadedFile, setUploadedFile] = useState<File | null>(null);
     const [extractedText, setExtractedText] = useState<string>('');
     const [isExtracting, setIsExtracting] = useState(false);
-    
-    // Estados para histórico
-    const [showHistorico, setShowHistorico] = useState(false);
-    const [loadedReports, setLoadedReports] = useState<ConsultantReport[]>([]);
 
-    // Aplicar pré-seleção quando as props mudarem
+    // Estado para modal de histórico
+    const [showHistoricoModal, setShowHistoricoModal] = useState(false);
+    const [consultantReports, setConsultantReports] = useState<ConsultantReport[]>([]);
+    const [loadingReports, setLoadingReports] = useState(false);
+
+    // ✅ NAVEGAÇÃO CONTEXTUAL: Pré-selecionar cliente e consultor quando recebidos
     useEffect(() => {
-        if (preSelectedClient) setSelectedClient(preSelectedClient);
-        if (preSelectedConsultant) setSelectedConsultant(preSelectedConsultant);
-    }, [preSelectedClient, preSelectedConsultant]);
+        if (preSelectedClient) {
+            setSelectedClient(preSelectedClient);
+        }
+    }, [preSelectedClient]);
 
-    // Filtrar consultores pelo cliente selecionado
+    useEffect(() => {
+        if (preSelectedConsultant && preSelectedClient) {
+            setSelectedConsultant(preSelectedConsultant);
+        }
+    }, [preSelectedConsultant, preSelectedClient]);
+
+    // Filtrar consultores pelo cliente selecionado (apenas para modo manual)
     const filteredConsultants = useMemo(() => {
         if (!selectedClient) return [];
         const client = clients.find(c => c.razao_social_cliente === selectedClient);
@@ -62,28 +72,60 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
         ).sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores));
     }, [selectedClient, clients, consultants, usuariosCliente]);
 
-    // Dados do consultor selecionado
+    // Obter dados do consultor selecionado
     const selectedConsultantData = useMemo(() => {
+        if (!selectedConsultant) return null;
         return consultants.find(c => c.nome_consultores === selectedConsultant);
     }, [selectedConsultant, consultants]);
 
-    // Dados do gestor do consultor
-    const consultantManager = useMemo(() => {
-        if (!selectedConsultantData?.gestor_imediato_id) return null;
-        return usuariosCliente.find(u => u.id === selectedConsultantData.gestor_imediato_id);
-    }, [selectedConsultantData, usuariosCliente]);
+    // Obter dados do gestor/coordenador associado
+    const managerData = useMemo(() => {
+        if (!selectedConsultantData) return null;
+        
+        // Primeiro tenta buscar o gestor imediato
+        const manager = usuariosCliente.find(u => u.id === selectedConsultantData.gestor_imediato_id);
+        
+        if (manager) {
+            return {
+                nome: manager.nome_gestor_cliente,
+                cargo: manager.cargo_gestor,
+                email: `gestor${manager.id}@cliente.com`, // Email não está na tabela, usar placeholder
+                celular: manager.celular || 'Não informado',
+                tipo: 'Gestor'
+            };
+        }
+        
+        // Se não encontrar gestor, tenta buscar coordenador
+        if (selectedConsultantData.coordenador_id) {
+            const coordenador = coordenadoresCliente.find(c => c.id === selectedConsultantData.coordenador_id);
+            if (coordenador) {
+                return {
+                    nome: coordenador.nome_coordenador_cliente,
+                    cargo: coordenador.cargo_coordenador_cliente,
+                    email: `coordenador${coordenador.id}@cliente.com`, // Email não está na tabela, usar placeholder
+                    celular: coordenador.celular || 'Não informado',
+                    tipo: 'Coordenador'
+                };
+            }
+        }
+        
+        return null;
+    }, [selectedConsultantData, usuariosCliente, coordenadoresCliente]);
 
     // Handler para abrir histórico
     const handleOpenHistorico = async () => {
-        if (!selectedConsultantData) return;
+        if (!selectedConsultantData || !loadConsultantReports) return;
         
+        setLoadingReports(true);
         try {
             const reports = await loadConsultantReports(selectedConsultantData.id);
-            setLoadedReports(reports);
-            setShowHistorico(true);
+            setConsultantReports(reports);
+            setShowHistoricoModal(true);
         } catch (error) {
-            console.error('Erro ao carregar histórico:', error);
+            console.error('Erro ao carregar relatórios:', error);
             alert('Erro ao carregar histórico de atividades.');
+        } finally {
+            setLoadingReports(false);
         }
     };
 
@@ -124,38 +166,27 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
         }
     };
 
-    // Handler para processar relatório importado
     const handleImportSubmit = async () => {
-        if (!extractedText.trim()) {
-            alert('Por favor, faça upload de um arquivo primeiro.');
-            return;
-        }
-
+        if (!extractedText) return;
         setIsSubmitting(true);
-
         try {
-            const gestorName = 'Não especificado';
-            await onManualReport(extractedText, gestorName);
-            setUploadedFile(null);
+            await onManualReport(extractedText);
             setExtractedText('');
+            setUploadedFile(null);
+            alert('Relatório importado e processado com sucesso!');
         } catch (error) {
-            console.error('Erro ao processar relatório importado:', error);
-            alert('Ocorreu um erro ao processar o relatório.');
+            console.error('Erro ao processar relatório:', error);
+            alert('Erro ao processar relatório. Tente novamente.');
         } finally {
             setIsSubmitting(false);
         }
     };
 
-    // Handler para formulário manual
     const handleManualSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!selectedConsultant || !activities.trim()) {
-            alert('Por favor, selecione um consultor e descreva as atividades.');
-            return;
-        }
+        if (!selectedConsultant || !activities.trim()) return;
 
         setIsSubmitting(true);
-
         try {
             const consultant = consultants.find(c => c.nome_consultores === selectedConsultant);
             const manager = consultant ? usuariosCliente.find(u => u.id === consultant.gestor_imediato_id) : null;
@@ -194,23 +225,7 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
         <div className="max-w-6xl mx-auto p-6">
             <div className="flex justify-between items-center mb-6">
                 <h2 className="text-2xl font-bold text-gray-800">Inserir Relatório de Atividades</h2>
-                <div className="flex gap-3">
-                    {selectedConsultantData && (
-                        <button 
-                            onClick={handleOpenHistorico}
-                            className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-medium flex items-center gap-2"
-                        >
-                            <Clock size={18} />
-                            Histórico de Atividades
-                        </button>
-                    )}
-                    <button 
-                        onClick={downloadTemplate} 
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium"
-                    >
-                        Baixar Template de Exemplo
-                    </button>
-                </div>
+                <button onClick={downloadTemplate} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium">Baixar Template de Exemplo</button>
             </div>
 
             <div className="flex gap-2 mb-6 border-b border-gray-200">
@@ -240,63 +255,98 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
                         </div>
                     )}
 
-                    {/* Cards de Informação - Consultor e Gestor */}
-                    {selectedConsultantData && consultantManager && (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-                            {/* Card do Consultor */}
+                    {/* ✅ CARDS DE INFORMAÇÃO - Aparecem quando consultor é selecionado */}
+                    {selectedConsultantData && (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 my-6">
+                            {/* Card 1: Dados do Consultor */}
                             <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-5 shadow-sm">
                                 <div className="flex items-center gap-2 mb-4">
-                                    <User className="text-blue-600" size={20} />
-                                    <h3 className="font-semibold text-blue-900">Dados do Consultor</h3>
+                                    <User className="w-5 h-5 text-blue-600" />
+                                    <h3 className="text-lg font-semibold text-blue-900">Dados do Consultor</h3>
                                 </div>
-                                <div className="space-y-2 text-sm">
-                                    <div className="flex items-center gap-2">
-                                        <User size={16} className="text-blue-600" />
-                                        <span className="font-medium text-gray-700">Nome:</span>
-                                        <span className="text-gray-900">{selectedConsultantData.nome_consultores}</span>
+                                <div className="space-y-3">
+                                    <div className="flex items-start gap-2">
+                                        <User className="w-4 h-4 text-blue-600 mt-1 flex-shrink-0" />
+                                        <div>
+                                            <p className="text-xs text-blue-700 font-medium">Nome</p>
+                                            <p className="text-sm text-gray-800 font-semibold">{selectedConsultantData.nome_consultores}</p>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <Mail size={16} className="text-blue-600" />
-                                        <span className="font-medium text-gray-700">E-mail:</span>
-                                        <span className="text-gray-900">{selectedConsultantData.email_consultores || 'Não informado'}</span>
+                                    <div className="flex items-start gap-2">
+                                        <Mail className="w-4 h-4 text-blue-600 mt-1 flex-shrink-0" />
+                                        <div>
+                                            <p className="text-xs text-blue-700 font-medium">E-mail</p>
+                                            <p className="text-sm text-gray-800">{selectedConsultantData.email_consultor || 'Não informado'}</p>
+                                        </div>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                        <Phone size={16} className="text-blue-600" />
-                                        <span className="font-medium text-gray-700">Celular:</span>
-                                        <span className="text-gray-900">{selectedConsultantData.celular_consultores || 'Não informado'}</span>
+                                    <div className="flex items-start gap-2">
+                                        <Phone className="w-4 h-4 text-blue-600 mt-1 flex-shrink-0" />
+                                        <div>
+                                            <p className="text-xs text-blue-700 font-medium">Celular</p>
+                                            <p className="text-sm text-gray-800">{selectedConsultantData.celular || 'Não informado'}</p>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
 
-                            {/* Card do Gestor */}
-                            <div className="bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-lg p-5 shadow-sm">
-                                <div className="flex items-center gap-2 mb-4">
-                                    <Briefcase className="text-purple-600" size={20} />
-                                    <h3 className="font-semibold text-purple-900">Gestor Responsável</h3>
+                            {/* Card 2: Dados do Gestor/Coordenador */}
+                            {managerData ? (
+                                <div className="bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-lg p-5 shadow-sm">
+                                    <div className="flex items-center gap-2 mb-4">
+                                        <Briefcase className="w-5 h-5 text-purple-600" />
+                                        <h3 className="text-lg font-semibold text-purple-900">Dados do {managerData.tipo}</h3>
+                                    </div>
+                                    <div className="space-y-3">
+                                        <div className="flex items-start gap-2">
+                                            <User className="w-4 h-4 text-purple-600 mt-1 flex-shrink-0" />
+                                            <div>
+                                                <p className="text-xs text-purple-700 font-medium">Nome</p>
+                                                <p className="text-sm text-gray-800 font-semibold">{managerData.nome}</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-start gap-2">
+                                            <Briefcase className="w-4 h-4 text-purple-600 mt-1 flex-shrink-0" />
+                                            <div>
+                                                <p className="text-xs text-purple-700 font-medium">Cargo</p>
+                                                <p className="text-sm text-gray-800">{managerData.cargo}</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-start gap-2">
+                                            <Mail className="w-4 h-4 text-purple-600 mt-1 flex-shrink-0" />
+                                            <div>
+                                                <p className="text-xs text-purple-700 font-medium">E-mail</p>
+                                                <p className="text-sm text-gray-800">{managerData.email}</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-start gap-2">
+                                            <Phone className="w-4 h-4 text-purple-600 mt-1 flex-shrink-0" />
+                                            <div>
+                                                <p className="text-xs text-purple-700 font-medium">Celular</p>
+                                                <p className="text-sm text-gray-800">{managerData.celular}</p>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="space-y-2 text-sm">
-                                    <div className="flex items-center gap-2">
-                                        <User size={16} className="text-purple-600" />
-                                        <span className="font-medium text-gray-700">Nome:</span>
-                                        <span className="text-gray-900">{consultantManager.nome_gestor_cliente}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <Briefcase size={16} className="text-purple-600" />
-                                        <span className="font-medium text-gray-700">Cargo:</span>
-                                        <span className="text-gray-900">{consultantManager.cargo_gestor_cliente || 'Gestor'}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <Mail size={16} className="text-purple-600" />
-                                        <span className="font-medium text-gray-700">E-mail:</span>
-                                        <span className="text-gray-900">{consultantManager.email_gestor_cliente || 'Não informado'}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        <Phone size={16} className="text-purple-600" />
-                                        <span className="font-medium text-gray-700">Celular:</span>
-                                        <span className="text-gray-900">{consultantManager.celular_gestor_cliente || 'Não informado'}</span>
-                                    </div>
+                            ) : (
+                                <div className="bg-gray-50 border border-gray-200 rounded-lg p-5 shadow-sm flex items-center justify-center">
+                                    <p className="text-gray-500 text-sm">Nenhum gestor/coordenador associado</p>
                                 </div>
-                            </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Botão Histórico de Atividades */}
+                    {selectedConsultantData && loadConsultantReports && (
+                        <div className="flex justify-end">
+                            <button
+                                type="button"
+                                onClick={handleOpenHistorico}
+                                disabled={loadingReports}
+                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-medium disabled:bg-gray-400"
+                            >
+                                <Clock className="w-4 h-4" />
+                                {loadingReports ? 'Carregando...' : 'Histórico de Atividades (90 dias)'}
+                            </button>
                         </div>
                     )}
 
@@ -341,11 +391,11 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             )}
 
             {/* Modal de Histórico */}
-            {showHistorico && selectedConsultantData && (
+            {showHistoricoModal && selectedConsultantData && (
                 <HistoricoAtividadesModal
                     consultant={selectedConsultantData}
-                    allReports={loadedReports}
-                    onClose={() => setShowHistorico(false)}
+                    allReports={consultantReports}
+                    onClose={() => setShowHistoricoModal(false)}
                 />
             )}
         </div>
