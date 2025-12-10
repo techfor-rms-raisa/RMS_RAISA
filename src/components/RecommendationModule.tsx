@@ -1,15 +1,21 @@
-import React, { useMemo, useState } from 'react';
-import { Consultant, Client, UsuarioCliente } from '../components/types';
+import React, { useState, useMemo } from 'react';
+import { Consultant, Client, UsuarioCliente, ConsultantReport, CoordenadorCliente } from '../components/types';
+import HistoricoAtividadesModal from './HistoricoAtividadesModal';
 
 interface RecommendationModuleProps {
     consultants: Consultant[];
     clients: Client[];
     usuariosCliente: UsuarioCliente[];
+    coordenadoresCliente: CoordenadorCliente[];
+    loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
     onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
 }
 
-const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants, clients, usuariosCliente, onNavigateToAtividades }) => {
+const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants, clients, usuariosCliente, coordenadoresCliente, loadConsultantReports, onNavigateToAtividades }) => {
     const [selectedClient, setSelectedClient] = useState<string>('all');
+    const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
+    const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
+    const [loadedReports, setLoadedReports] = useState<ConsultantReport[]>([]);
 
     const filteredList = useMemo(() => {
         // Filtrar consultores ativos com risco MÉDIO, ALTO ou CRÍTICO (score >= 3)
@@ -57,6 +63,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants
     }, [consultants, selectedClient, clients, usuariosCliente]);
 
     return (
+        <>
         <div className="p-6 space-y-6">
             <div className="flex justify-between items-center">
                 <h2 className="text-3xl font-bold text-[#4D5253]">Recomendações</h2>
@@ -135,11 +142,20 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants
                                     </div>
                                     <p className="text-xs text-gray-600 uppercase tracking-wide">{c.cargo_consultores}</p>
                                 </div>
-                                <div className={`px-3 py-2 rounded-lg ${bgColor} border ${borderColor} flex flex-col items-center justify-center min-w-[80px]`}>
+                                <button
+                                    onClick={async () => {
+                                        setSelectedConsultantForHistory(c);
+                                        const reports = await loadConsultantReports(c.id);
+                                        setLoadedReports(reports);
+                                        setShowHistoryModal(true);
+                                    }}
+                                    className={`px-3 py-2 rounded-lg ${bgColor} border ${borderColor} flex flex-col items-center justify-center min-w-[80px] cursor-pointer hover:opacity-80 transition`}
+                                    title="Clique para ver histórico de atividades"
+                                >
                                     <div className="text-xl mb-0.5">{riskIcon}</div>
                                     <div className="text-xs font-bold text-gray-700">{riskLabel}</div>
                                     <div className="text-sm font-bold text-gray-900">Score {riskScore}</div>
-                                </div>
+                                </button>
                             </div>
                             
                             {latestReport && (
@@ -168,6 +184,20 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants
                 })}
             </div>
         </div>
+        
+        {/* Modal de Histórico de Atividades */}
+        {showHistoryModal && selectedConsultantForHistory && (
+            <HistoricoAtividadesModal
+                consultant={selectedConsultantForHistory}
+                reports={loadedReports}
+                onClose={() => {
+                    setShowHistoryModal(false);
+                    setSelectedConsultantForHistory(null);
+                    setLoadedReports([]);
+                }}
+            />
+        )}
+    </>
     );
 };
 

@@ -358,10 +358,13 @@ const Dashboard: React.FC<DashboardProps> = ({
                                 <span>{consultant.nome_consultores}</span>
                                 <button
                                   onClick={() => onNavigateToAtividades(client.razao_social_cliente, consultant.nome_consultores)}
-                                  className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition whitespace-nowrap"
+                                  className="px-2 py-1 text-xs bg-white text-blue-600 border border-blue-600 rounded hover:bg-blue-50 transition whitespace-nowrap flex items-center gap-1"
                                   title="Registrar nova atividade para este consultor"
                                 >
-                                  + Atividade
+                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                  </svg>
+                                  Atividade
                                 </button>
                               </div>
                             </td>
