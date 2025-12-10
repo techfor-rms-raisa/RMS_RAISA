@@ -1,5 +1,5 @@
 // src/components/atividades/AtividadesInserir.tsx
-// ✅ VERSÃO FINAL CORRIGIDA - COM CARDS E NAVEGAÇÃO CONTEXTUAL
+// ✅ VERSÃO OTIMIZADA - UI COMPACTA E EFICIENTE
 import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Consultant, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '../types';
 import { User, Phone, Mail, Briefcase, Clock } from 'lucide-react';
@@ -28,17 +28,6 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     preSelectedClient = '',
     preSelectedConsultant = ''
 }) => {
-    console.log('🔵 [AtividadesInserir] COMPONENTE RENDERIZADO');
-    console.log('📦 Props recebidas:', {
-        clientsCount: clients.length,
-        consultantsCount: consultants.length,
-        usuariosClienteCount: usuariosCliente.length,
-        coordenadoresClienteCount: coordenadoresCliente.length,
-        preSelectedClient,
-        preSelectedConsultant,
-        hasLoadConsultantReports: !!loadConsultantReports
-    });
-
     // Estados do formulário manual
     const [selectedClient, setSelectedClient] = useState<string>('');
     const [selectedConsultant, setSelectedConsultant] = useState<string>('');
@@ -57,79 +46,47 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     const [consultantReports, setConsultantReports] = useState<ConsultantReport[]>([]);
     const [loadingReports, setLoadingReports] = useState(false);
 
-    // ✅ NAVEGAÇÃO CONTEXTUAL: Pré-selecionar cliente e consultor quando recebidos
+    // Navegação contextual
     useEffect(() => {
-        console.log('🟢 [useEffect - Cliente] Executado com preSelectedClient:', preSelectedClient);
         if (preSelectedClient) {
-            console.log('✅ Pré-selecionando cliente:', preSelectedClient);
             setSelectedClient(preSelectedClient);
         }
     }, [preSelectedClient]);
 
     useEffect(() => {
-        console.log('🟢 [useEffect - Consultor] Executado com:', { preSelectedConsultant, preSelectedClient });
         if (preSelectedConsultant && preSelectedClient) {
-            console.log('✅ Pré-selecionando consultor:', preSelectedConsultant);
             setSelectedConsultant(preSelectedConsultant);
         }
     }, [preSelectedConsultant, preSelectedClient]);
 
-    // Filtrar consultores pelo cliente selecionado (apenas para modo manual)
+    // Filtrar consultores pelo cliente selecionado
     const filteredConsultants = useMemo(() => {
-        console.log('🔍 [useMemo - filteredConsultants] Filtrando consultores para cliente:', selectedClient);
-        if (!selectedClient) {
-            console.log('⚠️ Nenhum cliente selecionado');
-            return [];
-        }
+        if (!selectedClient) return [];
         const client = clients.find(c => c.razao_social_cliente === selectedClient);
-        if (!client) {
-            console.log('❌ Cliente não encontrado:', selectedClient);
-            return [];
-        }
-        console.log('✅ Cliente encontrado:', client);
+        if (!client) return [];
         const clientManagers = usuariosCliente.filter(u => u.id_cliente === client.id);
-        console.log('👥 Gestores do cliente:', clientManagers);
         const managerIds = clientManagers.map(m => m.id);
-        const filtered = consultants.filter(c => 
+        return consultants.filter(c => 
             c.status === 'Ativo' && 
             c.gestor_imediato_id && 
             managerIds.includes(c.gestor_imediato_id)
         ).sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores));
-        console.log('✅ Consultores filtrados:', filtered.length, filtered.map(c => c.nome_consultores));
-        return filtered;
     }, [selectedClient, clients, consultants, usuariosCliente]);
 
     // Obter dados do consultor selecionado
     const selectedConsultantData = useMemo(() => {
-        console.log('🔍 [useMemo - selectedConsultantData] Buscando dados do consultor:', selectedConsultant);
-        if (!selectedConsultant) {
-            console.log('⚠️ Nenhum consultor selecionado');
-            return null;
-        }
-        const consultant = consultants.find(c => c.nome_consultores === selectedConsultant);
-        console.log('🎯 Consultor encontrado:', consultant ? '✅ SIM' : '❌ NÃO', consultant);
-        return consultant || null;
+        if (!selectedConsultant) return null;
+        return consultants.find(c => c.nome_consultores === selectedConsultant) || null;
     }, [selectedConsultant, consultants]);
 
     // Obter dados do gestor/coordenador associado
     const managerData = useMemo(() => {
-        console.log('🔍 [useMemo - managerData] Buscando gestor/coordenador');
-        if (!selectedConsultantData) {
-            console.log('⚠️ Nenhum consultor selecionado para buscar gestor');
-            return null;
-        }
-        
-        console.log('👤 Dados do consultor:', {
-            nome: selectedConsultantData.nome_consultores,
-            gestor_imediato_id: selectedConsultantData.gestor_imediato_id,
-            coordenador_id: selectedConsultantData.coordenador_id
-        });
+        if (!selectedConsultantData) return null;
         
         // Primeiro tenta buscar o gestor imediato
         const manager = usuariosCliente.find(u => u.id === selectedConsultantData.gestor_imediato_id);
         
         if (manager) {
-            console.log('✅ Gestor encontrado:', manager);
             return {
                 nome: manager.nome_gestor_cliente,
                 cargo: manager.cargo_gestor,
@@ -139,13 +96,10 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             };
         }
         
-        console.log('⚠️ Gestor não encontrado, tentando buscar coordenador...');
-        
         // Se não encontrar gestor, tenta buscar coordenador
         if (selectedConsultantData.coordenador_id) {
             const coordenador = coordenadoresCliente.find(c => c.id === selectedConsultantData.coordenador_id);
             if (coordenador) {
-                console.log('✅ Coordenador encontrado:', coordenador);
                 return {
                     nome: coordenador.nome_coordenador_cliente,
                     cargo: coordenador.cargo_coordenador_cliente,
@@ -156,45 +110,20 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             }
         }
         
-        console.log('❌ Nenhum gestor ou coordenador encontrado');
         return null;
     }, [selectedConsultantData, usuariosCliente, coordenadoresCliente]);
 
-    // Log quando os cards devem aparecer
-    useEffect(() => {
-        if (selectedConsultantData) {
-            console.log('🎨 CARDS DEVEM SER EXIBIDOS AGORA!');
-            console.log('📋 Dados do Consultor:', {
-                nome: selectedConsultantData.nome_consultores,
-                email: selectedConsultantData.email_consultor,
-                celular: selectedConsultantData.celular
-            });
-            console.log('📋 Dados do Gestor/Coordenador:', managerData);
-        } else {
-            console.log('⚠️ Cards NÃO devem ser exibidos (nenhum consultor selecionado)');
-        }
-    }, [selectedConsultantData, managerData]);
-
     // Handler para abrir histórico
     const handleOpenHistorico = async () => {
-        console.log('🕒 [handleOpenHistorico] Abrindo histórico...');
-        if (!selectedConsultantData || !loadConsultantReports) {
-            console.log('❌ Não é possível abrir histórico:', {
-                hasConsultant: !!selectedConsultantData,
-                hasLoadFunction: !!loadConsultantReports
-            });
-            return;
-        }
+        if (!selectedConsultantData || !loadConsultantReports) return;
         
         setLoadingReports(true);
         try {
-            console.log('📥 Carregando relatórios do consultor ID:', selectedConsultantData.id);
             const reports = await loadConsultantReports(selectedConsultantData.id);
-            console.log('✅ Relatórios carregados:', reports.length);
             setConsultantReports(reports);
             setShowHistoricoModal(true);
         } catch (error) {
-            console.error('❌ Erro ao carregar relatórios:', error);
+            console.error('Erro ao carregar relatórios:', error);
             alert('Erro ao carregar histórico de atividades.');
         } finally {
             setLoadingReports(false);
@@ -293,188 +222,214 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
 
     const months = Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: new Date(0, i).toLocaleString('pt-BR', { month: 'long' }) }));
 
-    console.log('🎨 [RENDER] Renderizando componente com:', {
-        selectedClient,
-        selectedConsultant,
-        hasSelectedConsultantData: !!selectedConsultantData,
-        hasManagerData: !!managerData
-    });
-
     return (
-        <div className="max-w-6xl mx-auto p-6">
-            {/* Banner de Debug */}
-            <div className="mb-4 p-4 bg-yellow-100 border border-yellow-400 rounded-lg">
-                <p className="text-sm font-bold text-yellow-800">🔧 MODO DEBUG ATIVADO - Verifique o Console (F12)</p>
-                <p className="text-xs text-yellow-700 mt-1">
-                    Cliente: {selectedClient || 'Nenhum'} | 
-                    Consultor: {selectedConsultant || 'Nenhum'} | 
-                    Cards: {selectedConsultantData ? '✅ DEVEM APARECER' : '❌ NÃO APARECEM'}
-                </p>
-            </div>
-
-            <div className="flex justify-between items-center mb-6">
+        <div className="max-w-6xl mx-auto p-4">
+            <div className="flex justify-between items-center mb-4">
                 <h2 className="text-2xl font-bold text-gray-800">Inserir Relatório de Atividades</h2>
-                <button onClick={downloadTemplate} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium">Baixar Template de Exemplo</button>
+                <button onClick={downloadTemplate} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm font-medium">
+                    Baixar Template de Exemplo
+                </button>
             </div>
 
-            <div className="flex gap-2 mb-6 border-b border-gray-200">
-                <button onClick={() => setMode('manual')} className={`px-6 py-3 font-medium transition ${mode === 'manual' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'}`}>Digitação Manual</button>
-                <button onClick={() => setMode('import')} className={`px-6 py-3 font-medium transition ${mode === 'import' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'}`}>Importar Arquivo</button>
+            <div className="flex gap-2 mb-4 border-b border-gray-200">
+                <button onClick={() => setMode('manual')} className={`px-6 py-2 font-medium transition text-sm ${mode === 'manual' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'}`}>
+                    Digitação Manual
+                </button>
+                <button onClick={() => setMode('import')} className={`px-6 py-2 font-medium transition text-sm ${mode === 'import' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'}`}>
+                    Importar Arquivo
+                </button>
             </div>
 
             {mode === 'manual' ? (
-                <form onSubmit={handleManualSubmit} className="space-y-6">
-                    {/* Cliente */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
-                        <select value={selectedClient} onChange={(e) => { setSelectedClient(e.target.value); setSelectedConsultant(''); }} className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                            <option value="">Selecione um cliente...</option>
-                            {clients.map(c => <option key={c.id} value={c.razao_social_cliente}>{c.razao_social_cliente}</option>)}
-                        </select>
-                    </div>
-
-                    {/* Consultor */}
-                    {selectedClient && (
+                <form onSubmit={handleManualSubmit} className="space-y-4">
+                    {/* Dropdowns Cliente e Consultor em Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Consultor</label>
-                            <select value={selectedConsultant} onChange={(e) => setSelectedConsultant(e.target.value)} className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                                <option value="">Selecione um consultor...</option>
-                                {filteredConsultants.map(c => <option key={c.id} value={c.nome_consultores}>{c.nome_consultores}</option>)}
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
+                            <select 
+                                value={selectedClient} 
+                                onChange={(e) => { setSelectedClient(e.target.value); setSelectedConsultant(''); }} 
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            >
+                                <option value="">Selecione um cliente...</option>
+                                {clients.map(c => <option key={c.id} value={c.razao_social_cliente}>{c.razao_social_cliente}</option>)}
                             </select>
                         </div>
-                    )}
 
-                    {/* ✅ CARDS DE INFORMAÇÃO - Aparecem quando consultor é selecionado */}
-                    {selectedConsultantData && (
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 my-6">
-                            {/* Card 1: Dados do Consultor */}
-                            <div className="bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 rounded-lg p-5 shadow-sm">
-                                <div className="flex items-center gap-2 mb-4">
-                                    <User className="w-5 h-5 text-blue-600" />
-                                    <h3 className="text-lg font-semibold text-blue-900">Dados do Consultor</h3>
-                                </div>
-                                <div className="space-y-3">
-                                    <div className="flex items-start gap-2">
-                                        <User className="w-4 h-4 text-blue-600 mt-1 flex-shrink-0" />
-                                        <div>
-                                            <p className="text-xs text-blue-700 font-medium">Nome</p>
-                                            <p className="text-sm text-gray-800 font-semibold">{selectedConsultantData.nome_consultores}</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-start gap-2">
-                                        <Mail className="w-4 h-4 text-blue-600 mt-1 flex-shrink-0" />
-                                        <div>
-                                            <p className="text-xs text-blue-700 font-medium">E-mail</p>
-                                            <p className="text-sm text-gray-800">{selectedConsultantData.email_consultor || 'Não informado'}</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-start gap-2">
-                                        <Phone className="w-4 h-4 text-blue-600 mt-1 flex-shrink-0" />
-                                        <div>
-                                            <p className="text-xs text-blue-700 font-medium">Celular</p>
-                                            <p className="text-sm text-gray-800">{selectedConsultantData.celular || 'Não informado'}</p>
-                                        </div>
-                                    </div>
-                                </div>
+                        {selectedClient && (
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Consultor</label>
+                                <select 
+                                    value={selectedConsultant} 
+                                    onChange={(e) => setSelectedConsultant(e.target.value)} 
+                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                >
+                                    <option value="">Selecione um consultor...</option>
+                                    {filteredConsultants.map(c => <option key={c.id} value={c.nome_consultores}>{c.nome_consultores}</option>)}
+                                </select>
                             </div>
+                        )}
+                    </div>
 
-                            {/* Card 2: Dados do Gestor/Coordenador */}
-                            {managerData ? (
-                                <div className="bg-gradient-to-br from-purple-50 to-purple-100 border border-purple-200 rounded-lg p-5 shadow-sm">
-                                    <div className="flex items-center gap-2 mb-4">
-                                        <Briefcase className="w-5 h-5 text-purple-600" />
-                                        <h3 className="text-lg font-semibold text-purple-900">Dados do {managerData.tipo}</h3>
+                    {/* Cards de Informação - Layout Compacto */}
+                    {selectedConsultantData && (
+                        <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-gray-200 rounded-lg p-3">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                {/* Card Consultor - Compacto */}
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <User className="w-4 h-4 text-blue-600" />
+                                        <h3 className="text-sm font-semibold text-blue-900">Consultor</h3>
                                     </div>
-                                    <div className="space-y-3">
+                                    <div className="space-y-1.5">
                                         <div className="flex items-start gap-2">
-                                            <User className="w-4 h-4 text-purple-600 mt-1 flex-shrink-0" />
-                                            <div>
-                                                <p className="text-xs text-purple-700 font-medium">Nome</p>
-                                                <p className="text-sm text-gray-800 font-semibold">{managerData.nome}</p>
+                                            <User className="w-3 h-3 text-gray-500 mt-0.5 flex-shrink-0" />
+                                            <div className="min-w-0">
+                                                <p className="text-xs text-gray-600">Nome</p>
+                                                <p className="text-xs font-semibold text-gray-800 truncate">{selectedConsultantData.nome_consultores}</p>
                                             </div>
                                         </div>
                                         <div className="flex items-start gap-2">
-                                            <Briefcase className="w-4 h-4 text-purple-600 mt-1 flex-shrink-0" />
-                                            <div>
-                                                <p className="text-xs text-purple-700 font-medium">Cargo</p>
-                                                <p className="text-sm text-gray-800">{managerData.cargo}</p>
+                                            <Mail className="w-3 h-3 text-gray-500 mt-0.5 flex-shrink-0" />
+                                            <div className="min-w-0">
+                                                <p className="text-xs text-gray-600">E-mail</p>
+                                                <p className="text-xs text-gray-800 truncate">{selectedConsultantData.email_consultor || 'Não informado'}</p>
                                             </div>
                                         </div>
                                         <div className="flex items-start gap-2">
-                                            <Mail className="w-4 h-4 text-purple-600 mt-1 flex-shrink-0" />
-                                            <div>
-                                                <p className="text-xs text-purple-700 font-medium">E-mail</p>
-                                                <p className="text-sm text-gray-800">{managerData.email}</p>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-start gap-2">
-                                            <Phone className="w-4 h-4 text-purple-600 mt-1 flex-shrink-0" />
-                                            <div>
-                                                <p className="text-xs text-purple-700 font-medium">Celular</p>
-                                                <p className="text-sm text-gray-800">{managerData.celular}</p>
+                                            <Phone className="w-3 h-3 text-gray-500 mt-0.5 flex-shrink-0" />
+                                            <div className="min-w-0">
+                                                <p className="text-xs text-gray-600">Celular</p>
+                                                <p className="text-xs text-gray-800">{selectedConsultantData.celular || 'Não informado'}</p>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
-                            ) : (
-                                <div className="bg-gray-50 border border-gray-200 rounded-lg p-5 shadow-sm flex items-center justify-center">
-                                    <p className="text-gray-500 text-sm">Nenhum gestor/coordenador associado</p>
-                                </div>
-                            )}
+
+                                {/* Card Gestor - Compacto */}
+                                {managerData && (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <Briefcase className="w-4 h-4 text-purple-600" />
+                                            <h3 className="text-sm font-semibold text-purple-900">{managerData.tipo}</h3>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <div className="flex items-start gap-2">
+                                                <User className="w-3 h-3 text-gray-500 mt-0.5 flex-shrink-0" />
+                                                <div className="min-w-0">
+                                                    <p className="text-xs text-gray-600">Nome</p>
+                                                    <p className="text-xs font-semibold text-gray-800 truncate">{managerData.nome}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-start gap-2">
+                                                <Briefcase className="w-3 h-3 text-gray-500 mt-0.5 flex-shrink-0" />
+                                                <div className="min-w-0">
+                                                    <p className="text-xs text-gray-600">Cargo</p>
+                                                    <p className="text-xs text-gray-800 truncate">{managerData.cargo}</p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-start gap-2">
+                                                <Mail className="w-3 h-3 text-gray-500 mt-0.5 flex-shrink-0" />
+                                                <div className="min-w-0">
+                                                    <p className="text-xs text-gray-600">E-mail</p>
+                                                    <p className="text-xs text-gray-800 truncate">{managerData.email}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Botão Histórico - Integrado nos Cards */}
+                                {loadConsultantReports && (
+                                    <div className="flex items-center justify-center">
+                                        <button
+                                            type="button"
+                                            onClick={handleOpenHistorico}
+                                            disabled={loadingReports}
+                                            className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-xs font-medium disabled:bg-gray-400 h-fit"
+                                        >
+                                            <Clock className="w-4 h-4" />
+                                            {loadingReports ? 'Carregando...' : 'Histórico (90 dias)'}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
 
-                    {/* Botão Histórico de Atividades */}
-                    {selectedConsultantData && loadConsultantReports && (
-                        <div className="flex justify-end">
-                            <button
-                                type="button"
-                                onClick={handleOpenHistorico}
-                                disabled={loadingReports}
-                                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-medium disabled:bg-gray-400"
+                    {/* Mês - Compacto */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Mês</label>
+                            <select 
+                                value={month} 
+                                onChange={(e) => setMonth(parseInt(e.target.value))} 
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                             >
-                                <Clock className="w-4 h-4" />
-                                {loadingReports ? 'Carregando...' : 'Histórico de Atividades (90 dias)'}
-                            </button>
+                                {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                            </select>
                         </div>
-                    )}
-
-                    {/* Mês */}
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Mês</label>
-                        <select value={month} onChange={(e) => setMonth(parseInt(e.target.value))} className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent">
-                            {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                        </select>
                     </div>
 
                     {/* Atividades */}
                     <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Atividades e Observações</label>
-                        <textarea value={activities} onChange={(e) => setActivities(e.target.value)} placeholder="Descreva as atividades, desempenho e observações sobre o consultor..." className="w-full border border-gray-300 rounded-lg p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent" rows={10} />
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Atividades e Observações</label>
+                        <textarea 
+                            value={activities} 
+                            onChange={(e) => setActivities(e.target.value)} 
+                            placeholder="Descreva as atividades, desempenho e observações sobre o consultor..." 
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent" 
+                            rows={8} 
+                        />
                     </div>
 
-                    {/* Botão Enviar */}
+                    {/* Botões */}
                     <div className="flex justify-end gap-3">
-                        <button type="button" onClick={() => { setSelectedClient(''); setSelectedConsultant(''); setMonth(new Date().getMonth() + 1); setActivities(''); }} className="px-6 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition font-medium">Limpar</button>
-                        <button type="submit" disabled={isSubmitting || !selectedConsultant} className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-gray-400 font-medium">{isSubmitting ? 'Processando...' : 'Enviar Relatório'}</button>
+                        <button 
+                            type="button" 
+                            onClick={() => { setSelectedClient(''); setSelectedConsultant(''); setMonth(new Date().getMonth() + 1); setActivities(''); }} 
+                            className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition text-sm font-medium"
+                        >
+                            Limpar
+                        </button>
+                        <button 
+                            type="submit" 
+                            disabled={isSubmitting || !selectedConsultant} 
+                            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-gray-400 text-sm font-medium"
+                        >
+                            {isSubmitting ? 'Processando...' : 'Enviar Relatório'}
+                        </button>
                     </div>
                 </form>
             ) : (
-                <div className="space-y-6">
-                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                <div className="space-y-4">
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
                         <input type="file" accept=".pdf,.txt" onChange={handleFileUpload} className="hidden" id="file-upload" />
-                        <label htmlFor="file-upload" className="cursor-pointer inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium">Selecionar PDF ou TXT</label>
-                        {uploadedFile && <div className="mt-4 text-sm text-gray-600"><p><strong>Arquivo:</strong> {uploadedFile.name}</p></div>}
-                        {isExtracting && <p className="mt-4 text-blue-600">Extraindo texto...</p>}
+                        <label htmlFor="file-upload" className="cursor-pointer inline-block px-5 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+                            Selecionar PDF ou TXT
+                        </label>
+                        {uploadedFile && <div className="mt-3 text-sm text-gray-600"><p><strong>Arquivo:</strong> {uploadedFile.name}</p></div>}
+                        {isExtracting && <p className="mt-3 text-blue-600 text-sm">Extraindo texto...</p>}
                     </div>
                     {extractedText && (
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Texto Extraído</label>
-                            <textarea value={extractedText} onChange={(e) => setExtractedText(e.target.value)} className="w-full border border-gray-300 rounded-lg p-3" rows={15} />
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Texto Extraído</label>
+                            <textarea 
+                                value={extractedText} 
+                                onChange={(e) => setExtractedText(e.target.value)} 
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" 
+                                rows={12} 
+                            />
                         </div>
                     )}
                     <div className="flex justify-end">
-                        <button onClick={handleImportSubmit} className="px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-gray-400" disabled={isSubmitting || !extractedText}>{isSubmitting ? 'Processando...' : 'Importar e Processar'}</button>
+                        <button 
+                            onClick={handleImportSubmit} 
+                            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:bg-gray-400 text-sm font-medium" 
+                            disabled={isSubmitting || !extractedText}
+                        >
+                            {isSubmitting ? 'Processando...' : 'Importar e Processar'}
+                        </button>
                     </div>
                 </div>
             )}
