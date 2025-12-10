@@ -49,6 +49,7 @@ export interface UsuarioCliente {
   cargo_gestor: string;
   ativo: boolean;
   gestor_rs_id: number | null;
+  celular?: string; // Formato: DDD-99999-9999 (Ex: 011-98833-8182)
 }
 
 export interface CoordenadorCliente {
@@ -57,6 +58,7 @@ export interface CoordenadorCliente {
   nome_coordenador_cliente: string;
   cargo_coordenador_cliente: string;
   ativo: boolean;
+  celular?: string; // Formato: DDD-99999-9999 (Ex: 011-98833-8182)
 }
 
 export interface Recommendation {
@@ -87,7 +89,8 @@ export interface Consultant {
   id: number;
   ano_vigencia: number; 
   nome_consultores: string;
-  email_consultor?: string; 
+  email_consultor?: string;
+  celular?: string; // Formato: DDD-99999-9999 (Ex: 011-98833-8182)
   cargo_consultores: string;
   data_inclusao_consultores: string;
   data_ultima_alteracao?: string; 
