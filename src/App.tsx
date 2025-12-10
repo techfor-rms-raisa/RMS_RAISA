@@ -173,6 +173,7 @@ const App: React.FC = () => {
             clients={clients} 
             consultants={consultants} 
             usuariosCliente={usuariosCliente}
+            coordenadoresCliente={coordenadoresCliente}
             allReports={consultants.flatMap(c => c.consultant_reports || [])}
             loadConsultantReports={loadConsultantReports}
             onManualReport={handleManualAnalysis}
