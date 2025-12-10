@@ -373,8 +373,9 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                       const finalScore = getValidFinalScore(consultant);
                       const isNew = isNewConsultant(consultant);
                       const daysSinceHiring = getDaysSinceHiring(consultant.data_inclusao_consultores);
-                      const clientInfo = clients.find(c => c.id === consultant.id_cliente);
-                      const coordenador = coordenadoresCliente.find(cc => cc.id_cliente === consultant.id_cliente);
+                      // Usar client do escopo superior (já disponível no map)
+                      const clientInfo = client;
+                      const coordenador = coordenadoresCliente.find(cc => cc.id_gestor_cliente === manager.id);
                       const recommendations = getRecommendations(consultant);
 
                       return (

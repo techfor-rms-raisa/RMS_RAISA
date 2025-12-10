@@ -78,6 +78,10 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants
                     const riskScore = c.parecer_final_consultor || 0;
                     const latestReport = c.reports && c.reports.length > 0 ? c.reports[0] : null;
                     
+                    // Buscar informações do cliente através do gestor
+                    const manager = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
+                    const clientInfo = clients.find(cl => cl.id === manager?.id_cliente);
+                    
                     // Definir cor da borda baseado no risco
                     // NOVA ESCALA: 1=Excelente (Verde), 2=Bom (Azul), 3=Médio (Amarelo), 4=Alto (Laranja), 5=Crítico (Vermelho)
                     let borderColor = 'border-gray-300';
