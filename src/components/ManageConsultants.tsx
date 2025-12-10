@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason } from '../components/types';
 import InclusionImport from './InclusionImport';
-import NovaAtividadeButton from './NovaAtividadeButton';
 
 interface ManageConsultantsProps {
     consultants: Consultant[];
@@ -109,12 +108,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                             + Novo Consultor
                         </button>
                     )}
-                    <NovaAtividadeButton
-                        consultantName=""
-                        clientName=""
-                        onNavigate={onNavigateToAtividades}
-                        variant="default"
-                    />
+
                 </div>
             </div>
 

@@ -120,25 +120,25 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants
                     const recommendations = latestReport?.recommendations || generateRecommendationsByScore(riskScore);
                     
                     return (
-                        <div key={c.id} className={`bg-white p-6 rounded-lg shadow-md border-l-4 ${borderColor}`}>
-                            <div className="flex justify-between items-start mb-4">
+                        <div key={c.id} className={`bg-white p-4 rounded-lg shadow-md border-l-4 ${borderColor}`}>
+                            <div className="flex justify-between items-start mb-3">
                                 <div className="flex-1">
-                                    <div className="flex items-center justify-between gap-3 mb-1">
-                                      <h3 className="font-bold text-xl text-gray-800">{c.nome_consultores}</h3>
+                                    <div className="flex items-center gap-3 flex-wrap mb-1">
+                                      <h3 className="font-bold text-lg text-gray-800">{c.nome_consultores}</h3>
                                       <button
                                         onClick={() => onNavigateToAtividades(clientInfo?.razao_social_cliente, c.nome_consultores)}
-                                        className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition whitespace-nowrap"
+                                        className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition whitespace-nowrap"
                                         title="Registrar nova atividade para este consultor"
                                       >
-                                        + Nova Atividade
+                                        + Atividade
                                       </button>
                                     </div>
-                                    <p className="text-sm text-gray-600">{c.cargo_consultores}</p>
+                                    <p className="text-xs text-gray-600 uppercase tracking-wide">{c.cargo_consultores}</p>
                                 </div>
-                                <div className={`px-4 py-2 rounded-lg ${bgColor} border ${borderColor}`}>
-                                    <div className="text-2xl mb-1">{riskIcon}</div>
+                                <div className={`px-3 py-2 rounded-lg ${bgColor} border ${borderColor} flex flex-col items-center justify-center min-w-[80px]`}>
+                                    <div className="text-xl mb-0.5">{riskIcon}</div>
                                     <div className="text-xs font-bold text-gray-700">{riskLabel}</div>
-                                    <div className="text-lg font-bold text-gray-900">Score {riskScore}</div>
+                                    <div className="text-sm font-bold text-gray-900">Score {riskScore}</div>
                                 </div>
                             </div>
                             

@@ -389,16 +389,16 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                             {/* Seção de Informações */}
                             <div className="consultant-info-section">
                               <div className="consultant-header-info">
-                                <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-3 flex-wrap">
                                   <h3 className="consultant-name">
                                     {consultant.nome_consultores}
                                   </h3>
                                   <button
                                     onClick={() => onNavigateToAtividades(clientInfo?.razao_social_cliente, consultant.nome_consultores)}
-                                    className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition whitespace-nowrap"
+                                    className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition whitespace-nowrap"
                                     title="Registrar nova atividade para este consultor"
                                   >
-                                    + Nova Atividade
+                                    + Atividade
                                   </button>
                                 </div>
                                 <p className="consultant-profession">{consultant.cargo_consultores || 'N/A'}</p>

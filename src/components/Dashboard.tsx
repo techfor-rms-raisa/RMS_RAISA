@@ -378,15 +378,19 @@ const Dashboard: React.FC<DashboardProps> = ({
                                 </td>
                               );
                             })}
-                            <td className="px-4 py-2 text-center">
+                            <td className="px-2 py-2 text-center">
                               {getValidFinalScore(consultant) !== null ? (
-                                <div 
-                                  className="inline-flex flex-col items-center justify-center w-12 h-12 rounded-full text-white font-bold text-sm"
-                                  style={{ backgroundColor: getScoreColor(getValidFinalScore(consultant)) }}
-                                  title={getScoreLabel(getValidFinalScore(consultant))}
-                                >
-                                  <span>{getValidFinalScore(consultant)}</span>
-                                  <span className="text-xs">{getScoreLabel(getValidFinalScore(consultant)).substring(0, 3)}</span>
+                                <div className="relative group flex justify-center">
+                                  <div 
+                                    className="w-5 h-5 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-md"
+                                    style={{ backgroundColor: getScoreColor(getValidFinalScore(consultant)) }}
+                                    title={`Score Final: ${getValidFinalScore(consultant)} - ${getScoreLabel(getValidFinalScore(consultant))}`}
+                                  >
+                                    {getValidFinalScore(consultant)}
+                                  </div>
+                                  <div className="absolute bottom-full mb-2 hidden group-hover:block w-max bg-gray-800 text-white text-xs rounded py-1 px-2 z-10">
+                                    {getScoreLabel(getValidFinalScore(consultant))}
+                                  </div>
                                 </div>
                               ) : (
                                 <span className="text-gray-400">-</span>
