@@ -89,13 +89,6 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     const today = new Date();
     const ninetyDaysAgo = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
     
-    // DEBUG
-    console.log(`[Quarentena] Buscando relatórios para ${consultant.nome_consultores}:`, {
-      tem_consultant_reports: !!consultant.consultant_reports,
-      length_consultant_reports: consultant.consultant_reports?.length || 0,
-      tem_reports: !!consultant.reports,
-      length_reports: consultant.reports?.length || 0
-    });
     
     // 1️⃣ PRIORIDADE: Buscar dados do Supabase (consultant_reports)
     if (consultant.consultant_reports && Array.isArray(consultant.consultant_reports) && consultant.consultant_reports.length > 0) {
