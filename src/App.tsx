@@ -89,6 +89,10 @@ const App: React.FC = () => {
     setSimulatedToken(null);
   };
 
+  const handleNavigateToAtividades = () => {
+    setCurrentView('atividades_inserir');
+  };
+
   const handleAnalysisComplete = (results: AIAnalysisResult[]) => {
       results.forEach(result => updateConsultantScore(result));
   };
@@ -139,11 +143,11 @@ const App: React.FC = () => {
       case 'clients':
         return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={updateClient} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={updateUsuarioCliente} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={updateCoordenadorCliente} currentUser={currentUser!} />;
       case 'consultants':
-        return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={updateConsultant} currentUser={currentUser!} />;
+        return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={updateConsultant} currentUser={currentUser!} onNavigateToAtividades={handleNavigateToAtividades} />;
       case 'quarantine':
-        return <Quarentena consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} />;
+        return <Quarentena consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} />;
       case 'recommendations':
-        return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} />;
+        return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} onNavigateToAtividades={handleNavigateToAtividades} />;
       case 'analytics':
         return <Analytics consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
       case 'export': 
@@ -197,7 +201,7 @@ const App: React.FC = () => {
 
       case 'dashboard':
       default:
-        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} />;
+        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} />;
     }
   };
 

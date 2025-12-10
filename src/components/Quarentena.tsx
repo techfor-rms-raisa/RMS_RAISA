@@ -1,6 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '../components/types';
 import ReportDetailsModal from './ReportDetailsModal';
+import HistoricoAtividadesModal from './HistoricoAtividadesModal';
+import NovaAtividadeButton from './NovaAtividadeButton';
 import './Quarentena.css';
 
 interface QuarentenaProps {
@@ -10,6 +12,7 @@ interface QuarentenaProps {
   coordenadoresCliente: CoordenadorCliente[];
   currentUser: User;
   loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
+  onNavigateToAtividades: () => void;
 }
 
 interface Recommendation {
@@ -23,7 +26,8 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   usuariosCliente = [], 
   coordenadoresCliente = [],
   currentUser,
-  loadConsultantReports
+  loadConsultantReports,
+  onNavigateToAtividades
 }) => {
   
   const [selectedClient, setSelectedClient] = useState<string>('all');
@@ -31,6 +35,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
   const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
+  const [loadedReports, setLoadedReports] = useState<ConsultantReport[]>([]);
 
   // ============================================================================
   // FUNÇÕES AUXILIARES
@@ -138,8 +143,11 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     try {
       // 🔥 Carregar relatórios sob demanda do Supabase
       console.log(`📊 Carregando relatórios do Supabase para consultor ${consultant.id}...`);
-      await loadConsultantReports(consultant.id);
-      console.log(`✅ Relatórios carregados com sucesso`);
+      const reports = await loadConsultantReports(consultant.id);
+      console.log(`✅ ${reports.length} relatórios carregados com sucesso`);
+      
+      // Armazenar relatórios no state
+      setLoadedReports(reports);
       
       // Abrir modal de histórico
       setSelectedConsultantForHistory(consultant);
@@ -147,6 +155,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     } catch (error) {
       console.error('❌ Erro ao carregar relatórios:', error);
       // Abrir modal mesmo com erro (mostrará mensagem de vazio)
+      setLoadedReports([]);
       setSelectedConsultantForHistory(consultant);
       setShowHistoryModal(true);
     }
@@ -311,8 +320,14 @@ const Quarentena: React.FC<QuarentenaProps> = ({
 
   return (
     <div className="quarentena-container">
-      <div className="quarentena-header">
+      <div className="quarentena-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 className="quarentena-title">🚨 Quarentena de Consultores</h2>
+        <NovaAtividadeButton
+          consultantName=""
+          clientName=""
+          onNavigate={onNavigateToAtividades}
+          variant="default"
+        />
       </div>
       
       {/* Filtros */}
@@ -493,45 +508,15 @@ const Quarentena: React.FC<QuarentenaProps> = ({
 
       {/* Modal de Histórico de Atividades */}
       {showHistoryModal && selectedConsultantForHistory && (
-        <div className="history-modal-overlay" onClick={() => setShowHistoryModal(false)}>
-          <div className="history-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="history-modal-header">
-              <h3>Histórico de Atividades - {selectedConsultantForHistory.nome_consultores}</h3>
-              <button className="history-modal-close" onClick={() => setShowHistoryModal(false)}>×</button>
-            </div>
-            
-            <div className="history-modal-body">
-              {get90DaysReports(selectedConsultantForHistory).length > 0 ? (
-                <div className="history-list">
-                  {get90DaysReports(selectedConsultantForHistory).map((report, idx) => (
-                    <div key={idx} className="history-item">
-                      <div className="history-item-date">
-                        {new Date(report.data_relatorio || report.created_at || "").toLocaleDateString("pt-BR")}
-                      </div>
-                      <div className="history-item-content">
-                        <div className="history-item-title">{report.titulo || "Relatório de Atividade"}</div>
-                        {report.summary && (
-                          <div className="history-item-summary">{report.summary}</div>
-                        )}
-                        {report.riskScore && (
-                          <div className="history-item-risk">
-                            <span className="risk-badge" style={{ backgroundColor: getScoreColor(report.riskScore) }}>
-                              Score {report.riskScore}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="history-empty">
-                  <p>Nenhuma atividade nos últimos 90 dias</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <HistoricoAtividadesModal
+          consultant={selectedConsultantForHistory}
+          allReports={loadedReports}
+          onClose={() => {
+            setShowHistoryModal(false);
+            setSelectedConsultantForHistory(null);
+            setLoadedReports([]);
+          }}
+        />
       )}
 
     </div>

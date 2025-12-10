@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason } from '../components/types';
 import InclusionImport from './InclusionImport';
+import NovaAtividadeButton from './NovaAtividadeButton';
 
 interface ManageConsultantsProps {
     consultants: Consultant[];
@@ -11,6 +12,7 @@ interface ManageConsultantsProps {
     addConsultant: (c: any) => void;
     updateConsultant: (c: Consultant) => void;
     currentUser: User;
+    onNavigateToAtividades: () => void;
 }
 
 const TERMINATION_REASONS: { value: TerminationReason; description: string }[] = [
@@ -27,7 +29,7 @@ const TERMINATION_REASONS: { value: TerminationReason; description: string }[] =
     { value: 'Outros', description: 'Outros motivos...' }
 ];
 
-const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usuariosCliente, clients, coordenadoresCliente, users, addConsultant, updateConsultant, currentUser }) => {
+const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usuariosCliente, clients, coordenadoresCliente, users, addConsultant, updateConsultant, currentUser, onNavigateToAtividades }) => {
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingConsultant, setEditingConsultant] = useState<Consultant | null>(null);
 
@@ -97,15 +99,23 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
             
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
                 <h2 className="section-title">Gerenciar Consultores</h2>
-                {!isReadOnly && (
-                    <button 
-                        onClick={() => { setEditingConsultant(null); setIsFormOpen(true); }} 
-                        className="btn"
-                        style={{ backgroundColor: '#533738', color: '#ffffff', padding: '12px 24px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
-                    >
-                        + Novo Consultor
-                    </button>
-                )}
+                <div style={{ display: 'flex', gap: '12px' }}>
+                    {!isReadOnly && (
+                        <button 
+                            onClick={() => { setEditingConsultant(null); setIsFormOpen(true); }} 
+                            className="btn"
+                            style={{ backgroundColor: '#533738', color: '#ffffff', padding: '12px 24px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
+                        >
+                            + Novo Consultor
+                        </button>
+                    )}
+                    <NovaAtividadeButton
+                        consultantName=""
+                        clientName=""
+                        onNavigate={onNavigateToAtividades}
+                        variant="default"
+                    />
+                </div>
             </div>
 
             {isFormOpen && (

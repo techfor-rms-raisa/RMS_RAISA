@@ -3,6 +3,7 @@ import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, Consultan
 import StatusCircle from './StatusCircle';
 import ReportDetailsModal from './ReportDetailsModal';
 import MonthlyReportsModal from './MonthlyReportsModal';
+import NovaAtividadeButton from './NovaAtividadeButton';
 
 interface DashboardProps {
   consultants: Consultant[];
@@ -12,6 +13,7 @@ interface DashboardProps {
   currentUser: User;
   users: User[];
   loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
+  onNavigateToAtividades: () => void;
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -21,7 +23,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   coordenadoresCliente = [], 
   currentUser, 
   users,
-  loadConsultantReports
+  loadConsultantReports,
+  onNavigateToAtividades
 }) => {
   
   const [selectedClient, setSelectedClient] = useState<string>('all');
@@ -249,6 +252,12 @@ const Dashboard: React.FC<DashboardProps> = ({
         <h2 className="text-2xl font-bold text-[#4D5253]">
           Dashboard de Acompanhamento
         </h2>
+        <NovaAtividadeButton
+          consultantName=""
+          clientName=""
+          onNavigate={onNavigateToAtividades}
+          variant="default"
+        />
       </div>
       
       {/* Filtros */}
