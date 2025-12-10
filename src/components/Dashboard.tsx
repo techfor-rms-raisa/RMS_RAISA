@@ -164,39 +164,32 @@ const Dashboard: React.FC<DashboardProps> = ({
     if (consultant.consultant_reports && Array.isArray(consultant.consultant_reports) && consultant.consultant_reports.length > 0) {
       console.log(`✅ Encontrados ${consultant.consultant_reports.length} relatórios do Supabase para ${consultant.nome_consultores}`);
       
+      // CORREÇÃO: Usar o campo 'month' diretamente (não extrair de created_at)
       const reportsFromSupabase = consultant.consultant_reports.filter(r => {
-        // Verificar se o relatório é do mês especificado
-        // Tentar múltiplos campos de data
-        const dateString = r.created_at || (r as any).data_relatorio || (r as any).createdAt || '';
-        if (!dateString) {
-          console.warn('⚠️ Relatório sem data:', r);
+        const reportMonth = (r as any).month; // Campo 'month' existe diretamente no Supabase
+        
+        if (!reportMonth) {
+          console.warn('⚠️ Relatório sem campo month:', r);
           return false;
         }
         
-        try {
-          const reportDate = new Date(dateString);
-          const reportMonth = reportDate.getMonth() + 1; // getMonth() retorna 0-11
-          const isMatch = reportMonth === month;
-          
-          if (isMatch) {
-            console.log(`✅ Relatório do mês ${month} encontrado:`, {
-              id: r.id,
-              date: dateString,
-              month: reportMonth
-            });
-          }
-          
-          return isMatch;
-        } catch (error) {
-          console.error('❌ Erro ao processar data do relatório:', error, r);
-          return false;
+        const isMatch = reportMonth === month;
+        
+        if (isMatch) {
+          console.log(`✅ Relatório do mês ${month} encontrado:`, {
+            id: r.id,
+            month: reportMonth,
+            risk_score: (r as any).risk_score
+          });
         }
+        
+        return isMatch;
       });
       
       if (reportsFromSupabase.length > 0) {
         allReports = reportsFromSupabase.sort((a, b) => {
-          const dateA = new Date((a as any).created_at || (a as any).data_relatorio || (a as any).createdAt || '');
-          const dateB = new Date((b as any).created_at || (b as any).data_relatorio || (b as any).createdAt || '');
+          const dateA = new Date((a as any).created_at || '');
+          const dateB = new Date((b as any).created_at || '');
           return dateB.getTime() - dateA.getTime(); // Mais recente primeiro
         });
         
