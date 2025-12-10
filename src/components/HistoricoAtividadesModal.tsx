@@ -1,7 +1,6 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { X, Calendar, FileText, AlertCircle } from 'lucide-react';
 import { Consultant, ConsultantReport } from '../components/types';
-import './HistoricoAtividadesModal.css';
 
 interface HistoricoAtividadesModalProps {
   consultant: Consultant;
