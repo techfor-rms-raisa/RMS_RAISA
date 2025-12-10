@@ -1,4 +1,5 @@
 // src/components/atividades/AtividadesInserir.tsx
+// ✅ VERSÃO COM LOGS DETALHADOS PARA DIAGNÓSTICO
 import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Consultant, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '../types';
 import { User, Phone, Mail, Briefcase, Clock } from 'lucide-react';
@@ -27,6 +28,17 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     preSelectedClient = '',
     preSelectedConsultant = ''
 }) => {
+    console.log('🔵 [AtividadesInserir] COMPONENTE RENDERIZADO');
+    console.log('📦 Props recebidas:', {
+        clientsCount: clients.length,
+        consultantsCount: consultants.length,
+        usuariosClienteCount: usuariosCliente.length,
+        coordenadoresClienteCount: coordenadoresCliente.length,
+        preSelectedClient,
+        preSelectedConsultant,
+        hasLoadConsultantReports: !!loadConsultantReports
+    });
+
     // Estados do formulário manual
     const [selectedClient, setSelectedClient] = useState<string>('');
     const [selectedConsultant, setSelectedConsultant] = useState<string>('');
@@ -47,82 +59,142 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
 
     // ✅ NAVEGAÇÃO CONTEXTUAL: Pré-selecionar cliente e consultor quando recebidos
     useEffect(() => {
+        console.log('🟢 [useEffect - Cliente] Executado com preSelectedClient:', preSelectedClient);
         if (preSelectedClient) {
+            console.log('✅ Pré-selecionando cliente:', preSelectedClient);
             setSelectedClient(preSelectedClient);
         }
     }, [preSelectedClient]);
 
     useEffect(() => {
+        console.log('🟢 [useEffect - Consultor] Executado com:', { preSelectedConsultant, preSelectedClient });
         if (preSelectedConsultant && preSelectedClient) {
+            console.log('✅ Pré-selecionando consultor:', preSelectedConsultant);
             setSelectedConsultant(preSelectedConsultant);
         }
     }, [preSelectedConsultant, preSelectedClient]);
 
     // Filtrar consultores pelo cliente selecionado (apenas para modo manual)
     const filteredConsultants = useMemo(() => {
-        if (!selectedClient) return [];
+        console.log('🔍 [useMemo - filteredConsultants] Filtrando consultores para cliente:', selectedClient);
+        if (!selectedClient) {
+            console.log('⚠️ Nenhum cliente selecionado');
+            return [];
+        }
         const client = clients.find(c => c.razao_social_cliente === selectedClient);
-        if (!client) return [];
+        if (!client) {
+            console.log('❌ Cliente não encontrado:', selectedClient);
+            return [];
+        }
+        console.log('✅ Cliente encontrado:', client);
         const clientManagers = usuariosCliente.filter(u => u.id_cliente === client.id);
+        console.log('👥 Gestores do cliente:', clientManagers);
         const managerIds = clientManagers.map(m => m.id);
-        return consultants.filter(c => 
+        const filtered = consultants.filter(c => 
             c.status === 'Ativo' && 
             c.gestor_imediato_id && 
             managerIds.includes(c.gestor_imediato_id)
         ).sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores));
+        console.log('✅ Consultores filtrados:', filtered.length, filtered.map(c => c.nome_consultores));
+        return filtered;
     }, [selectedClient, clients, consultants, usuariosCliente]);
 
     // Obter dados do consultor selecionado
     const selectedConsultantData = useMemo(() => {
-        if (!selectedConsultant) return null;
-        return consultants.find(c => c.nome_consultores === selectedConsultant);
+        console.log('🔍 [useMemo - selectedConsultantData] Buscando dados do consultor:', selectedConsultant);
+        if (!selectedConsultant) {
+            console.log('⚠️ Nenhum consultor selecionado');
+            return null;
+        }
+        const consultant = consultants.find(c => c.nome_consultores === selectedConsultant);
+        console.log('🎯 Consultor encontrado:', consultant ? '✅ SIM' : '❌ NÃO', consultant);
+        return consultant || null;
     }, [selectedConsultant, consultants]);
 
     // Obter dados do gestor/coordenador associado
     const managerData = useMemo(() => {
-        if (!selectedConsultantData) return null;
+        console.log('🔍 [useMemo - managerData] Buscando gestor/coordenador');
+        if (!selectedConsultantData) {
+            console.log('⚠️ Nenhum consultor selecionado para buscar gestor');
+            return null;
+        }
+        
+        console.log('👤 Dados do consultor:', {
+            nome: selectedConsultantData.nome_consultores,
+            gestor_imediato_id: selectedConsultantData.gestor_imediato_id,
+            coordenador_id: selectedConsultantData.coordenador_id
+        });
         
         // Primeiro tenta buscar o gestor imediato
         const manager = usuariosCliente.find(u => u.id === selectedConsultantData.gestor_imediato_id);
         
         if (manager) {
+            console.log('✅ Gestor encontrado:', manager);
             return {
                 nome: manager.nome_gestor_cliente,
                 cargo: manager.cargo_gestor,
-                email: `gestor${manager.id}@cliente.com`, // Email não está na tabela, usar placeholder
+                email: `gestor${manager.id}@cliente.com`,
                 celular: manager.celular || 'Não informado',
                 tipo: 'Gestor'
             };
         }
         
+        console.log('⚠️ Gestor não encontrado, tentando buscar coordenador...');
+        
         // Se não encontrar gestor, tenta buscar coordenador
         if (selectedConsultantData.coordenador_id) {
             const coordenador = coordenadoresCliente.find(c => c.id === selectedConsultantData.coordenador_id);
             if (coordenador) {
+                console.log('✅ Coordenador encontrado:', coordenador);
                 return {
                     nome: coordenador.nome_coordenador_cliente,
                     cargo: coordenador.cargo_coordenador_cliente,
-                    email: `coordenador${coordenador.id}@cliente.com`, // Email não está na tabela, usar placeholder
+                    email: `coordenador${coordenador.id}@cliente.com`,
                     celular: coordenador.celular || 'Não informado',
                     tipo: 'Coordenador'
                 };
             }
         }
         
+        console.log('❌ Nenhum gestor ou coordenador encontrado');
         return null;
     }, [selectedConsultantData, usuariosCliente, coordenadoresCliente]);
 
+    // Log quando os cards devem aparecer
+    useEffect(() => {
+        if (selectedConsultantData) {
+            console.log('🎨 CARDS DEVEM SER EXIBIDOS AGORA!');
+            console.log('📋 Dados do Consultor:', {
+                nome: selectedConsultantData.nome_consultores,
+                email: selectedConsultantData.email_consultor,
+                celular: selectedConsultantData.celular
+            });
+            console.log('📋 Dados do Gestor/Coordenador:', managerData);
+        } else {
+            console.log('⚠️ Cards NÃO devem ser exibidos (nenhum consultor selecionado)');
+        }
+    }, [selectedConsultantData, managerData]);
+
     // Handler para abrir histórico
     const handleOpenHistorico = async () => {
-        if (!selectedConsultantData || !loadConsultantReports) return;
+        console.log('🕒 [handleOpenHistorico] Abrindo histórico...');
+        if (!selectedConsultantData || !loadConsultantReports) {
+            console.log('❌ Não é possível abrir histórico:', {
+                hasConsultant: !!selectedConsultantData,
+                hasLoadFunction: !!loadConsultantReports
+            });
+            return;
+        }
         
         setLoadingReports(true);
         try {
+            console.log('📥 Carregando relatórios do consultor ID:', selectedConsultantData.id);
             const reports = await loadConsultantReports(selectedConsultantData.id);
+            console.log('✅ Relatórios carregados:', reports.length);
             setConsultantReports(reports);
             setShowHistoricoModal(true);
         } catch (error) {
-            console.error('Erro ao carregar relatórios:', error);
+            console.error('❌ Erro ao carregar relatórios:', error);
             alert('Erro ao carregar histórico de atividades.');
         } finally {
             setLoadingReports(false);
@@ -221,8 +293,25 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
 
     const months = Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: new Date(0, i).toLocaleString('pt-BR', { month: 'long' }) }));
 
+    console.log('🎨 [RENDER] Renderizando componente com:', {
+        selectedClient,
+        selectedConsultant,
+        hasSelectedConsultantData: !!selectedConsultantData,
+        hasManagerData: !!managerData
+    });
+
     return (
         <div className="max-w-6xl mx-auto p-6">
+            {/* Banner de Debug */}
+            <div className="mb-4 p-4 bg-yellow-100 border border-yellow-400 rounded-lg">
+                <p className="text-sm font-bold text-yellow-800">🔧 MODO DEBUG ATIVADO - Verifique o Console (F12)</p>
+                <p className="text-xs text-yellow-700 mt-1">
+                    Cliente: {selectedClient || 'Nenhum'} | 
+                    Consultor: {selectedConsultant || 'Nenhum'} | 
+                    Cards: {selectedConsultantData ? '✅ DEVEM APARECER' : '❌ NÃO APARECEM'}
+                </p>
+            </div>
+
             <div className="flex justify-between items-center mb-6">
                 <h2 className="text-2xl font-bold text-gray-800">Inserir Relatório de Atividades</h2>
                 <button onClick={downloadTemplate} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium">Baixar Template de Exemplo</button>
