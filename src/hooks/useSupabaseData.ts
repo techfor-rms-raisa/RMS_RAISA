@@ -722,24 +722,8 @@ export const useSupabaseData = () => {
 
       if (error) throw error;
 
-      // 2️⃣ Carregar relatórios separadamente
-      const { data: reportsData } = await supabase
-        .from('consultant_reports')
-        .select('*');
-
-      // 3️⃣ Mapear relatórios por consultant_id
-      const reportsMap = new Map<number, ConsultantReport[]>();
-      (reportsData || []).forEach((report: any) => {
-        if (!reportsMap.has(report.consultant_id)) {
-          reportsMap.set(report.consultant_id, []);
-        }
-        reportsMap.get(report.consultant_id)!.push(report);
-      });
-
-      // 4️⃣ Adicionar relatórios aos consultores
-      (data || []).forEach((consultant: any) => {
-        consultant.consultant_reports = reportsMap.get(consultant.id) || [];
-      });
+      // ⚠️ NÃO CARREGAR RELATÓRIOS AQUI - USAR LAZY LOADING
+      // Os relatórios serão carregados sob demanda via loadConsultantReports()
 
       const mappedConsultants: Consultant[] = (data || []).map((consultant: any) => ({
         id: consultant.id,
@@ -772,7 +756,7 @@ export const useSupabaseData = () => {
         parecer_12_consultor: consultant.parecer_12_consultor,
         parecer_final_consultor: consultant.parecer_final_consultor,
         reports: [],
-        consultant_reports: consultant.consultant_reports || []
+        consultant_reports: [] // Será carregado sob demanda
       }));
 
       setConsultants(mappedConsultants);
@@ -1968,7 +1952,62 @@ ${text}`;
   };
 
   // ============================================
-  // RETORNO DO HOOK
+  // 🔥 LAZY LOADING DE RELATÓRIOS (CORREÇÃO 403)
+  // ============================================
+  
+  /**
+   * Carrega relatórios de um consultor específico sob demanda
+   * Esta função deve ser chamada apenas quando o usuário clicar em "Ver Histórico"
+   * @param consultantId - ID do consultor
+   * @returns Array de relatórios do consultor
+   */
+  const loadConsultantReports = async (consultantId: number): Promise<ConsultantReport[]> => {
+    try {
+      console.log(`📊 Carregando relatórios do consultor ${consultantId}...`);
+      
+      const { data, error } = await supabase
+        .from('consultant_reports')
+        .select('*')
+        .eq('consultant_id', consultantId)
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      
+      const reports: ConsultantReport[] = (data || []).map((report: any) => ({
+        id: report.id,
+        month: report.month,
+        year: report.year,
+        riskScore: report.risk_score,
+        summary: report.summary,
+        negativePattern: report.negative_pattern,
+        predictiveAlert: report.predictive_alert,
+        recommendations: typeof report.recommendations === 'string' 
+          ? JSON.parse(report.recommendations) 
+          : report.recommendations,
+        content: report.content,
+        createdAt: report.created_at,
+        generatedBy: report.generated_by,
+        aiJustification: report.ai_justification
+      }));
+      
+      console.log(`✅ ${reports.length} relatórios carregados para consultor ${consultantId}`);
+      
+      // Atualizar o estado local do consultor com os relatórios
+      setConsultants(prev => prev.map(c => 
+        c.id === consultantId 
+          ? { ...c, consultant_reports: reports }
+          : c
+      ));
+      
+      return reports;
+    } catch (err: any) {
+      console.error(`❌ Erro ao carregar relatórios do consultor ${consultantId}:`, err);
+      throw err;
+    }
+  };
+
+  // ============================================
+  // RETURN
   // ============================================
 
   return {
@@ -2002,6 +2041,7 @@ ${text}`;
     inactivateConsultant,
     updateConsultantScore,
     processReportAnalysis,
+    loadConsultantReports, // 🔥 Lazy loading de relatórios
 
     // Gestores de Clientes (✅ Implementado)
     usuariosCliente,
