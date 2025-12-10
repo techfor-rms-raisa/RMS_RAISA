@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore } from '../components/types';
 import StatusCircle from './StatusCircle';
 import ReportDetailsModal from './ReportDetailsModal';
+import MonthlyReportsModal from './MonthlyReportsModal';
 
 interface DashboardProps {
   consultants: Consultant[];
@@ -24,24 +25,26 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedManager, setSelectedManager] = useState<string>('all');
   const [selectedConsultant, setSelectedConsultant] = useState<string>('all');
-  const [selectedScore, setSelectedScore] = useState<string>('all'); // NOVO: filtro de score
+  const [selectedScore, setSelectedScore] = useState<string>('all');
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [yearInitialized, setYearInitialized] = useState<boolean>(false);
+  
+  // Estados para o modal de histórico mensal completo
+  const [showMonthlyReportsModal, setShowMonthlyReportsModal] = useState<boolean>(false);
+  const [selectedMonthReports, setSelectedMonthReports] = useState<{
+    consultant: Consultant;
+    month: number;
+    reports: ConsultantReport[];
+  } | null>(null);
 
   const availableYears = useMemo(() => [...new Set(consultants.map(c => c.ano_vigencia))].sort((a: number, b: number) => b - a), [consultants]);
-
-  if (consultants.length === 0 || clients.length === 0) {
-    return <div className="p-6 text-center text-gray-500">Carregando dados do Supabase...</div>;
-  }
 
   // ============================================================================
   // EFEITO 1: Inicializar o ano selecionado apenas uma vez
   // ============================================================================
-  // Este efeito é independente e não depende de selectedYear para evitar ciclos
   useEffect(() => {
     if (!yearInitialized && availableYears.length > 0) {
-      // Selecionar o ano mais recente disponível
       setSelectedYear(availableYears[0]);
       setYearInitialized(true);
     }
@@ -126,7 +129,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           managerConsultants = managerConsultants.filter(c => c.ano_vigencia === selectedYear);
         }
 
-        // NOVO: Aplicar filtro de score selecionado
+        // Aplicar filtro de score selecionado
         if (selectedScore !== 'all') {
           const scoreNum = parseInt(selectedScore, 10);
           managerConsultants = managerConsultants.filter(c => getValidFinalScore(c) === scoreNum);
@@ -149,10 +152,59 @@ const Dashboard: React.FC<DashboardProps> = ({
     }).sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente));
   }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedManager, selectedConsultant, selectedYear, selectedScore]);
 
-  const getReportForMonth = (c: Consultant, m: number) => {
-    if (!c.reports) return undefined;
-    return c.reports.filter(r => r.month === m).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+  // ============================================================================
+  // FUNÇÃO: Buscar TODOS os relatórios de um mês específico
+  // ============================================================================
+  const getAllReportsForMonth = (consultant: Consultant, month: number): ConsultantReport[] => {
+    // Prioridade 1: Buscar em consultant_reports (dados do Supabase)
+    if (consultant.consultant_reports && Array.isArray(consultant.consultant_reports)) {
+      const reportsFromSupabase = consultant.consultant_reports.filter(r => {
+        // Verificar se o relatório é do mês especificado
+        const reportDate = new Date(r.created_at || r.data_relatorio || '');
+        return reportDate.getMonth() + 1 === month;
+      });
+      
+      if (reportsFromSupabase.length > 0) {
+        return reportsFromSupabase.sort((a, b) => {
+          const dateA = new Date(a.created_at || a.data_relatorio || '');
+          const dateB = new Date(b.created_at || b.data_relatorio || '');
+          return dateB.getTime() - dateA.getTime(); // Mais recente primeiro
+        });
+      }
+    }
+    
+    // Prioridade 2: Fallback para reports (dados locais)
+    if (consultant.reports && Array.isArray(consultant.reports)) {
+      return consultant.reports
+        .filter(r => r.month === month)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    }
+    
+    return [];
   };
+
+  // ============================================================================
+  // FUNÇÃO: Handler para clique no ícone mensal
+  // ============================================================================
+  const handleMonthlyScoreClick = (consultant: Consultant, month: number) => {
+    const reports = getAllReportsForMonth(consultant, month);
+    
+    if (reports.length > 0) {
+      setSelectedMonthReports({
+        consultant,
+        month,
+        reports
+      });
+      setShowMonthlyReportsModal(true);
+    }
+  };
+
+  // ============================================================================
+  // EARLY RETURN - DEPOIS DE TODOS OS HOOKS
+  // ============================================================================
+  if (consultants.length === 0 || clients.length === 0) {
+    return <div className="p-6 text-center text-gray-500">Carregando dados do Supabase...</div>;
+  }
 
   return (
     <div className="p-6 rounded-lg shadow-md border-t-4 bg-white border-transparent">
@@ -205,7 +257,7 @@ const Dashboard: React.FC<DashboardProps> = ({
           </select>
         </div>
 
-        {/* NOVO: Filtro de Score */}
+        {/* Filtro de Score */}
         <div>
           <label className="block text-sm font-bold text-gray-700 mb-1">Score:</label>
           <select 
@@ -263,12 +315,14 @@ const Dashboard: React.FC<DashboardProps> = ({
                             <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">{consultant.nome_consultores}</td>
                             {[...Array(12)].map((_, i) => {
                               const month = i + 1;
-                              const report = getReportForMonth(consultant, month);
+                              const monthScore = consultant[`parecer_${month}_consultor` as keyof Consultant] as RiskScore | null;
+                              const hasReports = getAllReportsForMonth(consultant, month).length > 0;
+                              
                               return (
                                 <td key={i} className="px-2 py-2 text-center">
                                   <StatusCircle 
-                                    score={consultant[`parecer_${month}_consultor` as keyof Consultant] as RiskScore | null} 
-                                    onClick={report ? () => setViewingReport(report) : undefined} 
+                                    score={monthScore} 
+                                    onClick={hasReports ? () => handleMonthlyScoreClick(consultant, month) : undefined} 
                                   />
                                 </td>
                               );
@@ -305,7 +359,21 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
+      {/* Modal Antigo - Mantido para compatibilidade */}
       <ReportDetailsModal report={viewingReport} onClose={() => setViewingReport(null)} />
+      
+      {/* Modal de Histórico Mensal Completo */}
+      {showMonthlyReportsModal && selectedMonthReports && (
+        <MonthlyReportsModal
+          consultant={selectedMonthReports.consultant}
+          month={selectedMonthReports.month}
+          reports={selectedMonthReports.reports}
+          onClose={() => {
+            setShowMonthlyReportsModal(false);
+            setSelectedMonthReports(null);
+          }}
+        />
+      )}
     </div>
   );
 };
