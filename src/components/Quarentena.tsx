@@ -9,6 +9,7 @@ interface QuarentenaProps {
   usuariosCliente: UsuarioCliente[];
   coordenadoresCliente: CoordenadorCliente[];
   currentUser: User;
+  loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
 }
 
 interface Recommendation {
@@ -21,7 +22,8 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   clients = [], 
   usuariosCliente = [], 
   coordenadoresCliente = [],
-  currentUser 
+  currentUser,
+  loadConsultantReports
 }) => {
   
   const [selectedClient, setSelectedClient] = useState<string>('all');
@@ -130,9 +132,24 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     return [];
   };
   // Abrir modal de histórico ao clicar no badge
-  const handleScoreBadgeClick = (consultant: Consultant) => {
-    setSelectedConsultantForHistory(consultant);
-    setShowHistoryModal(true);
+  const handleScoreBadgeClick = async (consultant: Consultant) => {
+    console.log(`🖱️ Clique no badge de score para ${consultant.nome_consultores}`);
+    
+    try {
+      // 🔥 Carregar relatórios sob demanda do Supabase
+      console.log(`📊 Carregando relatórios do Supabase para consultor ${consultant.id}...`);
+      await loadConsultantReports(consultant.id);
+      console.log(`✅ Relatórios carregados com sucesso`);
+      
+      // Abrir modal de histórico
+      setSelectedConsultantForHistory(consultant);
+      setShowHistoryModal(true);
+    } catch (error) {
+      console.error('❌ Erro ao carregar relatórios:', error);
+      // Abrir modal mesmo com erro (mostrará mensagem de vazio)
+      setSelectedConsultantForHistory(consultant);
+      setShowHistoryModal(true);
+    }
   };
 
 

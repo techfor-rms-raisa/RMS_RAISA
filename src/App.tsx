@@ -61,6 +61,7 @@ const App: React.FC = () => {
     templates, campaigns, feedbackResponses, rhActions,
     vagas, pessoas, candidaturas, // RAISA Data
     updateConsultantScore, processReportAnalysis, 
+    loadConsultantReports, // 🔥 Lazy loading de relatórios
     addClient, updateClient, batchAddClients,
     addConsultant, updateConsultant, batchAddConsultants,
     addUser, updateUser,
@@ -140,7 +141,7 @@ const App: React.FC = () => {
       case 'consultants':
         return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={updateConsultant} currentUser={currentUser!} />;
       case 'quarantine':
-        return <Quarentena consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} currentUser={currentUser!} />;
+        return <Quarentena consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} />;
       case 'recommendations':
         return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} />;
       case 'analytics':
@@ -196,7 +197,7 @@ const App: React.FC = () => {
 
       case 'dashboard':
       default:
-        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} />;
+        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} />;
     }
   };
 

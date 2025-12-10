@@ -11,6 +11,7 @@ interface DashboardProps {
   coordenadoresCliente: CoordenadorCliente[];
   currentUser: User;
   users: User[];
+  loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -19,7 +20,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   usuariosCliente = [], 
   coordenadoresCliente = [], 
   currentUser, 
-  users 
+  users,
+  loadConsultantReports
 }) => {
   
   const [selectedClient, setSelectedClient] = useState<string>('all');
@@ -200,22 +202,38 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   // ============================================================================
-  // FUNÇÃO: Handler para clique no ícone mensal (COM LAZY LOADING)
+  // FUNÇÃO: Handler para clique no ícone mensal (COM LAZY LOADING REAL)
   // ============================================================================
-  const handleMonthlyScoreClick = (consultant: Consultant, month: number) => {
+  const handleMonthlyScoreClick = async (consultant: Consultant, month: number) => {
     console.log(`🖱️ Clique no ícone P${month} para ${consultant.nome_consultores}`);
     
-    // Buscar relatórios do mês específico
-    const reports = getAllReportsForMonth(consultant, month);
-    
-    // Sempre abrir o modal, mesmo se não houver relatórios
-    console.log(`📊 Abrindo modal para mês ${month} (${reports.length} relatórios encontrados)`);
-    setSelectedMonthReports({
-      consultant,
-      month,
-      reports
-    });
-    setShowMonthlyReportsModal(true);
+    try {
+      // 🔥 Carregar relatórios sob demanda do Supabase
+      console.log(`📊 Carregando relatórios do Supabase para consultor ${consultant.id}...`);
+      const allReports = await loadConsultantReports(consultant.id);
+      
+      // Filtrar apenas os relatórios do mês selecionado
+      const monthReports = allReports.filter(r => (r as any).month === month);
+      
+      console.log(`✅ ${monthReports.length} relatórios encontrados para o mês ${month}`);
+      
+      // Abrir modal com os relatórios carregados
+      setSelectedMonthReports({
+        consultant,
+        month,
+        reports: monthReports
+      });
+      setShowMonthlyReportsModal(true);
+    } catch (error) {
+      console.error('❌ Erro ao carregar relatórios:', error);
+      // Abrir modal vazio em caso de erro
+      setSelectedMonthReports({
+        consultant,
+        month,
+        reports: []
+      });
+      setShowMonthlyReportsModal(true);
+    }
   };
 
   // ============================================================================
