@@ -3,7 +3,7 @@ import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, Consultan
 import StatusCircle from './StatusCircle';
 import ReportDetailsModal from './ReportDetailsModal';
 import MonthlyReportsModal from './MonthlyReportsModal';
-import NovaAtividadeButton from './NovaAtividadeButton';
+
 
 interface DashboardProps {
   consultants: Consultant[];
@@ -13,7 +13,7 @@ interface DashboardProps {
   currentUser: User;
   users: User[];
   loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
-  onNavigateToAtividades: () => void;
+  onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -252,12 +252,7 @@ const Dashboard: React.FC<DashboardProps> = ({
         <h2 className="text-2xl font-bold text-[#4D5253]">
           Dashboard de Acompanhamento
         </h2>
-        <NovaAtividadeButton
-          consultantName=""
-          clientName=""
-          onNavigate={onNavigateToAtividades}
-          variant="default"
-        />
+
       </div>
       
       {/* Filtros */}
@@ -358,7 +353,18 @@ const Dashboard: React.FC<DashboardProps> = ({
                       <tbody className="bg-white divide-y divide-gray-200">
                         {manager.consultants.map(consultant => (
                           <tr key={consultant.id}>
-                            <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">{consultant.nome_consultores}</td>
+                            <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">
+                              <div className="flex items-center justify-between gap-2">
+                                <span>{consultant.nome_consultores}</span>
+                                <button
+                                  onClick={() => onNavigateToAtividades(client.razao_social_cliente, consultant.nome_consultores)}
+                                  className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition whitespace-nowrap"
+                                  title="Registrar nova atividade para este consultor"
+                                >
+                                  + Atividade
+                                </button>
+                              </div>
+                            </td>
                             {[...Array(12)].map((_, i) => {
                               const month = i + 1;
                               const monthScore = consultant[`parecer_${month}_consultor` as keyof Consultant] as RiskScore | null;

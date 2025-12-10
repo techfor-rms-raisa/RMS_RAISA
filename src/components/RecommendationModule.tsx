@@ -5,9 +5,10 @@ interface RecommendationModuleProps {
     consultants: Consultant[];
     clients: Client[];
     usuariosCliente: UsuarioCliente[];
+    onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
 }
 
-const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants, clients, usuariosCliente }) => {
+const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants, clients, usuariosCliente, onNavigateToAtividades }) => {
     const [selectedClient, setSelectedClient] = useState<string>('all');
 
     const filteredList = useMemo(() => {
@@ -117,8 +118,17 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants
                     return (
                         <div key={c.id} className={`bg-white p-6 rounded-lg shadow-md border-l-4 ${borderColor}`}>
                             <div className="flex justify-between items-start mb-4">
-                                <div>
-                                    <h3 className="font-bold text-xl text-gray-800">{c.nome_consultores}</h3>
+                                <div className="flex-1">
+                                    <div className="flex items-center justify-between gap-3 mb-1">
+                                      <h3 className="font-bold text-xl text-gray-800">{c.nome_consultores}</h3>
+                                      <button
+                                        onClick={() => onNavigateToAtividades(clientInfo?.razao_social_cliente, c.nome_consultores)}
+                                        className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition whitespace-nowrap"
+                                        title="Registrar nova atividade para este consultor"
+                                      >
+                                        + Nova Atividade
+                                      </button>
+                                    </div>
                                     <p className="text-sm text-gray-600">{c.cargo_consultores}</p>
                                 </div>
                                 <div className={`px-4 py-2 rounded-lg ${bgColor} border ${borderColor}`}>

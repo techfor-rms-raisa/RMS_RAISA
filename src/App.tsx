@@ -51,6 +51,10 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [currentView, setCurrentView] = useState<View>('dashboard');
   const [simulatedToken, setSimulatedToken] = useState<string | null>(null);
+  
+  // Estados para navegação contextual
+  const [contextualClient, setContextualClient] = useState<string>('');
+  const [contextualConsultant, setContextualConsultant] = useState<string>('');
 
   useEffect(() => {
       console.log("ORBIT.ai V2.0 Loaded");
@@ -89,7 +93,9 @@ const App: React.FC = () => {
     setSimulatedToken(null);
   };
 
-  const handleNavigateToAtividades = () => {
+  const handleNavigateToAtividades = (clientName?: string, consultantName?: string) => {
+    if (clientName) setContextualClient(clientName);
+    if (consultantName) setContextualConsultant(consultantName);
     setCurrentView('atividades_inserir');
   };
 
@@ -163,7 +169,16 @@ const App: React.FC = () => {
       
       // Atividades Views
       case 'atividades_inserir':
-          return <AtividadesInserir clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} onManualReport={handleManualAnalysis} />;
+          return <AtividadesInserir 
+            clients={clients} 
+            consultants={consultants} 
+            usuariosCliente={usuariosCliente}
+            allReports={consultants.flatMap(c => c.consultant_reports || [])}
+            loadConsultantReports={loadConsultantReports}
+            onManualReport={handleManualAnalysis}
+            preSelectedClient={contextualClient}
+            preSelectedConsultant={contextualConsultant}
+          />;
       case 'atividades_consultar':
           return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} />;
       case 'atividades_exportar':

@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '../components/types';
 import ReportDetailsModal from './ReportDetailsModal';
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
-import NovaAtividadeButton from './NovaAtividadeButton';
+
 import './Quarentena.css';
 
 interface QuarentenaProps {
@@ -12,7 +12,7 @@ interface QuarentenaProps {
   coordenadoresCliente: CoordenadorCliente[];
   currentUser: User;
   loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
-  onNavigateToAtividades: () => void;
+  onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
 }
 
 interface Recommendation {
@@ -322,12 +322,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     <div className="quarentena-container">
       <div className="quarentena-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 className="quarentena-title">🚨 Quarentena de Consultores</h2>
-        <NovaAtividadeButton
-          consultantName=""
-          clientName=""
-          onNavigate={onNavigateToAtividades}
-          variant="default"
-        />
+
       </div>
       
       {/* Filtros */}
@@ -393,9 +388,18 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                             {/* Seção de Informações */}
                             <div className="consultant-info-section">
                               <div className="consultant-header-info">
-                                <h3 className="consultant-name">
-                                  {consultant.nome_consultores}
-                                </h3>
+                                <div className="flex items-center justify-between gap-3">
+                                  <h3 className="consultant-name">
+                                    {consultant.nome_consultores}
+                                  </h3>
+                                  <button
+                                    onClick={() => onNavigateToAtividades(clientInfo?.razao_social_cliente, consultant.nome_consultores)}
+                                    className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition whitespace-nowrap"
+                                    title="Registrar nova atividade para este consultor"
+                                  >
+                                    + Nova Atividade
+                                  </button>
+                                </div>
                                 <p className="consultant-profession">{consultant.cargo_consultores || 'N/A'}</p>
                               </div>
 
