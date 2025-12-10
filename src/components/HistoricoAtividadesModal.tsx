@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { X, Calendar, FileText, AlertCircle } from 'lucide-react';
 import { Consultant, ConsultantReport } from '../components/types';
 
