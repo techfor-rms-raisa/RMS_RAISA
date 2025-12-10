@@ -27,6 +27,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedScore, setSelectedScore] = useState<string>('all'); // NOVO: filtro de score
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const [yearInitialized, setYearInitialized] = useState<boolean>(false);
 
   const availableYears = useMemo(() => [...new Set(consultants.map(c => c.ano_vigencia))].sort((a: number, b: number) => b - a), [consultants]);
 
@@ -34,12 +35,32 @@ const Dashboard: React.FC<DashboardProps> = ({
     return <div className="p-6 text-center text-gray-500">Carregando dados do Supabase...</div>;
   }
 
+  // ============================================================================
+  // EFEITO 1: Inicializar o ano selecionado apenas uma vez
+  // ============================================================================
+  // Este efeito é independente e não depende de selectedYear para evitar ciclos
   useEffect(() => {
-    if (availableYears.length > 0 && availableYears[0] > selectedYear) setSelectedYear(availableYears[0]);
-  }, [availableYears, selectedYear]);
+    if (!yearInitialized && availableYears.length > 0) {
+      // Selecionar o ano mais recente disponível
+      setSelectedYear(availableYears[0]);
+      setYearInitialized(true);
+    }
+  }, [availableYears, yearInitialized]);
 
-  useEffect(() => { setSelectedManager('all'); setSelectedConsultant('all'); }, [selectedClient]);
-  useEffect(() => { setSelectedConsultant('all'); }, [selectedManager]);
+  // ============================================================================
+  // EFEITO 2: Resetar filtros quando o cliente muda
+  // ============================================================================
+  useEffect(() => { 
+    setSelectedManager('all'); 
+    setSelectedConsultant('all'); 
+  }, [selectedClient]);
+
+  // ============================================================================
+  // EFEITO 3: Resetar consultor quando o gestor muda
+  // ============================================================================
+  useEffect(() => { 
+    setSelectedConsultant('all'); 
+  }, [selectedManager]);
 
   // ============================================================================
   // FUNÇÕES AUXILIARES
