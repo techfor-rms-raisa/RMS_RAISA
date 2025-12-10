@@ -153,33 +153,75 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedManager, selectedConsultant, selectedYear, selectedScore]);
 
   // ============================================================================
-  // FUNÇÃO: Buscar TODOS os relatórios de um mês específico
+  // FUNÇÃO: Buscar TODOS os relatórios de um mês específico (CORRIGIDA)
   // ============================================================================
   const getAllReportsForMonth = (consultant: Consultant, month: number): ConsultantReport[] => {
+    console.log(`🔍 Buscando relatórios para ${consultant.nome_consultores} - Mês ${month}`);
+    
+    let allReports: ConsultantReport[] = [];
+    
     // Prioridade 1: Buscar em consultant_reports (dados do Supabase)
-    if (consultant.consultant_reports && Array.isArray(consultant.consultant_reports)) {
+    if (consultant.consultant_reports && Array.isArray(consultant.consultant_reports) && consultant.consultant_reports.length > 0) {
+      console.log(`✅ Encontrados ${consultant.consultant_reports.length} relatórios do Supabase para ${consultant.nome_consultores}`);
+      
       const reportsFromSupabase = consultant.consultant_reports.filter(r => {
         // Verificar se o relatório é do mês especificado
-        const reportDate = new Date(r.created_at || r.data_relatorio || '');
-        return reportDate.getMonth() + 1 === month;
+        // Tentar múltiplos campos de data
+        const dateString = r.created_at || (r as any).data_relatorio || (r as any).createdAt || '';
+        if (!dateString) {
+          console.warn('⚠️ Relatório sem data:', r);
+          return false;
+        }
+        
+        try {
+          const reportDate = new Date(dateString);
+          const reportMonth = reportDate.getMonth() + 1; // getMonth() retorna 0-11
+          const isMatch = reportMonth === month;
+          
+          if (isMatch) {
+            console.log(`✅ Relatório do mês ${month} encontrado:`, {
+              id: r.id,
+              date: dateString,
+              month: reportMonth
+            });
+          }
+          
+          return isMatch;
+        } catch (error) {
+          console.error('❌ Erro ao processar data do relatório:', error, r);
+          return false;
+        }
       });
       
       if (reportsFromSupabase.length > 0) {
-        return reportsFromSupabase.sort((a, b) => {
-          const dateA = new Date(a.created_at || a.data_relatorio || '');
-          const dateB = new Date(b.created_at || b.data_relatorio || '');
+        allReports = reportsFromSupabase.sort((a, b) => {
+          const dateA = new Date((a as any).created_at || (a as any).data_relatorio || (a as any).createdAt || '');
+          const dateB = new Date((b as any).created_at || (b as any).data_relatorio || (b as any).createdAt || '');
           return dateB.getTime() - dateA.getTime(); // Mais recente primeiro
         });
+        
+        console.log(`✅ ${allReports.length} relatórios do Supabase encontrados para o mês ${month}`);
+        return allReports;
       }
+    } else {
+      console.log(`ℹ️ Nenhum relatório do Supabase encontrado para ${consultant.nome_consultores}`);
     }
     
     // Prioridade 2: Fallback para reports (dados locais)
-    if (consultant.reports && Array.isArray(consultant.reports)) {
-      return consultant.reports
+    if (consultant.reports && Array.isArray(consultant.reports) && consultant.reports.length > 0) {
+      console.log(`ℹ️ Buscando em reports locais para ${consultant.nome_consultores}`);
+      
+      const localReports = consultant.reports
         .filter(r => r.month === month)
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      
+      if (localReports.length > 0) {
+        console.log(`✅ ${localReports.length} relatórios locais encontrados para o mês ${month}`);
+        return localReports;
+      }
     }
     
+    console.log(`❌ Nenhum relatório encontrado para ${consultant.nome_consultores} no mês ${month}`);
     return [];
   };
 
@@ -187,15 +229,20 @@ const Dashboard: React.FC<DashboardProps> = ({
   // FUNÇÃO: Handler para clique no ícone mensal
   // ============================================================================
   const handleMonthlyScoreClick = (consultant: Consultant, month: number) => {
+    console.log(`🖱️ Clique no ícone P${month} para ${consultant.nome_consultores}`);
+    
     const reports = getAllReportsForMonth(consultant, month);
     
     if (reports.length > 0) {
+      console.log(`✅ Abrindo modal com ${reports.length} relatórios`);
       setSelectedMonthReports({
         consultant,
         month,
         reports
       });
       setShowMonthlyReportsModal(true);
+    } else {
+      console.warn(`⚠️ Nenhum relatório encontrado para exibir`);
     }
   };
 

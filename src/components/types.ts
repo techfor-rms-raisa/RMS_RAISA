@@ -112,7 +112,8 @@ export interface Consultant {
   parecer_12_consultor: RiskScore | null;
   
   parecer_final_consultor: RiskScore | null;
-  reports: ConsultantReport[]; 
+  reports: ConsultantReport[];
+  consultant_reports?: ConsultantReport[]; // Relatórios do Supabase 
 
   gestor_rs_id: number | null;
   id_gestao_de_pessoas: number | null;
