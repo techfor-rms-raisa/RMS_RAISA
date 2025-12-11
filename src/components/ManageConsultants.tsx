@@ -120,7 +120,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                         <h3 className="text-2xl font-bold text-gray-800 mb-6">
                             {editingConsultant ? 'Editar' : 'Novo'} Consultor
                         </h3>
-                        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
+                        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-5">
                             <div>
                                 <label className="label">Nome</label>
                                 <input 
@@ -196,16 +196,16 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                     placeholder="Selecionado automaticamente pelo Gestor"
                                 />
                             </div>
-                            <div>
-                                <label className="label">Faturamento</label>
+                            <div className="md:col-span-1">
+                                <label className="label">Faturamento (R$)</label>
                                 <input 
                                     className="input"
-                                    placeholder="R$ 0,00" 
+                                    placeholder="Ex: 15000,00" 
                                     value={formData.valor_faturamento} 
                                     onChange={e => setFormData({...formData, valor_faturamento: e.target.value})}
                                 />
                             </div>
-                            <div>
+                            <div className="md:col-span-1">
                                 <label className="label">Status</label>
                                 <select 
                                     className="input"

@@ -729,6 +729,7 @@ export const useSupabaseData = () => {
         id: consultant.id,
         nome_consultores: consultant.nome_consultores,
         email_consultor: consultant.email_consultor,
+        celular: consultant.celular, // ✅ Adicionado campo de celular
         cpf: consultant.cpf,
         cargo_consultores: consultant.cargo_consultores,
         ano_vigencia: consultant.ano_vigencia,
