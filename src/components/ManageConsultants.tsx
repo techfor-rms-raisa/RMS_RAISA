@@ -34,9 +34,10 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
 
     const [formData, setFormData] = useState({
         ano_vigencia: new Date().getFullYear(),
-        nome_consultores: '',
-        email_consultor: '',
-        cargo_consultores: '',
+        nome_consultores: ,
+        email_consultor: ,
+        celular: , // Adicionado campo de celular
+        cargo_consultores: ,
         data_inclusao_consultores: '',
         data_saida: '',
         gestor_imediato_id: '',
@@ -55,7 +56,8 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
             setFormData({
                 ano_vigencia: editingConsultant.ano_vigencia,
                 nome_consultores: editingConsultant.nome_consultores,
-                email_consultor: editingConsultant.email_consultor || '',
+                email_consultor: editingConsultant.email_consultor || ,
+                celular: editingConsultant.celular || , // Adicionado campo de celular
                 cargo_consultores: editingConsultant.cargo_consultores,
                 data_inclusao_consultores: editingConsultant.data_inclusao_consultores,
                 data_saida: editingConsultant.data_saida || '',
@@ -115,10 +117,10 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
             {isFormOpen && (
                 <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(75, 85, 99, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
                     <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', padding: '32px', maxWidth: '900px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
-                        <h3 className="card-title" style={{ marginBottom: '24px' }}>
+                        <h3 className="text-2xl font-bold text-gray-800 mb-6">
                             {editingConsultant ? 'Editar' : 'Novo'} Consultor
                         </h3>
-                        <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4">
                             <div>
                                 <label className="label">Nome</label>
                                 <input 
@@ -137,6 +139,15 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                     type="email" 
                                     value={formData.email_consultor} 
                                     onChange={e => setFormData({...formData, email_consultor: e.target.value})}
+                                />
+                            </div>
+                            <div>
+                                <label className="label">Celular</label>
+                                <input 
+                                    className="input"
+                                    placeholder="(XX) XXXXX-XXXX" 
+                                    value={formData.celular} 
+                                    onChange={e => setFormData({...formData, celular: e.target.value})}
                                 />
                             </div>
                             <div>
@@ -232,19 +243,17 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 </>
                             )}
                             
-                            <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '16px', justifyContent: 'flex-end', paddingTop: '16px', borderTop: '1px solid #e5e7eb' }}>
+                            <div className="col-span-1 md:col-span-2 flex justify-end gap-4 pt-4 border-t border-gray-200 mt-4">
                                 <button 
                                     type="button" 
                                     onClick={() => { setIsFormOpen(false); setEditingConsultant(null); }} 
-                                    className="btn"
-                                    style={{ padding: '8px 16px', backgroundColor: '#d1d5db', color: '#1f2937', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
+                                    className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition font-medium"
                                 >
                                     Cancelar
                                 </button>
                                 <button 
                                     type="submit" 
-                                    className="btn"
-                                    style={{ padding: '8px 16px', backgroundColor: '#533738', color: '#ffffff', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
+                                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
                                 >
                                     Salvar
                                 </button>

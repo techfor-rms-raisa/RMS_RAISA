@@ -84,6 +84,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let role = '';
             let startDateStr = '';
             let hourlyRateStr = '';
+            let celularStr = '';
 
             for (let i = 0; i < lines.length; i++) {
                 const cleanLine = lines[i];
@@ -97,6 +98,12 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 if (cleanLine.match(/^DATA DE INÍCIO:/i)) {
                     startDateStr = cleanLine.replace(/^DATA DE INÍCIO:/i, '').trim();
+                }
+                if (cleanLine.match(/TELEFONE CELULAR/i)) {
+                    const match = cleanLine.match(/TELEFONE CELULAR\s*:?\s*([\d\s\-\(\)]+)/i);
+                    if (match) {
+                        celularStr = match[1].trim().replace(/\s+/g, '');
+                    }
                 }
                 
                 // LOGIC: Find "FATURAMENTO MENSAL" and capture value (either same line or next line)
@@ -196,6 +203,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 nome_consultores: consultantName,
                 cargo_consultores: role || 'Consultor',
                 data_inclusao_consultores: startDate,
+                celular: celularStr || '', // Celular extraído do PDF
                 status: 'Ativo',
                 gestor_imediato_id: targetManagerId,
                 coordenador_id: targetCoordId,
