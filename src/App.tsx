@@ -153,7 +153,7 @@ const App: React.FC = () => {
       case 'quarantine':
         return <Quarentena consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} />;
       case 'recommendations':
-        return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} onNavigateToAtividades={handleNavigateToAtividades} />;
+        return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} />;
       case 'analytics':
         return <Analytics consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
       case 'export': 

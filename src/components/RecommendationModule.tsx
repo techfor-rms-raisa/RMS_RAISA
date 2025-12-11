@@ -134,7 +134,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants
                                       <h3 className="font-bold text-lg text-gray-800">{c.nome_consultores}</h3>
                                       <button
                                         onClick={() => onNavigateToAtividades(clientInfo?.razao_social_cliente, c.nome_consultores)}
-                                        className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition whitespace-nowrap"
+                                        className="px-2 py-1 text-xs bg-white text-blue-600 border border-blue-600 rounded hover:bg-blue-50 transition whitespace-nowrap"
                                         title="Registrar nova atividade para este consultor"
                                       >
                                         + Atividade
