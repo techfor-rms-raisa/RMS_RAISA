@@ -91,11 +91,11 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     
     return result;
   };
+  
   // Obter relatórios dos últimos 90 dias
   const get90DaysReports = (consultant: Consultant): ConsultantReport[] => {
     const today = new Date();
     const ninetyDaysAgo = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
-    
     
     // 1️⃣ PRIORIDADE: Buscar dados do Supabase (consultant_reports)
     if (consultant.consultant_reports && Array.isArray(consultant.consultant_reports) && consultant.consultant_reports.length > 0) {
@@ -136,9 +136,10 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     // 3️⃣ FALLBACK FINAL: Retornar array vazio
     return [];
   };
-  // Abrir modal de histórico ao clicar no badge
-  const handleScoreBadgeClick = async (consultant: Consultant) => {
-    console.log(`🖱️ Clique no badge de score para ${consultant.nome_consultores}`);
+
+  // ✅ NOVO: Abrir modal de histórico ao clicar em "Ver Histórico"
+  const handleViewHistoryClick = async (consultant: Consultant) => {
+    console.log(`📋 Clique em "Ver Histórico" para ${consultant.nome_consultores}`);
     
     try {
       // 🔥 Carregar relatórios sob demanda do Supabase
@@ -160,8 +161,6 @@ const Quarentena: React.FC<QuarentenaProps> = ({
       setShowHistoryModal(true);
     }
   };
-
-
 
   const getScoreColor = (score: number | null): string => {
     if (score === null || score === undefined) return '#757575';
@@ -218,46 +217,6 @@ const Quarentena: React.FC<QuarentenaProps> = ({
       return [];
     }
   }
-  // Gerar recomendações baseadas no score
-  const generateRecommendationsByScore = (score: number): { tipo: string; descricao: string }[] => {
-    if (score === 5) {
-      return [
-        { tipo: 'URGENTE', descricao: 'Reunião imediata com gestor e RH' },
-        { tipo: 'PLANO DE AÇÃO', descricao: 'Criar plano de recuperação em 48h' },
-        { tipo: 'MONITORAMENTO', descricao: 'Acompanhamento semanal obrigatório' },
-        { tipo: 'SUPORTE', descricao: 'Alocar mentor/coach especializado' }
-      ];
-    } else if (score === 4) {
-      return [
-        { tipo: 'ATENÇÃO', descricao: 'Agendar reunião com gestor em 1 semana' },
-        { tipo: 'FEEDBACK', descricao: 'Sessão de feedback estruturado' },
-        { tipo: 'TREINAMENTO', descricao: 'Identificar necessidades de capacitação' },
-        { tipo: 'ACOMPANHAMENTO', descricao: 'Monitoramento Semanal (recomendado pela IA)' }
-      ];
-    } else if (score === 3) {
-      return [
-        { tipo: 'OBSERVAÇÃO', descricao: 'Conversa informal com gestor' },
-        { tipo: 'DESENVOLVIMENTO', descricao: 'Oferecer oportunidades de melhoria' },
-        { tipo: 'SUPORTE', descricao: 'Disponibilizar recursos adicionais' },
-        { tipo: 'PREVENTIVO', descricao: 'Monitoramento Semanal' }
-      ];
-    } else if (score === 2) {
-      return [
-        { tipo: 'RECONHECIMENTO', descricao: 'Reconhecer bom desempenho' },
-        { tipo: 'CRESCIMENTO', descricao: 'Explorar oportunidades de desenvolvimento' },
-        { tipo: 'MANUTENÇÃO', descricao: 'Manter nível de suporte atual' }
-      ];
-    } else if (score === 1) {
-      return [
-        { tipo: 'DESTAQUE', descricao: 'Reconhecimento público do desempenho' },
-        { tipo: 'LIDERANÇA', descricao: 'Considerar para posições de liderança' },
-        { tipo: 'MENTORIA', descricao: 'Convidar para mentorar outros consultores' },
-        { tipo: 'RETENÇÃO', descricao: 'Plano de carreira e retenção de talento' }
-      ];
-    }
-    return [{ tipo: 'AVALIAR', descricao: 'Realizar avaliação de desempenho' }];
-  };
-;
 
   // ============================================================================
   // LÓGICA DE ESTRUTURA DE DADOS
@@ -322,7 +281,6 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     <div className="quarentena-container">
       <div className="quarentena-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 className="quarentena-title">🚨 Quarentena de Consultores</h2>
-
       </div>
       
       {/* Filtros */}
@@ -400,6 +358,27 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                   >
                                     + Atividade
                                   </button>
+                                  
+                                  {/* ✅ NOVO: Botão "Ver Recomendação" */}
+                                  <button
+                                    onClick={() => {
+                                      // TODO: Implementar navegação para Recomendações
+                                      console.log(`👁️ Ver Recomendação para ${consultant.nome_consultores}`);
+                                    }}
+                                    className="px-2 py-1 text-xs bg-white text-green-600 border border-green-600 rounded hover:bg-green-50 transition whitespace-nowrap"
+                                    title="Ver recomendações de ação para este consultor"
+                                  >
+                                    Ver Recomendação
+                                  </button>
+
+                                  {/* ✅ NOVO: Botão "Ver Histórico" */}
+                                  <button
+                                    onClick={() => handleViewHistoryClick(consultant)}
+                                    className="px-2 py-1 text-xs bg-white text-purple-600 border border-purple-600 rounded hover:bg-purple-50 transition whitespace-nowrap"
+                                    title="Ver histórico de atividades"
+                                  >
+                                    Ver Histórico
+                                  </button>
                                 </div>
                                 <p className="consultant-profession">{consultant.cargo_consultores || 'N/A'}</p>
                               </div>
@@ -423,20 +402,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                 </div>
                               </div>
 
-                              {/* Recomendações Inline */}
-                              {finalScore !== null && (
-                                <div className="recommendations-inline">
-                                  <h4 className="recommendations-inline-title">⚡ Recomendações de Ação:</h4>
-                                  <div className="recommendations-inline-grid">
-                                    {generateRecommendationsByScore(finalScore).map((rec, idx) => (
-                                      <div key={idx} className="recommendation-inline-card">
-                                        <div className="recommendation-inline-tipo">{rec.tipo}</div>
-                                        <div className="recommendation-inline-descricao">{rec.descricao}</div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
+                              {/* ❌ REMOVIDO: Seção "Recomendações de Ação" inline foi removida conforme solicitado */}
                             </div>
 
                             {/* Score Badge - Lado Direito */}
@@ -449,49 +415,31 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                   </div>
                                 )}
                                 {finalScore !== null ? (
-                                  <button 
-                                    className="score-badge score-badge-button"
+                                  <div 
+                                    className="score-badge"
                                     style={{ backgroundColor: getScoreColor(finalScore) }}
-                                    onClick={() => handleScoreBadgeClick(consultant)}
-                                    title="Clique para ver histórico de atividades"
+                                    title="Score do consultor"
                                   >
                                     <span className="score-label-text">RISCO</span>
                                     <span className="score-label-text">{getScoreLabel(finalScore)}</span>
                                     <span className="score-number">Score {finalScore}</span>
-                                  </button>
+                                  </div>
                                 ) : (
-                                  <button 
-                                    className="score-badge score-badge-button"
+                                  <div 
+                                    className="score-badge"
                                     style={{ backgroundColor: '#fbc02d' }}
-                                    onClick={() => handleScoreBadgeClick(consultant)}
-                                    title="Clique para ver histórico de atividades"
+                                    title="Score do consultor"
                                   >
                                     <span className="score-label-text">RISCO</span>
                                     <span className="score-label-text">MODERADO</span>
                                     <span className="score-number">Score 3</span>
-                                  </button>
+                                  </div>
                                 )}
                               </div>
                             </div>
                           </div>
 
-                          {/* Seção de Recomendações */}
-                          {recommendations.length > 0 && (
-                            <div className="recommendations-section">
-                              <h4 className="recommendations-title">⚡ Recomendações de Ação:</h4>
-                              <div className="recommendations-grid-2x2">
-                                {recommendations.map((rec, idx) => (
-                                  <div 
-                                    key={idx} 
-                                    className={`recommendation-card recommendation-${getCategoryClassName(rec.category)}`}
-                                  >
-                                    <div className="recommendation-category">{rec.category.toUpperCase()}</div>
-                                    <div className="recommendation-description">{rec.description}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
+                          {/* ❌ REMOVIDO: Seção de Recomendações foi completamente removida */}
                         </div>
                       );
                     })}
@@ -503,19 +451,18 @@ const Quarentena: React.FC<QuarentenaProps> = ({
         ))}
       </div>
 
-      {structuredData.every(c => c.managers.length === 0) && (
-        <div className="empty-state">
-          <p className="empty-state-text">✅ Nenhum consultor em quarentena com os filtros selecionados</p>
-        </div>
+      {/* Modais */}
+      {viewingReport && (
+        <ReportDetailsModal
+          report={viewingReport}
+          onClose={() => setViewingReport(null)}
+        />
       )}
 
-      <ReportDetailsModal report={viewingReport} onClose={() => setViewingReport(null)} isQuarentineView={true} />
-
-      {/* Modal de Histórico de Atividades */}
       {showHistoryModal && selectedConsultantForHistory && (
         <HistoricoAtividadesModal
           consultant={selectedConsultantForHistory}
-          allReports={loadedReports}
+          reports={loadedReports}
           onClose={() => {
             setShowHistoryModal(false);
             setSelectedConsultantForHistory(null);
@@ -523,7 +470,6 @@ const Quarentena: React.FC<QuarentenaProps> = ({
           }}
         />
       )}
-
     </div>
   );
 };
