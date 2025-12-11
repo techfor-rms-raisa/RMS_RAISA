@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import LoginScreen from './components/LoginScreen';
 import Header from './components/Header';
@@ -40,7 +39,7 @@ import AtividadesConsultar from './components/atividades/AtividadesConsultar';
 import AtividadesExportar from './components/atividades/AtividadesExportar';
 
 // ============================================
-// ✅ ADICIONE ESTE IMPORT
+// ✅ IMPORT DO PERMISSIONS PROVIDER
 // ============================================
 import { PermissionsProvider } from './hooks/usePermissions';
 
@@ -78,7 +77,7 @@ const App: React.FC = () => {
     addVaga, updateVaga, deleteVaga, 
     addPessoa, updatePessoa,
     addCandidatura, updateCandidaturaStatus,
-    reload: loadAllData  // ✅ Adicionar função para carregar dados
+    reload: loadAllData  // ✅ Função para carregar dados
   } = useSupabaseData();
 
   const handleLogin = (user: User) => {

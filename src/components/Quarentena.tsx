@@ -2,6 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '../components/types';
 import ReportDetailsModal from './ReportDetailsModal';
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
+import RecommendationsModal from './RecommendationsModal';
+import { generateIntelligentRecommendations, IntelligentAnalysis } from '../services/recommendationService';
 
 import './Quarentena.css';
 
@@ -38,6 +40,14 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
   const [loadedReports, setLoadedReports] = useState<ConsultantReport[]>([]);
+
+  // ============================================
+  // ✅ NOVO: ESTADOS PARA MODAL DE RECOMENDAÇÕES
+  // ============================================
+  const [showRecommendationsModal, setShowRecommendationsModal] = useState<boolean>(false);
+  const [selectedConsultantForRecommendations, setSelectedConsultantForRecommendations] = useState<Consultant | null>(null);
+  const [selectedRecommendations, setSelectedRecommendations] = useState<IntelligentAnalysis | null>(null);
+  const [loadingRecommendations, setLoadingRecommendations] = useState<boolean>(false);
 
   // ============================================================================
   // FUNÇÕES AUXILIARES
@@ -162,6 +172,52 @@ const Quarentena: React.FC<QuarentenaProps> = ({
       setSelectedConsultantForHistory(consultant);
       setShowHistoryModal(true);
     }
+  };
+
+  // ============================================
+  // ✅ NOVO: HANDLER PARA ABRIR MODAL DE RECOMENDAÇÕES
+  // ============================================
+  const handleViewRecommendations = async (consultant: Consultant) => {
+    console.log(`⚡ Clique em "Ver Recomendação" para ${consultant.nome_consultores}`);
+    
+    setLoadingRecommendations(true);
+    try {
+      // Buscar relatórios do consultor
+      const reports = await loadConsultantReports(consultant.id);
+      
+      // Buscar gestor e cliente
+      const manager = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
+      const client = clients.find(c => c.id === manager?.id_cliente);
+      
+      // Gerar análise inteligente
+      const analysis = await generateIntelligentRecommendations(
+        consultant,
+        reports,
+        manager,
+        client
+      );
+      
+      // Armazenar dados no state
+      setSelectedConsultantForRecommendations(consultant);
+      setSelectedRecommendations(analysis);
+      setShowRecommendationsModal(true);
+      
+      console.log(`✅ Recomendações carregadas para ${consultant.nome_consultores}`);
+    } catch (error) {
+      console.error(`❌ Erro ao carregar recomendações para ${consultant.nome_consultores}:`, error);
+      alert('Erro ao carregar recomendações. Tente novamente.');
+    } finally {
+      setLoadingRecommendations(false);
+    }
+  };
+
+  // ============================================
+  // ✅ NOVO: HANDLER PARA FECHAR MODAL DE RECOMENDAÇÕES
+  // ============================================
+  const handleCloseRecommendations = () => {
+    setShowRecommendationsModal(false);
+    setSelectedConsultantForRecommendations(null);
+    setSelectedRecommendations(null);
   };
 
   const getScoreColor = (score: number | null): string => {
@@ -361,20 +417,16 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                     + Atividade
                                   </button>
                                   
-                                  {/* ✅ NOVO: Botão "Ver Recomendação" */}
+                                  {/* ============================================ */}
+                                  {/* ✅ NOVO: Botão "Ver Recomendação" com Modal */}
+                                  {/* ============================================ */}
                                   <button
-                                    onClick={() => {
-                                      console.log(`👁️ Navegando para Recomendações do ${consultant.nome_consultores}`);
-                                      if (onNavigateToRecommendations) {
-                                        onNavigateToRecommendations(consultant);
-                                      } else {
-                                        console.warn('⚠️ onNavigateToRecommendations não está definido');
-                                      }
-                                    }}
-                                    className="px-2 py-1 text-xs bg-white text-green-600 border border-green-600 rounded hover:bg-green-50 transition whitespace-nowrap"
+                                    onClick={() => handleViewRecommendations(consultant)}
+                                    disabled={loadingRecommendations}
+                                    className="px-2 py-1 text-xs bg-white text-indigo-600 border border-indigo-600 rounded hover:bg-indigo-50 transition whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                                     title="Ver recomendações de ação para este consultor"
                                   >
-                                    Ver Recomendação
+                                    {loadingRecommendations ? '⏳ Carregando...' : '⚡ Ver Recomendação'}
                                   </button>
 
                                   {/* ✅ NOVO: Botão "Ver Histórico" */}
@@ -474,6 +526,22 @@ const Quarentena: React.FC<QuarentenaProps> = ({
             setSelectedConsultantForHistory(null);
             setLoadedReports([]);
           }}
+        />
+      )}
+
+      {/* ============================================ */}
+      {/* ✅ NOVO: MODAL DE RECOMENDAÇÕES */}
+      {/* ============================================ */}
+      {showRecommendationsModal && selectedConsultantForRecommendations && selectedRecommendations && (
+        <RecommendationsModal
+          isOpen={showRecommendationsModal}
+          onClose={handleCloseRecommendations}
+          consultantName={selectedConsultantForRecommendations.nome_consultores}
+          score={selectedConsultantForRecommendations.parecer_final_consultor || null}
+          recommendations={selectedRecommendations.recomendacoes?.map((rec: any) => ({
+            category: rec.tipo,
+            description: rec.descricao
+          })) || []}
         />
       )}
     </div>

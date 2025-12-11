@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Consultant, Client, UsuarioCliente, ConsultantReport, CoordenadorCliente } from '../components/types';
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
 import RecommendationCard from './RecommendationCard';
+import RecommendationsModal from './RecommendationsModal';
 import { generateIntelligentRecommendations, IntelligentAnalysis } from '../services/recommendationService';
 
 interface RecommendationModuleProps {
@@ -37,6 +38,13 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     const [loadedReports, setLoadedReports] = useState<ConsultantReport[]>([]);
     const [analysisCache, setAnalysisCache] = useState<Map<number, ConsultantAnalysis>>(new Map());
     const [loadingConsultants, setLoadingConsultants] = useState<Set<number>>(new Set());
+    
+    // ============================================
+    // ✅ NOVO: ESTADO PARA MODAL DE RECOMENDAÇÕES
+    // ============================================
+    const [showRecommendationsModal, setShowRecommendationsModal] = useState<boolean>(false);
+    const [selectedConsultantForRecommendations, setSelectedConsultantForRecommendations] = useState<Consultant | null>(null);
+    const [selectedRecommendations, setSelectedRecommendations] = useState<any>(null);
 
     // Filtrar consultores que precisam de recomendação
     const filteredList = useMemo(() => {
@@ -158,6 +166,24 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
         setShowHistoryModal(true);
     };
 
+    // ============================================
+    // ✅ NOVO: HANDLER PARA ABRIR MODAL DE RECOMENDAÇÕES
+    // ============================================
+    const handleOpenRecommendations = (consultant: Consultant, analysis: IntelligentAnalysis) => {
+        setSelectedConsultantForRecommendations(consultant);
+        setSelectedRecommendations(analysis);
+        setShowRecommendationsModal(true);
+    };
+
+    // ============================================
+    // ✅ NOVO: HANDLER PARA FECHAR MODAL DE RECOMENDAÇÕES
+    // ============================================
+    const handleCloseRecommendations = () => {
+        setShowRecommendationsModal(false);
+        setSelectedConsultantForRecommendations(null);
+        setSelectedRecommendations(null);
+    };
+
     return (
         <>
             <div className="p-6 space-y-6">
@@ -235,6 +261,10 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                                 managerName={cachedAnalysis.manager?.nome_gestor_cliente}
                                 onNavigateToAtividades={onNavigateToAtividades}
                                 onOpenHistory={() => handleOpenHistory(consultant)}
+                                // ============================================
+                                // ✅ NOVO: PROP PARA ABRIR MODAL DE RECOMENDAÇÕES
+                                // ============================================
+                                onOpenRecommendations={() => handleOpenRecommendations(consultant, cachedAnalysis.analysis)}
                             />
                         );
                     })}
@@ -251,6 +281,22 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                         setSelectedConsultantForHistory(null);
                         setLoadedReports([]);
                     }}
+                />
+            )}
+
+            {/* ============================================ */}
+            {/* ✅ NOVO: MODAL DE RECOMENDAÇÕES */}
+            {/* ============================================ */}
+            {showRecommendationsModal && selectedConsultantForRecommendations && selectedRecommendations && (
+                <RecommendationsModal
+                    isOpen={showRecommendationsModal}
+                    onClose={handleCloseRecommendations}
+                    consultantName={selectedConsultantForRecommendations.nome_consultores}
+                    score={selectedConsultantForRecommendations.parecer_final_consultor || null}
+                    recommendations={selectedRecommendations.recomendacoes?.map((rec: any) => ({
+                        category: rec.tipo,
+                        description: rec.descricao
+                    })) || []}
                 />
             )}
         </>
