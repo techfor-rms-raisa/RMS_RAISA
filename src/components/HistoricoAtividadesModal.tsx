@@ -4,28 +4,50 @@ import { Consultant, ConsultantReport } from '../components/types';
 
 interface HistoricoAtividadesModalProps {
   consultant: Consultant;
-  allReports: ConsultantReport[];
+  reports?: ConsultantReport[];  // Agora aceita 'reports' (como está sendo passado)
+  allReports?: ConsultantReport[];  // Também aceita 'allReports' (para compatibilidade)
   onClose: () => void;
 }
 
 const HistoricoAtividadesModal: React.FC<HistoricoAtividadesModalProps> = ({
   consultant,
+  reports,
   allReports,
   onClose
 }) => {
   
+  // Usar reports ou allReports, com fallback para array vazio
+  const reportsData = reports || allReports || [];
+  
   // Filtrar relatórios dos últimos 90 dias
   const reportsLast90Days = useMemo(() => {
+    // Validação: garantir que reportsData é um array
+    if (!Array.isArray(reportsData)) {
+      console.warn('⚠️ HistoricoAtividadesModal: reports não é um array válido', reportsData);
+      return [];
+    }
+
     const today = new Date();
     const ninetyDaysAgo = new Date(today.getTime() - 90 * 24 * 60 * 60 * 1000);
     
-    return allReports
+    return reportsData
       .filter(report => {
-        const reportDate = new Date(report.createdAt);
-        return reportDate >= ninetyDaysAgo && reportDate <= today;
+        try {
+          const reportDate = new Date(report.createdAt);
+          return reportDate >= ninetyDaysAgo && reportDate <= today;
+        } catch (error) {
+          console.warn('⚠️ Erro ao processar data do relatório:', error);
+          return false;
+        }
       })
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [allReports]);
+      .sort((a, b) => {
+        try {
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        } catch {
+          return 0;
+        }
+      });
+  }, [reportsData]);
 
   const formatDate = (dateString: string): string => {
     try {
@@ -180,7 +202,7 @@ const HistoricoAtividadesModal: React.FC<HistoricoAtividadesModalProps> = ({
                     </div>
 
                     {/* Recommendations - Mais Compactas */}
-                    {report.recommendations && report.recommendations.length > 0 && (
+                    {report.recommendations && Array.isArray(report.recommendations) && report.recommendations.length > 0 && (
                       <div>
                         <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                           Recomendações
