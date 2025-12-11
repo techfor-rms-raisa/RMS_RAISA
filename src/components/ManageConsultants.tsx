@@ -34,10 +34,10 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
 
     const [formData, setFormData] = useState({
         ano_vigencia: new Date().getFullYear(),
-        nome_consultores: ,
-        email_consultor: ,
-        celular: , // Adicionado campo de celular
-        cargo_consultores: ,
+        nome_consultores: '',
+        email_consultor: '',
+        celular: '', // Adicionado campo de celular
+        cargo_consultores: '',
         data_inclusao_consultores: '',
         data_saida: '',
         gestor_imediato_id: '',
@@ -56,8 +56,8 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
             setFormData({
                 ano_vigencia: editingConsultant.ano_vigencia,
                 nome_consultores: editingConsultant.nome_consultores,
-                email_consultor: editingConsultant.email_consultor || ,
-                celular: editingConsultant.celular || , // Adicionado campo de celular
+                email_consultor: editingConsultant.email_consultor || '',
+                celular: editingConsultant.celular || '', // Adicionado campo de celular
                 cargo_consultores: editingConsultant.cargo_consultores,
                 data_inclusao_consultores: editingConsultant.data_inclusao_consultores,
                 data_saida: editingConsultant.data_saida || '',
