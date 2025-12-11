@@ -36,7 +36,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
         ano_vigencia: new Date().getFullYear(),
         nome_consultores: '',
         email_consultor: '',
-        celular: '', // Adicionado campo de celular
+        celular: '',
         cargo_consultores: '',
         data_inclusao_consultores: '',
         data_saida: '',
@@ -57,7 +57,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                 ano_vigencia: editingConsultant.ano_vigencia,
                 nome_consultores: editingConsultant.nome_consultores,
                 email_consultor: editingConsultant.email_consultor || '',
-                celular: editingConsultant.celular || '', // Adicionado campo de celular
+                celular: editingConsultant.celular || '',
                 cargo_consultores: editingConsultant.cargo_consultores,
                 data_inclusao_consultores: editingConsultant.data_inclusao_consultores,
                 data_saida: editingConsultant.data_saida || '',
@@ -94,216 +94,309 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
         setEditingConsultant(null);
     };
 
+    const handleCloseForm = () => {
+        setIsFormOpen(false);
+        setEditingConsultant(null);
+    };
+
     return (
-        <div style={{ backgroundColor: '#ffffff', padding: '24px', borderRadius: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
+        <div className="bg-white rounded-lg shadow-sm p-6">
             {!isReadOnly && <InclusionImport clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} onImport={addConsultant} />}
             
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+            <div className="flex justify-between items-center mb-8">
                 <h2 className="section-title">Gerenciar Consultores</h2>
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="flex gap-3">
                     {!isReadOnly && (
                         <button 
                             onClick={() => { setEditingConsultant(null); setIsFormOpen(true); }} 
-                            className="btn"
-                            style={{ backgroundColor: '#533738', color: '#ffffff', padding: '12px 24px', borderRadius: '4px', border: 'none', cursor: 'pointer' }}
+                            className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 font-medium shadow-md hover:shadow-lg"
                         >
                             + Novo Consultor
                         </button>
                     )}
-
                 </div>
             </div>
 
+            {/* MODAL COM DESIGN PROFISSIONAL */}
             {isFormOpen && (
-                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(75, 85, 99, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
-                    <div style={{ backgroundColor: '#ffffff', borderRadius: '8px', padding: '32px', maxWidth: '900px', width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
-                        <h3 className="text-2xl font-bold text-gray-800 mb-6">
-                            {editingConsultant ? 'Editar' : 'Novo'} Consultor
-                        </h3>
-                        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-5">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                        {/* HEADER DO MODAL */}
+                        <div className="sticky top-0 bg-gradient-to-r from-blue-50 to-blue-100 border-b border-blue-200 px-8 py-6 flex justify-between items-center">
                             <div>
-                                <label className="label">Nome</label>
-                                <input 
-                                    className="input"
-                                    placeholder="Nome" 
-                                    value={formData.nome_consultores} 
-                                    onChange={e => setFormData({...formData, nome_consultores: e.target.value})} 
-                                    required
-                                />
+                                <h3 className="text-2xl font-bold text-gray-900">
+                                    {editingConsultant ? '✏️ Editar Consultor' : '➕ Novo Consultor'}
+                                </h3>
+                                <p className="text-sm text-gray-600 mt-1">Preencha os dados abaixo para {editingConsultant ? 'atualizar' : 'registrar'} o consultor</p>
                             </div>
-                            <div>
-                                <label className="label">Email</label>
-                                <input 
-                                    className="input"
-                                    placeholder="Email" 
-                                    type="email" 
-                                    value={formData.email_consultor} 
-                                    onChange={e => setFormData({...formData, email_consultor: e.target.value})}
-                                />
-                            </div>
-                            <div>
-                                <label className="label">Celular</label>
-                                <input 
-                                    className="input"
-                                    placeholder="(XX) XXXXX-XXXX" 
-                                    value={formData.celular} 
-                                    onChange={e => setFormData({...formData, celular: e.target.value})}
-                                />
-                            </div>
-                            <div>
-                                <label className="label">Cargo</label>
-                                <input 
-                                    className="input"
-                                    placeholder="Cargo" 
-                                    value={formData.cargo_consultores} 
-                                    onChange={e => setFormData({...formData, cargo_consultores: e.target.value})} 
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <label className="label">Data de Inclusão</label>
-                                <input 
-                                    className="input"
-                                    type="date" 
-                                    value={formData.data_inclusao_consultores} 
-                                    onChange={e => setFormData({...formData, data_inclusao_consultores: e.target.value})} 
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <label className="label">Gestor</label>
-                                <select 
-                                    className="input"
-                                    value={formData.gestor_imediato_id} 
-                                    onChange={e => setFormData({...formData, gestor_imediato_id: e.target.value})} 
-                                    required
-                                >
-                                    <option value="">Selecione...</option>
-                                    {usuariosCliente.filter(u => u.ativo).map(u => <option key={u.id} value={u.id}>{u.nome_gestor_cliente}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="label">Cliente</label>
-                                <input 
-                                    className="input"
-                                    style={{ backgroundColor: '#f3f4f6' }}
-                                    value={(() => {
-                                        const gestor = usuariosCliente.find(u => u.id === parseInt(formData.gestor_imediato_id));
-                                        const cliente = gestor ? clients.find(cl => cl.id === gestor.id_cliente) : null;
-                                        return cliente?.razao_social_cliente || '';
-                                    })()} 
-                                    readOnly 
-                                    placeholder="Selecionado automaticamente pelo Gestor"
-                                />
-                            </div>
-                            <div className="md:col-span-1">
-                                <label className="label">Faturamento (R$)</label>
-                                <input 
-                                    className="input"
-                                    placeholder="Ex: 15000,00" 
-                                    value={formData.valor_faturamento} 
-                                    onChange={e => setFormData({...formData, valor_faturamento: e.target.value})}
-                                />
-                            </div>
-                            <div className="md:col-span-1">
-                                <label className="label">Status</label>
-                                <select 
-                                    className="input"
-                                    value={formData.status} 
-                                    onChange={e => setFormData({...formData, status: e.target.value as any})}
-                                >
-                                    <option value="Ativo">Ativo</option>
-                                    <option value="Perdido">Perdido</option>
-                                    <option value="Encerrado">Encerrado</option>
-                                </select>
-                            </div>
-                            {(formData.status === 'Perdido' || formData.status === 'Encerrado') && (
-                                <>
-                                    <div>
-                                        <label className="label">Data de Saída</label>
-                                        <input 
-                                            className="input"
-                                            type="date" 
-                                            value={formData.data_saida} 
-                                            onChange={e => setFormData({...formData, data_saida: e.target.value})} 
-                                            required
-                                        />
+                            <button 
+                                onClick={handleCloseForm}
+                                className="text-gray-400 hover:text-gray-600 transition-colors text-2xl font-light"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {/* CONTEÚDO DO FORMULÁRIO */}
+                        <div className="p-8">
+                            <form onSubmit={handleSubmit} className="space-y-8">
+                                {/* SEÇÃO 1: DADOS PESSOAIS */}
+                                <div>
+                                    <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-blue-200">
+                                        📋 Dados Pessoais
+                                    </h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                        {/* Nome */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                Nome <span className="text-red-500">*</span>
+                                            </label>
+                                            <input 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                                placeholder="Nome completo" 
+                                                value={formData.nome_consultores} 
+                                                onChange={e => setFormData({...formData, nome_consultores: e.target.value})} 
+                                                required
+                                            />
+                                        </div>
+
+                                        {/* Email */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                Email
+                                            </label>
+                                            <input 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                                placeholder="email@exemplo.com" 
+                                                type="email" 
+                                                value={formData.email_consultor} 
+                                                onChange={e => setFormData({...formData, email_consultor: e.target.value})}
+                                            />
+                                        </div>
+
+                                        {/* Celular */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                📱 Celular
+                                            </label>
+                                            <input 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                                placeholder="(XX) XXXXX-XXXX" 
+                                                value={formData.celular} 
+                                                onChange={e => setFormData({...formData, celular: e.target.value})}
+                                            />
+                                        </div>
                                     </div>
-                                    <div>
-                                        <label className="label">Motivo de Desligamento</label>
-                                        <select 
-                                            className="input"
-                                            value={formData.motivo_desligamento} 
-                                            onChange={e => setFormData({...formData, motivo_desligamento: e.target.value as any})}
-                                        >
-                                            <option value="">Selecione...</option>
-                                            {TERMINATION_REASONS.map(r => <option key={r.value} value={r.value}>{r.value}</option>)}
-                                        </select>
+                                </div>
+
+                                {/* SEÇÃO 2: DADOS PROFISSIONAIS */}
+                                <div>
+                                    <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-blue-200">
+                                        💼 Dados Profissionais
+                                    </h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                        {/* Cargo */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                Cargo <span className="text-red-500">*</span>
+                                            </label>
+                                            <input 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                                placeholder="Ex: Desenvolvedor, Analista..." 
+                                                value={formData.cargo_consultores} 
+                                                onChange={e => setFormData({...formData, cargo_consultores: e.target.value})} 
+                                                required
+                                            />
+                                        </div>
+
+                                        {/* Data de Inclusão */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                📅 Data de Inclusão <span className="text-red-500">*</span>
+                                            </label>
+                                            <input 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                                type="date" 
+                                                value={formData.data_inclusao_consultores} 
+                                                onChange={e => setFormData({...formData, data_inclusao_consultores: e.target.value})} 
+                                                required
+                                            />
+                                        </div>
+
+                                        {/* Faturamento */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                💰 Faturamento (R$)
+                                            </label>
+                                            <input 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                                placeholder="Ex: 15.000,00" 
+                                                value={formData.valor_faturamento} 
+                                                onChange={e => setFormData({...formData, valor_faturamento: e.target.value})}
+                                            />
+                                        </div>
                                     </div>
-                                </>
-                            )}
-                            
-                            <div className="col-span-1 md:col-span-2 flex justify-end gap-4 pt-4 border-t border-gray-200 mt-4">
-                                <button 
-                                    type="button" 
-                                    onClick={() => { setIsFormOpen(false); setEditingConsultant(null); }} 
-                                    className="px-6 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition font-medium"
-                                >
-                                    Cancelar
-                                </button>
-                                <button 
-                                    type="submit" 
-                                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
-                                >
-                                    Salvar
-                                </button>
-                            </div>
-                        </form>
+                                </div>
+
+                                {/* SEÇÃO 3: GESTÃO E CLIENTE */}
+                                <div>
+                                    <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-blue-200">
+                                        👥 Gestão e Cliente
+                                    </h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                        {/* Gestor */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                Gestor <span className="text-red-500">*</span>
+                                            </label>
+                                            <select 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white"
+                                                value={formData.gestor_imediato_id} 
+                                                onChange={e => setFormData({...formData, gestor_imediato_id: e.target.value})} 
+                                                required
+                                            >
+                                                <option value="">Selecione um gestor...</option>
+                                                {usuariosCliente.filter(u => u.ativo).map(u => <option key={u.id} value={u.id}>{u.nome_gestor_cliente}</option>)}
+                                            </select>
+                                        </div>
+
+                                        {/* Cliente (Auto-preenchido) */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                Cliente
+                                            </label>
+                                            <input 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-100 text-gray-700 cursor-not-allowed"
+                                                value={(() => {
+                                                    const gestor = usuariosCliente.find(u => u.id === parseInt(formData.gestor_imediato_id));
+                                                    const cliente = gestor ? clients.find(cl => cl.id === gestor.id_cliente) : null;
+                                                    return cliente?.razao_social_cliente || 'Selecionado automaticamente';
+                                                })()} 
+                                                readOnly 
+                                            />
+                                        </div>
+
+                                        {/* Status */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                Status
+                                            </label>
+                                            <select 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white"
+                                                value={formData.status} 
+                                                onChange={e => setFormData({...formData, status: e.target.value as any})}
+                                            >
+                                                <option value="Ativo">✅ Ativo</option>
+                                                <option value="Perdido">⚠️ Perdido</option>
+                                                <option value="Encerrado">❌ Encerrado</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* SEÇÃO 4: DESLIGAMENTO (Condicional) */}
+                                {(formData.status === 'Perdido' || formData.status === 'Encerrado') && (
+                                    <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+                                        <h4 className="text-lg font-semibold text-red-800 mb-4">
+                                            ⚠️ Informações de Desligamento
+                                        </h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            {/* Data de Saída */}
+                                            <div className="flex flex-col">
+                                                <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                    📅 Data de Saída <span className="text-red-500">*</span>
+                                                </label>
+                                                <input 
+                                                    className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
+                                                    type="date" 
+                                                    value={formData.data_saida} 
+                                                    onChange={e => setFormData({...formData, data_saida: e.target.value})} 
+                                                    required
+                                                />
+                                            </div>
+
+                                            {/* Motivo de Desligamento */}
+                                            <div className="flex flex-col">
+                                                <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                    Motivo <span className="text-red-500">*</span>
+                                                </label>
+                                                <select 
+                                                    className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all bg-white"
+                                                    value={formData.motivo_desligamento} 
+                                                    onChange={e => setFormData({...formData, motivo_desligamento: e.target.value as any})}
+                                                    required
+                                                >
+                                                    <option value="">Selecione um motivo...</option>
+                                                    {TERMINATION_REASONS.map(r => <option key={r.value} value={r.value}>{r.value}</option>)}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* BOTÕES DE AÇÃO */}
+                                <div className="flex justify-end gap-4 pt-6 border-t border-gray-200">
+                                    <button 
+                                        type="button" 
+                                        onClick={handleCloseForm}
+                                        className="px-6 py-2.5 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-all duration-200 font-medium"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button 
+                                        type="submit"
+                                        className="px-8 py-2.5 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg hover:from-green-700 hover:to-green-800 transition-all duration-200 font-medium shadow-md hover:shadow-lg"
+                                    >
+                                        {editingConsultant ? '💾 Atualizar' : '➕ Criar Consultor'}
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
                 </div>
             )}
 
-            <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                        <tr style={{ backgroundColor: '#f3f4f6' }}>
-                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Nome</th>
-                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Cliente</th>
-                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Cargo</th>
-                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Data Inclusão</th>
-                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Status</th>
-                            <th style={{ border: '1px solid #e5e7eb', padding: '12px 16px', textAlign: 'left', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px', color: '#6b7280' }}>Ações</th>
+            {/* TABELA DE CONSULTORES */}
+            <div className="mt-8 overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead className="bg-gray-100 border-b-2 border-gray-300">
+                        <tr>
+                            <th className="px-6 py-3 text-left font-semibold text-gray-700">Nome</th>
+                            <th className="px-6 py-3 text-left font-semibold text-gray-700">Cargo</th>
+                            <th className="px-6 py-3 text-left font-semibold text-gray-700">Cliente</th>
+                            <th className="px-6 py-3 text-left font-semibold text-gray-700">Status</th>
+                            <th className="px-6 py-3 text-center font-semibold text-gray-700">Ações</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {consultants.map((c) => {
-                            const gestor = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
-                            const cliente = gestor ? clients.find(cl => cl.id === gestor.id_cliente) : null;
-                            const dataInclusao = new Date(c.data_inclusao_consultores).toLocaleDateString('pt-BR');
-                            return (
-                                <tr key={c.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
-                                    <td style={{ padding: '12px 16px', fontSize: '14px', color: '#1f2937', fontFamily: "'Roboto', sans-serif" }}>{c.nome_consultores}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '14px', color: '#1f2937', fontFamily: "'Roboto', sans-serif" }}>{cliente?.razao_social_cliente || '-'}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '14px', color: '#1f2937', fontFamily: "'Roboto', sans-serif" }}>{c.cargo_consultores}</td>
-                                    <td style={{ padding: '12px 16px', fontSize: '14px', color: '#1f2937', fontFamily: "'Roboto', sans-serif" }}>{dataInclusao}</td>
-                                    <td style={{ padding: '12px 16px' }}>
-                                        <span className="status-badge" style={{ padding: '4px 8px', borderRadius: '4px', fontSize: '12px', fontWeight: 700, backgroundColor: c.status === 'Ativo' ? '#dcfce7' : '#fee2e2', color: c.status === 'Ativo' ? '#166534' : '#991b1b' }}>
-                                            {c.status}
-                                        </span>
-                                    </td>
-                                    <td style={{ padding: '12px 16px' }}>
-                                        <div style={{ display: 'flex', gap: '8px' }}>
-                                            <button 
-                                                onClick={() => setEditingConsultant(c)} 
-                                                style={{ color: '#2563eb', cursor: 'pointer', border: 'none', backgroundColor: 'transparent', fontSize: '14px', fontWeight: 500, fontFamily: "'Roboto', sans-serif" }}
-                                            >
-                                                Editar
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            );
-                        })}
+                        {consultants.map((consultant, idx) => (
+                            <tr key={idx} className="border-b border-gray-200 hover:bg-blue-50 transition-colors">
+                                <td className="px-6 py-3 text-gray-800">{consultant.nome_consultores}</td>
+                                <td className="px-6 py-3 text-gray-600">{consultant.cargo_consultores}</td>
+                                <td className="px-6 py-3 text-gray-600">
+                                    {clients.find(c => c.id === usuariosCliente.find(u => u.id === consultant.gestor_imediato_id)?.id_cliente)?.razao_social_cliente || '-'}
+                                </td>
+                                <td className="px-6 py-3">
+                                    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                                        consultant.status === 'Ativo' ? 'bg-green-100 text-green-800' :
+                                        consultant.status === 'Perdido' ? 'bg-yellow-100 text-yellow-800' :
+                                        'bg-red-100 text-red-800'
+                                    }`}>
+                                        {consultant.status}
+                                    </span>
+                                </td>
+                                <td className="px-6 py-3 text-center">
+                                    {!isReadOnly && (
+                                        <button 
+                                            onClick={() => setEditingConsultant(consultant)}
+                                            className="text-blue-600 hover:text-blue-800 font-medium transition-colors"
+                                        >
+                                            Editar
+                                        </button>
+                                    )}
+                                </td>
+                            </tr>
+                        ))}
                     </tbody>
                 </table>
             </div>
