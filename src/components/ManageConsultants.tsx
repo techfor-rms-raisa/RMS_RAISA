@@ -40,6 +40,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
         cargo_consultores: '',
         data_inclusao_consultores: '',
         data_saida: '',
+        id_cliente: '', // Novo: ID do cliente selecionado
         gestor_imediato_id: '',
         coordenador_id: '',
         status: 'Ativo' as ConsultantStatus,
@@ -53,6 +54,8 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
     
     useEffect(() => {
         if (editingConsultant) {
+            // Encontrar o cliente do gestor atual
+            const gestor = usuariosCliente.find(u => u.id === editingConsultant.gestor_imediato_id);
             setFormData({
                 ano_vigencia: editingConsultant.ano_vigencia,
                 nome_consultores: editingConsultant.nome_consultores,
@@ -61,6 +64,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                 cargo_consultores: editingConsultant.cargo_consultores,
                 data_inclusao_consultores: editingConsultant.data_inclusao_consultores,
                 data_saida: editingConsultant.data_saida || '',
+                id_cliente: gestor ? String(gestor.id_cliente) : '',
                 gestor_imediato_id: String(editingConsultant.gestor_imediato_id),
                 coordenador_id: editingConsultant.coordenador_id ? String(editingConsultant.coordenador_id) : '',
                 status: editingConsultant.status,
@@ -81,6 +85,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
         }
         const dataToSave = {
             ...formData,
+            id_cliente: undefined, // Remover campo temporário
             gestor_imediato_id: parseInt(formData.gestor_imediato_id),
             coordenador_id: formData.coordenador_id ? parseInt(formData.coordenador_id) : null,
             motivo_desligamento: formData.motivo_desligamento || undefined,
@@ -97,6 +102,19 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
     const handleCloseForm = () => {
         setIsFormOpen(false);
         setEditingConsultant(null);
+    };
+
+    // Obter gestores filtrados pelo cliente selecionado
+    const getGestoresPorCliente = (clienteId: string): UsuarioCliente[] => {
+        if (!clienteId) return [];
+        return usuariosCliente.filter(u => u.id_cliente === parseInt(clienteId) && u.ativo);
+    };
+
+    // Obter nome do cliente pelo ID
+    const getNomeCliente = (clienteId: string): string => {
+        if (!clienteId) return '';
+        const cliente = clients.find(c => c.id === parseInt(clienteId));
+        return cliente?.razao_social_cliente || '';
     };
 
     return (
@@ -241,10 +259,36 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                 {/* SEÇÃO 3: GESTÃO E CLIENTE */}
                                 <div>
                                     <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-blue-200">
-                                        👥 Gestão e Cliente
+                                        👥 Cliente e Gestor
                                     </h4>
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                        {/* Gestor */}
+                                        {/* CLIENTE - PRIMEIRO DROPDOWN (ATIVO) */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                Cliente <span className="text-red-500">*</span>
+                                            </label>
+                                            <select 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white font-medium"
+                                                value={formData.id_cliente} 
+                                                onChange={e => {
+                                                    setFormData({
+                                                        ...formData, 
+                                                        id_cliente: e.target.value,
+                                                        gestor_imediato_id: '' // Limpar gestor ao trocar cliente
+                                                    });
+                                                }}
+                                                required
+                                            >
+                                                <option value="">Selecione um cliente...</option>
+                                                {clients.map(c => (
+                                                    <option key={c.id} value={c.id}>
+                                                        {c.razao_social_cliente}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        {/* GESTOR - SEGUNDO DROPDOWN (FILTRADO POR CLIENTE) */}
                                         <div className="flex flex-col">
                                             <label className="text-sm font-semibold text-gray-700 mb-2">
                                                 Gestor <span className="text-red-500">*</span>
@@ -254,26 +298,17 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                                 value={formData.gestor_imediato_id} 
                                                 onChange={e => setFormData({...formData, gestor_imediato_id: e.target.value})} 
                                                 required
+                                                disabled={!formData.id_cliente}
                                             >
-                                                <option value="">Selecione um gestor...</option>
-                                                {usuariosCliente.filter(u => u.ativo).map(u => <option key={u.id} value={u.id}>{u.nome_gestor_cliente}</option>)}
+                                                <option value="">
+                                                    {!formData.id_cliente ? 'Selecione um cliente primeiro' : 'Selecione um gestor...'}
+                                                </option>
+                                                {getGestoresPorCliente(formData.id_cliente).map(u => (
+                                                    <option key={u.id} value={u.id}>
+                                                        {u.nome_gestor_cliente}
+                                                    </option>
+                                                ))}
                                             </select>
-                                        </div>
-
-                                        {/* Cliente (Auto-preenchido) */}
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">
-                                                Cliente
-                                            </label>
-                                            <input 
-                                                className="px-4 py-2.5 border border-gray-300 rounded-lg bg-gray-100 text-gray-700 cursor-not-allowed"
-                                                value={(() => {
-                                                    const gestor = usuariosCliente.find(u => u.id === parseInt(formData.gestor_imediato_id));
-                                                    const cliente = gestor ? clients.find(cl => cl.id === gestor.id_cliente) : null;
-                                                    return cliente?.razao_social_cliente || 'Selecionado automaticamente';
-                                                })()} 
-                                                readOnly 
-                                            />
                                         </div>
 
                                         {/* Status */}
