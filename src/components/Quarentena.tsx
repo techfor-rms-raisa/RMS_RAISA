@@ -13,6 +13,7 @@ interface QuarentenaProps {
   currentUser: User;
   loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
   onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
+  onNavigateToRecommendations?: (consultant: Consultant) => void;
 }
 
 interface Recommendation {
@@ -27,7 +28,8 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   coordenadoresCliente = [],
   currentUser,
   loadConsultantReports,
-  onNavigateToAtividades
+  onNavigateToAtividades,
+  onNavigateToRecommendations
 }) => {
   
   const [selectedClient, setSelectedClient] = useState<string>('all');
@@ -362,8 +364,12 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                   {/* ✅ NOVO: Botão "Ver Recomendação" */}
                                   <button
                                     onClick={() => {
-                                      // TODO: Implementar navegação para Recomendações
-                                      console.log(`👁️ Ver Recomendação para ${consultant.nome_consultores}`);
+                                      console.log(`👁️ Navegando para Recomendações do ${consultant.nome_consultores}`);
+                                      if (onNavigateToRecommendations) {
+                                        onNavigateToRecommendations(consultant);
+                                      } else {
+                                        console.warn('⚠️ onNavigateToRecommendations não está definido');
+                                      }
                                     }}
                                     className="px-2 py-1 text-xs bg-white text-green-600 border border-green-600 rounded hover:bg-green-50 transition whitespace-nowrap"
                                     title="Ver recomendações de ação para este consultor"
