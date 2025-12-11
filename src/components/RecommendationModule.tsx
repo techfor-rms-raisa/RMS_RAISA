@@ -1,6 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Consultant, Client, UsuarioCliente, ConsultantReport, CoordenadorCliente } from '../components/types';
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
+import RecommendationCard from './RecommendationCard';
+import { generateIntelligentRecommendations, IntelligentAnalysis } from '../services/recommendationService';
 
 interface RecommendationModuleProps {
     consultants: Consultant[];
@@ -11,28 +13,46 @@ interface RecommendationModuleProps {
     onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
 }
 
-const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants, clients, usuariosCliente, coordenadoresCliente, loadConsultantReports, onNavigateToAtividades }) => {
+interface ConsultantAnalysis {
+    consultant: Consultant;
+    analysis: IntelligentAnalysis;
+    reports: ConsultantReport[];
+    manager?: UsuarioCliente;
+    client?: Client;
+    loading: boolean;
+    error?: string;
+}
+
+const RecommendationModule: React.FC<RecommendationModuleProps> = ({
+    consultants,
+    clients,
+    usuariosCliente,
+    coordenadoresCliente,
+    loadConsultantReports,
+    onNavigateToAtividades
+}) => {
     const [selectedClient, setSelectedClient] = useState<string>('all');
     const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
     const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
     const [loadedReports, setLoadedReports] = useState<ConsultantReport[]>([]);
+    const [analysisCache, setAnalysisCache] = useState<Map<number, ConsultantAnalysis>>(new Map());
+    const [loadingConsultants, setLoadingConsultants] = useState<Set<number>>(new Set());
 
+    // Filtrar consultores que precisam de recomendação
     const filteredList = useMemo(() => {
-        // Filtrar consultores ativos com risco MÉDIO, ALTO ou CRÍTICO (score >= 3)
-        // NOVA ESCALA: 1=Excelente, 2=Bom, 3=Médio, 4=Alto, 5=Crítico
         let list = consultants.filter(c => {
             if (c.status !== 'Ativo') return false;
-            
+
             // Verificar se tem relatórios com risco >= 3
             if (c.reports && c.reports.length > 0) {
                 return c.reports.some(r => r.riskScore >= 3);
             }
-            
+
             // Verificar parecer_final_consultor (1-5)
             if (c.parecer_final_consultor && c.parecer_final_consultor >= 3) {
                 return true;
             }
-            
+
             // Verificar qualquer parecer mensal (parecer_1_consultor até parecer_12_consultor)
             for (let i = 1; i <= 12; i++) {
                 const parecerField = `parecer_${i}_consultor` as keyof Consultant;
@@ -41,19 +61,19 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants
                     return true;
                 }
             }
-            
+
             return false;
         });
-        
+
         // Filtrar por cliente se selecionado
         if (selectedClient !== 'all') {
-             list = list.filter(c => {
-                 const m = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
-                 const cl = clients.find(cl => cl.id === m?.id_cliente);
-                 return cl?.razao_social_cliente === selectedClient;
-             });
+            list = list.filter(c => {
+                const m = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
+                const cl = clients.find(cl => cl.id === m?.id_cliente);
+                return cl?.razao_social_cliente === selectedClient;
+            });
         }
-        
+
         // Ordenar por maior risco primeiro (score mais alto = pior)
         return list.sort((a, b) => {
             const scoreA = a.parecer_final_consultor || 0;
@@ -62,191 +82,179 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({ consultants
         });
     }, [consultants, selectedClient, clients, usuariosCliente]);
 
+    // Gerar análises inteligentes para consultores filtrados
+    useEffect(() => {
+        const generateAnalyses = async () => {
+            for (const consultant of filteredList) {
+                // Verificar se já está em cache
+                if (analysisCache.has(consultant.id)) {
+                    continue;
+                }
+
+                // Marcar como carregando
+                setLoadingConsultants(prev => new Set(prev).add(consultant.id));
+
+                try {
+                    // Buscar relatórios
+                    const reports = await loadConsultantReports(consultant.id);
+                    const manager = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
+                    const client = clients.find(c => c.id === manager?.id_cliente);
+
+                    // Gerar análise inteligente
+                    const analysis = await generateIntelligentRecommendations(
+                        consultant,
+                        reports,
+                        manager,
+                        client
+                    );
+
+                    // Armazenar em cache
+                    setAnalysisCache(prev => {
+                        const newCache = new Map(prev);
+                        newCache.set(consultant.id, {
+                            consultant,
+                            analysis,
+                            reports,
+                            manager,
+                            client,
+                            loading: false
+                        });
+                        return newCache;
+                    });
+                } catch (error) {
+                    console.error(`❌ Erro ao gerar análise para ${consultant.nome_consultores}:`, error);
+                    setAnalysisCache(prev => {
+                        const newCache = new Map(prev);
+                        newCache.set(consultant.id, {
+                            consultant,
+                            analysis: {
+                                resumo: 'Erro ao gerar análise. Por favor, tente novamente.',
+                                recomendacoes: []
+                            },
+                            reports: [],
+                            loading: false,
+                            error: String(error)
+                        });
+                        return newCache;
+                    });
+                } finally {
+                    setLoadingConsultants(prev => {
+                        const newSet = new Set(prev);
+                        newSet.delete(consultant.id);
+                        return newSet;
+                    });
+                }
+            }
+        };
+
+        generateAnalyses();
+    }, [filteredList, loadConsultantReports, usuariosCliente, clients]);
+
+    // Handler para abrir modal de histórico
+    const handleOpenHistory = async (consultant: Consultant) => {
+        setSelectedConsultantForHistory(consultant);
+        const reports = await loadConsultantReports(consultant.id);
+        setLoadedReports(reports);
+        setShowHistoryModal(true);
+    };
+
     return (
         <>
-        <div className="p-6 space-y-6">
-            <div className="flex justify-between items-center">
-                <h2 className="text-3xl font-bold text-[#4D5253]">Recomendações</h2>
-                <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)} className="p-2 border rounded">
-                    <option value="all">Todos Clientes</option>
-                    {clients.map(c => <option key={c.id} value={c.razao_social_cliente}>{c.razao_social_cliente}</option>)}
-                </select>
-            </div>
-            {filteredList.length === 0 && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-8 text-center">
-                    <div className="text-6xl mb-4">🎉</div>
-                    <h3 className="text-xl font-bold text-green-800 mb-2">Nenhuma Recomendação Necessária!</h3>
-                    <p className="text-green-600">Todos os consultores estão com desempenho satisfatório (score 1-2: Excelente/Bom).</p>
+            <div className="p-6 space-y-6">
+                {/* Header */}
+                <div className="flex justify-between items-center">
+                    <div>
+                        <h2 className="text-3xl font-bold text-[#4D5253]">Recomendações</h2>
+                        <p className="text-sm text-gray-600 mt-1">
+                            {filteredList.length} consultor(es) com recomendações pendentes
+                        </p>
+                    </div>
+                    <select
+                        value={selectedClient}
+                        onChange={e => setSelectedClient(e.target.value)}
+                        className="p-2 border border-gray-300 rounded-lg hover:border-gray-400 transition"
+                    >
+                        <option value="all">Todos Clientes</option>
+                        {clients.map(c => (
+                            <option key={c.id} value={c.razao_social_cliente}>
+                                {c.razao_social_cliente}
+                            </option>
+                        ))}
+                    </select>
                 </div>
-            )}
-            
-            <div className="grid gap-6">
-                {filteredList.map(c => {
-                    const riskScore = c.parecer_final_consultor || 0;
-                    const latestReport = c.reports && c.reports.length > 0 ? c.reports[0] : null;
-                    
-                    // Buscar informações do cliente através do gestor
-                    const manager = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
-                    const clientInfo = clients.find(cl => cl.id === manager?.id_cliente);
-                    
-                    // Definir cor da borda baseado no risco
-                    // NOVA ESCALA: 1=Excelente (Verde), 2=Bom (Azul), 3=Médio (Amarelo), 4=Alto (Laranja), 5=Crítico (Vermelho)
-                    let borderColor = 'border-gray-300';
-                    let bgColor = 'bg-gray-50';
-                    let riskLabel = 'Sem Classificação';
-                    let riskIcon = '❓';
-                    
-                    if (riskScore === 1) {
-                        borderColor = 'border-green-500';
-                        bgColor = 'bg-green-50';
-                        riskLabel = 'EXCELENTE';
-                        riskIcon = '🟢'; // Verde #34A853
-                    } else if (riskScore === 2) {
-                        borderColor = 'border-blue-500';
-                        bgColor = 'bg-blue-50';
-                        riskLabel = 'BOM';
-                        riskIcon = '🔵'; // Azul #4285F4
-                    } else if (riskScore === 3) {
-                        borderColor = 'border-yellow-500';
-                        bgColor = 'bg-yellow-50';
-                        riskLabel = 'MÉDIO';
-                        riskIcon = '🟡'; // Amarelo #FBBC05
-                    } else if (riskScore === 4) {
-                        borderColor = 'border-orange-600';
-                        bgColor = 'bg-orange-50';
-                        riskLabel = 'ALTO';
-                        riskIcon = '🟠'; // Laranja #FF6D00
-                    } else if (riskScore === 5) {
-                        borderColor = 'border-red-700';
-                        bgColor = 'bg-red-50';
-                        riskLabel = 'CRÍTICO';
-                        riskIcon = '🔴'; // Vermelho #EA4335
-                    }
-                    
-                    // Gerar recomendações baseadas no score
-                    const recommendations = latestReport?.recommendations || generateRecommendationsByScore(riskScore);
-                    
-                    return (
-                        <div key={c.id} className={`bg-white p-4 rounded-lg shadow-md border-l-4 ${borderColor}`}>
-                            <div className="flex justify-between items-start mb-3">
-                                <div className="flex-1">
-                                    <div className="flex items-center gap-3 flex-wrap mb-1">
-                                      <h3 className="font-bold text-lg text-gray-800">{c.nome_consultores}</h3>
-                                      <button
-                                        onClick={() => onNavigateToAtividades(clientInfo?.razao_social_cliente, c.nome_consultores)}
-                                        className="px-2 py-1 text-xs bg-white text-blue-600 border border-blue-600 rounded hover:bg-blue-50 transition whitespace-nowrap"
-                                        title="Registrar nova atividade para este consultor"
-                                      >
-                                        + Atividade
-                                      </button>
-                                    </div>
-                                    <p className="text-xs text-gray-600 uppercase tracking-wide">{c.cargo_consultores}</p>
-                                </div>
-                                <button
-                                    onClick={async () => {
-                                        setSelectedConsultantForHistory(c);
-                                        const reports = await loadConsultantReports(c.id);
-                                        setLoadedReports(reports);
-                                        setShowHistoryModal(true);
-                                    }}
-                                    className={`px-3 py-2 rounded-lg ${bgColor} border ${borderColor} flex flex-col items-center justify-center min-w-[80px] cursor-pointer hover:opacity-80 transition`}
-                                    title="Clique para ver histórico de atividades"
-                                >
-                                    <div className="text-xl mb-0.5">{riskIcon}</div>
-                                    <div className="text-xs font-bold text-gray-700">{riskLabel}</div>
-                                    <div className="text-sm font-bold text-gray-900">Score {riskScore}</div>
-                                </button>
-                            </div>
-                            
-                            {latestReport && (
-                                <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded">
-                                    <h4 className="font-bold text-sm text-blue-900 mb-2">📊 Resumo da Análise:</h4>
-                                    <p className="text-sm text-blue-800">{latestReport.summary}</p>
-                                    {latestReport.predictiveAlert && (
-                                        <p className="text-sm text-red-600 font-bold mt-2">⚠️ {latestReport.predictiveAlert}</p>
-                                    )}
-                                </div>
-                            )}
-                            
-                            <div className="mt-4">
-                                <h4 className="font-bold text-sm text-gray-700 mb-3">💡 Recomendações de Ação:</h4>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    {recommendations.map((r, i) => (
-                                        <div key={i} className="border border-gray-200 p-3 rounded-lg bg-white hover:shadow-md transition-shadow">
-                                            <span className="text-xs font-bold uppercase text-blue-600">{r.tipo}</span>
-                                            <p className="text-sm mt-1 text-gray-700">{r.descricao}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
-        
-        {/* Modal de Histórico de Atividades */}
-        {showHistoryModal && selectedConsultantForHistory && (
-            <HistoricoAtividadesModal
-                consultant={selectedConsultantForHistory}
-                reports={loadedReports}
-                onClose={() => {
-                    setShowHistoryModal(false);
-                    setSelectedConsultantForHistory(null);
-                    setLoadedReports([]);
-                }}
-            />
-        )}
-    </>
-    );
-};
 
-// Função auxiliar para gerar recomendações baseadas no score
-const generateRecommendationsByScore = (score: number) => {
-    // NOVA ESCALA: 1=Excelente, 2=Bom, 3=Médio, 4=Alto, 5=Crítico
-    
-    if (score === 5) {
-        // CRÍTICO - Situação grave
-        return [
-            { tipo: 'URGENTE', descricao: 'Reunião imediata com gestor e RH' },
-            { tipo: 'PLANO DE AÇÃO', descricao: 'Criar plano de recuperação em 48h' },
-            { tipo: 'MONITORAMENTO', descricao: 'Acompanhamento semanal obrigatório' },
-            { tipo: 'SUPORTE', descricao: 'Alocar mentor/coach especializado' }
-        ];
-    } else if (score === 4) {
-        // ALTO - Problemas significativos
-        return [
-            { tipo: 'ATENÇÃO', descricao: 'Agendar reunião com gestor em 1 semana' },
-            { tipo: 'FEEDBACK', descricao: 'Sessão de feedback estruturado' },
-            { tipo: 'TREINAMENTO', descricao: 'Identificar necessidades de capacitação' },
-            { tipo: 'ACOMPANHAMENTO', descricao: 'Monitoramento quinzenal' }
-        ];
-    } else if (score === 3) {
-        // MÉDIO - Pontos de atenção
-        return [
-            { tipo: 'OBSERVAÇÃO', descricao: 'Conversa informal com gestor' },
-            { tipo: 'DESENVOLVIMENTO', descricao: 'Oferecer oportunidades de melhoria' },
-            { tipo: 'SUPORTE', descricao: 'Disponibilizar recursos adicionais' },
-            { tipo: 'PREVENTIVO', descricao: 'Monitoramento mensal' }
-        ];
-    } else if (score === 2) {
-        // BOM - Performance satisfatória
-        return [
-            { tipo: 'RECONHECIMENTO', descricao: 'Reconhecer bom desempenho' },
-            { tipo: 'CRESCIMENTO', descricao: 'Explorar oportunidades de desenvolvimento' },
-            { tipo: 'MANUTENÇÃO', descricao: 'Manter nível de suporte atual' }
-        ];
-    } else if (score === 1) {
-        // EXCELENTE - Performance excepcional
-        return [
-            { tipo: 'DESTAQUE', descricao: 'Reconhecimento público do desempenho' },
-            { tipo: 'LIDERANÇA', descricao: 'Considerar para posições de liderança' },
-            { tipo: 'MENTORIA', descricao: 'Convidar para mentorar outros consultores' },
-            { tipo: 'RETENÇÃO', descricao: 'Plano de carreira e retenção de talento' }
-        ];
-    }
-    
-    return [{ tipo: 'AVALIAR', descricao: 'Realizar avaliação de desempenho' }];
+                {/* Empty State */}
+                {filteredList.length === 0 && (
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-8 text-center">
+                        <div className="text-6xl mb-4">🎉</div>
+                        <h3 className="text-xl font-bold text-green-800 mb-2">Nenhuma Recomendação Necessária!</h3>
+                        <p className="text-green-600">Todos os consultores estão com desempenho satisfatório (score 1-2: Excelente/Bom).</p>
+                    </div>
+                )}
+
+                {/* Recomendações */}
+                <div className="grid gap-6">
+                    {filteredList.map(consultant => {
+                        const cachedAnalysis = analysisCache.get(consultant.id);
+                        const isLoading = loadingConsultants.has(consultant.id);
+
+                        // Mostrar skeleton enquanto carrega
+                        if (isLoading || !cachedAnalysis) {
+                            return (
+                                <div
+                                    key={consultant.id}
+                                    className="bg-white rounded-lg shadow-lg border-l-4 border-gray-300 p-6 animate-pulse"
+                                >
+                                    <div className="h-6 bg-gray-200 rounded w-1/3 mb-4"></div>
+                                    <div className="h-4 bg-gray-200 rounded w-full mb-2"></div>
+                                    <div className="h-4 bg-gray-200 rounded w-5/6"></div>
+                                </div>
+                            );
+                        }
+
+                        // Mostrar erro se houver
+                        if (cachedAnalysis.error) {
+                            return (
+                                <div
+                                    key={consultant.id}
+                                    className="bg-red-50 border border-red-200 rounded-lg p-6"
+                                >
+                                    <h3 className="font-bold text-red-900 mb-2">{consultant.nome_consultores}</h3>
+                                    <p className="text-red-700 text-sm">{cachedAnalysis.error}</p>
+                                </div>
+                            );
+                        }
+
+                        // Renderizar card com análise
+                        return (
+                            <RecommendationCard
+                                key={consultant.id}
+                                consultant={consultant}
+                                analysis={cachedAnalysis.analysis}
+                                clientName={cachedAnalysis.client?.razao_social_cliente}
+                                managerName={cachedAnalysis.manager?.nome_gestor_cliente}
+                                onNavigateToAtividades={onNavigateToAtividades}
+                                onOpenHistory={() => handleOpenHistory(consultant)}
+                            />
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* Modal de Histórico de Atividades */}
+            {showHistoryModal && selectedConsultantForHistory && (
+                <HistoricoAtividadesModal
+                    consultant={selectedConsultantForHistory}
+                    reports={loadedReports}
+                    onClose={() => {
+                        setShowHistoryModal(false);
+                        setSelectedConsultantForHistory(null);
+                        setLoadedReports([]);
+                    }}
+                />
+            )}
+        </>
+    );
 };
 
 export default RecommendationModule;
