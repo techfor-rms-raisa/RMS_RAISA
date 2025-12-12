@@ -267,22 +267,49 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Razão Social</label>
                                 <input className="w-full border p-2 rounded" placeholder="Razão Social" value={clientForm.razao_social_cliente} onChange={e => setClientForm({...clientForm, razao_social_cliente: e.target.value})} required />
                             </div>
+
+                            {/* Linha de Gestores com Ícones - Tarefa 2 */}
+                            {editingClient && (
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 space-y-2">
+                                    <div className="flex items-center gap-3 text-xs">
+                                        <div className="flex items-center gap-1">
+                                            <Briefcase className="w-4 h-4 text-green-600" />
+                                            <span className="font-medium text-gray-700">Gestão Comercial:</span>
+                                            <span className="text-gray-600">{users.find(u => u.id === editingClient.id_gestao_comercial)?.nome_usuario || 'N/A'}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3 text-xs">
+                                        <div className="flex items-center gap-1">
+                                            <Briefcase className="w-4 h-4 text-purple-600" />
+                                            <span className="font-medium text-gray-700">Gestão Pessoas:</span>
+                                            <span className="text-gray-600">{users.find(u => u.id === editingClient.id_gestao_de_pessoas)?.nome_usuario || 'N/A'}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-3 text-xs">
+                                        <div className="flex items-center gap-1">
+                                            <Briefcase className="w-4 h-4 text-blue-600" />
+                                            <span className="font-medium text-gray-700">Focal R&S:</span>
+                                            <span className="text-gray-600">{users.find(u => u.id === editingClient.id_gestor_rs)?.nome_usuario || 'N/A'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Gestão Comercial</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">👔 Gestão Comercial</label>
                                 <select className="w-full border p-2 rounded" value={clientForm.id_gestao_comercial} onChange={e => setClientForm({...clientForm, id_gestao_comercial: e.target.value})} required>
                                     <option value="">Selecione...</option>
                                     {users.filter(u => u.tipo_usuario === 'Gestão Comercial' || u.tipo_usuario === 'Administrador').map(u => <option key={u.id} value={u.id}>{u.nome_usuario}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Gestão de Pessoas</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">👥 Gestão de Pessoas</label>
                                 <select className="w-full border p-2 rounded" value={clientForm.id_gestao_de_pessoas} onChange={e => setClientForm({...clientForm, id_gestao_de_pessoas: e.target.value})} required>
                                     <option value="">Selecione...</option>
                                     {users.filter(u => u.tipo_usuario === 'Gestão de Pessoas' || u.tipo_usuario === 'Administrador').map(u => <option key={u.id} value={u.id}>{u.nome_usuario}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Analista R&S</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">🔍 Focal R&S</label>
                                 <select className="w-full border p-2 rounded" value={clientForm.id_gestor_rs} onChange={e => setClientForm({...clientForm, id_gestor_rs: e.target.value})} required>
                                     <option value="">Selecione...</option>
                                     {users.filter(u => u.tipo_usuario === 'Analista de R&S' || u.tipo_usuario === 'Administrador').map(u => <option key={u.id} value={u.id}>{u.nome_usuario}</option>)}
@@ -306,6 +333,23 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Gestor</label>
                                 <input className="w-full border p-2 rounded" placeholder="Nome" value={managerForm.nome_gestor_cliente} onChange={e => setManagerForm({...managerForm, nome_gestor_cliente: e.target.value})} required />
+                                {/* Contatos do Gestor - Tarefa 3 */}
+                                {(managerForm.email_gestor || managerForm.celular_gestor) && (
+                                    <div className="mt-1 flex flex-wrap gap-3 text-xs">
+                                        {managerForm.email_gestor && (
+                                            <a href={`mailto:${managerForm.email_gestor}`} className="flex items-center gap-1 text-blue-600 hover:text-blue-800 transition" title="Enviar email">
+                                                <Mail className="w-3 h-3" />
+                                                <span>{managerForm.email_gestor}</span>
+                                            </a>
+                                        )}
+                                        {managerForm.celular_gestor && (
+                                            <a href={`https://wa.me/55${managerForm.celular_gestor.replace(/[^0-9]/g, '')}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-green-600 hover:text-green-800 transition" title="Abrir WhatsApp">
+                                                <Phone className="w-3 h-3" />
+                                                <span>{managerForm.celular_gestor}</span>
+                                            </a>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Cargo</label>
@@ -337,6 +381,23 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Coordenador</label>
                                 <input className="w-full border p-2 rounded" placeholder="Nome" value={coordForm.nome_coordenador_cliente} onChange={e => setCoordForm({...coordForm, nome_coordenador_cliente: e.target.value})} required />
+                                {/* Contatos do Coordenador - Tarefa 4 */}
+                                {(coordForm.email_coordenador || coordForm.celular_coordenador) && (
+                                    <div className="mt-1 flex flex-wrap gap-3 text-xs">
+                                        {coordForm.email_coordenador && (
+                                            <a href={`mailto:${coordForm.email_coordenador}`} className="flex items-center gap-1 text-blue-600 hover:text-blue-800 transition" title="Enviar email">
+                                                <Mail className="w-3 h-3" />
+                                                <span>{coordForm.email_coordenador}</span>
+                                            </a>
+                                        )}
+                                        {coordForm.celular_coordenador && (
+                                            <a href={`https://wa.me/55${coordForm.celular_coordenador.replace(/[^0-9]/g, '')}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-green-600 hover:text-green-800 transition" title="Abrir WhatsApp">
+                                                <Phone className="w-3 h-3" />
+                                                <span>{coordForm.celular_coordenador}</span>
+                                            </a>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Cargo</label>
