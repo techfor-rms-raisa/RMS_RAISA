@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Client, User, UsuarioCliente, CoordenadorCliente, Consultant } from '../components/types';
 import { Mail, Phone, Briefcase } from 'lucide-react';
+import { GestaoPessoasIcon } from './icons/GestaoPessoasIcon';
+import { FocalRSIcon } from './icons/FocalRSIcon';
 import InclusionImport from './InclusionImport';
 
 interface ManageClientsProps {
@@ -323,13 +325,13 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                                 )}
                                 {peopleManager && (
                                     <div className="flex items-center gap-2">
-                                        <Briefcase className="w-4 h-4 text-purple-600" />
+                                        <GestaoPessoasIcon className="w-4 h-4 text-purple-600" size={16} />
                                         <span className="text-sm"><strong>Gestão Pessoas:</strong> {peopleManager.nome_usuario}</span>
                                     </div>
                                 )}
                                 {rsAnalyst && (
                                     <div className="flex items-center gap-2">
-                                        <Briefcase className="w-4 h-4 text-blue-600" />
+                                        <FocalRSIcon className="w-4 h-4 text-blue-600" size={16} />
                                         <span className="text-sm"><strong>Focal R&S:</strong> {rsAnalyst.nome_usuario}</span>
                                     </div>
                                 )}
