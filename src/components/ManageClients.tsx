@@ -306,108 +306,164 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                     const rsAnalyst = users.find(u => u.id === client.id_gestor_rs);
 
                     return (
-                        <div key={client.id} className="border border-gray-200 p-4 rounded-lg">
-                            <div className="flex justify-between items-start mb-3">
+                        <div key={client.id} className="border-t border-blue-300 pt-6">
+                            {/* ✅ NOVO: Cabeçalho do Cliente com melhor hierarquia */}
+                            <div className="flex justify-between items-start mb-4">
                                 <div>
-                                    <h3 className="text-xl font-bold text-blue-600">{client.razao_social_cliente}</h3>
-                                    <p className="text-sm text-gray-600">ID: {client.id}</p>
+                                    <h3 className="text-2xl font-bold text-blue-600">{client.razao_social_cliente}</h3>
+                                    <p className="text-sm text-gray-500 mt-1">ID: {client.id}</p>
                                 </div>
-                                <button onClick={() => openClientModal(client)} className="text-blue-600 text-sm">Editar</button>
+                                <button 
+                                    onClick={() => openClientModal(client)} 
+                                    className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition"
+                                >
+                                    Editar
+                                </button>
                             </div>
 
-                            {/* Managers Row with Icons - TAREFA 2 */}
-                            <div className="bg-blue-50 p-3 rounded mb-4 flex flex-wrap gap-4">
-                                {commercialManager && (
-                                    <div className="flex items-center gap-2">
-                                        <Briefcase className="w-4 h-4 text-green-600" />
-                                        <span className="text-sm"><strong>Gestão Comercial:</strong> {commercialManager.nome_usuario}</span>
-                                    </div>
-                                )}
-                                {peopleManager && (
-                                    <div className="flex items-center gap-2">
-                                        <GestaoPessoasIcon className="w-4 h-4 text-purple-600" size={16} />
-                                        <span className="text-sm"><strong>Gestão Pessoas:</strong> {peopleManager.nome_usuario}</span>
-                                    </div>
-                                )}
-                                {rsAnalyst && (
-                                    <div className="flex items-center gap-2">
-                                        <FocalRSIcon className="w-4 h-4 text-blue-600" size={16} />
-                                        <span className="text-sm"><strong>Focal R&S:</strong> {rsAnalyst.nome_usuario}</span>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Managers List */}
-                            <div className="pl-4 border-l-2 border-blue-200 space-y-4">
-                                {usuariosCliente.filter(u => u.id_cliente === client.id).map(manager => (
-                                    <div key={manager.id} className="bg-white p-3 rounded shadow-sm">
-                                        <div className="flex justify-between items-start">
-                                            <div className="flex-1">
-                                                <div className="font-semibold text-gray-800">{manager.nome_gestor_cliente} <span className="text-xs text-gray-500 font-normal">({manager.cargo_gestor})</span></div>
-                                                
-                                                {/* Contact Info for Manager - TAREFA 3 */}
-                                                <div className="mt-2 flex flex-wrap gap-3 text-xs">
-                                                    {manager.celular && (
-                                                        <a 
-                                                            href={`https://wa.me/55${manager.celular.replace(/\D/g, '')}`}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="flex items-center gap-1 text-gray-700 hover:text-green-600 transition"
-                                                        >
-                                                            <Phone className="w-4 h-4" />
-                                                            <span>{manager.celular}</span>
-                                                        </a>
-                                                    )}
-                                                    {manager.email_gestor && (
-                                                        <a 
-                                                            href={`mailto:${manager.email_gestor}`}
-                                                            className="flex items-center gap-1 text-gray-700 hover:text-blue-600 transition"
-                                                        >
-                                                            <Mail className="w-4 h-4" />
-                                                            <span>{manager.email_gestor}</span>
-                                                        </a>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="space-x-2">
-                                                <button onClick={() => openCoordModal(manager.id)} className="bg-purple-600 text-white px-2 py-0.5 rounded text-xs">+ Coord</button>
-                                                <button onClick={() => openManagerModal(client.id, manager)} className="text-blue-600 text-xs">Editar</button>
+                            {/* ✅ NOVO: Managers Row com ícones - Design melhorado */}
+                            <div className="bg-gradient-to-r from-blue-50 to-purple-50 p-4 rounded-lg mb-6 border border-blue-200">
+                                <div className="flex flex-wrap gap-6">
+                                    {commercialManager && (
+                                        <div className="flex items-center gap-2">
+                                            <Briefcase className="w-5 h-5 text-green-600" />
+                                            <div>
+                                                <div className="text-xs text-gray-600 font-semibold">Gestão Comercial:</div>
+                                                <div className="text-sm font-medium text-gray-900">{commercialManager.nome_usuario}</div>
                                             </div>
                                         </div>
+                                    )}
+                                    {peopleManager && (
+                                        <div className="flex items-center gap-2">
+                                            <GestaoPessoasIcon className="w-5 h-5 text-purple-600" size={20} />
+                                            <div>
+                                                <div className="text-xs text-gray-600 font-semibold">Gestão Pessoas:</div>
+                                                <div className="text-sm font-medium text-gray-900">{peopleManager.nome_usuario}</div>
+                                            </div>
+                                        </div>
+                                    )}
+                                    {rsAnalyst && (
+                                        <div className="flex items-center gap-2">
+                                            <FocalRSIcon className="w-5 h-5 text-blue-600" size={20} />
+                                            <div>
+                                                <div className="text-xs text-gray-600 font-semibold">Focal R&S:</div>
+                                                <div className="text-sm font-medium text-gray-900">{rsAnalyst.nome_usuario}</div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
 
-                                        {/* Coordinators List */}
-                                        <div className="mt-2 pl-4 border-l-2 border-purple-200 space-y-2">
+                            {/* ✅ NOVO: Managers List - Design melhorado inspirado em Consultores */}
+                            <div className="space-y-4">
+                                <button 
+                                    onClick={() => openManagerModal(client.id)} 
+                                    className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition w-full"
+                                >
+                                    + Novo Gestor
+                                </button>
+
+                                {usuariosCliente.filter(u => u.id_cliente === client.id).map(manager => (
+                                    <div key={manager.id} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition">
+                                        {/* Cabeçalho do Gestor */}
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <h4 className="font-bold text-gray-900 text-lg">{manager.nome_gestor_cliente}</h4>
+                                                    {manager.ativo && (
+                                                        <span className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded-full font-semibold">Ativo</span>
+                                                    )}
+                                                </div>
+                                                <p className="text-sm text-gray-600">Cargo: {manager.cargo_gestor || 'N/A'}</p>
+                                                <p className="text-xs text-gray-500">Cliente: {client.razao_social_cliente}</p>
+                                            </div>
+                                            <button 
+                                                onClick={() => openManagerModal(client.id, manager)} 
+                                                className="bg-blue-600 text-white px-3 py-1 rounded text-xs hover:bg-blue-700 transition"
+                                            >
+                                                Editar
+                                            </button>
+                                        </div>
+                                                
+                                        {/* ✅ NOVO: Contact Info for Manager - Design melhorado */}
+                                        <div className="flex flex-wrap gap-3 mb-3">
+                                            {manager.email_gestor && (
+                                                <a 
+                                                    href={`mailto:${manager.email_gestor}`}
+                                                    className="flex items-center gap-2 text-sm text-gray-700 hover:text-blue-600 transition bg-blue-50 px-3 py-1.5 rounded-lg"
+                                                >
+                                                    <Mail className="w-4 h-4" />
+                                                    <span>{manager.email_gestor}</span>
+                                                </a>
+                                            )}
+                                            {manager.celular && (
+                                                <a 
+                                                    href={`https://wa.me/55${manager.celular.replace(/\D/g, '')}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="flex items-center gap-2 text-sm text-gray-700 hover:text-green-600 transition bg-green-50 px-3 py-1.5 rounded-lg"
+                                                >
+                                                    <Phone className="w-4 h-4" />
+                                                    <span>{manager.celular}</span>
+                                                </a>
+                                            )}
+                                        </div>
+
+                                        {/* ✅ NOVO: Coordinators List - Design melhorado */}
+                                        <div className="mt-4 space-y-3">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <h5 className="text-sm font-semibold text-purple-900">Coordenadores</h5>
+                                                <button 
+                                                    onClick={() => openCoordModal(manager.id)} 
+                                                    className="bg-purple-600 text-white px-3 py-1 rounded text-xs hover:bg-purple-700 transition"
+                                                >
+                                                    + Coord
+                                                </button>
+                                            </div>
+
                                             {coordenadoresCliente.filter(c => c.id_gestor_cliente === manager.id).map(coord => (
-                                                <div key={coord.id} className="flex justify-between items-start text-sm py-1">
-                                                    <div className="flex-1">
-                                                        <span className="font-medium">{coord.nome_coordenador_cliente}</span>
-                                                        <span className="text-xs text-gray-500"> ({coord.cargo_coordenador_cliente})</span>
-                                                        
-                                                        {/* Contact Info for Coordinator - TAREFA 4 */}
-                                                        <div className="mt-1 flex flex-wrap gap-2 text-xs">
-                                                            {coord.celular && (
-                                                                <a 
-                                                                    href={`https://wa.me/55${coord.celular.replace(/\D/g, '')}`}
-                                                                    target="_blank"
-                                                                    rel="noopener noreferrer"
-                                                                    className="flex items-center gap-1 text-gray-700 hover:text-green-600 transition"
-                                                                >
-                                                                    <Phone className="w-3 h-3" />
-                                                                    <span>{coord.celular}</span>
-                                                                </a>
-                                                            )}
-                                                            {coord.email_coordenador && (
-                                                                <a 
-                                                                    href={`mailto:${coord.email_coordenador}`}
-                                                                    className="flex items-center gap-1 text-gray-700 hover:text-blue-600 transition"
-                                                                >
-                                                                    <Mail className="w-3 h-3" />
-                                                                    <span>{coord.email_coordenador}</span>
-                                                                </a>
-                                                            )}
+                                                <div key={coord.id} className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <div className="flex-1">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-semibold text-gray-900">{coord.nome_coordenador_cliente}</span>
+                                                                {coord.ativo && (
+                                                                    <span className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded-full font-semibold">Ativo</span>
+                                                                )}
+                                                            </div>
+                                                            <span className="text-xs text-gray-600">Cargo: {coord.cargo_coordenador_cliente || 'N/A'}</span>
                                                         </div>
+                                                        <button 
+                                                            onClick={() => openCoordModal(manager.id, coord)} 
+                                                            className="bg-blue-600 text-white px-2 py-1 rounded text-xs hover:bg-blue-700 transition"
+                                                        >
+                                                            Editar
+                                                        </button>
                                                     </div>
-                                                    <button onClick={() => openCoordModal(manager.id, coord)} className="text-blue-600 text-xs">Editar</button>
+                                                    
+                                                    {/* ✅ NOVO: Contact Info for Coordinator - Design melhorado */}
+                                                    <div className="flex flex-wrap gap-2 mt-2">
+                                                        {coord.email_coordenador && (
+                                                            <a 
+                                                                href={`mailto:${coord.email_coordenador}`}
+                                                                className="flex items-center gap-1 text-xs text-gray-700 hover:text-blue-600 transition bg-white px-2 py-1 rounded"
+                                                            >
+                                                                <Mail className="w-3 h-3" />
+                                                                <span>{coord.email_coordenador}</span>
+                                                            </a>
+                                                        )}
+                                                        {coord.celular && (
+                                                            <a 
+                                                                href={`https://wa.me/55${coord.celular.replace(/\D/g, '')}`}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="flex items-center gap-1 text-xs text-gray-700 hover:text-green-600 transition bg-white px-2 py-1 rounded"
+                                                            >
+                                                                <Phone className="w-3 h-3" />
+                                                                <span>{coord.celular}</span>
+                                                            </a>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             ))}
                                         </div>

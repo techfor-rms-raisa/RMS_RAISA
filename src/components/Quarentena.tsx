@@ -1,4 +1,6 @@
 import React, { useState, useMemo } from 'react';
+import { Mail, Phone } from 'lucide-react';
+import { FocalRSIcon } from './icons/FocalRSIcon';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '../components/types';
 import ReportDetailsModal from './ReportDetailsModal';
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
@@ -36,6 +38,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedScore, setSelectedScore] = useState<string>('all');
+  const [selectedManager, setSelectedManager] = useState<string>('all'); // ✅ NOVO: Filtro por Gestor
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
   const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
@@ -287,7 +290,12 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     }
 
     return relevantClients.map(client => {
-      const clientManagers = usuariosCliente.filter(uc => uc.id_cliente === client.id);
+      let clientManagers = usuariosCliente.filter(uc => uc.id_cliente === client.id);
+      
+      // ✅ NOVO: Filtrar por Gestor selecionado
+      if (selectedManager !== 'all') {
+        clientManagers = clientManagers.filter(uc => uc.nome_gestor_cliente === selectedManager);
+      }
       
       const managers = clientManagers.map(manager => {
         let managerConsultants = consultants.filter(c => c.gestor_imediato_id === manager.id && c.status === 'Ativo');
@@ -316,7 +324,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
 
       return { ...client, managers };
     }).sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente));
-  }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedScore]);
+  }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedScore, selectedManager]);
 
   const getReportForMonth = (c: Consultant, m: number) => {
     if (!c.reports) return undefined;
@@ -369,6 +377,21 @@ const Quarentena: React.FC<QuarentenaProps> = ({
             <option value="4">Score 4 - ALTO</option>
             <option value="3">Score 3 - MODERADO</option>
             <option value="new">Novo Consultor (&lt; 45 dias)</option>
+          </select>
+        </div>
+
+        {/* ✅ NOVO: Filtro por Gestão de Pessoas */}
+        <div className="filter-group">
+          <label className="filter-label">Gestão de Pessoas:</label>
+          <select 
+            value={selectedManager} 
+            onChange={e => setSelectedManager(e.target.value)} 
+            className="filter-select"
+          >
+            <option value="all">Todos os Gestores</option>
+            {[...new Set(usuariosCliente.filter(uc => uc.ativo).map(uc => uc.nome_gestor_cliente))].sort().map(n => (
+              <option key={n} value={n}>{n}</option>
+            ))}
           </select>
         </div>
       </div>
@@ -441,23 +464,95 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                 <p className="consultant-profession">{consultant.cargo_consultores || 'N/A'}</p>
                               </div>
 
-                              <div className="consultant-details-grid-single">
-                                <div className="detail-item">
-                                  <span className="detail-label">E-mail:</span>
-                                  <span className="detail-value">{consultant.email_consultor || 'N/A'}</span>
+                              {/* ✅ NOVO: Detalhes com ícones */}
+                              <div className="space-y-3 mt-3">
+                                {/* Consultor */}
+                                <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <FocalRSIcon className="w-4 h-4 text-blue-600" size={16} />
+                                    <span className="font-semibold text-blue-900">Analista de R&S</span>
+                                  </div>
+                                  <div className="space-y-1 ml-6">
+                                    {consultant.email_consultor && (
+                                      <div className="flex items-center gap-2 text-sm">
+                                        <Mail className="w-3 h-3 text-blue-600" />
+                                        <a href={`mailto:${consultant.email_consultor}`} className="text-blue-700 hover:underline">
+                                          {consultant.email_consultor}
+                                        </a>
+                                      </div>
+                                    )}
+                                    {consultant.celular && (
+                                      <div className="flex items-center gap-2 text-sm">
+                                        <Phone className="w-3 h-3 text-blue-600" />
+                                        <a href={`tel:${consultant.celular}`} className="text-blue-700 hover:underline">
+                                          {consultant.celular}
+                                        </a>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="detail-item">
-                                  <span className="detail-label">Cliente:</span>
-                                  <span className="detail-value">{clientInfo?.razao_social_cliente || 'N/A'}</span>
+
+                                {/* Cliente */}
+                                <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-gray-700">Cliente:</span>
+                                    <span className="text-gray-900">{clientInfo?.razao_social_cliente || 'N/A'}</span>
+                                  </div>
                                 </div>
-                                <div className="detail-item">
-                                  <span className="detail-label">Gestor:</span>
-                                  <span className="detail-value">{manager.nome_gestor_cliente || 'N/A'}</span>
+
+                                {/* Gestor */}
+                                <div className="bg-purple-50 p-3 rounded-lg border border-purple-200">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <span className="font-semibold text-purple-900">Gestor de Pessoas</span>
+                                  </div>
+                                  <div className="space-y-1 ml-6">
+                                    <div className="text-sm font-medium text-purple-900">{manager.nome_gestor_cliente || 'N/A'}</div>
+                                    {manager.email_gestor && (
+                                      <div className="flex items-center gap-2 text-sm">
+                                        <Mail className="w-3 h-3 text-purple-600" />
+                                        <a href={`mailto:${manager.email_gestor}`} className="text-purple-700 hover:underline">
+                                          {manager.email_gestor}
+                                        </a>
+                                      </div>
+                                    )}
+                                    {manager.celular && (
+                                      <div className="flex items-center gap-2 text-sm">
+                                        <Phone className="w-3 h-3 text-purple-600" />
+                                        <a href={`tel:${manager.celular}`} className="text-purple-700 hover:underline">
+                                          {manager.celular}
+                                        </a>
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
-                                <div className="detail-item">
-                                  <span className="detail-label">Coordenador:</span>
-                                  <span className="detail-value">{coordenador?.nome_coordenador || 'N/A'}</span>
-                                </div>
+
+                                {/* Coordenador */}
+                                {coordenador && (
+                                  <div className="bg-green-50 p-3 rounded-lg border border-green-200">
+                                    <div className="flex items-center gap-2 mb-2">
+                                      <span className="font-semibold text-green-900">Coordenador</span>
+                                    </div>
+                                    <div className="space-y-1 ml-6">
+                                      <div className="text-sm font-medium text-green-900">{coordenador.nome_coordenador || 'N/A'}</div>
+                                      {coordenador.email_coordenador && (
+                                        <div className="flex items-center gap-2 text-sm">
+                                          <Mail className="w-3 h-3 text-green-600" />
+                                          <a href={`mailto:${coordenador.email_coordenador}`} className="text-green-700 hover:underline">
+                                            {coordenador.email_coordenador}
+                                          </a>
+                                        </div>
+                                      )}
+                                      {coordenador.celular && (
+                                        <div className="flex items-center gap-2 text-sm">
+                                          <Phone className="w-3 h-3 text-green-600" />
+                                          <a href={`tel:${coordenador.celular}`} className="text-green-700 hover:underline">
+                                            {coordenador.celular}
+                                          </a>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
 
                               {/* ❌ REMOVIDO: Seção "Recomendações de Ação" inline foi removida conforme solicitado */}
