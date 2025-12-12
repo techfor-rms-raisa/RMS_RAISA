@@ -76,11 +76,11 @@ const ManageClients: React.FC<ManageClientsProps> = ({
     // --- MANAGERS ---
     const openManagerModal = (clientId: number, manager?: UsuarioCliente) => {
         setSelectedClientId(clientId);
-        if (manager) {
+        if (manager && manager.nome_gestor_cliente) {
             setEditingManager(manager);
             setManagerForm({ 
-                nome_gestor_cliente: manager.nome_gestor_cliente, 
-                cargo_gestor: manager.cargo_gestor,
+                nome_gestor_cliente: manager.nome_gestor_cliente || '', 
+                cargo_gestor: manager.cargo_gestor || '',
                 email_gestor: manager.email_gestor || '',
                 celular_gestor: manager.celular || ''
             });
@@ -110,11 +110,11 @@ const ManageClients: React.FC<ManageClientsProps> = ({
     // --- COORDINATORS ---
     const openCoordModal = (managerId: number, coord?: CoordenadorCliente) => {
         setSelectedManagerId(managerId);
-        if (coord) {
+        if (coord && coord.nome_coordenador_cliente) {
             setEditingCoord(coord);
             setCoordForm({ 
-                nome_coordenador_cliente: coord.nome_coordenador_cliente, 
-                cargo_coordenador_cliente: coord.cargo_coordenador_cliente,
+                nome_coordenador_cliente: coord.nome_coordenador_cliente || '', 
+                cargo_coordenador_cliente: coord.cargo_coordenador_cliente || '',
                 email_coordenador: coord.email_coordenador || '',
                 celular_coordenador: coord.celular || ''
             });
