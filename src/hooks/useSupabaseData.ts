@@ -381,6 +381,8 @@ export const useSupabaseData = () => {
         id_cliente: uc.id_cliente,
         nome_gestor_cliente: uc.nome_gestor_cliente,
         cargo_gestor: uc.cargo_gestor,
+        email_gestor: uc.email_gestor,
+        celular: uc.celular,
         ativo: uc.ativo,
         gestor_rs_id: uc.gestor_rs_id,
         cliente: undefined,
@@ -405,6 +407,8 @@ export const useSupabaseData = () => {
           id_cliente: newUsuario.id_cliente,
           nome_gestor_cliente: newUsuario.nome_gestor_cliente,
           cargo_gestor: newUsuario.cargo_gestor || 'Gestor',
+          email_gestor: newUsuario.email_gestor || null,
+          celular: newUsuario.celular || null,
           ativo: newUsuario.ativo ?? true,
           gestor_rs_id: newUsuario.gestor_rs_id || null
         }])
@@ -418,6 +422,8 @@ export const useSupabaseData = () => {
         id_cliente: data.id_cliente,
         nome_gestor_cliente: data.nome_gestor_cliente,
         cargo_gestor: data.cargo_gestor,
+        email_gestor: data.email_gestor,
+        celular: data.celular,
         ativo: data.ativo,
         gestor_rs_id: data.gestor_rs_id,
         cliente: undefined,
@@ -435,19 +441,21 @@ export const useSupabaseData = () => {
     }
   };
 
-  const updateUsuarioCliente = async (id: number, updates: Partial<UsuarioCliente>) => {
+  const updateUsuarioCliente = async (updates: UsuarioCliente) => {
     try {
-      console.log('📝 Atualizando gestor de cliente:', id, updates);
+      console.log('📝 Atualizando gestor de cliente:', updates.id, updates);
 
       const { data, error } = await supabase
         .from('usuarios_cliente')
         .update({
           nome_gestor_cliente: updates.nome_gestor_cliente,
           cargo_gestor: updates.cargo_gestor,
+          email_gestor: updates.email_gestor,
+          celular: updates.celular,
           ativo: updates.ativo,
           gestor_rs_id: updates.gestor_rs_id
         })
-        .eq('id', id)
+        .eq('id', updates.id)
         .select('*')
         .single();
 
@@ -458,13 +466,15 @@ export const useSupabaseData = () => {
         id_cliente: data.id_cliente,
         nome_gestor_cliente: data.nome_gestor_cliente,
         cargo_gestor: data.cargo_gestor,
+        email_gestor: data.email_gestor,
+        celular: data.celular,
         ativo: data.ativo,
         gestor_rs_id: data.gestor_rs_id,
         cliente: undefined,
         gestor_rs: undefined
       };
 
-      setUsuariosCliente(prev => prev.map(u => u.id === id ? updatedUsuario : u));
+      setUsuariosCliente(prev => prev.map(u => u.id === updates.id ? updatedUsuario : u));
       console.log('✅ Gestor de cliente atualizado:', updatedUsuario);
       
       return updatedUsuario;
@@ -484,6 +494,8 @@ export const useSupabaseData = () => {
         id_cliente: m.id_cliente,
         nome_gestor_cliente: m.nome_gestor_cliente,
         cargo_gestor: m.cargo_gestor || 'Gestor',
+        email_gestor: m.email_gestor || null,
+        celular: m.celular || null,
         ativo: m.ativo ?? true,
         gestor_rs_id: m.gestor_rs_id || null
       }));
@@ -500,8 +512,12 @@ export const useSupabaseData = () => {
         id_cliente: uc.id_cliente,
         nome_gestor_cliente: uc.nome_gestor_cliente,
         cargo_gestor: uc.cargo_gestor,
+        email_gestor: uc.email_gestor,
+        celular: uc.celular,
         ativo: uc.ativo,
-        gestor_rs_id: uc.gestor_rs_id
+        gestor_rs_id: uc.gestor_rs_id,
+        cliente: undefined,
+        gestor_rs: undefined
       }));
 
       setUsuariosCliente(prev => [...prev, ...createdManagers]);
@@ -583,6 +599,8 @@ export const useSupabaseData = () => {
         id_gestor_cliente: cc.id_gestor_cliente,
         nome_coordenador_cliente: cc.nome_coordenador_cliente,
         cargo_coordenador_cliente: cc.cargo_coordenador_cliente,
+        email_coordenador: cc.email_coordenador,
+        celular: cc.celular,
         ativo: cc.ativo,
         gestor: undefined
       }));
@@ -605,6 +623,8 @@ export const useSupabaseData = () => {
           id_gestor_cliente: newCoordenador.id_gestor_cliente,
           nome_coordenador_cliente: newCoordenador.nome_coordenador_cliente,
           cargo_coordenador_cliente: newCoordenador.cargo_coordenador_cliente || 'Coordenador',
+          email_coordenador: newCoordenador.email_coordenador || null,
+          celular: newCoordenador.celular || null,
           ativo: newCoordenador.ativo ?? true
         }])
         .select()
@@ -617,6 +637,8 @@ export const useSupabaseData = () => {
         id_gestor_cliente: data.id_gestor_cliente,
         nome_coordenador_cliente: data.nome_coordenador_cliente,
         cargo_coordenador_cliente: data.cargo_coordenador_cliente,
+        email_coordenador: data.email_coordenador,
+        celular: data.celular,
         ativo: data.ativo,
         gestor: undefined
       };
@@ -632,18 +654,20 @@ export const useSupabaseData = () => {
     }
   };
 
-  const updateCoordenadorCliente = async (id: number, updates: Partial<CoordenadorCliente>) => {
+  const updateCoordenadorCliente = async (updates: CoordenadorCliente) => {
     try {
-      console.log('📝 Atualizando coordenador de cliente:', id, updates);
+      console.log('📝 Atualizando coordenador de cliente:', updates.id, updates);
 
       const { data, error } = await supabase
         .from('coordenadores_cliente')
         .update({
           nome_coordenador_cliente: updates.nome_coordenador_cliente,
           cargo_coordenador_cliente: updates.cargo_coordenador_cliente,
+          email_coordenador: updates.email_coordenador,
+          celular: updates.celular,
           ativo: updates.ativo
         })
-        .eq('id', id)
+        .eq('id', updates.id)
         .select()
         .single();
 
@@ -654,11 +678,13 @@ export const useSupabaseData = () => {
         id_gestor_cliente: data.id_gestor_cliente,
         nome_coordenador_cliente: data.nome_coordenador_cliente,
         cargo_coordenador_cliente: data.cargo_coordenador_cliente,
+        email_coordenador: data.email_coordenador,
+        celular: data.celular,
         ativo: data.ativo,
         gestor: undefined
       };
 
-      setCoordenadoresCliente(prev => prev.map(c => c.id === id ? updatedCoordenador : c));
+      setCoordenadoresCliente(prev => prev.map(c => c.id === updates.id ? updatedCoordenador : c));
       console.log('✅ Coordenador de cliente atualizado:', updatedCoordenador);
       
       return updatedCoordenador;
@@ -678,6 +704,8 @@ export const useSupabaseData = () => {
         id_gestor_cliente: c.id_gestor_cliente,
         nome_coordenador_cliente: c.nome_coordenador_cliente,
         cargo_coordenador_cliente: c.cargo_coordenador_cliente || 'Coordenador',
+        email_coordenador: c.email_coordenador || null,
+        celular: c.celular || null,
         ativo: c.ativo ?? true
       }));
 
@@ -693,7 +721,10 @@ export const useSupabaseData = () => {
         id_gestor_cliente: cc.id_gestor_cliente,
         nome_coordenador_cliente: cc.nome_coordenador_cliente,
         cargo_coordenador_cliente: cc.cargo_coordenador_cliente,
-        ativo: cc.ativo
+        email_coordenador: cc.email_coordenador,
+        celular: cc.celular,
+        ativo: cc.ativo,
+        gestor: undefined
       }));
 
       setCoordenadoresCliente(prev => [...prev, ...createdCoordinators]);
