@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason } from '../components/types';
+import { Mail, Phone } from 'lucide-react';
 import InclusionImport from './InclusionImport';
 
 interface ManageConsultantsProps {
@@ -392,26 +393,13 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
             )}
 
             {/* TABELA DE CONSULTORES */}
-            <div className="mt-8 overflow-x-auto">
-                <table className="w-full text-sm">
-                    <thead className="bg-gray-100 border-b-2 border-gray-300">
-                        <tr>
-                            <th className="px-6 py-3 text-left font-semibold text-gray-700">Nome</th>
-                            <th className="px-6 py-3 text-left font-semibold text-gray-700">Cargo</th>
-                            <th className="px-6 py-3 text-left font-semibold text-gray-700">Cliente</th>
-                            <th className="px-6 py-3 text-left font-semibold text-gray-700">Status</th>
-                            <th className="px-6 py-3 text-center font-semibold text-gray-700">Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {consultants.map((consultant, idx) => (
-                            <tr key={idx} className="border-b border-gray-200 hover:bg-blue-50 transition-colors">
-                                <td className="px-6 py-3 text-gray-800">{consultant.nome_consultores}</td>
-                                <td className="px-6 py-3 text-gray-600">{consultant.cargo_consultores}</td>
-                                <td className="px-6 py-3 text-gray-600">
-                                    {clients.find(c => c.id === usuariosCliente.find(u => u.id === consultant.gestor_imediato_id)?.id_cliente)?.razao_social_cliente || '-'}
-                                </td>
-                                <td className="px-6 py-3">
+            <div className="mt-8 space-y-4">
+                {consultants.map((consultant, idx) => (
+                    <div key={idx} className="border rounded-lg p-4 bg-gray-50 hover:bg-blue-50 transition-colors">
+                        <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <h3 className="text-lg font-semibold text-gray-800">{consultant.nome_consultores}</h3>
                                     <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
                                         consultant.status === 'Ativo' ? 'bg-green-100 text-green-800' :
                                         consultant.status === 'Perdido' ? 'bg-yellow-100 text-yellow-800' :
@@ -419,21 +407,48 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                     }`}>
                                         {consultant.status}
                                     </span>
-                                </td>
-                                <td className="px-6 py-3 text-center">
-                                    {!isReadOnly && (
-                                        <button 
-                                            onClick={() => setEditingConsultant(consultant)}
-                                            className="text-blue-600 hover:text-blue-800 font-medium transition-colors"
+                                </div>
+                                <p className="text-sm text-gray-600 mb-1"><span className="font-medium">Cargo:</span> {consultant.cargo_consultores}</p>
+                                <p className="text-sm text-gray-600 mb-3"><span className="font-medium">Cliente:</span> {clients.find(c => c.id === usuariosCliente.find(u => u.id === consultant.gestor_imediato_id)?.id_cliente)?.razao_social_cliente || '-'}</p>
+                                
+                                {/* Contact Info for Consultant */}
+                                <div className="flex flex-wrap gap-4 text-sm">
+                                    {consultant.email_consultor && (
+                                        <a 
+                                            href={`mailto:${consultant.email_consultor}`}
+                                            className="flex items-center gap-1 text-gray-700 hover:text-blue-600 transition"
                                         >
-                                            Editar
-                                        </button>
+                                            <Mail className="w-4 h-4" />
+                                            <span>{consultant.email_consultor}</span>
+                                        </a>
                                     )}
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+                                    {consultant.celular && (
+                                        <a 
+                                            href={`https://wa.me/55${consultant.celular.replace(/[^0-9]/g, '')}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex items-center gap-1 text-gray-700 hover:text-green-600 transition"
+                                            title="Abrir no WhatsApp"
+                                        >
+                                            <Phone className="w-4 h-4" />
+                                            <span>{consultant.celular}</span>
+                                        </a>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="ml-4">
+                                {!isReadOnly && (
+                                    <button 
+                                        onClick={() => setEditingConsultant(consultant)}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors font-medium text-sm"
+                                    >
+                                        Editar
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                ))}
             </div>
         </div>
     );
