@@ -464,34 +464,8 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                 <p className="consultant-profession">{consultant.cargo_consultores || 'N/A'}</p>
                               </div>
 
-                              {/* ✅ NOVO: Detalhes com ícones */}
+                              {/* ✅ CORRIGIDO: Detalhes reorganizados - Cliente, Gestor, Coordenador, Analista de R&S */}
                               <div className="space-y-3 mt-3">
-                                {/* Consultor */}
-                                <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
-                                  <div className="flex items-center gap-2 mb-2">
-                                    <FocalRSIcon className="w-4 h-4 text-blue-600" size={16} />
-                                    <span className="font-semibold text-blue-900">Analista de R&S</span>
-                                  </div>
-                                  <div className="space-y-1 ml-6">
-                                    {consultant.email_consultor && (
-                                      <div className="flex items-center gap-2 text-sm">
-                                        <Mail className="w-3 h-3 text-blue-600" />
-                                        <a href={`mailto:${consultant.email_consultor}`} className="text-blue-700 hover:underline">
-                                          {consultant.email_consultor}
-                                        </a>
-                                      </div>
-                                    )}
-                                    {consultant.celular && (
-                                      <div className="flex items-center gap-2 text-sm">
-                                        <Phone className="w-3 h-3 text-blue-600" />
-                                        <a href={`tel:${consultant.celular}`} className="text-blue-700 hover:underline">
-                                          {consultant.celular}
-                                        </a>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-
                                 {/* Cliente */}
                                 <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
                                   <div className="flex items-center gap-2">
@@ -500,10 +474,10 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                   </div>
                                 </div>
 
-                                {/* Gestor */}
+                                {/* ✅ CORRIGIDO: Renomeado de "Gestor de Pessoas" para "Gestor" */}
                                 <div className="bg-purple-50 p-3 rounded-lg border border-purple-200">
                                   <div className="flex items-center gap-2 mb-2">
-                                    <span className="font-semibold text-purple-900">Gestor de Pessoas</span>
+                                    <span className="font-semibold text-purple-900">Gestor</span>
                                   </div>
                                   <div className="space-y-1 ml-6">
                                     <div className="text-sm font-medium text-purple-900">{manager.nome_gestor_cliente || 'N/A'}</div>
@@ -553,6 +527,35 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                                     </div>
                                   </div>
                                 )}
+
+                                {/* ✅ CORRIGIDO: Analista de R&S movido para baixo do Coordenador */}
+                                <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                                  {/* ✅ CORRIGIDO: Nome do Analista na mesma linha do ícone */}
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <FocalRSIcon className="w-4 h-4 text-blue-600" size={16} />
+                                    <span className="font-semibold text-blue-900">Analista de R&S:</span>
+                                    <span className="text-sm font-medium text-blue-900">{consultant.analista_rs || 'N/A'}</span>
+                                  </div>
+                                  {/* Email e Celular do CONSULTOR */}
+                                  <div className="space-y-1 ml-6">
+                                    {consultant.email_consultor && (
+                                      <div className="flex items-center gap-2 text-sm">
+                                        <Mail className="w-3 h-3 text-blue-600" />
+                                        <a href={`mailto:${consultant.email_consultor}`} className="text-blue-700 hover:underline">
+                                          {consultant.email_consultor}
+                                        </a>
+                                      </div>
+                                    )}
+                                    {consultant.celular && (
+                                      <div className="flex items-center gap-2 text-sm">
+                                        <Phone className="w-3 h-3 text-blue-600" />
+                                        <a href={`tel:${consultant.celular}`} className="text-blue-700 hover:underline">
+                                          {consultant.celular}
+                                        </a>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
 
                               {/* ❌ REMOVIDO: Seção "Recomendações de Ação" inline foi removida conforme solicitado */}
