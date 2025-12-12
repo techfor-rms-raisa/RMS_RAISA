@@ -94,7 +94,9 @@ const ManageClients: React.FC<ManageClientsProps> = ({
     const handleManagerSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const data = { 
-            ...managerForm, 
+            nome_gestor_cliente: managerForm.nome_gestor_cliente,
+            cargo_gestor: managerForm.cargo_gestor,
+            email_gestor: managerForm.email_gestor,
             celular: managerForm.celular_gestor,
             id_cliente: selectedClientId!, 
             ativo: true, 
@@ -126,7 +128,9 @@ const ManageClients: React.FC<ManageClientsProps> = ({
     const handleCoordSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const data = { 
-            ...coordForm, 
+            nome_coordenador_cliente: coordForm.nome_coordenador_cliente,
+            cargo_coordenador_cliente: coordForm.cargo_coordenador_cliente,
+            email_coordenador: coordForm.email_coordenador,
             celular: coordForm.celular_coordenador,
             id_gestor_cliente: selectedManagerId!, 
             ativo: true 
