@@ -51,7 +51,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
         coordenador_id: '',
         status: 'Ativo' as ConsultantStatus,
         motivo_desligamento: '' as TerminationReason | '',
-        gestor_rs_id: '' as string | number,
+        analista_rs_id: '' as string | number,
         id_gestao_de_pessoas: '' as string | number,
         valor_faturamento: '',
     });
@@ -75,7 +75,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                 coordenador_id: editingConsultant.coordenador_id ? String(editingConsultant.coordenador_id) : '',
                 status: editingConsultant.status,
                 motivo_desligamento: editingConsultant.motivo_desligamento || '',
-                gestor_rs_id: editingConsultant.gestor_rs_id ? String(editingConsultant.gestor_rs_id) : '',
+                analista_rs_id: editingConsultant.analista_rs_id ? String(editingConsultant.analista_rs_id) : '',
                 id_gestao_de_pessoas: editingConsultant.id_gestao_de_pessoas ? String(editingConsultant.id_gestao_de_pessoas) : '',
                 valor_faturamento: editingConsultant.valor_faturamento ? editingConsultant.valor_faturamento.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '',
             });
@@ -353,8 +353,8 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                             </label>
                                             <select 
                                                 className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white"
-                                                value={formData.gestor_rs_id} 
-                                                onChange={e => setFormData({...formData, gestor_rs_id: e.target.value})}
+                                                value={formData.analista_rs_id} 
+                                                onChange={e => setFormData({...formData, analista_rs_id: e.target.value})}
                                             >
                                                 <option value="">Selecione...</option>
                                                 {users

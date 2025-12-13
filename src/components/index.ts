@@ -42,7 +42,7 @@ export interface User {
     ativo_usuario: boolean;
     receber_alertas_email: boolean;
     perfil_id: number | null;
-    gestor_rs_id: number | null;
+    analista_rs_id: number | null;
     foto_url: string | null;
     telefone: string | null;
     ultimo_acesso: string | null;
@@ -89,7 +89,7 @@ export interface UsuarioCliente {
     email_gestor?: string;
     telefone_gestor?: string;
     ativo: boolean;
-    gestor_rs_id: number | null;
+    analista_rs_id: number | null;
 }
 
 export interface CoordenadorCliente {
@@ -114,7 +114,7 @@ export interface Consultant {
     valor_faturamento: number | null;
     gestor_imediato_id: number | null;
     coordenador_id: number | null;
-    gestor_rs_id: number | null;
+    analista_rs_id: number | null;
     id_gestao_de_pessoas: number | null;
     parecer_final_consultor: string | null;
     reports: any[];

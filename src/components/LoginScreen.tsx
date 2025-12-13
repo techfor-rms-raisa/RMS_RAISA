@@ -38,7 +38,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           ativo_usuario: data.ativo,
           tipo_usuario: data.tipo,
           receber_alertas_email: data.receber_alertas_email || false,
-          gestor_rs_id: data.gestor_rs_id || null,
+          analista_rs_id: data.analista_rs_id || null,
         };
         onLogin(user);
       } else if (data && !data.ativo) {

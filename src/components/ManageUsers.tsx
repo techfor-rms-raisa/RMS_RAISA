@@ -25,7 +25,7 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
         tipo_usuario: 'Consulta' as UserRole,
         ativo_usuario: true,
         receber_alertas_email: true,
-        gestor_rs_id: null as number | null
+        analista_rs_id: null as number | null
     });
 
     const userRoles: UserRole[] = [
@@ -45,7 +45,7 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
             tipo_usuario: 'Consulta',
             ativo_usuario: true,
             receber_alertas_email: true,
-            gestor_rs_id: null
+            analista_rs_id: null
         });
     };
 
@@ -92,7 +92,7 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
             tipo_usuario: formData.tipo_usuario,
             ativo_usuario: formData.ativo_usuario,
             receber_alertas_email: formData.receber_alertas_email,
-            gestor_rs_id: formData.gestor_rs_id
+            analista_rs_id: formData.analista_rs_id
         };
 
         // Só atualiza a senha se foi preenchida
@@ -116,7 +116,7 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
             tipo_usuario: user.tipo_usuario,
             ativo_usuario: user.ativo_usuario,
             receber_alertas_email: user.receber_alertas_email,
-            gestor_rs_id: user.gestor_rs_id
+            analista_rs_id: user.analista_rs_id
         });
         setIsEditModalOpen(true);
     };

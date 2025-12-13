@@ -35,7 +35,7 @@ interface CreateManagerPayload {
     email_gestor?: string;
     celular?: string;
     ativo: boolean;
-    gestor_rs_id: null;
+    analista_rs_id: null;
 }
 
 /**
@@ -91,7 +91,7 @@ const createManagerPayload = (
     email_gestor: formData.email_gestor.trim() || undefined,
     celular: formData.celular_gestor.trim() || undefined,
     ativo: true,
-    gestor_rs_id: null
+    analista_rs_id: null
 });
 
 /**

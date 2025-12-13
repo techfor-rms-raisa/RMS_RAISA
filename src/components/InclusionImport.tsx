@@ -209,7 +209,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 coordenador_id: targetCoordId,
                 valor_faturamento: billingValue || 0, // Saved as Calculated Monthly Value
                 // Defaults
-                gestor_rs_id: client.id_gestor_rs,
+                analista_rs_id: client.id_gestor_rs,
                 id_gestao_de_pessoas: client.id_gestao_de_pessoas,
             };
 

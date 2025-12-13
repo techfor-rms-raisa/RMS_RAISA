@@ -109,7 +109,7 @@ export const useSupabaseData = () => {
         ativo_usuario: user.ativo_usuario,
         receber_alertas_email: user.receber_alertas_email,
         tipo_usuario: user.tipo_usuario || 'Consulta',
-        gestor_rs_id: user.gestor_rs_id,
+        analista_rs_id: user.analista_rs_id,
         perfil_id: user.perfil_id,
         perfil: null
       }));
@@ -136,7 +136,7 @@ export const useSupabaseData = () => {
           ativo_usuario: newUser.ativo_usuario ?? true,
           receber_alertas_email: newUser.receber_alertas_email ?? true,
           perfil_id: newUser.perfil_id || null,
-          gestor_rs_id: newUser.gestor_rs_id || null
+          analista_rs_id: newUser.analista_rs_id || null
         }])
         .select('*')
         .single();
@@ -151,7 +151,7 @@ export const useSupabaseData = () => {
         ativo_usuario: data.ativo_usuario,
         receber_alertas_email: data.receber_alertas_email,
         tipo_usuario: data.tipo_usuario || 'Consulta',
-        gestor_rs_id: data.gestor_rs_id,
+        analista_rs_id: data.analista_rs_id,
         perfil_id: data.perfil_id,
         perfil: null
       };
@@ -181,7 +181,7 @@ export const useSupabaseData = () => {
           ativo_usuario: updates.ativo_usuario,
           receber_alertas_email: updates.receber_alertas_email,
           perfil_id: updates.perfil_id,
-          gestor_rs_id: updates.gestor_rs_id
+          analista_rs_id: updates.analista_rs_id
         })
         .eq('id', id)
         .select('*')
@@ -197,7 +197,7 @@ export const useSupabaseData = () => {
         ativo_usuario: data.ativo_usuario,
         receber_alertas_email: data.receber_alertas_email,
         tipo_usuario: data.tipo_usuario || 'Consulta',
-        gestor_rs_id: data.gestor_rs_id,
+        analista_rs_id: data.analista_rs_id,
         perfil_id: data.perfil_id,
         perfil: null
       };
@@ -384,7 +384,7 @@ export const useSupabaseData = () => {
         email_gestor: uc.email_gestor,
         celular: uc.celular,
         ativo: uc.ativo,
-        gestor_rs_id: uc.gestor_rs_id,
+        analista_rs_id: uc.analista_rs_id,
         cliente: undefined,
         gestor_rs: undefined
       }));
@@ -410,7 +410,7 @@ export const useSupabaseData = () => {
           email_gestor: newUsuario.email_gestor || null,
           celular: newUsuario.celular || null,
           ativo: newUsuario.ativo ?? true,
-          gestor_rs_id: newUsuario.gestor_rs_id || null
+          analista_rs_id: newUsuario.analista_rs_id || null
         }])
         .select('*')
         .single();
@@ -425,7 +425,7 @@ export const useSupabaseData = () => {
         email_gestor: data.email_gestor,
         celular: data.celular,
         ativo: data.ativo,
-        gestor_rs_id: data.gestor_rs_id,
+        analista_rs_id: data.analista_rs_id,
         cliente: undefined,
         gestor_rs: undefined
       };
@@ -453,7 +453,7 @@ export const useSupabaseData = () => {
           email_gestor: updates.email_gestor,
           celular: updates.celular,
           ativo: updates.ativo,
-          gestor_rs_id: updates.gestor_rs_id
+          analista_rs_id: updates.analista_rs_id
         })
         .eq('id', updates.id)
         .select('*')
@@ -469,7 +469,7 @@ export const useSupabaseData = () => {
         email_gestor: data.email_gestor,
         celular: data.celular,
         ativo: data.ativo,
-        gestor_rs_id: data.gestor_rs_id,
+        analista_rs_id: data.analista_rs_id,
         cliente: undefined,
         gestor_rs: undefined
       };
@@ -497,7 +497,7 @@ export const useSupabaseData = () => {
         email_gestor: m.email_gestor || null,
         celular: m.celular || null,
         ativo: m.ativo ?? true,
-        gestor_rs_id: m.gestor_rs_id || null
+        analista_rs_id: m.analista_rs_id || null
       }));
 
       const { data, error } = await supabase
@@ -515,7 +515,7 @@ export const useSupabaseData = () => {
         email_gestor: uc.email_gestor,
         celular: uc.celular,
         ativo: uc.ativo,
-        gestor_rs_id: uc.gestor_rs_id,
+        analista_rs_id: uc.analista_rs_id,
         cliente: undefined,
         gestor_rs: undefined
       }));
@@ -773,7 +773,7 @@ export const useSupabaseData = () => {
         valor_pagamento: consultant.valor_pagamento, // ✅ NOVO: Valor pago ao consultor
         gestor_imediato_id: consultant.gestor_imediato_id,
         coordenador_id: consultant.coordenador_id,
-        gestor_rs_id: consultant.gestor_rs_id,
+        analista_rs_id: consultant.analista_rs_id,
         id_gestao_de_pessoas: consultant.id_gestao_de_pessoas,
         parecer_1_consultor: consultant.parecer_1_consultor,
         parecer_2_consultor: consultant.parecer_2_consultor,
@@ -805,7 +805,7 @@ export const useSupabaseData = () => {
       console.log('➥ Criando consultor:', newConsultant);
       
       // 🔍 RECUPERAÇÃO AUTOMÁTICA DE CV E ANALISTA R&S
-      let cvData: { pessoa_id?: number; candidatura_id?: number; curriculo_url?: string; curriculo_filename?: string; gestor_rs_id?: number } = {};
+      let cvData: { pessoa_id?: number; candidatura_id?: number; curriculo_url?: string; curriculo_filename?: string; analista_rs_id?: number } = {};
       
       // Buscar pessoa no banco de talentos por CPF ou Email
       if (newConsultant.cpf || newConsultant.email_consultor) {
@@ -842,7 +842,7 @@ export const useSupabaseData = () => {
             
             // ✅ NOVO: Buscar Analista R&S da candidatura
             if (candidaturaData.analista_id) {
-              cvData.gestor_rs_id = candidaturaData.analista_id;
+              cvData.analista_rs_id = candidaturaData.analista_id;
               console.log('✅ Analista R&S encontrado automaticamente:', candidaturaData.analista_id);
             }
           }
@@ -868,7 +868,7 @@ export const useSupabaseData = () => {
           valor_pagamento: newConsultant.valor_pagamento, // ✅ NOVO: Valor pago ao consultor
           gestor_imediato_id: newConsultant.gestor_imediato_id,
           coordenador_id: newConsultant.coordenador_id,
-          gestor_rs_id: cvData.gestor_rs_id || newConsultant.gestor_rs_id || null, // ✅ Prioriza analista da candidatura
+          analista_rs_id: cvData.analista_rs_id || newConsultant.analista_rs_id || null, // ✅ Prioriza analista da candidatura
           id_gestao_de_pessoas: newConsultant.id_gestao_de_pessoas,
           // Campos de CV recuperados automaticamente
           pessoa_id: cvData.pessoa_id || null,
@@ -915,7 +915,7 @@ export const useSupabaseData = () => {
           valor_pagamento: updates.valor_pagamento, // ✅ NOVO: Valor pago ao consultor
           gestor_imediato_id: updates.gestor_imediato_id,
           coordenador_id: updates.coordenador_id,
-          gestor_rs_id: updates.gestor_rs_id,
+          analista_rs_id: updates.analista_rs_id,
           id_gestao_de_pessoas: updates.id_gestao_de_pessoas
         })
         .eq('id', id)
@@ -984,7 +984,7 @@ export const useSupabaseData = () => {
             valor_faturamento: c.valor_faturamento,
             gestor_imediato_id: c.gestor_imediato_id,
             coordenador_id: c.coordenador_id,
-            gestor_rs_id: c.gestor_rs_id,
+            analista_rs_id: c.analista_rs_id,
             id_gestao_de_pessoas: c.id_gestao_de_pessoas,
             // Campos de CV recuperados automaticamente
             pessoa_id: pessoa?.id || null,

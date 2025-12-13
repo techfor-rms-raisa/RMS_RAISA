@@ -15,7 +15,7 @@ const INITIAL_USERS: User[] = [
       ativo_usuario: true, 
       receber_alertas_email: true, 
       tipo_usuario: 'Administrador', 
-      gestor_rs_id: null 
+      analista_rs_id: null 
   }
 ];
 

@@ -39,7 +39,7 @@ export interface User {
   receber_alertas_email: boolean;
   tipo_usuario: UserRole;
   clientId?: number; 
-  gestor_rs_id: number | null;
+  analista_rs_id: number | null;
 }
 
 export interface UsuarioCliente {
@@ -50,7 +50,7 @@ export interface UsuarioCliente {
   email_gestor?: string; // E-mail do Gestor
   celular?: string; // Formato: DDD-99999-9999 (Ex: 011-98833-8182)
   ativo: boolean;
-  gestor_rs_id: number | null;
+  analista_rs_id: number | null;
 }
 
 export interface CoordenadorCliente {
@@ -121,7 +121,7 @@ export interface Consultant {
   reports: ConsultantReport[];
   consultant_reports?: ConsultantReport[]; // Relatórios do Supabase 
 
-  gestor_rs_id: number | null;
+  analista_rs_id: number | null;
   id_gestao_de_pessoas: number | null;
   
   // Campos de vínculo com candidatos e CV
