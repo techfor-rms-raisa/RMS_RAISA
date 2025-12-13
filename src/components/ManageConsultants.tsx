@@ -43,6 +43,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
         nome_consultores: '',
         email_consultor: '',
         celular: '',
+        cpf: '',
         cargo_consultores: '',
         data_inclusao_consultores: '',
         data_saida: '',
@@ -67,8 +68,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                 nome_consultores: editingConsultant.nome_consultores,
                 email_consultor: editingConsultant.email_consultor || '',
                 celular: editingConsultant.celular || '',
+                cpf: editingConsultant.cpf || '',
                 cargo_consultores: editingConsultant.cargo_consultores,
-                data_inclusao_consultores: editingConsultant.data_inclusao_consultores,
+                data_inclusao_consultores: editingConsultant.data_inclusao_consultores ? editingConsultant.data_inclusao_consultores.split('T')[0] : '',
                 data_saida: editingConsultant.data_saida || '',
                 id_cliente: gestor ? String(gestor.id_cliente) : '',
                 gestor_imediato_id: String(editingConsultant.gestor_imediato_id),
@@ -208,6 +210,19 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                                 placeholder="(XX) XXXXX-XXXX" 
                                                 value={formData.celular} 
                                                 onChange={e => setFormData({...formData, celular: e.target.value})}
+                                            />
+                                        </div>
+
+                                        {/* CPF */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                🆔 C.P.F.
+                                            </label>
+                                            <input 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                                placeholder="000.000.000-00" 
+                                                value={formData.cpf} 
+                                                onChange={e => setFormData({...formData, cpf: e.target.value})}
                                             />
                                         </div>
                                     </div>
@@ -464,6 +479,14 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                             <option value="all">Todos os Consultores</option>
                             {consultants
                                 .filter(c => c.status === 'Ativo')
+                                .filter(c => {
+                                    // Se um cliente foi selecionado, mostrar apenas consultores desse cliente
+                                    if (selectedClientFilter !== 'all') {
+                                        const gestor = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
+                                        return gestor && String(gestor.id_cliente) === selectedClientFilter;
+                                    }
+                                    return true; // Se "Todos os Clientes", mostrar todos
+                                })
                                 .sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores))
                                 .map((consultant, idx) => (
                                     <option key={idx} value={consultant.nome_consultores}>{consultant.nome_consultores}</option>
