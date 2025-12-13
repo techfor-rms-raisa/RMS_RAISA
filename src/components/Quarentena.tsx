@@ -40,7 +40,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedScore, setSelectedScore] = useState<string>('all');
-  const [selectedManager, setSelectedManager] = useState<string>('all'); // ✅ NOVO: Filtro por Gestor
+  const [selectedManager, setSelectedManager] = useState<string>('all'); // ✅ CORRIGIDO: Filtro por ID do Gestor de Pessoas
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
   const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
@@ -292,12 +292,15 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     }
 
     return relevantClients.map(client => {
-      let clientManagers = usuariosCliente.filter(uc => uc.id_cliente === client.id);
-      
-      // ✅ NOVO: Filtrar por Gestor selecionado
+      // ✅ CORRIGIDO: Filtrar por id_gestao_de_pessoas do cliente
       if (selectedManager !== 'all') {
-        clientManagers = clientManagers.filter(uc => uc.nome_gestor_cliente === selectedManager);
+        const selectedManagerId = parseInt(selectedManager, 10);
+        if (client.id_gestao_de_pessoas !== selectedManagerId) {
+          return { ...client, managers: [] };
+        }
       }
+      
+      let clientManagers = usuariosCliente.filter(uc => uc.id_cliente === client.id);
       
       const managers = clientManagers.map(manager => {
         let managerConsultants = consultants.filter(c => c.gestor_imediato_id === manager.id && c.status === 'Ativo');
@@ -395,7 +398,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
               .filter(u => u.tipo_usuario === 'Gestão de Pessoas' && u.ativo_usuario)
               .sort((a, b) => a.nome_usuario.localeCompare(b.nome_usuario))
               .map(u => (
-                <option key={u.id} value={u.nome_usuario}>{u.nome_usuario}</option>
+                <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
               ))
             }
           </select>

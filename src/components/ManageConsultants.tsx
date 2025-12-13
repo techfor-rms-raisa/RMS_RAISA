@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason } from '../components/types';
-import { Mail, Phone } from 'lucide-react';
+import { Mail, Phone, Search } from 'lucide-react';
 import InclusionImport from './InclusionImport';
 
 interface ManageConsultantsProps {
@@ -32,6 +32,11 @@ const TERMINATION_REASONS: { value: TerminationReason; description: string }[] =
 const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usuariosCliente, clients, coordenadoresCliente, users, addConsultant, updateConsultant, currentUser, onNavigateToAtividades }) => {
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingConsultant, setEditingConsultant] = useState<Consultant | null>(null);
+    
+    // ✅ NOVO: Estados para filtros
+    const [selectedClientFilter, setSelectedClientFilter] = useState<string>('all');
+    const [selectedConsultantFilter, setSelectedConsultantFilter] = useState<string>('all');
+    const [searchQuery, setSearchQuery] = useState<string>('');
 
     const [formData, setFormData] = useState({
         ano_vigencia: new Date().getFullYear(),
@@ -123,7 +128,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
             {!isReadOnly && <InclusionImport clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} onImport={addConsultant} />}
             
             <div className="flex justify-between items-center mb-8">
-                <h2 className="section-title">Gerenciar Consultores</h2>
+                <h2 className="text-3xl font-bold text-gray-900" style={{ fontFamily: 'Segoe UI, sans-serif', fontWeight: 700 }}>Gerenciar Consultores</h2>
                 <div className="flex gap-3">
                     {!isReadOnly && (
                         <button 
@@ -392,9 +397,88 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                 </div>
             )}
 
+            {/* ✅ NOVO: FILTROS */}
+            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* Filtro por Cliente */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Filtrar Cliente:</label>
+                        <select 
+                            value={selectedClientFilter} 
+                            onChange={e => setSelectedClientFilter(e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                            <option value="all">Todos os Clientes</option>
+                            {clients
+                                .filter(c => c.ativo_cliente)
+                                .sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente))
+                                .map(client => (
+                                    <option key={client.id} value={String(client.id)}>{client.razao_social_cliente}</option>
+                                ))
+                            }
+                        </select>
+                    </div>
+
+                    {/* Filtro por Consultor */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Filtrar por Consultor:</label>
+                        <select 
+                            value={selectedConsultantFilter} 
+                            onChange={e => setSelectedConsultantFilter(e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                            <option value="all">Todos os Consultores</option>
+                            {consultants
+                                .filter(c => c.status === 'Ativo')
+                                .sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores))
+                                .map((consultant, idx) => (
+                                    <option key={idx} value={consultant.nome_consultores}>{consultant.nome_consultores}</option>
+                                ))
+                            }
+                        </select>
+                    </div>
+
+                    {/* Campo de Pesquisa */}
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Pesquisar:</label>
+                        <div className="relative">
+                            <input 
+                                type="text"
+                                value={searchQuery}
+                                onChange={e => setSearchQuery(e.target.value)}
+                                placeholder="Digite o nome do consultor..."
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 pl-10 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            />
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             {/* TABELA DE CONSULTORES */}
             <div className="mt-8 space-y-4">
-                {consultants.map((consultant, idx) => (
+                {consultants
+                    .filter(consultant => {
+                        // Filtro por Cliente
+                        if (selectedClientFilter !== 'all') {
+                            const gestor = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
+                            if (!gestor || String(gestor.id_cliente) !== selectedClientFilter) return false;
+                        }
+                        
+                        // Filtro por Consultor
+                        if (selectedConsultantFilter !== 'all') {
+                            if (consultant.nome_consultores !== selectedConsultantFilter) return false;
+                        }
+                        
+                        // Filtro por Pesquisa
+                        if (searchQuery.trim() !== '') {
+                            const query = searchQuery.toLowerCase();
+                            return consultant.nome_consultores.toLowerCase().includes(query);
+                        }
+                        
+                        return true;
+                    })
+                    .map((consultant, idx) => (
                     <div key={idx} className="border rounded-lg p-4 bg-gray-50 hover:bg-blue-50 transition-colors">
                         <div className="flex justify-between items-start">
                             <div className="flex-1">
