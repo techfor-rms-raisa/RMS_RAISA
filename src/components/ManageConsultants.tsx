@@ -259,6 +259,19 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                                 onChange={e => setFormData({...formData, valor_faturamento: e.target.value})}
                                             />
                                         </div>
+
+                                        {/* ✅ NOVO: Valor Pagamento */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                👥 Valor Pagamento (R$)
+                                            </label>
+                                            <input 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                                                placeholder="Ex: 11.694,48" 
+                                                value={formData.valor_pagamento} 
+                                                onChange={e => setFormData({...formData, valor_pagamento: e.target.value})}
+                                            />
+                                        </div>
                                     </div>
                                 </div>
 
@@ -330,6 +343,27 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                                                 <option value="Ativo">✅ Ativo</option>
                                                 <option value="Perdido">⚠️ Perdido</option>
                                                 <option value="Encerrado">❌ Encerrado</option>
+                                            </select>
+                                        </div>
+
+                                        {/* ✅ NOVO: Analista de R&S */}
+                                        <div className="flex flex-col">
+                                            <label className="text-sm font-semibold text-gray-700 mb-2">
+                                                🎯 Analista de R&S
+                                            </label>
+                                            <select 
+                                                className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white"
+                                                value={formData.gestor_rs_id} 
+                                                onChange={e => setFormData({...formData, gestor_rs_id: e.target.value})}
+                                            >
+                                                <option value="">Selecione...</option>
+                                                {users
+                                                    .filter(u => u.tipo_usuario === 'Analista de R&S' && u.ativo_usuario)
+                                                    .sort((a, b) => a.nome_usuario.localeCompare(b.nome_usuario))
+                                                    .map(u => (
+                                                        <option key={u.id} value={u.id}>{u.nome_usuario}</option>
+                                                    ))
+                                                }
                                             </select>
                                         </div>
                                     </div>
