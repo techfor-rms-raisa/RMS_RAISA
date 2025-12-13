@@ -99,7 +99,8 @@ export interface Consultant {
   data_saida?: string;
   status: ConsultantStatus; 
   motivo_desligamento?: TerminationReason;
-  valor_faturamento?: number;
+  valor_faturamento?: number; // Valor que o cliente paga
+  valor_pagamento?: number; // ✅ NOVO: Valor que o consultor recebe (salário)
   gestor_imediato_id: number; 
   coordenador_id: number | null; 
   

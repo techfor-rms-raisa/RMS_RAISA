@@ -770,6 +770,7 @@ export const useSupabaseData = () => {
         status: consultant.status,
         motivo_desligamento: consultant.motivo_desligamento,
         valor_faturamento: consultant.valor_faturamento,
+        valor_pagamento: consultant.valor_pagamento, // ✅ NOVO: Valor pago ao consultor
         gestor_imediato_id: consultant.gestor_imediato_id,
         coordenador_id: consultant.coordenador_id,
         gestor_rs_id: consultant.gestor_rs_id,
@@ -803,8 +804,8 @@ export const useSupabaseData = () => {
     try {
       console.log('➥ Criando consultor:', newConsultant);
       
-      // 🔍 RECUPERAÇÃO AUTOMÁTICA DE CV
-      let cvData: { pessoa_id?: number; candidatura_id?: number; curriculo_url?: string; curriculo_filename?: string } = {};
+      // 🔍 RECUPERAÇÃO AUTOMÁTICA DE CV E ANALISTA R&S
+      let cvData: { pessoa_id?: number; candidatura_id?: number; curriculo_url?: string; curriculo_filename?: string; gestor_rs_id?: number } = {};
       
       // Buscar pessoa no banco de talentos por CPF ou Email
       if (newConsultant.cpf || newConsultant.email_consultor) {
@@ -838,6 +839,12 @@ export const useSupabaseData = () => {
           if (candidaturaData) {
             console.log('✅ Candidatura aprovada encontrada');
             cvData.candidatura_id = parseInt(candidaturaData.id);
+            
+            // ✅ NOVO: Buscar Analista R&S da candidatura
+            if (candidaturaData.analista_id) {
+              cvData.gestor_rs_id = candidaturaData.analista_id;
+              console.log('✅ Analista R&S encontrado automaticamente:', candidaturaData.analista_id);
+            }
           }
           
           if (cvData.curriculo_url) {
@@ -858,9 +865,10 @@ export const useSupabaseData = () => {
           data_inclusao_consultores: newConsultant.data_inclusao_consultores,
           status: newConsultant.status || 'Ativo',
           valor_faturamento: newConsultant.valor_faturamento,
+          valor_pagamento: newConsultant.valor_pagamento, // ✅ NOVO: Valor pago ao consultor
           gestor_imediato_id: newConsultant.gestor_imediato_id,
           coordenador_id: newConsultant.coordenador_id,
-          gestor_rs_id: newConsultant.gestor_rs_id,
+          gestor_rs_id: cvData.gestor_rs_id || newConsultant.gestor_rs_id || null, // ✅ Prioriza analista da candidatura
           id_gestao_de_pessoas: newConsultant.id_gestao_de_pessoas,
           // Campos de CV recuperados automaticamente
           pessoa_id: cvData.pessoa_id || null,
@@ -904,6 +912,7 @@ export const useSupabaseData = () => {
           data_saida: updates.data_saida,
           motivo_desligamento: updates.motivo_desligamento,
           valor_faturamento: updates.valor_faturamento,
+          valor_pagamento: updates.valor_pagamento, // ✅ NOVO: Valor pago ao consultor
           gestor_imediato_id: updates.gestor_imediato_id,
           coordenador_id: updates.coordenador_id,
           gestor_rs_id: updates.gestor_rs_id,
