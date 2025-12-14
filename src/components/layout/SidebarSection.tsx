@@ -35,9 +35,9 @@ const SidebarSection: React.FC<SidebarSectionProps> = ({ title, subtitle, items,
         >
             {!isCollapsed && title && (
                 <div className="px-4 mb-2">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#F0F0F0' }}>
+                    <h3 className="text-xs font-semibold tracking-wider" style={{ color: '#F0F0F0' }}>
                         {showIcon && <i className="fa-solid fa-tasks mr-2"></i>}
-                        {title}
+                        {showIcon ? title : title.toUpperCase()}
                     </h3>
                     {subtitle && (
                         <p className="text-[10px] mt-0.5 leading-tight" style={{ color: '#F0F0F0' }}>

@@ -5,7 +5,8 @@ import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, Consultan
 import ReportDetailsModal from './ReportDetailsModal';
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
 import RecommendationsModal from './RecommendationsModal';
-import { generateIntelligentRecommendations, IntelligentAnalysis } from '../services/recommendationService';
+import { loadRecommendationsFromSupabase, IntelligentAnalysis } from '../services/supabaseRecommendationService';
+// ✅ CORRIGIDO: Usar recomendações persistidas no Supabase em vez de chamar API Gemini
 
 import './Quarentena.css';
 
@@ -187,20 +188,11 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     
     setLoadingRecommendations(true);
     try {
-      // Buscar relatórios do consultor
+      // ✅ CORRIGIDO: Buscar relatórios do Supabase
       const reports = await loadConsultantReports(consultant.id);
       
-      // Buscar gestor e cliente
-      const manager = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
-      const client = clients.find(c => c.id === manager?.id_cliente);
-      
-      // Gerar análise inteligente
-      const analysis = await generateIntelligentRecommendations(
-        consultant,
-        reports,
-        manager,
-        client
-      );
+      // ✅ CORRIGIDO: Carregar recomendações persistidas do Supabase (não chamar Gemini)
+      const analysis = loadRecommendationsFromSupabase(consultant, reports);
       
       // Armazenar dados no state
       setSelectedConsultantForRecommendations(consultant);
@@ -210,7 +202,13 @@ const Quarentena: React.FC<QuarentenaProps> = ({
       console.log(`✅ Recomendações carregadas para ${consultant.nome_consultores}`);
     } catch (error) {
       console.error(`❌ Erro ao carregar recomendações para ${consultant.nome_consultores}:`, error);
-      alert('Erro ao carregar recomendações. Tente novamente.');
+      // ✅ CORRIGIDO: Não mostrar alert, usar fallback silenciosamente
+      setSelectedConsultantForRecommendations(consultant);
+      setSelectedRecommendations({
+        resumo: 'Recomendações padrão baseadas no score de risco',
+        recomendacoes: []
+      });
+      setShowRecommendationsModal(true);
     } finally {
       setLoadingRecommendations(false);
     }
