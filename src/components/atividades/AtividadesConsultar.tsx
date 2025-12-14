@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Client, Consultant, UsuarioCliente, ConsultantReport } from '../../src/components/types';
 
 interface AtividadesConsultarProps {
@@ -21,6 +21,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
     const [loadingReports, setLoadingReports] = useState(false);
     const [consultantsWithReports, setConsultantsWithReports] = useState<Consultant[]>([]);
+    const hasLoadedReports = useRef(false);
 
     const months = [
         { value: 1, label: 'Janeiro' },
@@ -37,11 +38,12 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         { value: 12, label: 'Dezembro' }
     ];
 
-    // ✅ Carregar relatórios de todos os consultores quando o componente monta
+    // ✅ Carregar relatórios APENAS UMA VEZ quando o componente monta
     useEffect(() => {
+        if (hasLoadedReports.current || !loadConsultantReports || consultants.length === 0) return;
+        
+        hasLoadedReports.current = true;
         const loadAllReports = async () => {
-            if (!loadConsultantReports || consultants.length === 0) return;
-            
             setLoadingReports(true);
             try {
                 console.log('📊 Carregando relatórios de todos os consultores...');
@@ -68,11 +70,11 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         };
 
         loadAllReports();
-    }, [loadConsultantReports, consultants]);
+    }, []); // ✅ Dependency array vazio para executar apenas uma vez
 
     // ✅ Filtrar consultores e relatórios usando dados carregados
     const filteredData = useMemo(() => {
-        let filtered = consultantsWithReports;
+        let filtered = consultantsWithReports.filter(c => c.consultant_reports && c.consultant_reports.length > 0);
 
         // Filtrar por cliente
         if (selectedClient !== 'all') {
@@ -261,16 +263,18 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                 </div>
             </div>
 
-            {/* Tabela de Relatórios */}
+            {/* ✅ TABELA DE RELATÓRIOS COM CABEÇALHO COMPLETO */}
             {!loadingReports && filteredData.length > 0 ? (
                 <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
+                    <table className="min-w-full divide-y divide-gray-200 border border-gray-300">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Consultor</th>
-                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase border-r border-gray-300">Consultor</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-700 uppercase border-r border-gray-300">Cliente</th>
                                 {months.map(m => (
-                                    <th key={m.value} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">{m.label.substring(0, 3)}</th>
+                                    <th key={m.value} className="px-4 py-3 text-center text-xs font-medium text-gray-700 uppercase border-r border-gray-300 whitespace-nowrap">
+                                        {m.label.substring(0, 3).toUpperCase()}
+                                    </th>
                                 ))}
                             </tr>
                         </thead>
@@ -278,13 +282,13 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                             {filteredData.map(consultant => {
                                 const client = clients.find(cli => usuariosCliente.some(u => u.id_cliente === cli.id && u.id === consultant.gestor_imediato_id));
                                 return (
-                                    <tr key={consultant.id}>
-                                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{consultant.nome_consultores}</td>
-                                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{client?.razao_social_cliente || 'N/A'}</td>
+                                    <tr key={consultant.id} className="hover:bg-gray-50">
+                                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900 border-r border-gray-300">{consultant.nome_consultores}</td>
+                                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-600 border-r border-gray-300">{client?.razao_social_cliente || 'N/A'}</td>
                                         {months.map(m => {
                                             const report = getReportForMonth(consultant, m.value);
                                             return (
-                                                <td key={m.value} className="px-4 py-4 text-center">
+                                                <td key={m.value} className="px-4 py-4 text-center border-r border-gray-300">
                                                     {report ? (
                                                         <button 
                                                             onClick={() => setViewingReport(report)}
@@ -294,7 +298,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                                                             {report.riskScore}
                                                         </button>
                                                     ) : (
-                                                        <div className="w-8 h-8 rounded-full bg-gray-100"></div>
+                                                        <div className="w-8 h-8 rounded-full bg-gray-100 mx-auto"></div>
                                                     )}
                                                 </td>
                                             );
