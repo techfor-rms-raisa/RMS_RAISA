@@ -95,7 +95,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
                     isCollapsed={isCollapsed}
                     onNavigate={onNavigate}
                     isSubmenu={true}
-                    showIcon={true}
+                    icon="fa-solid fa-tasks"
                 />
                 
                 <div className="my-2 border-t border-gray-700 mx-4 opacity-50"></div>

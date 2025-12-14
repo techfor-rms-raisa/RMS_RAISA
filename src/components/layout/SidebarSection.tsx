@@ -11,29 +11,79 @@ interface ItemConfig {
 
 interface SidebarSectionProps {
     title?: string;
-    subtitle?: string; // ✅ NOVO: Descrição do acrônimo
+    subtitle?: string;
     items: ItemConfig[];
     currentUserRole: UserRole;
     currentView: View;
     isCollapsed: boolean;
     onNavigate: (view: View) => void;
-    isSubmenu?: boolean; // ✅ NOVO: Ativa comportamento hover/dropdown
-    showIcon?: boolean; // ✅ NOVO: Mostrar ícone antes do título
+    isSubmenu?: boolean;
+    icon?: string;
 }
 
-const SidebarSection: React.FC<SidebarSectionProps> = ({ title, subtitle, items, currentUserRole, currentView, isCollapsed, onNavigate, isSubmenu = false, showIcon = false }) => {
+const SidebarSection: React.FC<SidebarSectionProps> = ({ 
+    title, 
+    subtitle, 
+    items, 
+    currentUserRole, 
+    currentView, 
+    isCollapsed, 
+    onNavigate, 
+    isSubmenu = false,
+    icon
+}) => {
     const [isHovered, setIsHovered] = React.useState(false);
     const visibleItems = items.filter(item => item.roles.includes(currentUserRole));
 
     if (visibleItems.length === 0) return null;
 
+    // Se é submenu com ícone, renderiza como item normal com submenu hover
+    if (isSubmenu && icon) {
+        return (
+            <div 
+                className="mb-4"
+                onMouseEnter={() => setIsHovered(true)}
+                onMouseLeave={() => setIsHovered(false)}
+            >
+                {/* Renderizar título como item normal (não como seção) */}
+                {!isCollapsed && title && (
+                    <button
+                        className="group flex items-center w-full px-4 py-3 transition-all duration-200 relative text-gray-400 hover:bg-gray-700 hover:text-white border-l-4 border-transparent"
+                        title={isCollapsed ? title : ''}
+                    >
+                        <i className={`${icon} text-lg mr-3 w-6 text-center`}></i>
+                        <span className="text-sm font-medium whitespace-nowrap">{title}</span>
+                    </button>
+                )}
+                
+                {/* Submenu items aparecem ao passar o mouse */}
+                {isHovered && visibleItems.map(item => (
+                    <div 
+                        key={item.view}
+                        className="pl-4"
+                    >
+                        <SidebarItem
+                            view={item.view}
+                            label={item.label}
+                            icon={item.icon}
+                            isActive={currentView === item.view}
+                            isCollapsed={isCollapsed}
+                            onClick={onNavigate}
+                        />
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    // Renderização padrão de seção
     return (
         <div 
             className="mb-4"
             onMouseEnter={() => isSubmenu && setIsHovered(true)}
             onMouseLeave={() => isSubmenu && setIsHovered(false)}
         >
-            {!isCollapsed && title && !showIcon && (
+            {!isCollapsed && title && (
                 <div className="px-4 mb-2">
                     <h3 className="text-xs font-semibold tracking-wider" style={{ color: '#F0F0F0' }}>
                         {title.toUpperCase()}
@@ -43,14 +93,6 @@ const SidebarSection: React.FC<SidebarSectionProps> = ({ title, subtitle, items,
                             {subtitle}
                         </p>
                     )}
-                </div>
-            )}
-            {!isCollapsed && title && showIcon && (
-                <div className="px-4 mb-2">
-                    <p className="text-xs font-semibold tracking-wider" style={{ color: '#F0F0F0' }}>
-                        <i className="fa-solid fa-tasks mr-2"></i>
-                        {title.toUpperCase()}
-                    </p>
                 </div>
             )}
             {visibleItems.map(item => (
