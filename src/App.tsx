@@ -183,9 +183,9 @@ const App: React.FC = () => {
             preSelectedConsultant={contextualConsultant}
           />;
       case 'atividades_consultar':
-          return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={loadConsultantReports} />;
+          return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={memoizedLoadConsultantReports} />;
       case 'atividades_exportar':
-          return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={loadConsultantReports} />;
+          return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={memoizedLoadConsultantReports} />;
       
       // RAISA Views
       case 'vagas':
