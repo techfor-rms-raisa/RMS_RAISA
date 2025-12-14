@@ -81,7 +81,8 @@ const App: React.FC = () => {
   } = useSupabaseData();
 
   // ✅ Memoizar loadConsultantReports para evitar loops infinitos
-  const memoizedLoadConsultantReports = useCallback(loadConsultantReports, [loadConsultantReports]);
+  // ⚠️ Dependency array vazio: loadConsultantReports nunca muda, é sempre a mesma função
+  const memoizedLoadConsultantReports = useCallback(loadConsultantReports, []);
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
