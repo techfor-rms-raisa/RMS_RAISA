@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { View, User } from '../../src/components/types';
 import SidebarSection from './SidebarSection';
@@ -20,7 +19,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
         localStorage.setItem('orbit_sidebar_collapsed', String(isCollapsed));
     }, [isCollapsed]);
 
-    // RMS Icons mapped to FontAwesome classes
     const rmsItems = [
         { view: 'dashboard', label: 'Dashboard', icon: 'fa-solid fa-gauge-high', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas', 'Analista de R&S', 'Consulta', 'Cliente'] },
         { view: 'quarantine', label: 'Quarentena', icon: 'fa-solid fa-triangle-exclamation', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
@@ -34,12 +32,14 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
         { view: 'users', label: 'Usuários', icon: 'fa-solid fa-user-gear', roles: ['Administrador'] },
         { view: 'export', label: 'Exportação', icon: 'fa-solid fa-file-export', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
         { view: 'import', label: 'Importação', icon: 'fa-solid fa-file-import', roles: ['Administrador'] },
-        { view: 'atividades', label: 'Atividades', icon: 'fa-solid fa-tasks', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
     ] as any;
 
+    const atividadesItems = [
+        { view: 'atividades_inserir', label: 'Inserir', icon: 'fa-solid fa-pen-to-square', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
+        { view: 'atividades_consultar', label: 'Consultar', icon: 'fa-solid fa-magnifying-glass', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
+        { view: 'atividades_exportar', label: 'Exportar', icon: 'fa-solid fa-download', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
+    ] as any;
 
-
-    // RAISA Icons mapped to FontAwesome classes
     const raisaItems = [
         { view: 'vagas', label: 'Vagas', icon: 'fa-solid fa-briefcase', roles: ['Administrador', 'Analista de R&S'] },
         { view: 'candidaturas', label: 'Candidaturas', icon: 'fa-solid fa-id-card', roles: ['Administrador', 'Analista de R&S'] },
@@ -65,7 +65,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
             `}
             style={{ height: 'calc(100vh - 64px)' }} 
         >
-            {/* Logo Area in Sidebar */}
             <div className={`p-4 flex items-center justify-center border-b border-gray-700 ${isCollapsed ? 'h-16' : 'h-16'}`}>
                  {isCollapsed ? (
                      <span className="text-xl">⭕</span>
@@ -80,7 +79,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
             <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 custom-scrollbar">
                 <SidebarSection 
                     title="RMS"
-                    subtitle="Risk Management Systems" // ✅ NOVO: Descrição
+                    subtitle="Risk Management Systems"
                     items={rmsItems}
                     currentUserRole={currentUser.tipo_usuario}
                     currentView={currentView}
@@ -88,14 +87,22 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
                     onNavigate={onNavigate}
                 />
                 
-                {/* Visual Separator */}
+                <SidebarSection 
+                    title="Atividades"
+                    items={atividadesItems}
+                    currentUserRole={currentUser.tipo_usuario}
+                    currentView={currentView}
+                    isCollapsed={isCollapsed}
+                    onNavigate={onNavigate}
+                    isSubmenu={true}
+                    showIcon={true}
+                />
+                
                 <div className="my-2 border-t border-gray-700 mx-4 opacity-50"></div>
-
-
 
                 <SidebarSection 
                     title="RAISA"
-                    subtitle="Recruitment And Intelligent Staff Allocation" // ✅ NOVO: Descrição
+                    subtitle="Recruitment And Intelligent Staff Allocation"
                     items={raisaItems}
                     currentUserRole={currentUser.tipo_usuario}
                     currentView={currentView}
