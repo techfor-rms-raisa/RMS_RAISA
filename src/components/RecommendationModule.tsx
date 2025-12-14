@@ -1,9 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Consultant, Client, UsuarioCliente, ConsultantReport, CoordenadorCliente } from '../components/types';
+import { Consultant, Client, UsuarioCliente, ConsultantReport, CoordenadorCliente, User } from '../components/types';
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
 import RecommendationCard from './RecommendationCard';
 import RecommendationsModal from './RecommendationsModal';
-// ✅ CORRIGIDO: Usar recomendações do Supabase em vez de chamar Gemini
 import { loadRecommendationsFromSupabase, IntelligentAnalysis } from '../services/supabaseRecommendationService';
 
 interface RecommendationModuleProps {
@@ -11,6 +10,7 @@ interface RecommendationModuleProps {
     clients: Client[];
     usuariosCliente: UsuarioCliente[];
     coordenadoresCliente: CoordenadorCliente[];
+    users?: User[]; // ✅ NOVO: Lista de usuários para filtro de Gestão de Pessoas
     loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
     onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
 }
@@ -25,59 +25,79 @@ interface ConsultantAnalysis {
     error?: string;
 }
 
-const ITEMS_PER_PAGE = 10; // ✅ NOVO: Paginação com 10 consultores por página
+// ✅ CORRIGIDO: Navegação 1 a 1 (1 consultor por página)
+const ITEMS_PER_PAGE = 1;
 
 const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     consultants,
     clients,
     usuariosCliente,
     coordenadoresCliente,
+    users = [],
     loadConsultantReports,
     onNavigateToAtividades
 }) => {
+    // ✅ NOVO: Estados para filtros (como Quarentena)
     const [selectedClient, setSelectedClient] = useState<string>('all');
-    const [currentPage, setCurrentPage] = useState<number>(1); // ✅ NOVO: Página atual
+    const [selectedScore, setSelectedScore] = useState<string>('all');
+    const [selectedManager, setSelectedManager] = useState<string>('all');
+    
+    const [currentPage, setCurrentPage] = useState<number>(1);
     const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
     const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
     const [loadedReports, setLoadedReports] = useState<ConsultantReport[]>([]);
     const [analysisCache, setAnalysisCache] = useState<Map<number, ConsultantAnalysis>>(new Map());
     const [loadingConsultants, setLoadingConsultants] = useState<Set<number>>(new Set());
     
-    // ============================================
-    // ✅ NOVO: ESTADO PARA MODAL DE RECOMENDAÇÕES
-    // ============================================
     const [showRecommendationsModal, setShowRecommendationsModal] = useState<boolean>(false);
     const [selectedConsultantForRecommendations, setSelectedConsultantForRecommendations] = useState<Consultant | null>(null);
     const [selectedRecommendations, setSelectedRecommendations] = useState<any>(null);
+
+    // ✅ NOVO: Funções auxiliares (copiadas do Quarentena)
+    const getDaysSinceHiring = (hireDate: string | null | undefined): number | null => {
+        if (!hireDate) return null;
+        try {
+            const hire = new Date(hireDate);
+            const today = new Date();
+            const diffTime = Math.abs(today.getTime() - hire.getTime());
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays;
+        } catch {
+            return null;
+        }
+    };
+
+    const isNewConsultant = (consultant: Consultant): boolean => {
+        const daysSinceHiring = getDaysSinceHiring(consultant.data_inclusao_consultores);
+        return daysSinceHiring !== null && daysSinceHiring < 45;
+    };
+
+    const getValidFinalScore = (consultant: Consultant): number | null => {
+        const score = consultant.parecer_final_consultor;
+        if (score === null || score === undefined || score === '#FFFF') {
+            return null;
+        }
+        const numScore = typeof score === 'string' ? parseInt(score, 10) : score;
+        if (isNaN(numScore) || numScore < 1 || numScore > 5) {
+            return null;
+        }
+        return numScore;
+    };
 
     // Filtrar consultores que precisam de recomendação
     const filteredList = useMemo(() => {
         let list = consultants.filter(c => {
             if (c.status !== 'Ativo') return false;
 
-            // Verificar se tem relatórios com risco >= 3
-            if (c.reports && c.reports.length > 0) {
-                return c.reports.some(r => r.riskScore >= 3);
-            }
-
             // Verificar parecer_final_consultor (1-5)
-            if (c.parecer_final_consultor && c.parecer_final_consultor >= 3) {
-                return true;
-            }
-
-            // Verificar qualquer parecer mensal (parecer_1_consultor até parecer_12_consultor)
-            for (let i = 1; i <= 12; i++) {
-                const parecerField = `parecer_${i}_consultor` as keyof Consultant;
-                const parecer = c[parecerField];
-                if (typeof parecer === 'number' && parecer >= 3) {
-                    return true;
-                }
-            }
-
-            return false;
+            const finalScore = getValidFinalScore(c);
+            const isNew = isNewConsultant(c);
+            const hasRiskScore = finalScore !== null && [5, 4, 3].includes(finalScore);
+            
+            return hasRiskScore || isNew;
         });
 
-        // Filtrar por cliente se selecionado
+        // ✅ NOVO: Filtro por Cliente
         if (selectedClient !== 'all') {
             list = list.filter(c => {
                 const m = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
@@ -86,15 +106,35 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
             });
         }
 
+        // ✅ NOVO: Filtro por Score
+        if (selectedScore !== 'all') {
+            if (selectedScore === 'new') {
+                list = list.filter(c => isNewConsultant(c));
+            } else {
+                const scoreNum = parseInt(selectedScore, 10);
+                list = list.filter(c => getValidFinalScore(c) === scoreNum);
+            }
+        }
+
+        // ✅ NOVO: Filtro por Gestão de Pessoas
+        if (selectedManager !== 'all') {
+            const selectedManagerId = parseInt(selectedManager, 10);
+            list = list.filter(c => {
+                const manager = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
+                return manager?.id_cliente === selectedManagerId || 
+                       users.find(u => u.id === selectedManagerId && u.tipo_usuario === 'Gestão de Pessoas');
+            });
+        }
+
         // Ordenar por maior risco primeiro (score mais alto = pior)
         return list.sort((a, b) => {
-            const scoreA = a.parecer_final_consultor || 0;
-            const scoreB = b.parecer_final_consultor || 0;
+            const scoreA = getValidFinalScore(a) || 0;
+            const scoreB = getValidFinalScore(b) || 0;
             return scoreB - scoreA; // Decrescente (5=Crítico primeiro)
         });
-    }, [consultants, selectedClient, clients, usuariosCliente]);
+    }, [consultants, selectedClient, selectedScore, selectedManager, clients, usuariosCliente, users]);
 
-    // ✅ NOVO: Calcular consultores da página atual
+    // ✅ CORRIGIDO: Calcular consultor da página atual (1 a 1)
     const paginatedList = useMemo(() => {
         const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
         const endIndex = startIndex + ITEMS_PER_PAGE;
@@ -107,30 +147,29 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     // ✅ NOVO: Resetar página quando filtro mudar
     useEffect(() => {
         setCurrentPage(1);
-    }, [selectedClient]);
+    }, [selectedClient, selectedScore, selectedManager]);
 
-    // ✅ CORRIGIDO: Carregar análises apenas para consultores da página atual
+    // ✅ NOVO: Rolar tela para início ao navegar
+    useEffect(() => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, [currentPage]);
+
+    // Carregar análises apenas para consultores da página atual
     useEffect(() => {
         const generateAnalyses = async () => {
             for (const consultant of paginatedList) {
-                // Verificar se já está em cache
                 if (analysisCache.has(consultant.id)) {
                     continue;
                 }
 
-                // Marcar como carregando
                 setLoadingConsultants(prev => new Set(prev).add(consultant.id));
 
                 try {
-                    // Buscar relatórios
                     const reports = await loadConsultantReports(consultant.id);
                     const manager = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
                     const client = clients.find(c => c.id === manager?.id_cliente);
-
-                    // ✅ CORRIGIDO: Carregar recomendações do Supabase (não chamar Gemini)
                     const analysis = loadRecommendationsFromSupabase(consultant, reports);
 
-                    // Armazenar em cache
                     setAnalysisCache(prev => {
                         const newCache = new Map(prev);
                         newCache.set(consultant.id, {
@@ -144,7 +183,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                         return newCache;
                     });
                 } catch (error) {
-                    console.error(`❌ Erro ao gerar análise para ${consultant.nome_consultores}:`, error);
+                    console.error(`Erro ao gerar análise para ${consultant.nome_consultores}:`, error);
                     setAnalysisCache(prev => {
                         const newCache = new Map(prev);
                         newCache.set(consultant.id, {
@@ -172,7 +211,6 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
         generateAnalyses();
     }, [paginatedList, loadConsultantReports, usuariosCliente, clients, analysisCache]);
 
-    // Handler para abrir modal de histórico
     const handleOpenHistory = async (consultant: Consultant) => {
         setSelectedConsultantForHistory(consultant);
         const reports = await loadConsultantReports(consultant.id);
@@ -180,18 +218,12 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
         setShowHistoryModal(true);
     };
 
-    // ============================================
-    // ✅ NOVO: HANDLER PARA ABRIR MODAL DE RECOMENDAÇÕES
-    // ============================================
     const handleOpenRecommendations = (consultant: Consultant, analysis: IntelligentAnalysis) => {
         setSelectedConsultantForRecommendations(consultant);
         setSelectedRecommendations(analysis);
         setShowRecommendationsModal(true);
     };
 
-    // ============================================
-    // ✅ NOVO: HANDLER PARA FECHAR MODAL DE RECOMENDAÇÕES
-    // ============================================
     const handleCloseRecommendations = () => {
         setShowRecommendationsModal(false);
         setSelectedConsultantForRecommendations(null);
@@ -201,26 +233,67 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     return (
         <>
             <div className="p-6 space-y-6">
-                {/* Header */}
-                <div className="flex justify-between items-center">
+                {/* ✅ NOVO: Header com Filtros (como Quarentena) */}
+                <div className="space-y-4">
                     <div>
                         <h2 className="text-3xl font-bold text-[#4D5253]">Recomendações</h2>
                         <p className="text-sm text-gray-600 mt-1">
                             {filteredList.length} consultor(es) com recomendações pendentes
                         </p>
                     </div>
-                    <select
-                        value={selectedClient}
-                        onChange={e => setSelectedClient(e.target.value)}
-                        className="p-2 border border-gray-300 rounded-lg hover:border-gray-400 transition"
-                    >
-                        <option value="all">Todos Clientes</option>
-                        {clients.map(c => (
-                            <option key={c.id} value={c.razao_social_cliente}>
-                                {c.razao_social_cliente}
-                            </option>
-                        ))}
-                    </select>
+
+                    {/* Filtros */}
+                    <div className="flex flex-wrap gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
+                        {/* Filtro por Cliente */}
+                        <div className="flex flex-col gap-2">
+                            <label className="text-sm font-semibold text-gray-700">Filtrar por Cliente:</label>
+                            <select
+                                value={selectedClient}
+                                onChange={e => setSelectedClient(e.target.value)}
+                                className="px-3 py-2 border border-gray-300 rounded-lg hover:border-gray-400 transition"
+                            >
+                                <option value="all">Todos os Clientes</option>
+                                {[...new Set(clients.map(c => c.razao_social_cliente))].sort().map(n => (
+                                    <option key={n} value={n}>{n}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Filtro por Score */}
+                        <div className="flex flex-col gap-2">
+                            <label className="text-sm font-semibold text-gray-700">Filtrar por Score:</label>
+                            <select
+                                value={selectedScore}
+                                onChange={e => setSelectedScore(e.target.value)}
+                                className="px-3 py-2 border border-gray-300 rounded-lg hover:border-gray-400 transition"
+                            >
+                                <option value="all">Todos os Scores</option>
+                                <option value="5">Score 5 - CRÍTICO</option>
+                                <option value="4">Score 4 - ALTO</option>
+                                <option value="3">Score 3 - MODERADO</option>
+                                <option value="new">Novo Consultor (&lt; 45 dias)</option>
+                            </select>
+                        </div>
+
+                        {/* Filtro por Gestão de Pessoas */}
+                        <div className="flex flex-col gap-2">
+                            <label className="text-sm font-semibold text-gray-700">Gestão de Pessoas:</label>
+                            <select
+                                value={selectedManager}
+                                onChange={e => setSelectedManager(e.target.value)}
+                                className="px-3 py-2 border border-gray-300 rounded-lg hover:border-gray-400 transition"
+                            >
+                                <option value="all">Todos</option>
+                                {users
+                                    .filter(u => u.tipo_usuario === 'Gestão de Pessoas' && u.ativo_usuario)
+                                    .sort((a, b) => a.nome_usuario.localeCompare(b.nome_usuario))
+                                    .map(u => (
+                                        <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
+                                    ))
+                                }
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Empty State */}
@@ -228,17 +301,16 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                     <div className="bg-green-50 border border-green-200 rounded-lg p-8 text-center">
                         <div className="text-6xl mb-4">🎉</div>
                         <h3 className="text-xl font-bold text-green-800 mb-2">Nenhuma Recomendação Necessária!</h3>
-                        <p className="text-green-600">Todos os consultores estão com desempenho satisfatório (score 1-2: Excelente/Bom).</p>
+                        <p className="text-green-600">Todos os consultores estão com desempenho satisfatório.</p>
                     </div>
                 )}
 
-                {/* Recomendações */}
+                {/* Recomendação Atual (1 a 1) */}
                 <div className="grid gap-6">
                     {paginatedList.map(consultant => {
                         const cachedAnalysis = analysisCache.get(consultant.id);
                         const isLoading = loadingConsultants.has(consultant.id);
 
-                        // Mostrar skeleton enquanto carrega
                         if (isLoading || !cachedAnalysis) {
                             return (
                                 <div
@@ -252,7 +324,6 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                             );
                         }
 
-                        // Mostrar erro se houver
                         if (cachedAnalysis.error) {
                             return (
                                 <div
@@ -265,7 +336,6 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                             );
                         }
 
-                        // Renderizar card com análise
                         return (
                             <RecommendationCard
                                 key={consultant.id}
@@ -275,16 +345,13 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                                 managerName={cachedAnalysis.manager?.nome_gestor_cliente}
                                 onNavigateToAtividades={onNavigateToAtividades}
                                 onOpenHistory={() => handleOpenHistory(consultant)}
-                                // ============================================
-                                // ✅ NOVO: PROP PARA ABRIR MODAL DE RECOMENDAÇÕES
-                                // ============================================
                                 onOpenRecommendations={() => handleOpenRecommendations(consultant, cachedAnalysis.analysis)}
                             />
                         );
                     })}
                 </div>
 
-                {/* ✅ NOVO: PAGINAÇÃO */}
+                {/* ✅ CORRIGIDO: Paginação 1 a 1 */}
                 {filteredList.length > ITEMS_PER_PAGE && (
                     <div className="flex items-center justify-center gap-4 mt-8 pt-6 border-t border-gray-200">
                         {/* Botão Início */}
@@ -296,7 +363,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                     : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
                             }`}
-                            title="Ir para primeira página"
+                            title="Ir para primeiro consultor"
                         >
                             <i className="fa-solid fa-step-backward mr-2"></i>
                             Início
@@ -311,19 +378,16 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                     : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
                             }`}
-                            title="Página anterior"
+                            title="Consultor anterior"
                         >
                             <i className="fa-solid fa-chevron-left mr-2"></i>
                             Voltar
                         </button>
 
                         {/* Indicador de Página */}
-                        <div className="px-6 py-2 bg-gray-100 rounded-lg text-center min-w-[120px]">
+                        <div className="px-6 py-2 bg-gray-100 rounded-lg text-center min-w-[150px]">
                             <p className="text-sm font-semibold text-gray-700">
-                                Página <span className="text-blue-600">{currentPage}</span> de <span className="text-blue-600">{totalPages}</span>
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                                {paginatedList.length} de {filteredList.length} consultores
+                                Consultor <span className="text-blue-600">{currentPage}</span> de <span className="text-blue-600">{totalPages}</span>
                             </p>
                         </div>
 
@@ -336,7 +400,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                     : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
                             }`}
-                            title="Próxima página"
+                            title="Próximo consultor"
                         >
                             Avançar
                             <i className="fa-solid fa-chevron-right ml-2"></i>
@@ -351,7 +415,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                     : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
                             }`}
-                            title="Ir para última página"
+                            title="Ir para último consultor"
                         >
                             Fim
                             <i className="fa-solid fa-step-forward ml-2"></i>
@@ -373,9 +437,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                 />
             )}
 
-            {/* ============================================ */}
-            {/* ✅ NOVO: MODAL DE RECOMENDAÇÕES */}
-            {/* ============================================ */}
+            {/* Modal de Recomendações */}
             {showRecommendationsModal && selectedConsultantForRecommendations && selectedRecommendations && (
                 <RecommendationsModal
                     consultant={selectedConsultantForRecommendations}
