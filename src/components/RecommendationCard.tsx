@@ -117,56 +117,25 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({
         </div>
       )}
 
-      {/* Recomendações em 3 Colunas */}
+      {/* Recomendações em Lista Vertical */}
       <div className="px-6 py-6">
         <h4 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-          <span>💡 Recomendações de Ação</span>
+          <span>💡 Recomendações</span>
           <span className="text-xs bg-gray-200 text-gray-700 px-2 py-1 rounded-full">
             {analysis.recomendacoes.length}
           </span>
         </h4>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {analysis.recomendacoes.map((rec, idx) => {
-            // Determinar cor baseado no tipo
-            const typeColors: Record<string, { bg: string; border: string; text: string }> = {
-              'AÇÃO IMEDIATA': { bg: 'bg-red-50', border: 'border-red-500', text: 'text-red-900' },
-              'PREVENTIVO': { bg: 'bg-yellow-50', border: 'border-yellow-500', text: 'text-yellow-900' },
-              'DESENVOLVIMENTO': { bg: 'bg-blue-50', border: 'border-blue-500', text: 'text-blue-900' },
-              'RECONHECIMENTO': { bg: 'bg-green-50', border: 'border-green-500', text: 'text-green-900' },
-              'SUPORTE': { bg: 'bg-purple-50', border: 'border-purple-500', text: 'text-purple-900' },
-              'OBSERVAÇÃO': { bg: 'bg-gray-50', border: 'border-gray-500', text: 'text-gray-900' }
-            };
-
-            const typeColor = typeColors[rec.tipo] || typeColors['OBSERVAÇÃO'];
-
-            return (
-              <div
-                key={idx}
-                className={`${typeColor.bg} border-l-4 ${typeColor.border} p-4 rounded-r-lg hover:shadow-md transition-shadow`}
-              >
-                <div className="flex justify-between items-start gap-2 mb-2">
-                  <span className={`font-bold text-xs uppercase ${typeColor.text}`}>
-                    {rec.tipo}
-                  </span>
-                  <span className="text-xs bg-white px-2 py-1 rounded border border-gray-200 text-gray-700 font-semibold whitespace-nowrap">
-                    ⏱️ {rec.prazo}
-                  </span>
-                </div>
-
-                <p className="text-sm text-gray-700 mb-3 leading-relaxed">
-                  {rec.descricao}
-                </p>
-
-                <div className="flex items-center gap-2 text-xs text-gray-600 bg-white px-2 py-1.5 rounded border border-gray-200">
-                  <span>👤</span>
-                  <span>
-                    <strong>Responsável:</strong> {rec.responsavel}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+        <div className="space-y-2">
+          {analysis.recomendacoes.map((rec, idx) => (
+            <div
+              key={idx}
+              className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg"
+            >
+              <span className="font-bold text-blue-900 text-xs uppercase">{rec.tipo}</span>
+              <p className="text-gray-700 text-sm mt-1">{rec.descricao}</p>
+            </div>
+          ))}
         </div>
       </div>
 
