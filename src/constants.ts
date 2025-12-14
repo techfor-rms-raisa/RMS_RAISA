@@ -36,9 +36,10 @@ export const RISK_LABELS: { [key in RiskScore]: string } = {
 };
 
 // --- APP IDENTITY & CONFIGURATION ---
-export const APP_TITLE = "ORBIT.ai";
-export const APP_SUBTITLE = "AI-Powered Talent Management";
-export const APP_VERSION = "V2.0";
+export const APP_TITLE = "RMS-RAISA.ai";
+export const APP_SUBTITLE = "AI-Powered Recruitment & Risk Management Platform";
+export const APP_VERSION = "V2.6";
+export const COMPANY_NAME = "TECH FOR TI";
 // Variable AI Model
 export const AI_MODEL_NAME = "gemini-2.5-flash"; 
 
