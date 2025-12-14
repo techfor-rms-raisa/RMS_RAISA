@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore } from '../components/types';
 import StatusCircle from './StatusCircle';
 import ReportDetailsModal from './ReportDetailsModal';
@@ -156,6 +156,35 @@ const Dashboard: React.FC<DashboardProps> = ({
       return { ...client, managers };
     }).sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente));
   }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedManager, selectedConsultant, selectedYear, selectedScore]);
+
+  // ============================================================================
+  // CÁLCULO DE ESTATÍSTICAS (NOVO)
+  // ============================================================================
+  const statistics = useMemo(() => {
+    const stats = { total: 0, excellent: 0, good: 0, medium: 0, high: 0, critical: 0 };
+    
+    // Contar todos os consultores que aparecem na estrutura de dados filtrada
+    const allConsultants = structuredData.flatMap(client => 
+      client.managers.flatMap(manager => manager.consultants)
+    );
+    
+    stats.total = allConsultants.length;
+
+    allConsultants.forEach(consultant => {
+      const score = getValidFinalScore(consultant);
+      if (score !== null) {
+        switch (score) {
+          case 1: stats.excellent++; break;
+          case 2: stats.good++; break;
+          case 3: stats.medium++; break;
+          case 4: stats.high++; break;
+          case 5: stats.critical++; break;
+        }
+      }
+    });
+
+    return stats;
+  }, [structuredData]);
 
   // ============================================================================
   // FUNÇÃO: Buscar TODOS os relatórios de um mês específico (CORRIGIDA)
@@ -332,6 +361,34 @@ const Dashboard: React.FC<DashboardProps> = ({
         </div>
       </div>
 
+      {/* PAINEL DE ESTATÍSTICAS (NOVO) */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
+        <div className="bg-gray-100 p-4 rounded-lg text-center shadow">
+          <p className="text-2xl font-bold text-gray-800">{statistics.total}</p>
+          <p className="text-sm text-gray-600">Consultores</p>
+        </div>
+        <div className="bg-green-100 p-4 rounded-lg text-center shadow">
+          <p className="text-2xl font-bold text-green-700">{statistics.excellent}</p>
+          <p className="text-sm text-green-700">Excelente</p>
+        </div>
+        <div className="bg-blue-100 p-4 rounded-lg text-center shadow">
+          <p className="text-2xl font-bold text-blue-700">{statistics.good}</p>
+          <p className="text-sm text-blue-700">Bom</p>
+        </div>
+        <div className="bg-yellow-100 p-4 rounded-lg text-center shadow">
+          <p className="text-2xl font-bold text-yellow-700">{statistics.medium}</p>
+          <p className="text-sm text-yellow-700">Médio</p>
+        </div>
+        <div className="bg-orange-100 p-4 rounded-lg text-center shadow">
+          <p className="text-2xl font-bold text-orange-700">{statistics.high}</p>
+          <p className="text-sm text-orange-700">Alto</p>
+        </div>
+        <div className="bg-red-100 p-4 rounded-lg text-center shadow">
+          <p className="text-2xl font-bold text-red-700">{statistics.critical}</p>
+          <p className="text-sm text-red-700">Crítico</p>
+        </div>
+      </div>
+
       {/* Dados */}
       <div className="space-y-8">
         {structuredData.map(client => (
@@ -437,3 +494,4 @@ const Dashboard: React.FC<DashboardProps> = ({
 };
 
 export default Dashboard;
+
