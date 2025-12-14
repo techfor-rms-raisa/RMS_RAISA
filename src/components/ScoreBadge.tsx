@@ -1,6 +1,7 @@
+'''
 import React from 'react';
 
-// Definindo os tipos diretamente no arquivo para simplicidade
+// Define o tipo diretamente para evitar dependência de importação complexa
 type RiskScore = 1 | 2 | 3 | 4 | 5;
 
 interface ScoreBadgeProps {
@@ -10,23 +11,23 @@ interface ScoreBadgeProps {
 const ScoreBadge: React.FC<ScoreBadgeProps> = ({ score }) => {
   const getScoreDetails = (s: RiskScore | null | undefined) => {
     if (s === null || s === undefined) {
-      return { color: 'bg-gray-400', label: 'N/A' };
+      return { color: 'bg-gray-300', label: 'N/A', textColor: 'text-gray-800' };
     }
     switch (s) {
-      case 1: return { color: 'bg-green-500', label: 'Excelente' };
-      case 2: return { color: 'bg-blue-500', label: 'Bom' };
-      case 3: return { color: 'bg-yellow-500', label: 'Médio' };
-      case 4: return { color: 'bg-orange-500', label: 'Alto' };
-      case 5: return { color: 'bg-red-500', label: 'Crítico' };
-      default: return { color: 'bg-gray-400', label: 'N/A' };
+      case 1: return { color: 'bg-green-500', label: 'Excelente', textColor: 'text-white' };
+      case 2: return { color: 'bg-blue-500', label: 'Bom', textColor: 'text-white' };
+      case 3: return { color: 'bg-yellow-500', label: 'Médio', textColor: 'text-white' };
+      case 4: return { color: 'bg-orange-500', label: 'Alto', textColor: 'text-white' };
+      case 5: return { color: 'bg-red-500', label: 'Crítico', textColor: 'text-white' };
+      default: return { color: 'bg-gray-300', label: 'N/A', textColor: 'text-gray-800' };
     }
   };
 
-  const { color, label } = getScoreDetails(score);
+  const { color, label, textColor } = getScoreDetails(score);
 
   return (
-    <div className={`relative group flex items-center justify-center w-6 h-6 rounded-full ${color} text-white font-bold text-xs shadow-md`}>
-      {score}
+    <div className={`relative group flex items-center justify-center w-5 h-5 rounded-full ${color} ${textColor} font-bold text-xs shadow-sm`}>
+      {score ?? '-'}
       <div className="absolute bottom-full mb-2 hidden group-hover:block w-max bg-gray-800 text-white text-xs rounded py-1 px-2 z-10">
         Score: {label}
       </div>
@@ -35,4 +36,4 @@ const ScoreBadge: React.FC<ScoreBadgeProps> = ({ score }) => {
 };
 
 export default ScoreBadge;
-export default ScoreBadge;
+'''
