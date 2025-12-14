@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import LoginScreen from './components/LoginScreen';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
@@ -79,6 +79,9 @@ const App: React.FC = () => {
     addCandidatura, updateCandidaturaStatus,
     reload: loadAllData  // ✅ Função para carregar dados
   } = useSupabaseData();
+
+  // ✅ Memoizar loadConsultantReports para evitar loops infinitos
+  const memoizedLoadConsultantReports = useCallback(loadConsultantReports, [loadConsultantReports]);
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);

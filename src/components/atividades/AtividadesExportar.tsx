@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Consultant, UsuarioCliente, ConsultantReport } from '../../src/components/types';
 
 interface AtividadesExportarProps {
@@ -20,18 +20,19 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
     const [includeDetails, setIncludeDetails] = useState(true);
     const [loadingReports, setLoadingReports] = useState(false);
     const [consultantsWithReports, setConsultantsWithReports] = useState<Consultant[]>([]);
-    const hasLoadedReports = useRef(false);
 
     const months = [
         'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
         'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
     ];
 
-    // ✅ Carregar relatórios APENAS UMA VEZ quando o componente monta
+    // ✅ Carregar relatórios apenas quando loadConsultantReports muda (memoizado)
     useEffect(() => {
-        if (hasLoadedReports.current || !loadConsultantReports || consultants.length === 0) return;
+        if (!loadConsultantReports || consultants.length === 0) {
+            setConsultantsWithReports(consultants);
+            return;
+        }
         
-        hasLoadedReports.current = true;
         const loadAllReports = async () => {
             setLoadingReports(true);
             try {
@@ -59,7 +60,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
         };
 
         loadAllReports();
-    }, []); // ✅ Dependency array vazio para executar apenas uma vez
+    }, [loadConsultantReports, consultants]);
 
     const getRiskLabel = (score: number | null | undefined) => {
         if (!score) return 'N/A';

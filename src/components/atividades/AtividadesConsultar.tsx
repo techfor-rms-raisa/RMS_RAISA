@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Consultant, UsuarioCliente, ConsultantReport } from '../../src/components/types';
 
 interface AtividadesConsultarProps {
@@ -21,7 +21,6 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
     const [loadingReports, setLoadingReports] = useState(false);
     const [consultantsWithReports, setConsultantsWithReports] = useState<Consultant[]>([]);
-    const hasLoadedReports = useRef(false);
 
     const months = [
         { value: 1, label: 'Janeiro' },
@@ -38,11 +37,13 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         { value: 12, label: 'Dezembro' }
     ];
 
-    // ✅ Carregar relatórios APENAS UMA VEZ quando o componente monta
+    // ✅ Carregar relatórios apenas quando loadConsultantReports muda (memoizado)
     useEffect(() => {
-        if (hasLoadedReports.current || !loadConsultantReports || consultants.length === 0) return;
+        if (!loadConsultantReports || consultants.length === 0) {
+            setConsultantsWithReports(consultants);
+            return;
+        }
         
-        hasLoadedReports.current = true;
         const loadAllReports = async () => {
             setLoadingReports(true);
             try {
@@ -70,7 +71,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         };
 
         loadAllReports();
-    }, []); // ✅ Dependency array vazio para executar apenas uma vez
+    }, [loadConsultantReports, consultants]);
 
     // ✅ Filtrar consultores e relatórios usando dados carregados
     const filteredData = useMemo(() => {
