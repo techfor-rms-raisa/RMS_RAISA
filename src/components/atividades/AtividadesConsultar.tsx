@@ -292,3 +292,4 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
 };
 
 export default AtividadesConsultar;
+
