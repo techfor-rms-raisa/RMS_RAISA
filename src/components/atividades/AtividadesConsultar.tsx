@@ -1,4 +1,3 @@
-'''
 import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Consultant, UsuarioCliente, ConsultantReport } from '../../src/components/types';
 
@@ -24,29 +23,43 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     const [consultantsWithReports, setConsultantsWithReports] = useState<Consultant[]>([]);
 
     const months = [
-        { value: 1, label: 'Janeiro' }, { value: 2, label: 'Fevereiro' }, { value: 3, label: 'Março' },
-        { value: 4, label: 'Abril' }, { value: 5, label: 'Maio' }, { value: 6, label: 'Junho' },
-        { value: 7, label: 'Julho' }, { value: 8, label: 'Agosto' }, { value: 9, label: 'Setembro' },
-        { value: 10, label: 'Outubro' }, { value: 11, label: 'Novembro' }, { value: 12, label: 'Dezembro' }
+        { value: 1, label: 'Janeiro' },
+        { value: 2, label: 'Fevereiro' },
+        { value: 3, label: 'Março' },
+        { value: 4, label: 'Abril' },
+        { value: 5, label: 'Maio' },
+        { value: 6, label: 'Junho' },
+        { value: 7, label: 'Julho' },
+        { value: 8, label: 'Agosto' },
+        { value: 9, label: 'Setembro' },
+        { value: 10, label: 'Outubro' },
+        { value: 11, label: 'Novembro' },
+        { value: 12, label: 'Dezembro' }
     ];
 
+    // ✅ Carregar relatórios de todos os consultores quando o componente monta
     useEffect(() => {
         const loadAllReports = async () => {
             if (!loadConsultantReports || consultants.length === 0) return;
             
             setLoadingReports(true);
             try {
+                console.log('📊 Carregando relatórios de todos os consultores...');
+                
                 const updatedConsultants = await Promise.all(
                     consultants.map(async (consultant) => {
                         try {
                             const reports = await loadConsultantReports(consultant.id);
                             return { ...consultant, consultant_reports: reports };
                         } catch (error) {
-                            return consultant; // Retorna o consultor original em caso de erro
+                            console.warn(`⚠️ Erro ao carregar relatórios do consultor ${consultant.id}:`, error);
+                            return consultant;
                         }
                     })
                 );
+                
                 setConsultantsWithReports(updatedConsultants);
+                console.log('✅ Relatórios carregados com sucesso!');
             } catch (error) {
                 console.error('❌ Erro ao carregar relatórios:', error);
             } finally {
@@ -57,9 +70,11 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         loadAllReports();
     }, [loadConsultantReports, consultants]);
 
+    // ✅ Filtrar consultores e relatórios usando dados carregados
     const filteredData = useMemo(() => {
         let filtered = consultantsWithReports;
 
+        // Filtrar por cliente
         if (selectedClient !== 'all') {
             const client = clients.find(c => c.razao_social_cliente === selectedClient);
             if (client) {
@@ -69,18 +84,21 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
             }
         }
 
+        // Filtrar por consultor
         if (selectedConsultant !== 'all') {
             filtered = filtered.filter(c => c.nome_consultores === selectedConsultant);
         }
 
-        // Filtra para garantir que o consultor tenha relatórios no ano selecionado
-        return filtered.filter(c => 
-            c.consultant_reports && c.consultant_reports.some(r => r.year === selectedYear)
-        );
+        // Filtrar por ano
+        filtered = filtered.filter(c => {
+            if (!c.consultant_reports) return false;
+            return c.consultant_reports.some(r => r.year === selectedYear);
+        });
 
+        return filtered;
     }, [consultantsWithReports, selectedClient, selectedConsultant, selectedYear, clients, usuariosCliente]);
 
-    // ✅ NOVO: Lógica para calcular estatísticas com base nos relatórios carregados
+    // ✅ Calcular estatísticas com base nos relatórios carregados
     const statistics = useMemo(() => {
         const stats = { total: 0, excellent: 0, good: 0, medium: 0, high: 0, critical: 0 };
         stats.total = filteredData.length;
@@ -89,7 +107,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
             // Encontra o relatório mais recente do ano selecionado
             const latestReport = consultant.consultant_reports
                 ?.filter(r => r.year === selectedYear)
-                .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0];
+                .sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())[0];
 
             if (latestReport) {
                 switch (latestReport.riskScore) {
@@ -132,7 +150,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     const getReportForMonth = (consultant: Consultant, month: number) => {
         if (!consultant.consultant_reports) return null;
         const reports = consultant.consultant_reports.filter(r => r.month === month && r.year === selectedYear);
-        return reports.length > 0 ? reports.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())[0] : null;
+        return reports.length > 0 ? reports.sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())[0] : null;
     };
 
     return (
@@ -147,10 +165,75 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
 
             {/* Filtros */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
-                {/* ... Filtros de Ano, Cliente, Consultor, Mês ... */}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Ano</label>
+                    <select
+                        value={selectedYear}
+                        onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                        className="w-full border border-gray-300 rounded-lg p-2"
+                    >
+                        {[2024, 2025, 2026].map(y => (
+                            <option key={y} value={y}>{y}</option>
+                        ))}
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Cliente</label>
+                    <select
+                        value={selectedClient}
+                        onChange={(e) => {
+                            setSelectedClient(e.target.value);
+                            setSelectedConsultant('all');
+                        }}
+                        className="w-full border border-gray-300 rounded-lg p-2"
+                    >
+                        <option value="all">Todos os Clientes</option>
+                        {clients
+                            .filter(c => c.ativo_cliente)
+                            .sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente))
+                            .map(c => (
+                                <option key={c.id} value={c.razao_social_cliente}>
+                                    {c.razao_social_cliente}
+                                </option>
+                            ))}
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Consultor</label>
+                    <select
+                        value={selectedConsultant}
+                        onChange={(e) => setSelectedConsultant(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg p-2"
+                    >
+                        <option value="all">Todos os Consultores</option>
+                        {filteredData
+                            .map(c => c.nome_consultores)
+                            .filter((v, i, a) => a.indexOf(v) === i)
+                            .sort()
+                            .map(name => (
+                                <option key={name} value={name}>{name}</option>
+                            ))}
+                    </select>
+                </div>
+
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Mês</label>
+                    <select
+                        value={selectedMonth}
+                        onChange={(e) => setSelectedMonth(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg p-2"
+                    >
+                        <option value="all">Todos os Meses</option>
+                        {months.map(m => (
+                            <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                    </select>
+                </div>
             </div>
 
-            {/* ✅ PAINEL DE ESTATÍSTICAS RESTAURADO */}
+            {/* ✅ PAINEL DE ESTATÍSTICAS */}
             <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-6">
                 <div className="bg-gray-100 p-4 rounded-lg text-center">
                     <p className="text-2xl font-bold text-gray-800">{statistics.total}</p>
@@ -181,7 +264,46 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
             {/* Tabela de Relatórios */}
             {!loadingReports && filteredData.length > 0 ? (
                 <div className="overflow-x-auto">
-                    {/* ... Tabela de Relatórios ... */}
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Consultor</th>
+                                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Cliente</th>
+                                {months.map(m => (
+                                    <th key={m.value} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">{m.label.substring(0, 3)}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {filteredData.map(consultant => {
+                                const client = clients.find(cli => usuariosCliente.some(u => u.id_cliente === cli.id && u.id === consultant.gestor_imediato_id));
+                                return (
+                                    <tr key={consultant.id}>
+                                        <td className="px-4 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{consultant.nome_consultores}</td>
+                                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">{client?.razao_social_cliente || 'N/A'}</td>
+                                        {months.map(m => {
+                                            const report = getReportForMonth(consultant, m.value);
+                                            return (
+                                                <td key={m.value} className="px-4 py-4 text-center">
+                                                    {report ? (
+                                                        <button 
+                                                            onClick={() => setViewingReport(report)}
+                                                            className={`w-8 h-8 rounded-full text-xs font-bold ${getRiskColor(report.riskScore)}`}
+                                                            title={`Risco: ${getRiskLabel(report.riskScore)} - Clique para ver detalhes`}
+                                                        >
+                                                            {report.riskScore}
+                                                        </button>
+                                                    ) : (
+                                                        <div className="w-8 h-8 rounded-full bg-gray-100"></div>
+                                                    )}
+                                                </td>
+                                            );
+                                        })}
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
                 </div>
             ) : (
                 !loadingReports && (
@@ -195,7 +317,23 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
             {/* Modal de Visualização de Relatório */}
             {viewingReport && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    {/* ... Modal ... */}
+                    <div className="bg-white p-6 rounded-lg shadow-xl max-w-2xl w-full mx-4">
+                        <h3 className="text-xl font-bold mb-4">Detalhes do Relatório</h3>
+                        <p><strong>Consultor:</strong> {filteredData.find(c => c.consultant_reports?.some(r => r.id === viewingReport.id))?.nome_consultores}</p>
+                        <p><strong>Mês/Ano:</strong> {viewingReport.month}/{viewingReport.year}</p>
+                        <p><strong>Score de Risco:</strong> <span className={`font-bold ${getRiskColor(viewingReport.riskScore)}`}>{getRiskLabel(viewingReport.riskScore)} ({viewingReport.riskScore})</span></p>
+                        <div className="mt-4">
+                            <h4 className="font-bold">Resumo da IA:</h4>
+                            <p className="text-sm bg-gray-100 p-2 rounded">{viewingReport.summary}</p>
+                        </div>
+                        <div className="mt-2">
+                            <h4 className="font-bold">Conteúdo Original:</h4>
+                            <p className="text-xs bg-gray-100 p-2 rounded max-h-40 overflow-y-auto">{viewingReport.content}</p>
+                        </div>
+                        <button onClick={() => setViewingReport(null)} className="mt-6 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                            Fechar
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
@@ -203,4 +341,3 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
 };
 
 export default AtividadesConsultar;
-'''
