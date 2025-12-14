@@ -180,9 +180,9 @@ const App: React.FC = () => {
             preSelectedConsultant={contextualConsultant}
           />;
       case 'atividades_consultar':
-          return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} />;
+          return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={loadConsultantReports} />;
       case 'atividades_exportar':
-          return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} />;
+          return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={loadConsultantReports} />;
       
       // RAISA Views
       case 'vagas':
