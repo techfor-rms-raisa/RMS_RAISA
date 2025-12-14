@@ -34,14 +34,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
         { view: 'users', label: 'Usuários', icon: 'fa-solid fa-user-gear', roles: ['Administrador'] },
         { view: 'export', label: 'Exportação', icon: 'fa-solid fa-file-export', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
         { view: 'import', label: 'Importação', icon: 'fa-solid fa-file-import', roles: ['Administrador'] },
+        { view: 'atividades', label: 'Atividades', icon: 'fa-solid fa-tasks', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
     ] as any;
 
-    // Atividades Items (submenu)
-    const atividadesItems = [
-        { view: 'atividades_inserir', label: 'Inserir', icon: 'fa-solid fa-pen-to-square', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
-        { view: 'atividades_consultar', label: 'Consultar', icon: 'fa-solid fa-magnifying-glass', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
-        { view: 'atividades_exportar', label: 'Exportar', icon: 'fa-solid fa-download', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
-    ] as any;
+
 
     // RAISA Icons mapped to FontAwesome classes
     const raisaItems = [
@@ -95,19 +91,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
                 {/* Visual Separator */}
                 <div className="my-2 border-t border-gray-700 mx-4 opacity-50"></div>
 
-                <SidebarSection 
-                    title="Atividades"
-                    items={atividadesItems}
-                    currentUserRole={currentUser.tipo_usuario}
-                    currentView={currentView}
-                    isCollapsed={isCollapsed}
-                    onNavigate={onNavigate}
-                    isSubmenu={true}
-                    showIcon={true}
-                />
-                
-                {/* Visual Separator */}
-                <div className="my-2 border-t border-gray-700 mx-4 opacity-50"></div>
+
 
                 <SidebarSection 
                     title="RAISA"
