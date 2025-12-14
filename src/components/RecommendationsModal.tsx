@@ -1,30 +1,24 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { ConsultantReport } from '../components/types';
 import './RecommendationsModal.css';
 
-interface Recommendation {
-  category: 'Recomendação de ação' | 'Atenção' | 'Feedback' | 'Treinamento' | 'Acompanhamento';
-  description: string;
-}
-
 interface RecommendationsModalProps {
-  isOpen: boolean;
+  consultant: any;
+  analysis: any;
   onClose: () => void;
-  consultantName: string;
-  score: number | null;
-  recommendations: Recommendation[];
+  onOpenHistory?: () => void;
 }
 
 const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
-  isOpen,
+  consultant,
+  analysis,
   onClose,
-  consultantName,
-  score,
-  recommendations = []
+  onOpenHistory
 }) => {
+  const [historicalRecommendations, setHistoricalRecommendations] = useState<any[]>([]);
+
   // ✅ NOVO: useEffect para fechar modal ao pressionar ESC
   useEffect(() => {
-    if (!isOpen) return;
-
     const handleEscapeKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         onClose();
@@ -33,25 +27,39 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
 
     document.addEventListener('keydown', handleEscapeKey);
     return () => document.removeEventListener('keydown', handleEscapeKey);
-  }, [isOpen, onClose]);
+  }, [onClose]);
 
   // ✅ NOVO: Prevenir scroll do body quando modal está aberto
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-
+    document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = 'unset';
     };
-  }, [isOpen]);
+  }, []);
 
-  if (!isOpen) return null;
+  // ✅ NOVO: Extrair recomendações mais recentes
+  useEffect(() => {
+    if (analysis?.recomendacoes && Array.isArray(analysis.recomendacoes)) {
+      // Pegar apenas as 3 recomendações mais recentes
+      const recent = analysis.recomendacoes.slice(0, 3);
+      setHistoricalRecommendations(recent);
+    }
+  }, [analysis]);
 
-  const getScoreColor = (s: number | null): string => {
-    if (s === null || s === undefined) return '#757575';
+  const getTypeColor = (tipo: string): { bg: string; border: string; text: string } => {
+    const colors: Record<string, { bg: string; border: string; text: string }> = {
+      'AÇÃO IMEDIATA': { bg: 'bg-red-50', border: 'border-red-500', text: 'text-red-900' },
+      'PREVENTIVO': { bg: 'bg-yellow-50', border: 'border-yellow-500', text: 'text-yellow-900' },
+      'DESENVOLVIMENTO': { bg: 'bg-blue-50', border: 'border-blue-500', text: 'text-blue-900' },
+      'RECONHECIMENTO': { bg: 'bg-green-50', border: 'border-green-500', text: 'text-green-900' },
+      'SUPORTE': { bg: 'bg-purple-50', border: 'border-purple-500', text: 'text-purple-900' },
+      'OBSERVAÇÃO': { bg: 'bg-gray-50', border: 'border-gray-500', text: 'text-gray-900' }
+    };
+    return colors[tipo] || colors['OBSERVAÇÃO'];
+  };
+
+  const getScoreColor = (score: number | null): string => {
+    if (score === null || score === undefined) return '#757575';
     const colors: { [key: number]: string } = {
       5: '#d32f2f',
       4: '#f57c00',
@@ -59,11 +67,11 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
       2: '#388e3c',
       1: '#1976d2'
     };
-    return colors[s] || '#757575';
+    return colors[score] || '#757575';
   };
 
-  const getScoreLabel = (s: number | null): string => {
-    if (s === null || s === undefined) return '';
+  const getScoreLabel = (score: number | null): string => {
+    if (score === null || score === undefined) return '';
     const labels: { [key: number]: string } = {
       5: 'CRÍTICO',
       4: 'ALTO',
@@ -71,18 +79,7 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
       2: 'BAIXO',
       1: 'MÍNIMO'
     };
-    return labels[s] || 'DESCONHECIDO';
-  };
-
-  const getCategoryColor = (category: string): string => {
-    const colors: { [key: string]: string } = {
-      'Recomendação de ação': '#3b82f6',
-      'Atenção': '#f97316',
-      'Feedback': '#8b5cf6',
-      'Treinamento': '#06b6d4',
-      'Acompanhamento': '#10b981'
-    };
-    return colors[category] || '#6b7280';
+    return labels[score] || 'DESCONHECIDO';
   };
 
   return (
@@ -91,39 +88,54 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
         {/* Header */}
         <div className="recommendations-modal-header">
           <div className="recommendations-modal-title-section">
-            <h2 className="recommendations-modal-title">⚡ Recomendações de Ação</h2>
-            <p className="recommendations-modal-consultant">{consultantName}</p>
+            <h2 className="recommendations-modal-title">📋 Recomendações</h2>
+            <p className="recommendations-modal-consultant">{consultant?.nome_consultores}</p>
           </div>
           <div className="recommendations-modal-score">
             <div 
               className="recommendations-modal-score-circle"
-              style={{ backgroundColor: getScoreColor(score) }}
+              style={{ backgroundColor: getScoreColor(consultant?.parecer_final_consultor) }}
             >
-              <span className="recommendations-modal-score-number">{score}</span>
-              <span className="recommendations-modal-score-label">{getScoreLabel(score).substring(0, 3)}</span>
+              <span className="recommendations-modal-score-number">{consultant?.parecer_final_consultor}</span>
+              <span className="recommendations-modal-score-label">{getScoreLabel(consultant?.parecer_final_consultor).substring(0, 3)}</span>
             </div>
           </div>
           <button className="recommendations-modal-close" onClick={onClose}>✕</button>
         </div>
 
-        {/* Body */}
+        {/* Body - Histórico Recente */}
         <div className="recommendations-modal-body">
-          {recommendations.length > 0 ? (
-            <div className="recommendations-grid">
-              {recommendations.map((rec, idx) => (
-                <div 
-                  key={idx} 
-                  className="recommendation-card"
-                  style={{ borderLeftColor: getCategoryColor(rec.category) }}
-                >
-                  <div className="recommendation-category" style={{ color: getCategoryColor(rec.category) }}>
-                    {rec.category.toUpperCase()}
+          {historicalRecommendations.length > 0 ? (
+            <div className="space-y-4">
+              {historicalRecommendations.map((rec, idx) => {
+                const typeColor = getTypeColor(rec.tipo);
+                return (
+                  <div
+                    key={idx}
+                    className={`${typeColor.bg} border-l-4 ${typeColor.border} p-4 rounded-r-lg hover:shadow-md transition-shadow`}
+                  >
+                    <div className="flex justify-between items-start gap-2 mb-2">
+                      <span className={`font-bold text-sm uppercase ${typeColor.text}`}>
+                        {rec.tipo}
+                      </span>
+                      <span className="text-xs bg-white px-2 py-1 rounded border border-gray-200 text-gray-700 font-semibold whitespace-nowrap">
+                        ⏱️ {rec.prazo}
+                      </span>
+                    </div>
+
+                    <p className="text-sm text-gray-700 mb-3 leading-relaxed">
+                      {rec.descricao}
+                    </p>
+
+                    <div className="flex items-center gap-2 text-xs text-gray-600 bg-white px-2 py-1.5 rounded border border-gray-200">
+                      <span>👤</span>
+                      <span>
+                        <strong>Responsável:</strong> {rec.responsavel}
+                      </span>
+                    </div>
                   </div>
-                  <div className="recommendation-description">
-                    {rec.description}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="recommendations-empty">
@@ -134,7 +146,17 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
 
         {/* Footer */}
         <div className="recommendations-modal-footer">
-          <button className="recommendations-modal-button" onClick={onClose}>
+          <button 
+            onClick={onOpenHistory}
+            className="recommendations-modal-button-secondary"
+            title="Ver histórico completo de até 90 dias"
+          >
+            📊 Ver Histórico Completo
+          </button>
+          <button 
+            className="recommendations-modal-button" 
+            onClick={onClose}
+          >
             Fechar
           </button>
         </div>
