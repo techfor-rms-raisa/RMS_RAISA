@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason, RiskScore } from '../components/types';
 import { Mail, Phone, Search } from 'lucide-react';
 import InclusionImport from './InclusionImport';
-import ScoreBadge from './ScoreBadge'; // Importar o novo componente
+import ScoreBadge from './ScoreBadge'; // Caminho corrigido
 
 // ... (interface e constantes)
 
