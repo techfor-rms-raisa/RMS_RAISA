@@ -25,42 +25,6 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
     return analysis.recomendacoes.slice(0, 10); // Limitar a 10 mais recentes
   }, [analysis]);
 
-  const getTypeColor = (tipo: string): { bg: string; border: string; text: string } => {
-    const colors: Record<string, { bg: string; border: string; text: string }> = {
-      'AÇÃO IMEDIATA': { bg: 'bg-red-50', border: 'border-red-500', text: 'text-red-900' },
-      'PREVENTIVO': { bg: 'bg-yellow-50', border: 'border-yellow-500', text: 'text-yellow-900' },
-      'DESENVOLVIMENTO': { bg: 'bg-blue-50', border: 'border-blue-500', text: 'text-blue-900' },
-      'RECONHECIMENTO': { bg: 'bg-green-50', border: 'border-green-500', text: 'text-green-900' },
-      'SUPORTE': { bg: 'bg-purple-50', border: 'border-purple-500', text: 'text-purple-900' },
-      'OBSERVAÇÃO': { bg: 'bg-gray-50', border: 'border-gray-500', text: 'text-gray-900' }
-    };
-    return colors[tipo] || colors['OBSERVAÇÃO'];
-  };
-
-  const getScoreColor = (score: number | null): string => {
-    if (score === null || score === undefined) return '#757575';
-    const colors: { [key: number]: string } = {
-      5: '#d32f2f',
-      4: '#f57c00',
-      3: '#fbc02d',
-      2: '#388e3c',
-      1: '#1976d2'
-    };
-    return colors[score] || '#757575';
-  };
-
-  const getScoreLabel = (score: number | null): string => {
-    if (score === null || score === undefined) return '';
-    const labels: { [key: number]: string } = {
-      5: 'CRÍTICO',
-      4: 'ALTO',
-      3: 'MODERADO',
-      2: 'BAIXO',
-      1: 'MÍNIMO'
-    };
-    return labels[score] || 'DESCONHECIDO';
-  };
-
   // Fechar modal ao pressionar ESC
   React.useEffect(() => {
     const handleEscapeKey = (event: KeyboardEvent) => {
@@ -92,7 +56,7 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
       >
         
         {/* Header - Compacto e Profissional */}
-        <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-6 py-4">
+        <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="bg-white/20 p-2 rounded-lg">
@@ -115,21 +79,21 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
 
         {/* Summary Card - Mais Compacto */}
         <div className="px-6 pt-4 pb-2">
-          <div className="bg-gradient-to-br from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl p-4">
+          <div className="bg-gradient-to-br from-purple-50 to-indigo-50 border border-purple-200 rounded-xl p-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <div className="bg-indigo-100 p-3 rounded-lg">
-                  <Lightbulb className="w-6 h-6 text-indigo-600" />
+                <div className="bg-purple-100 p-3 rounded-lg">
+                  <Lightbulb className="w-6 h-6 text-purple-600" />
                 </div>
                 <div>
-                  <p className="text-3xl font-bold text-indigo-900">{recommendationsLast90Days.length}</p>
-                  <p className="text-sm text-indigo-700">
+                  <p className="text-3xl font-bold text-purple-900">{recommendationsLast90Days.length}</p>
+                  <p className="text-sm text-purple-700">
                     {recommendationsLast90Days.length === 1 ? 'recomendação encontrada' : 'recomendações encontradas'}
                   </p>
                 </div>
               </div>
               <div className="text-right">
-                <div className="flex items-center gap-2 text-indigo-600">
+                <div className="flex items-center gap-2 text-purple-600">
                   <TrendingUp className="w-4 h-4" />
                   <span className="text-sm font-semibold">Últimos 90 dias</span>
                 </div>
@@ -155,41 +119,20 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
             <div className="space-y-3">
               {/* Seção RECOMENDAÇÕES */}
               <div>
-                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3 flex items-center gap-2">
-                  <div className="w-1 h-4 bg-indigo-600 rounded"></div>
+                <h3 className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-3">
                   Recomendações
                 </h3>
                 
-                <div className="space-y-3">
-                  {recommendationsLast90Days.map((rec, idx) => {
-                    const typeColor = getTypeColor(rec.tipo);
-                    return (
-                      <div
-                        key={idx}
-                        className={`${typeColor.bg} border-l-4 ${typeColor.border} p-4 rounded-r-lg hover:shadow-md transition-shadow`}
-                      >
-                        <div className="flex justify-between items-start gap-3 mb-2">
-                          <span className={`font-bold text-xs uppercase ${typeColor.text} whitespace-nowrap`}>
-                            {rec.tipo}
-                          </span>
-                          <span className="text-xs bg-white px-2 py-1 rounded border border-gray-200 text-gray-700 font-semibold whitespace-nowrap">
-                            ⏱️ {rec.prazo}
-                          </span>
-                        </div>
-
-                        <p className="text-sm text-gray-700 mb-3 leading-relaxed">
-                          {rec.descricao}
-                        </p>
-
-                        <div className="flex items-center gap-2 text-xs text-gray-600 bg-white px-2 py-1.5 rounded border border-gray-200">
-                          <span>👤</span>
-                          <span>
-                            <strong>Responsável:</strong> {rec.responsavel}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="space-y-2">
+                  {recommendationsLast90Days.map((rec, idx) => (
+                    <div
+                      key={idx}
+                      className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg"
+                    >
+                      <span className="font-bold text-blue-900 text-xs uppercase">{rec.tipo}</span>
+                      <p className="text-gray-700 text-sm mt-1">{rec.descricao}</p>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -201,7 +144,7 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
           <div className="flex justify-end">
             <button
               onClick={onClose}
-              className="px-6 py-2.5 bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-lg hover:from-indigo-700 hover:to-blue-700 transition font-semibold shadow-md"
+              className="px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg hover:from-purple-700 hover:to-indigo-700 transition font-semibold shadow-md"
             >
               Fechar
             </button>
