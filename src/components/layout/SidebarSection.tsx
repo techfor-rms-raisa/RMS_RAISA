@@ -11,35 +11,55 @@ interface ItemConfig {
 
 interface SidebarSectionProps {
     title?: string;
+    subtitle?: string; // ✅ NOVO: Descrição do acrônimo
     items: ItemConfig[];
     currentUserRole: UserRole;
     currentView: View;
     isCollapsed: boolean;
     onNavigate: (view: View) => void;
+    isSubmenu?: boolean; // ✅ NOVO: Ativa comportamento hover/dropdown
 }
 
-const SidebarSection: React.FC<SidebarSectionProps> = ({ title, items, currentUserRole, currentView, isCollapsed, onNavigate }) => {
+const SidebarSection: React.FC<SidebarSectionProps> = ({ title, subtitle, items, currentUserRole, currentView, isCollapsed, onNavigate, isSubmenu = false }) => {
+    const [isHovered, setIsHovered] = React.useState(false);
     const visibleItems = items.filter(item => item.roles.includes(currentUserRole));
 
     if (visibleItems.length === 0) return null;
 
     return (
-        <div className="mb-4">
+        <div 
+            className="mb-4"
+            onMouseEnter={() => isSubmenu && setIsHovered(true)}
+            onMouseLeave={() => isSubmenu && setIsHovered(false)}
+        >
             {!isCollapsed && title && (
-                <h3 className="px-4 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                    {title}
-                </h3>
+                <div className="px-4 mb-2">
+                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                        {title}
+                    </h3>
+                    {subtitle && (
+                        <p className="text-[10px] text-gray-600 mt-0.5 leading-tight">
+                            {subtitle}
+                        </p>
+                    )}
+                </div>
             )}
             {visibleItems.map(item => (
-                <SidebarItem
+                <div 
                     key={item.view}
-                    view={item.view}
-                    label={item.label}
-                    icon={item.icon}
-                    isActive={currentView === item.view}
-                    isCollapsed={isCollapsed}
-                    onClick={onNavigate}
-                />
+                    className={`${
+                        isSubmenu && !isHovered ? 'hidden' : ''
+                    }`}
+                >
+                    <SidebarItem
+                        view={item.view}
+                        label={item.label}
+                        icon={item.icon}
+                        isActive={currentView === item.view}
+                        isCollapsed={isCollapsed}
+                        onClick={onNavigate}
+                    />
+                </div>
             ))}
         </div>
     );

@@ -84,6 +84,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
             <div className="flex-1 overflow-y-auto overflow-x-hidden py-4 custom-scrollbar">
                 <SidebarSection 
                     title="RMS"
+                    subtitle="Risk Management Systems" // ✅ NOVO: Descrição
                     items={rmsItems}
                     currentUserRole={currentUser.tipo_usuario}
                     currentView={currentView}
@@ -101,6 +102,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
                     currentView={currentView}
                     isCollapsed={isCollapsed}
                     onNavigate={onNavigate}
+                    isSubmenu={true} // ✅ NOVO: Ativa comportamento hover/dropdown
                 />
                 
                 {/* Visual Separator */}
@@ -108,6 +110,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
 
                 <SidebarSection 
                     title="RAISA"
+                    subtitle="Recruitment And Intelligent Staff Allocation" // ✅ NOVO: Descrição
                     items={raisaItems}
                     currentUserRole={currentUser.tipo_usuario}
                     currentView={currentView}

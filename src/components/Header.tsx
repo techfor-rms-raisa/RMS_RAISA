@@ -1,5 +1,5 @@
 import React from 'react';
-import { APP_TITLE, APP_SUBTITLE, APP_VERSION, AI_MODEL_NAME } from '../constants';
+import { APP_TITLE, APP_SUBTITLE, APP_VERSION, AI_MODEL_NAME, COMPANY_NAME } from '../constants';
 import { User } from '../components/types';
 
 interface HeaderProps {
@@ -19,7 +19,7 @@ const Header: React.FC<HeaderProps> = ({ currentUser, onLogout }) => {
               <div className="flex items-center">
                   <h1 className="text-xl md:text-2xl font-bold tracking-wider leading-none flex items-center">
                     <span className="mr-2 text-orange-400">⭕</span>
-                    {APP_TITLE}
+                    {COMPANY_NAME}
                   </h1>
               </div>
               <span className="text-[10px] md:text-xs font-normal text-gray-300 tracking-wide mt-1">
