@@ -92,17 +92,16 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
                     onNavigate={onNavigate}
                 />
                 
-                {/* Visual Separator */}
-                <div className="my-2 border-t border-gray-700 mx-4 opacity-50"></div>
-
                 <SidebarSection 
                     title="ATIVIDADES"
+                    subtitle="Atividades do Sistema" // ✅ NOVO: Descrição
                     items={atividadesItems}
                     currentUserRole={currentUser.tipo_usuario}
                     currentView={currentView}
                     isCollapsed={isCollapsed}
                     onNavigate={onNavigate}
                     isSubmenu={true} // ✅ NOVO: Ativa comportamento hover/dropdown
+                    showIcon={true} // ✅ NOVO: Mostrar ícone para Atividades
                 />
                 
                 {/* Visual Separator */}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import './RecommendationsModal.css';
 
 interface Recommendation {
@@ -21,6 +21,33 @@ const RecommendationsModal: React.FC<RecommendationsModalProps> = ({
   score,
   recommendations = []
 }) => {
+  // ✅ NOVO: useEffect para fechar modal ao pressionar ESC
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleEscapeKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleEscapeKey);
+    return () => document.removeEventListener('keydown', handleEscapeKey);
+  }, [isOpen, onClose]);
+
+  // ✅ NOVO: Prevenir scroll do body quando modal está aberto
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const getScoreColor = (s: number | null): string => {

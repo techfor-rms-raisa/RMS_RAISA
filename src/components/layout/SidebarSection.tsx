@@ -18,9 +18,10 @@ interface SidebarSectionProps {
     isCollapsed: boolean;
     onNavigate: (view: View) => void;
     isSubmenu?: boolean; // ✅ NOVO: Ativa comportamento hover/dropdown
+    showIcon?: boolean; // ✅ NOVO: Mostrar ícone antes do título
 }
 
-const SidebarSection: React.FC<SidebarSectionProps> = ({ title, subtitle, items, currentUserRole, currentView, isCollapsed, onNavigate, isSubmenu = false }) => {
+const SidebarSection: React.FC<SidebarSectionProps> = ({ title, subtitle, items, currentUserRole, currentView, isCollapsed, onNavigate, isSubmenu = false, showIcon = false }) => {
     const [isHovered, setIsHovered] = React.useState(false);
     const visibleItems = items.filter(item => item.roles.includes(currentUserRole));
 
@@ -34,11 +35,12 @@ const SidebarSection: React.FC<SidebarSectionProps> = ({ title, subtitle, items,
         >
             {!isCollapsed && title && (
                 <div className="px-4 mb-2">
-                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#F0F0F0' }}>
+                        {showIcon && <i className="fa-solid fa-tasks mr-2"></i>}
                         {title}
                     </h3>
                     {subtitle && (
-                        <p className="text-[10px] text-gray-600 mt-0.5 leading-tight">
+                        <p className="text-[10px] mt-0.5 leading-tight" style={{ color: '#F0F0F0' }}>
                             {subtitle}
                         </p>
                     )}
