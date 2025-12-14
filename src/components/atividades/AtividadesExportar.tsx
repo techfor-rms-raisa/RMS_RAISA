@@ -28,8 +28,8 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
 
     // ✅ Carregar relatórios apenas quando loadConsultantReports muda (memoizado)
     useEffect(() => {
-        if (!loadConsultantReports || consultants.length === 0) {
-            setConsultantsWithReports(consultants);
+        if (!loadConsultantReports || !consultants || consultants.length === 0) {
+            setConsultantsWithReports(consultants || []);
             return;
         }
         
@@ -60,7 +60,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
         };
 
         loadAllReports();
-    }, [loadConsultantReports, consultants]);
+    }, [loadConsultantReports]);
 
     const getRiskLabel = (score: number | null | undefined) => {
         if (!score) return 'N/A';

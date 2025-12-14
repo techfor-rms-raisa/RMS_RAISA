@@ -39,8 +39,8 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
 
     // ✅ Carregar relatórios apenas quando loadConsultantReports muda (memoizado)
     useEffect(() => {
-        if (!loadConsultantReports || consultants.length === 0) {
-            setConsultantsWithReports(consultants);
+        if (!loadConsultantReports || !consultants || consultants.length === 0) {
+            setConsultantsWithReports(consultants || []);
             return;
         }
         
@@ -71,7 +71,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         };
 
         loadAllReports();
-    }, [loadConsultantReports, consultants]);
+    }, [loadConsultantReports]);
 
     // ✅ Filtrar consultores e relatórios usando dados carregados
     const filteredData = useMemo(() => {
