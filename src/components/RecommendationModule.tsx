@@ -25,6 +25,8 @@ interface ConsultantAnalysis {
     error?: string;
 }
 
+const ITEMS_PER_PAGE = 10; // ✅ NOVO: Paginação com 10 consultores por página
+
 const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     consultants,
     clients,
@@ -34,6 +36,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     onNavigateToAtividades
 }) => {
     const [selectedClient, setSelectedClient] = useState<string>('all');
+    const [currentPage, setCurrentPage] = useState<number>(1); // ✅ NOVO: Página atual
     const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
     const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
     const [loadedReports, setLoadedReports] = useState<ConsultantReport[]>([]);
@@ -91,10 +94,25 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
         });
     }, [consultants, selectedClient, clients, usuariosCliente]);
 
-    // ✅ CORRIGIDO: Carregar análises usando Supabase em vez de Gemini
+    // ✅ NOVO: Calcular consultores da página atual
+    const paginatedList = useMemo(() => {
+        const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+        const endIndex = startIndex + ITEMS_PER_PAGE;
+        return filteredList.slice(startIndex, endIndex);
+    }, [filteredList, currentPage]);
+
+    // ✅ NOVO: Calcular total de páginas
+    const totalPages = Math.ceil(filteredList.length / ITEMS_PER_PAGE);
+
+    // ✅ NOVO: Resetar página quando filtro mudar
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [selectedClient]);
+
+    // ✅ CORRIGIDO: Carregar análises apenas para consultores da página atual
     useEffect(() => {
         const generateAnalyses = async () => {
-            for (const consultant of filteredList) {
+            for (const consultant of paginatedList) {
                 // Verificar se já está em cache
                 if (analysisCache.has(consultant.id)) {
                     continue;
@@ -152,7 +170,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
         };
 
         generateAnalyses();
-    }, [filteredList, loadConsultantReports, usuariosCliente, clients]);
+    }, [paginatedList, loadConsultantReports, usuariosCliente, clients, analysisCache]);
 
     // Handler para abrir modal de histórico
     const handleOpenHistory = async (consultant: Consultant) => {
@@ -216,7 +234,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
 
                 {/* Recomendações */}
                 <div className="grid gap-6">
-                    {filteredList.map(consultant => {
+                    {paginatedList.map(consultant => {
                         const cachedAnalysis = analysisCache.get(consultant.id);
                         const isLoading = loadingConsultants.has(consultant.id);
 
@@ -265,6 +283,81 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                         );
                     })}
                 </div>
+
+                {/* ✅ NOVO: PAGINAÇÃO */}
+                {filteredList.length > ITEMS_PER_PAGE && (
+                    <div className="flex items-center justify-center gap-4 mt-8 pt-6 border-t border-gray-200">
+                        {/* Botão Início */}
+                        <button
+                            onClick={() => setCurrentPage(1)}
+                            disabled={currentPage === 1}
+                            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                                currentPage === 1
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
+                            }`}
+                            title="Ir para primeira página"
+                        >
+                            <i className="fa-solid fa-step-backward mr-2"></i>
+                            Início
+                        </button>
+
+                        {/* Botão Voltar */}
+                        <button
+                            onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                            disabled={currentPage === 1}
+                            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                                currentPage === 1
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
+                            }`}
+                            title="Página anterior"
+                        >
+                            <i className="fa-solid fa-chevron-left mr-2"></i>
+                            Voltar
+                        </button>
+
+                        {/* Indicador de Página */}
+                        <div className="px-6 py-2 bg-gray-100 rounded-lg text-center min-w-[120px]">
+                            <p className="text-sm font-semibold text-gray-700">
+                                Página <span className="text-blue-600">{currentPage}</span> de <span className="text-blue-600">{totalPages}</span>
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                                {paginatedList.length} de {filteredList.length} consultores
+                            </p>
+                        </div>
+
+                        {/* Botão Avançar */}
+                        <button
+                            onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                            disabled={currentPage === totalPages}
+                            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                                currentPage === totalPages
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
+                            }`}
+                            title="Próxima página"
+                        >
+                            Avançar
+                            <i className="fa-solid fa-chevron-right ml-2"></i>
+                        </button>
+
+                        {/* Botão Fim */}
+                        <button
+                            onClick={() => setCurrentPage(totalPages)}
+                            disabled={currentPage === totalPages}
+                            className={`px-4 py-2 rounded-lg font-medium transition-all ${
+                                currentPage === totalPages
+                                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    : 'bg-blue-500 text-white hover:bg-blue-600 active:scale-95'
+                            }`}
+                            title="Ir para última página"
+                        >
+                            Fim
+                            <i className="fa-solid fa-step-forward ml-2"></i>
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Modal de Histórico de Atividades */}
