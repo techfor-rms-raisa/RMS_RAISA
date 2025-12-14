@@ -33,17 +33,24 @@ const SidebarSection: React.FC<SidebarSectionProps> = ({ title, subtitle, items,
             onMouseEnter={() => isSubmenu && setIsHovered(true)}
             onMouseLeave={() => isSubmenu && setIsHovered(false)}
         >
-            {!isCollapsed && title && (
+            {!isCollapsed && title && !showIcon && (
                 <div className="px-4 mb-2">
                     <h3 className="text-xs font-semibold tracking-wider" style={{ color: '#F0F0F0' }}>
-                        {showIcon && <i className="fa-solid fa-tasks mr-2"></i>}
-                        {showIcon ? title : title.toUpperCase()}
+                        {title.toUpperCase()}
                     </h3>
                     {subtitle && (
                         <p className="text-[10px] mt-0.5 leading-tight" style={{ color: '#F0F0F0' }}>
                             {subtitle}
                         </p>
                     )}
+                </div>
+            )}
+            {!isCollapsed && title && showIcon && (
+                <div className="px-4 mb-1">
+                    <p className="text-sm font-medium" style={{ color: '#F0F0F0' }}>
+                        <i className="fa-solid fa-tasks mr-2"></i>
+                        {title}
+                    </p>
                 </div>
             )}
             {visibleItems.map(item => (

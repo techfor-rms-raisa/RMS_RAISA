@@ -3,7 +3,8 @@ import { Consultant, Client, UsuarioCliente, ConsultantReport, CoordenadorClient
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
 import RecommendationCard from './RecommendationCard';
 import RecommendationsModal from './RecommendationsModal';
-import { generateIntelligentRecommendations, IntelligentAnalysis } from '../services/recommendationService';
+// ✅ CORRIGIDO: Usar recomendações do Supabase em vez de chamar Gemini
+import { loadRecommendationsFromSupabase, IntelligentAnalysis } from '../services/supabaseRecommendationService';
 
 interface RecommendationModuleProps {
     consultants: Consultant[];
@@ -90,7 +91,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
         });
     }, [consultants, selectedClient, clients, usuariosCliente]);
 
-    // Gerar análises inteligentes para consultores filtrados
+    // ✅ CORRIGIDO: Carregar análises usando Supabase em vez de Gemini
     useEffect(() => {
         const generateAnalyses = async () => {
             for (const consultant of filteredList) {
@@ -108,13 +109,8 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                     const manager = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
                     const client = clients.find(c => c.id === manager?.id_cliente);
 
-                    // Gerar análise inteligente
-                    const analysis = await generateIntelligentRecommendations(
-                        consultant,
-                        reports,
-                        manager,
-                        client
-                    );
+                    // ✅ CORRIGIDO: Carregar recomendações do Supabase (não chamar Gemini)
+                    const analysis = loadRecommendationsFromSupabase(consultant, reports);
 
                     // Armazenar em cache
                     setAnalysisCache(prev => {
@@ -289,14 +285,9 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
             {/* ============================================ */}
             {showRecommendationsModal && selectedConsultantForRecommendations && selectedRecommendations && (
                 <RecommendationsModal
-                    isOpen={showRecommendationsModal}
+                    consultant={selectedConsultantForRecommendations}
+                    analysis={selectedRecommendations}
                     onClose={handleCloseRecommendations}
-                    consultantName={selectedConsultantForRecommendations.nome_consultores}
-                    score={selectedConsultantForRecommendations.parecer_final_consultor || null}
-                    recommendations={selectedRecommendations.recomendacoes?.map((rec: any) => ({
-                        category: rec.tipo,
-                        description: rec.descricao
-                    })) || []}
                 />
             )}
         </>
