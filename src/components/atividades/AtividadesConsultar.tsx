@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Client, Consultant, UsuarioCliente, ConsultantReport } from '../../src/components/types';
 
 interface AtividadesConsultarProps {
@@ -21,6 +21,9 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
     const [loadingReports, setLoadingReports] = useState(false);
     const [consultantsWithReports, setConsultantsWithReports] = useState<Consultant[]>([]);
+    
+    // ✅ Rastrear se os dados já foram carregados para evitar loop infinito
+    const hasLoadedRef = useRef(false);
 
     const months = [
         { value: 1, label: 'Janeiro' },
@@ -37,10 +40,16 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         { value: 12, label: 'Dezembro' }
     ];
 
-    // ✅ Carregar relatórios apenas quando loadConsultantReports muda (memoizado)
+    // ✅ Carregar relatórios apenas UMA VEZ quando o componente monta
     useEffect(() => {
+        // ⚠️ Se já foi carregado, não carregar novamente
+        if (hasLoadedRef.current) {
+            return;
+        }
+        
         if (!loadConsultantReports || !consultants || consultants.length === 0) {
             setConsultantsWithReports(consultants || []);
+            hasLoadedRef.current = true;
             return;
         }
         
@@ -63,8 +72,12 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                 
                 setConsultantsWithReports(updatedConsultants);
                 console.log('✅ Relatórios carregados com sucesso!');
+                // ✅ Marcar como carregado para evitar loop
+                hasLoadedRef.current = true;
             } catch (error) {
                 console.error('❌ Erro ao carregar relatórios:', error);
+                // ✅ Mesmo em caso de erro, marcar como carregado
+                hasLoadedRef.current = true;
             } finally {
                 setLoadingReports(false);
             }

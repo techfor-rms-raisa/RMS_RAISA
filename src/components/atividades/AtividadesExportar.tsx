@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Client, Consultant, UsuarioCliente, ConsultantReport } from '../../src/components/types';
 
 interface AtividadesExportarProps {
@@ -20,16 +20,25 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
     const [includeDetails, setIncludeDetails] = useState(true);
     const [loadingReports, setLoadingReports] = useState(false);
     const [consultantsWithReports, setConsultantsWithReports] = useState<Consultant[]>([]);
+    
+    // ✅ Rastrear se os dados já foram carregados para evitar loop infinito
+    const hasLoadedRef = useRef(false);
 
     const months = [
         'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
         'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
     ];
 
-    // ✅ Carregar relatórios apenas quando loadConsultantReports muda (memoizado)
+    // ✅ Carregar relatórios apenas UMA VEZ quando o componente monta
     useEffect(() => {
+        // ⚠️ Se já foi carregado, não carregar novamente
+        if (hasLoadedRef.current) {
+            return;
+        }
+        
         if (!loadConsultantReports || !consultants || consultants.length === 0) {
             setConsultantsWithReports(consultants || []);
+            hasLoadedRef.current = true;
             return;
         }
         
@@ -52,8 +61,12 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 
                 setConsultantsWithReports(updatedConsultants);
                 console.log('✅ Relatórios carregados com sucesso para exportação!');
+                // ✅ Marcar como carregado para evitar loop
+                hasLoadedRef.current = true;
             } catch (error) {
                 console.error('❌ Erro ao carregar relatórios:', error);
+                // ✅ Mesmo em caso de erro, marcar como carregado
+                hasLoadedRef.current = true;
             } finally {
                 setLoadingReports(false);
             }
