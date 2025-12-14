@@ -6,7 +6,6 @@ interface AtividadesConsultarProps {
     consultants: Consultant[];
     usuariosCliente: UsuarioCliente[];
     loadConsultantReports?: (consultantId: number) => Promise<ConsultantReport[]>;
-    onNavigateToAtividades?: (clientName?: string, consultantName?: string) => void;
 }
 
 const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
@@ -14,10 +13,10 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     consultants,
     usuariosCliente,
     loadConsultantReports,
-    onNavigateToAtividades
 }) => {
     const [selectedClient, setSelectedClient] = useState<string>('all');
     const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+    const [selectedMonth, setSelectedMonth] = useState<string>('all'); // Filtro de Mês
     const [loadingReports, setLoadingReports] = useState(false);
     const [consultantsWithReports, setConsultantsWithReports] = useState<Consultant[]>([]);
     
@@ -97,6 +96,42 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
 
     }, [consultantsWithReports, clients, usuariosCliente, selectedClient]);
 
+    // Lógica para os cards de estatísticas
+    const statistics = useMemo(() => {
+        const stats = { total: 0, excellent: 0, good: 0, medium: 0, high: 0, critical: 0 };
+        const consultantsInFilter = dataGroupedByClient.flatMap(([, consultants]) => consultants);
+        stats.total = consultantsInFilter.length;
+
+        consultantsInFilter.forEach(consultant => {
+            const reports = consultant.consultant_reports || consultant.reports || [];
+            let relevantReports = reports.filter(r => r.year === selectedYear);
+
+            if (selectedMonth !== 'all') {
+                relevantReports = relevantReports.filter(r => r.month === parseInt(selectedMonth));
+            }
+
+            const latestReport = [...relevantReports].sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())[0];
+            
+            let score = latestReport?.riskScore || null;
+
+            if (!score && selectedMonth === 'all') {
+                score = consultant.parecer_final_consultor || null;
+            }
+
+            if (score) {
+                switch (score) {
+                    case 1: stats.excellent++; break;
+                    case 2: stats.good++; break;
+                    case 3: stats.medium++; break;
+                    case 4: stats.high++; break;
+                    case 5: stats.critical++; break;
+                }
+            }
+        });
+
+        return stats;
+    }, [dataGroupedByClient, selectedYear, selectedMonth]);
+
     const getReportInfoForMonth = (consultant: Consultant, month: number): { score: RiskScore | null, count: number } => {
         const reports = consultant.consultant_reports || consultant.reports || [];
         const monthReports = reports.filter(r => r.year === selectedYear && r.month === month);
@@ -120,7 +155,6 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
 
         let finalScore = latestReport?.riskScore || consultant.parecer_final_consultor || null;
         
-        // If no reports, check old parecer fields for a score
         if(yearReports.length === 0) {
             for(let i = 12; i >= 1; i--) {
                 const oldField = `parecer_${i}_consultor` as keyof Consultant;
@@ -140,7 +174,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
             <h2 className="text-2xl font-bold text-gray-800 mb-6">🔍 Consultar Relatórios de Atividades</h2>
 
             {/* Filtros */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 rounded-lg shadow-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 mb-6 p-4 bg-gray-50 rounded-lg shadow-sm">
                  <div>
                     <label className="text-sm font-medium text-gray-600">Ano</label>
                     <select
@@ -163,6 +197,45 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                             <option key={c.id} value={c.razao_social_cliente}>{c.razao_social_cliente}</option>
                         ))}
                     </select>
+                </div>
+                <div>
+                    <label className="text-sm font-medium text-gray-600">Mês</label>
+                    <select
+                        value={selectedMonth}
+                        onChange={(e) => setSelectedMonth(e.target.value)}
+                        className="mt-1 w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
+                    >
+                        <option value="all">Todos os Meses</option>
+                        {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                    </select>
+                </div>
+            </div>
+
+            {/* Painel de Estatísticas */}
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-8">
+                <div className="bg-gray-100 p-3 rounded-lg text-center shadow">
+                    <p className="text-2xl font-bold text-gray-800">{statistics.total}</p>
+                    <p className="text-xs text-gray-600">Consultores</p>
+                </div>
+                <div className="bg-green-100 p-3 rounded-lg text-center shadow">
+                    <p className="text-2xl font-bold text-green-700">{statistics.excellent}</p>
+                    <p className="text-xs text-green-700">Excelente</p>
+                </div>
+                <div className="bg-blue-100 p-3 rounded-lg text-center shadow">
+                    <p className="text-2xl font-bold text-blue-700">{statistics.good}</p>
+                    <p className="text-xs text-blue-700">Bom</p>
+                </div>
+                <div className="bg-yellow-100 p-3 rounded-lg text-center shadow">
+                    <p className="text-2xl font-bold text-yellow-700">{statistics.medium}</p>
+                    <p className="text-xs text-yellow-700">Médio</p>
+                </div>
+                <div className="bg-orange-100 p-3 rounded-lg text-center shadow">
+                    <p className="text-2xl font-bold text-orange-700">{statistics.high}</p>
+                    <p className="text-xs text-orange-700">Alto</p>
+                </div>
+                <div className="bg-red-100 p-3 rounded-lg text-center shadow">
+                    <p className="text-2xl font-bold text-red-700">{statistics.critical}</p>
+                    <p className="text-xs text-red-700">Crítico</p>
                 </div>
             </div>
 
@@ -190,15 +263,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                                             return (
                                                 <tr key={consultant.id}>
                                                     <td className="px-6 py-4 whitespace-nowrap">
-                                                        <div className="flex items-center">
-                                                            <div className="text-sm font-medium text-gray-900">{consultant.nome_consultores}</div>
-                                                            <button 
-                                                                onClick={() => onNavigateToAtividades?.(clientName, consultant.nome_consultores)}
-                                                                className="ml-4 px-2 py-1 border border-gray-300 text-xs font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-                                                            >
-                                                                + Atividade
-                                                            </button>
-                                                        </div>
+                                                        <div className="text-sm font-medium text-gray-900">{consultant.nome_consultores}</div>
                                                     </td>
                                                     {months.map(m => {
                                                         const reportInfo = getReportInfoForMonth(consultant, m.value);
