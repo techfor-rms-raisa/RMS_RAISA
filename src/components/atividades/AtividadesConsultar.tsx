@@ -57,6 +57,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                     consultants.map(async (consultant) => {
                         try {
                             const reports = await loadConsultantReports(consultant.id);
+                            // ADAPTATION: Use consultant_reports
                             return { ...consultant, consultant_reports: reports };
                         } catch (error) {
                             console.warn(`⚠️ Erro ao carregar relatórios do consultor ${consultant.id}:`, error);
@@ -78,8 +79,16 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         loadAllReports();
     }, [loadConsultantReports, consultants]);
 
+    // ADAPTATION: Normalize data inside useMemo
+    const normalizedData = useMemo(() => {
+        return consultantsWithReports.map(c => {
+            const reports = c.consultant_reports || c.reports || [];
+            return { ...c, normalized_reports: reports };
+        });
+    }, [consultantsWithReports]);
+
     const filteredData = useMemo(() => {
-        let filtered = consultantsWithReports.filter(c => c.consultant_reports && c.consultant_reports.length > 0);
+        let filtered = normalizedData.filter(c => c.normalized_reports && c.normalized_reports.length > 0);
 
         if (selectedClient !== 'all') {
             const client = clients.find(c => c.razao_social_cliente === selectedClient);
@@ -95,24 +104,27 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         }
 
         filtered = filtered.filter(c => {
-            if (!c.consultant_reports) return false;
-            return c.consultant_reports.some(r => r.year === selectedYear);
+            if (!c.normalized_reports) return false;
+            return c.normalized_reports.some(r => r.year === selectedYear);
         });
 
         return filtered;
-    }, [consultantsWithReports, selectedClient, selectedConsultant, selectedYear, clients, usuariosCliente]);
+    }, [normalizedData, selectedClient, selectedConsultant, selectedYear, clients, usuariosCliente]);
 
     const statistics = useMemo(() => {
         const stats = { total: 0, excellent: 0, good: 0, medium: 0, high: 0, critical: 0 };
         stats.total = filteredData.length;
 
         filteredData.forEach(consultant => {
-            const latestReport = consultant.consultant_reports
+            const latestReport = consultant.normalized_reports
                 ?.filter(r => r.year === selectedYear)
                 .sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())[0];
 
-            if (latestReport) {
-                switch (latestReport.riskScore) {
+            // ADAPTATION: Check for riskScore or parecer_final_consultor
+            const score = latestReport?.riskScore || consultant.parecer_final_consultor;
+
+            if (score) {
+                switch (score) {
                     case 1: stats.excellent++; break;
                     case 2: stats.good++; break;
                     case 3: stats.medium++; break;
@@ -137,10 +149,17 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         }
     };
 
-    const getReportForMonth = (consultant: Consultant, month: number) => {
-        if (!consultant.consultant_reports) return null;
-        const reports = consultant.consultant_reports.filter(r => r.month === month && r.year === selectedYear);
-        return reports.length > 0 ? reports.sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())[0] : null;
+    const getReportForMonth = (consultant: any, month: number) => {
+        const reports = consultant.normalized_reports || [];
+        const monthReports = reports.filter((r: ConsultantReport) => r.month === month && r.year === selectedYear);
+        if (monthReports.length > 0) {
+            return monthReports.sort((a: any, b: any) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())[0];
+        }
+        // ADAPTATION: Fallback to old parecer fields
+        const parecerField = `parecer_${month}_consultor` as keyof Consultant;
+        const score = consultant[parecerField];
+        if(score) return { riskScore: score };
+        return null;
     };
 
     return (
