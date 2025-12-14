@@ -55,6 +55,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
         analista_rs_id: '' as string | number,
         id_gestao_de_pessoas: '' as string | number,
         valor_faturamento: '',
+        valor_pagamento: '', // ✅ NOVO: Valor que o consultor recebe
     });
 
     const isReadOnly = currentUser.tipo_usuario === 'Consulta';
@@ -80,6 +81,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                 analista_rs_id: editingConsultant.analista_rs_id ? String(editingConsultant.analista_rs_id) : '',
                 id_gestao_de_pessoas: editingConsultant.id_gestao_de_pessoas ? String(editingConsultant.id_gestao_de_pessoas) : '',
                 valor_faturamento: editingConsultant.valor_faturamento ? editingConsultant.valor_faturamento.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '',
+                valor_pagamento: editingConsultant.valor_pagamento ? editingConsultant.valor_pagamento.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '', // ✅ NOVO
             });
             setIsFormOpen(true);
         }
@@ -98,7 +100,8 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
             coordenador_id: formData.coordenador_id ? parseInt(formData.coordenador_id) : null,
             motivo_desligamento: formData.motivo_desligamento || undefined,
             data_saida: formData.data_saida || undefined,
-            valor_faturamento: formData.valor_faturamento ? parseFloat(formData.valor_faturamento.replace(/[R$\s.]/g, '').replace(',', '.')) : undefined
+            valor_faturamento: formData.valor_faturamento ? parseFloat(formData.valor_faturamento.replace(/[R$\s.]/g, '').replace(',', '.')) : undefined,
+            valor_pagamento: formData.valor_pagamento ? parseFloat(formData.valor_pagamento.replace(/[R$\s.]/g, '').replace(',', '.')) : undefined // ✅ NOVO
         };
         
         if (editingConsultant) updateConsultant({ ...editingConsultant, ...dataToSave });
@@ -134,7 +137,30 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
                 <div className="flex gap-3">
                     {!isReadOnly && (
                         <button 
-                            onClick={() => { setEditingConsultant(null); setIsFormOpen(true); }} 
+                            onClick={() => { 
+                                setEditingConsultant(null); 
+                                // ✅ NOVO: Limpar formData ao abrir "+ Novo Consultor"
+                                setFormData({
+                                    ano_vigencia: new Date().getFullYear(),
+                                    nome_consultores: '',
+                                    email_consultor: '',
+                                    celular: '',
+                                    cpf: '',
+                                    cargo_consultores: '',
+                                    data_inclusao_consultores: '',
+                                    data_saida: '',
+                                    id_cliente: '',
+                                    gestor_imediato_id: '',
+                                    coordenador_id: '',
+                                    status: 'Ativo' as ConsultantStatus,
+                                    motivo_desligamento: '' as TerminationReason | '',
+                                    analista_rs_id: '' as string | number,
+                                    id_gestao_de_pessoas: '' as string | number,
+                                    valor_faturamento: '',
+                                    valor_pagamento: '',
+                                });
+                                setIsFormOpen(true); 
+                            }} 
                             className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg hover:from-blue-700 hover:to-blue-800 transition-all duration-200 font-medium shadow-md hover:shadow-lg"
                         >
                             + Novo Consultor

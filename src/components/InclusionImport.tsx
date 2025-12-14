@@ -85,6 +85,8 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let startDateStr = '';
             let hourlyRateStr = '';
             let celularStr = '';
+            let cpfStr = ''; // ✅ NOVO: CPF do consultor
+            let valorPagamentoStr = ''; // ✅ NOVO: Valor de pagamento do consultor
 
             for (let i = 0; i < lines.length; i++) {
                 const cleanLine = lines[i];
@@ -106,6 +108,11 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
+                // ✅ NOVO: Extrair CPF do bloco "DADOS DO PROFISSIONAL"
+                if (cleanLine.match(/^CPF:/i)) {
+                    cpfStr = cleanLine.replace(/^CPF:/i, '').trim();
+                }
+                
                 // LOGIC: Find "FATURAMENTO MENSAL" and capture value (either same line or next line)
                 if (cleanLine.match(/FATURAMENTO MENSAL/i)) {
                      // Strategy 1: Look on the same line
@@ -122,6 +129,23 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                      if (match) {
                          hourlyRateStr = match[1];
                      }
+                }
+                
+                // ✅ NOVO: Extrair Valor do bloco "DADOS DE PAGAMENTO"
+                // Procurar por "VALOR" ou "SALÁRIO" ou "PAGAMENTO" seguido de valor
+                if (cleanLine.match(/VALOR.*PAGAMENTO|SAL[ÁA]RIO|^VALOR:/i)) {
+                    // Strategy 1: Look on the same line
+                    let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
+                    
+                    // Strategy 2: If not found, look at the next line
+                    if (!match && i + 1 < lines.length) {
+                        const nextLine = lines[i+1];
+                        match = nextLine.match(/R?\$?\s*([\d.,]+)/);
+                    }
+                    
+                    if (match) {
+                        valorPagamentoStr = match[1];
+                    }
                 }
             }
             
@@ -151,6 +175,18 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 
                 if (!isNaN(normalizedValue)) {
                     billingValue = normalizedValue * 168;
+                }
+            }
+            
+            // ✅ NOVO: 3. Parse Valor Pagamento (valor mensal que o consultor recebe)
+            let valorPagamento = 0;
+            if (valorPagamentoStr) {
+                // Normalize currency: remove dots (thousands), replace comma with dot
+                const normalizedString = valorPagamentoStr.replace(/\./g, '').replace(',', '.');
+                const normalizedValue = parseFloat(normalizedString);
+                
+                if (!isNaN(normalizedValue)) {
+                    valorPagamento = normalizedValue;
                 }
             }
 
@@ -204,10 +240,12 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 cargo_consultores: role || 'Consultor',
                 data_inclusao_consultores: startDate,
                 celular: celularStr || '', // Celular extraído do PDF
+                cpf: cpfStr || '', // ✅ NOVO: CPF extraído do PDF
                 status: 'Ativo',
                 gestor_imediato_id: targetManagerId,
                 coordenador_id: targetCoordId,
                 valor_faturamento: billingValue || 0, // Saved as Calculated Monthly Value
+                valor_pagamento: valorPagamento || 0, // ✅ NOVO: Valor de pagamento extraído do PDF
                 // Defaults
                 analista_rs_id: client.id_gestor_rs,
                 id_gestao_de_pessoas: client.id_gestao_de_pessoas,

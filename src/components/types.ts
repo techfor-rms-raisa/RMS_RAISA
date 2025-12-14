@@ -93,6 +93,7 @@ export interface Consultant {
   nome_consultores: string;
   email_consultor?: string;
   celular?: string; // Formato: DDD-99999-9999 (Ex: 011-98833-8182)
+  cpf?: string; // CPF do consultor
   cargo_consultores: string;
   data_inclusao_consultores: string;
   data_ultima_alteracao?: string; 
