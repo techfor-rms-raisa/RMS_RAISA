@@ -8,44 +8,19 @@ interface ScoreBadgeProps {
 const ScoreBadge: React.FC<ScoreBadgeProps> = ({ score }) => {
     if (!score) return null;
 
-    const getScoreColor = (score: RiskScore): string => {
-        switch (score) {
-            case 'Crítico':
-                return 'bg-red-500';
-            case 'Alto':
-                return 'bg-orange-500';
-            case 'Médio':
-                return 'bg-yellow-500';
-            case 'Bom':
-                return 'bg-blue-500';
-            case 'Excelente':
-                return 'bg-green-500';
-            default:
-                return 'bg-gray-400';
-        }
+    const colorMap: Record<RiskScore, string> = {
+        'Crítico': 'bg-red-600',
+        'Alto': 'bg-orange-500',
+        'Médio': 'bg-yellow-500',
+        'Bom': 'bg-blue-500',
+        'Excelente': 'bg-green-500'
     };
 
-    const getScoreLabel = (score: RiskScore): string => {
-        const labels: Record<RiskScore, string> = {
-            'Crítico': 'Crítico',
-            'Alto': 'Alto',
-            'Médio': 'Médio',
-            'Bom': 'Bom',
-            'Excelente': 'Excelente'
-        };
-        return labels[score] || score;
-    };
+    const color = colorMap[score] || 'bg-gray-400';
 
     return (
-        <div 
-            className={`${getScoreColor(score)} w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs cursor-default hover:shadow-lg transition-shadow`}
-            title={`Score: ${getScoreLabel(score)}`}
-        >
-            {score === 'Crítico' ? '🔴' : 
-             score === 'Alto' ? '🟠' : 
-             score === 'Médio' ? '🟡' : 
-             score === 'Bom' ? '🔵' : 
-             score === 'Excelente' ? '🟢' : '⚪'}
+        <div className={`${color} w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold`} title={score}>
+            {score.charAt(0).toUpperCase()}
         </div>
     );
 };
