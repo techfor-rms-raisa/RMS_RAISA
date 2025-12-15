@@ -1,36 +1,53 @@
 import React from 'react';
-
-type RiskScore = 1 | 2 | 3 | 4 | 5;
+import { RiskScore } from './types';
 
 interface ScoreBadgeProps {
-  score: RiskScore | null | undefined;
+    score: RiskScore | null | undefined;
 }
 
 const ScoreBadge: React.FC<ScoreBadgeProps> = ({ score }) => {
-  const getScoreDetails = (s: RiskScore | null | undefined) => {
-    if (s === null || s === undefined) {
-      return { color: 'bg-gray-300', label: 'N/A', textColor: 'text-gray-800' };
-    }
-    switch (s) {
-      case 1: return { color: 'bg-green-500', label: 'Excelente', textColor: 'text-white' };
-      case 2: return { color: 'bg-blue-500', label: 'Bom', textColor: 'text-white' };
-      case 3: return { color: 'bg-yellow-500', label: 'Médio', textColor: 'text-white' };
-      case 4: return { color: 'bg-orange-500', label: 'Alto', textColor: 'text-white' };
-      case 5: return { color: 'bg-red-500', label: 'Crítico', textColor: 'text-white' };
-      default: return { color: 'bg-gray-300', label: 'N/A', textColor: 'text-gray-800' };
-    }
-  };
+    if (!score) return null;
 
-  const { color, label, textColor } = getScoreDetails(score);
+    const getScoreColor = (score: RiskScore): string => {
+        switch (score) {
+            case 'Crítico':
+                return 'bg-red-500';
+            case 'Alto':
+                return 'bg-orange-500';
+            case 'Médio':
+                return 'bg-yellow-500';
+            case 'Bom':
+                return 'bg-blue-500';
+            case 'Excelente':
+                return 'bg-green-500';
+            default:
+                return 'bg-gray-400';
+        }
+    };
 
-  return (
-    <div className={`relative group flex items-center justify-center w-5 h-5 rounded-full ${color} ${textColor} font-bold text-xs shadow-sm`}>
-      {score ?? '-'}
-      <div className="absolute bottom-full mb-2 hidden group-hover:block w-max bg-gray-800 text-white text-xs rounded py-1 px-2 z-10">
-        Score: {label}
-      </div>
-    </div>
-  );
+    const getScoreLabel = (score: RiskScore): string => {
+        const labels: Record<RiskScore, string> = {
+            'Crítico': 'Crítico',
+            'Alto': 'Alto',
+            'Médio': 'Médio',
+            'Bom': 'Bom',
+            'Excelente': 'Excelente'
+        };
+        return labels[score] || score;
+    };
+
+    return (
+        <div 
+            className={`${getScoreColor(score)} w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-xs cursor-default hover:shadow-lg transition-shadow`}
+            title={`Score: ${getScoreLabel(score)}`}
+        >
+            {score === 'Crítico' ? '🔴' : 
+             score === 'Alto' ? '🟠' : 
+             score === 'Médio' ? '🟡' : 
+             score === 'Bom' ? '🔵' : 
+             score === 'Excelente' ? '🟢' : '⚪'}
+        </div>
+    );
 };
 
 export default ScoreBadge;
