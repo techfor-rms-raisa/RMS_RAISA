@@ -1,9 +1,8 @@
-'''
 import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Consultant, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore } from '../types';
 import { User, Phone, Mail, Briefcase, Clock } from 'lucide-react';
 import HistoricoAtividadesModal from '../HistoricoAtividadesModal';
-import ScoreBadge from '../ScoreBadge'; // Caminho corrigido
+import ScoreBadge from '../ScoreBadge';
 
 interface AtividadesInserirProps {
     clients: Client[];
@@ -131,7 +130,7 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     };
 
     const downloadTemplate = () => {
-        const template = `INSTRUÇÕES...`; // Template content
+        const template = `INSTRUÇÕES PARA PREENCHIMENTO DO RELATÓRIO DE ATIVIDADES\n\nPreencha as atividades do consultor de forma clara e objetiva.`;
         const blob = new Blob([template], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -283,4 +282,3 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
 };
 
 export default AtividadesInserir;
-'''

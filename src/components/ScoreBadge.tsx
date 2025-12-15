@@ -1,7 +1,5 @@
-'''
 import React from 'react';
 
-// Define o tipo diretamente para evitar dependência de importação complexa
 type RiskScore = 1 | 2 | 3 | 4 | 5;
 
 interface ScoreBadgeProps {
@@ -36,4 +34,3 @@ const ScoreBadge: React.FC<ScoreBadgeProps> = ({ score }) => {
 };
 
 export default ScoreBadge;
-'''
