@@ -127,46 +127,50 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
 
             {isFormOpen && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full max-h-96 overflow-y-auto">
+                    <div className="bg-white rounded-lg shadow-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
                         <h3 className="text-xl font-bold mb-4">{editingConsultant ? 'Editar Consultor' : 'Novo Consultor'}</h3>
-                        <form onSubmit={handleSubmit} className="space-y-3">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
-                                <input 
-                                    type="text" 
-                                    value={formData.nome_consultores} 
-                                    onChange={(e) => setFormData({...formData, nome_consultores: e.target.value})} 
-                                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-                                    required
-                                />
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Nome *</label>
+                                    <input 
+                                        type="text" 
+                                        value={formData.nome_consultores} 
+                                        onChange={(e) => setFormData({...formData, nome_consultores: e.target.value})} 
+                                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Cargo *</label>
+                                    <input 
+                                        type="text" 
+                                        value={formData.cargo_consultores} 
+                                        onChange={(e) => setFormData({...formData, cargo_consultores: e.target.value})} 
+                                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                                        required
+                                    />
+                                </div>
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                                <input 
-                                    type="email" 
-                                    value={formData.email_consultor} 
-                                    onChange={(e) => setFormData({...formData, email_consultor: e.target.value})} 
-                                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Celular</label>
-                                <input 
-                                    type="tel" 
-                                    value={formData.celular} 
-                                    onChange={(e) => setFormData({...formData, celular: e.target.value})} 
-                                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Cargo</label>
-                                <input 
-                                    type="text" 
-                                    value={formData.cargo_consultores} 
-                                    onChange={(e) => setFormData({...formData, cargo_consultores: e.target.value})} 
-                                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-                                    required
-                                />
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                    <input 
+                                        type="email" 
+                                        value={formData.email_consultor} 
+                                        onChange={(e) => setFormData({...formData, email_consultor: e.target.value})} 
+                                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Celular</label>
+                                    <input 
+                                        type="tel" 
+                                        value={formData.celular} 
+                                        onChange={(e) => setFormData({...formData, celular: e.target.value})} 
+                                        className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                                    />
+                                </div>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Cliente</label>
