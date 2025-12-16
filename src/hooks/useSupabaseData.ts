@@ -13,6 +13,16 @@ import {
   LearningFeedbackLoop, Vaga, Pessoa, Candidatura
 } from '../components/types';
 
+// Função auxiliar para converter arrays do Supabase
+const parseArray = (dbArray: any): string[] => {
+  if (Array.isArray(dbArray)) return dbArray;
+  if (typeof dbArray === 'string') {
+    // Remove chaves e aspas, depois divide
+    return dbArray.replace(/[{}]/g, '').replace(/"/g, '').split(',').filter(i => i);
+  }
+  return [];
+};
+
 export const useSupabaseData = () => {
   // ============================================
   // ESTADO
@@ -1307,7 +1317,7 @@ export const useSupabaseData = () => {
         titulo: vaga.titulo,
         descricao: vaga.descricao,
         senioridade: vaga.senioridade,
-        stack_tecnologica: vaga.stack_tecnologica,
+        stack_tecnologica: parseArray(vaga.stack_tecnologica),
         salario_min: vaga.salario_min,
         salario_max: vaga.salario_max,
         status: vaga.status,
@@ -1343,7 +1353,7 @@ export const useSupabaseData = () => {
           titulo: newVaga.titulo,
           descricao: newVaga.descricao,
           senioridade: newVaga.senioridade,
-          stack_tecnologica: newVaga.stack_tecnologica,
+          stack_tecnologica: Array.isArray(newVaga.stack_tecnologica) && newVaga.stack_tecnologica.length > 0 ? `{${newVaga.stack_tecnologica.join(',')}}` : '{}',
           salario_min: newVaga.salario_min,
           salario_max: newVaga.salario_max,
           status: newVaga.status || 'aberta',
@@ -1407,7 +1417,7 @@ export const useSupabaseData = () => {
           titulo: updates.titulo,
           descricao: updates.descricao,
           senioridade: updates.senioridade,
-          stack_tecnologica: updates.stack_tecnologica,
+          stack_tecnologica: Array.isArray(updates.stack_tecnologica) && updates.stack_tecnologica.length > 0 ? `{${updates.stack_tecnologica.join(',')}}` : '{}',
           salario_min: updates.salario_min,
           salario_max: updates.salario_max,
           status: updates.status,
