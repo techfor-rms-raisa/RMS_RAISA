@@ -620,5 +620,4 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({ consultants, usua
         </div>
     );
 };
-
 export default ManageConsultants;
