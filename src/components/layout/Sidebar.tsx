@@ -40,8 +40,14 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
         { view: 'atividades_exportar', label: 'Exportar', icon: 'fa-solid fa-download', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
     ] as any;
 
+    const vagasItems = [
+        { view: 'vagas_dashboard', label: 'Dashboard', icon: 'fa-solid fa-chart-bar', roles: ['Administrador', 'Analista de R&S', 'Gestão Comercial'] },
+        { view: 'vagas_criar', label: 'Criar Vaga', icon: 'fa-solid fa-plus', roles: ['Administrador', 'Analista de R&S'] },
+        { view: 'vagas_consultar', label: 'Consultar', icon: 'fa-solid fa-search', roles: ['Administrador', 'Analista de R&S', 'Gestão Comercial'] },
+    ] as any;
+
     const raisaItems = [
-        { view: 'vagas', label: 'Vagas', icon: 'fa-solid fa-briefcase', roles: ['Administrador', 'Analista de R&S'] },
+        
         { view: 'candidaturas', label: 'Candidaturas', icon: 'fa-solid fa-id-card', roles: ['Administrador', 'Analista de R&S'] },
         { view: 'entrevista_tecnica', label: 'Entrevista Técnica', icon: 'fa-solid fa-headset', roles: ['Administrador', 'Analista de R&S'] },
         { view: 'controle_envios', label: 'Controle de Envios', icon: 'fa-solid fa-paper-plane', roles: ['Administrador', 'Analista de R&S', 'Gestão Comercial'] },
@@ -99,6 +105,17 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
                 />
                 
                 <div className="my-2 border-t border-gray-700 mx-4 opacity-50"></div>
+
+                <SidebarSection 
+                    title="Vagas"
+                    items={vagasItems}
+                    currentUserRole={currentUser.tipo_usuario}
+                    currentView={currentView}
+                    isCollapsed={isCollapsed}
+                    onNavigate={onNavigate}
+                    isSubmenu={true}
+                    icon="fa-solid fa-briefcase"
+                />
 
                 <SidebarSection 
                     title="RAISA"

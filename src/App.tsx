@@ -17,7 +17,9 @@ import Quarentena from './components/Quarentena';
 import Sidebar from './components/layout/Sidebar'; 
 
 // RAISA Imports
-import Vagas from './components/raisa/Vagas';
+import DashboardVagas from './components/raisa/DashboardVagas';
+import VagasCriar from './components/raisa/VagasCriar';
+import VagasConsultar from './components/raisa/VagasConsultar';
 import Candidaturas from './components/raisa/Candidaturas';
 import AnaliseRisco from './components/raisa/AnaliseRisco';
 import Pipeline from './components/raisa/Pipeline';
@@ -148,105 +150,101 @@ const App: React.FC = () => {
     switch (currentView) {
       // RMS Views
       case 'users':
-        return <ManageUsers users={users} addUser={addUser} updateUser={updateUser} currentUser={currentUser!} migrateYearlyData={migrateYearlyData} />;
+        return <ManageUsers users={users} onAdd={addUser} onUpdate={updateUser} />;
       case 'clients':
-        return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={updateClient} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={updateUsuarioCliente} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={updateCoordenadorCliente} currentUser={currentUser!} />;
+        return <ManageClients clients={clients} onAdd={addClient} onUpdate={updateClient} onBatchAdd={batchAddClients} />;
       case 'consultants':
-        return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={updateConsultant} currentUser={currentUser!} onNavigateToAtividades={handleNavigateToAtividades} />;
-      case 'quarantine':
-        return <Quarentena consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} onNavigateToRecommendations={(consultant) => { setContextualConsultant(consultant.nome_consultores); setCurrentView('recommendations'); }} />;
-      case 'recommendations':
-        return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} />;
+        return <ManageConsultants consultants={consultants} onAdd={addConsultant} onUpdate={updateConsultant} onBatchAdd={batchAddConsultants} />;
+      case 'dashboard':
+        return <Dashboard 
+          consultants={consultants} 
+          clients={clients} 
+          onNavigateToAtividades={handleNavigateToAtividades} 
+          loadConsultantReports={memoizedLoadConsultantReports} 
+        />;
       case 'analytics':
-        return <Analytics consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
-      case 'export': 
-        return <ExportModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
+        return <Analytics />;
+      case 'recommendations':
+        return <RecommendationModule />;
+      case 'export':
+        return <ExportModule />;
       case 'import':
-        return <ImportModule users={users} clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} batchAddClients={batchAddClients} batchAddManagers={batchAddManagers} batchAddCoordinators={batchAddCoordinators} batchAddConsultants={batchAddConsultants} />;
+        return <ImportModule onAnalysisComplete={handleAnalysisComplete} onManualAnalysis={handleManualAnalysis} />;
       case 'templates':
-          return <TemplateLibrary templates={templates} currentUser={currentUser!} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} />;
+        return <TemplateLibrary templates={templates} onAdd={addTemplate} onUpdate={updateTemplate} onDelete={deleteTemplate} />;
       case 'campaigns':
-          return <ComplianceCampaigns campaigns={campaigns} templates={templates} consultants={consultants} addCampaign={addCampaign} onSimulateLink={handleSimulateLink} />;
+        return <ComplianceCampaigns campaigns={campaigns} onAdd={addCampaign} onUpdate={updateCampaign} onSimulate={handleSimulateLink} />;
       case 'compliance_dashboard':
-          return <ComplianceDashboard rhActions={rhActions} feedbackResponses={feedbackResponses} />;
-      
+        return <ComplianceDashboard feedback={feedbackResponses} actions={rhActions} />;
+      case 'quarantine':
+        return <Quarentena consultants={consultants} />;
+
       // Atividades Views
       case 'atividades_inserir':
-          return <AtividadesInserir 
-            clients={clients} 
-            consultants={consultants} 
-            usuariosCliente={usuariosCliente}
-            coordenadoresCliente={coordenadoresCliente}
-            allReports={consultants.flatMap(c => c.consultant_reports || [])}
-            loadConsultantReports={loadConsultantReports}
-            onManualReport={handleManualAnalysis}
-            preSelectedClient={contextualClient}
-            preSelectedConsultant={contextualConsultant}
-          />;
+        return <AtividadesInserir onManualAnalysis={handleManualAnalysis} clientName={contextualClient} consultantName={contextualConsultant} />;
       case 'atividades_consultar':
-          return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={memoizedLoadConsultantReports} />;
+        return <AtividadesConsultar />;
       case 'atividades_exportar':
-          return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={memoizedLoadConsultantReports} />;
-      
-      // RAISA Views
-      case 'vagas':
-          return <Vagas vagas={vagas} addVaga={addVaga} updateVaga={updateVaga} deleteVaga={deleteVaga} />;
-      case 'candidaturas':
-          return <Candidaturas candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} updateStatus={updateCandidaturaStatus} />;
-      case 'analise_risco':
-          return <AnaliseRisco />;
-      case 'pipeline':
-          return <Pipeline candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} />;
-      case 'talentos':
-          return <BancoTalentos pessoas={pessoas} addPessoa={addPessoa} updatePessoa={updatePessoa} />;
-      case 'controle_envios':
-          return <ControleEnvios currentUser={currentUser!} />;
-      case 'entrevista_tecnica':
-          return <EntrevistaTecnica />;
-      
-      // RAISA Dashboard Views
-      case 'dashboard_funil':
-          return <DashboardFunilConversao />;
-      case 'dashboard_aprovacao':
-          return <DashboardAprovacaoReprovacao />;
-      case 'dashboard_analistas':
-          return <DashboardPerformanceAnalista />;
-      case 'dashboard_geral':
-          return <DashboardPerformanceGeral />;
-      case 'dashboard_clientes':
-          return <DashboardPerformanceCliente />;
-      case 'dashboard_tempo':
-          return <DashboardAnaliseTempo />;
+        return <AtividadesExportar />;
 
-      case 'dashboard':
+      // RAISA Views
+            case 'vagas_dashboard':
+        return <DashboardVagas vagas={vagas} clientes={clients} users={users} />;
+      case 'vagas_criar':
+        return <VagasCriar addVaga={addVaga} clientes={clients} users={users} />;
+      case 'vagas_consultar':
+        return <VagasConsultar vagas={vagas} clientes={clients} users={users} updateVaga={updateVaga} deleteVaga={deleteVaga} />;
+      case 'candidaturas':
+        return <Candidaturas candidaturas={candidaturas} pessoas={pessoas} vagas={vagas} onUpdateStatus={updateCandidaturaStatus} />;
+      case 'entrevista_tecnica':
+        return <EntrevistaTecnica />;
+      case 'controle_envios':
+        return <ControleEnvios />;
+      case 'analise_risco':
+        return <AnaliseRisco />;
+      case 'pipeline':
+        return <Pipeline />;
+      case 'talentos':
+        return <BancoTalentos pessoas={pessoas} />;
+
+      // RAISA Dashboards
+      case 'dashboard_funil':
+        return <DashboardFunilConversao />;
+      case 'dashboard_aprovacao':
+        return <DashboardAprovacaoReprovacao />;
+      case 'dashboard_analistas':
+        return <DashboardPerformanceAnalista />;
+      case 'dashboard_geral':
+        return <DashboardPerformanceGeral />;
+      case 'dashboard_clientes':
+        return <DashboardPerformanceCliente />;
+      case 'dashboard_tempo':
+        return <DashboardAnaliseTempo />;
+
       default:
-        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} />;
+        return <Dashboard 
+          consultants={consultants} 
+          clients={clients} 
+          onNavigateToAtividades={handleNavigateToAtividades} 
+          loadConsultantReports={memoizedLoadConsultantReports} 
+        />;
     }
   };
 
-  if (!currentUser && currentView !== 'feedback_portal') {
-    return <LoginScreen onLogin={handleLogin} users={users} updateUser={updateUser} />;
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
   }
 
-  if (currentView === 'feedback_portal') {
-      return renderContent();
-  }
-
-  // ============================================
-  // ✅ ENVOLVA TODO O RETURN COM <PermissionsProvider>
-  // ============================================
   return (
     <PermissionsProvider>
-      <div className="min-h-screen bg-gray-100 flex flex-col overflow-hidden">
-        <Header currentUser={currentUser!} onLogout={handleLogout} />
-        <div className="flex flex-1 overflow-hidden">
-          <Sidebar 
-              currentUser={currentUser!}
-              currentView={currentView}
-              onNavigate={setCurrentView}
-          />
-          <main className="flex-1 p-4 md:p-8 overflow-auto bg-gray-100 relative">
+      <div className="flex h-screen bg-gray-100 font-sans">
+        <Sidebar currentUser={currentUser} currentView={currentView} onNavigate={setCurrentView} />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <Header user={currentUser} onLogout={handleLogout} />
+          <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-200">
+            <div className="container mx-auto px-6 py-8">
               {renderContent()}
+            </div>
           </main>
         </div>
       </div>
