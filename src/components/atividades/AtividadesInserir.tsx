@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Consultant, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore } from '../types';
 import { User, Phone, Mail, Briefcase, Clock } from 'lucide-react';
 import HistoricoAtividadesModal from '../HistoricoAtividadesModal';
+import ReportImport from '../ReportImport';
 import ScoreBadge from '../ScoreBadge';
 
 interface AtividadesInserirProps {
@@ -266,7 +267,7 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
                     </div>
                 </form>
             ) : (
-                <div>Importação...</div>
+                <ReportImport onImport={onManualReport} />
             )}
 
             {showHistoricoModal && selectedConsultantData && (
