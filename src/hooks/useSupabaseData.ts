@@ -78,7 +78,7 @@ export const useSupabaseData = () => {
       if (failures.length > 0) {
         console.warn(`⚠️ ${failures.length} tabela(s) falharam ao carregar: ${failures.join(', ')}`);
         // Não defina erro se pelo menos alguns dados foram carregados
-        if (failures.length < 5) {
+        if (failures.length < 10) { // Aumentar tolerância
           setError(null); // Continuar mesmo com falhas parciais
         }
       }
