@@ -641,12 +641,8 @@ const Quarentena: React.FC<QuarentenaProps> = ({
         <RecommendationsModal
           isOpen={showRecommendationsModal}
           onClose={handleCloseRecommendations}
-          consultantName={selectedConsultantForRecommendations.nome_consultores}
-          score={selectedConsultantForRecommendations.parecer_final_consultor || null}
-          recommendations={selectedRecommendations.recomendacoes?.map((rec: any) => ({
-            category: rec.tipo,
-            description: rec.descricao
-          })) || []}
+          consultant={selectedConsultantForRecommendations}
+          analysis={selectedRecommendations}
         />
       )}
     </div>
