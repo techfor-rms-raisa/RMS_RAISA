@@ -1864,7 +1864,7 @@ const processReportAnalysis = async (text: string, gestorName?: string): Promise
     const apiKey = import.meta.env.VITE_GEMINI_API;
     
     if (!apiKey) {
-      throw new Error('Chave de API Gemini não configurada. Configure VITE_GEMINI_API no Vercel ou .env.local');
+      throw new Error('Chave de API Gemini não configurada. Configure VITE_GEMINI_API no Vercel ou .env.local');}
     }
     
     const genAI = new GoogleGenerativeAI(apiKey);
