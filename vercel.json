@@ -1,16 +1,9 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/repriorizacao",
-      "schedule": "0 */4 * * *"
-    },
-    {
-      "path": "/api/cron/analise-mensal",
-      "schedule": "0 0 1 * *"
-    },
-    {
-      "path": "/api/cron/limpeza-notificacoes",
-      "schedule": "0 0 * * 0"
-    }
-  ]
+  "env": {
+    "VITE_API_KEY": "@vite_api_key",
+    "API_KEY": "@api_key"
+  },
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite"
 }
