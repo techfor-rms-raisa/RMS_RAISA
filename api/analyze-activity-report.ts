@@ -2,35 +2,53 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI com Schema estruturado para análise de riscos
  * 
- * v46 - CORRIGIDO: Usando @google/genai com Schema (Google AI Studio)
+ * v47 - COM TRACE: Mostra versão e variáveis de ambiente nos logs do Vercel
  */
 
 import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { APP_VERSION, FEATURES_TRACE, ENV_TRACE, initializeTraces } from '../version';
 
 /**
- * 1. CONFIGURAÇÃO DO CLIENTE
+ * 1. INICIALIZAR TRACES NA PRIMEIRA EXECUÇÃO
+ */
+let tracesInitialized = false;
+
+/**
+ * 2. CONFIGURAÇÃO DO CLIENTE
  * Recupera a chave de API das variáveis de ambiente
  */
 const getAIClient = () => {
+  // Inicializar traces na primeira requisição
+  if (!tracesInitialized) {
+    console.log('\n🚀 PRIMEIRA REQUISIÇÃO - INICIALIZANDO TRACES\n');
+    initializeTraces();
+    tracesInitialized = true;
+  }
+
   const apiKey = process.env.VITE_API_KEY || process.env.API_KEY;
   
-  console.log('🔍 [REQUEST] Verificando API_KEY...');
-  console.log('🔍 [REQUEST] NODE_ENV:', process.env.NODE_ENV);
-  console.log('🔍 [REQUEST] VITE_API_KEY presente?', !!process.env.VITE_API_KEY);
-  console.log('🔍 [REQUEST] API_KEY presente?', !!process.env.API_KEY);
-  console.log('🔍 [REQUEST] apiKey final presente?', !!apiKey);
+  console.log('\n╔════════════════════════════════════════════════════════════╗');
+  console.log('║           📋 REQUISIÇÃO PARA ANÁLISE DE RELATÓRIO          ║');
+  console.log('╠════════════════════════════════════════════════════════════╣');
+  console.log(`║ Versão da App:         ${APP_VERSION.toString().padEnd(40)} ║`);
+  console.log(`║ NODE_ENV:              ${process.env.NODE_ENV?.padEnd(40) || 'unknown'.padEnd(40)} ║`);
+  console.log(`║ VITE_API_KEY presente: ${(!!process.env.VITE_API_KEY ? '✅ SIM' : '❌ NÃO').padEnd(40)} ║`);
+  console.log(`║ API_KEY presente:      ${(!!process.env.API_KEY ? '✅ SIM' : '❌ NÃO').padEnd(40)} ║`);
+  console.log(`║ API_KEY final:         ${(!!apiKey ? '✅ DISPONÍVEL' : '❌ NÃO DISPONÍVEL').padEnd(40)} ║`);
+  console.log('╚════════════════════════════════════════════════════════════╝\n');
   
   if (!apiKey) {
-    console.error('❌ [REQUEST] API_KEY não configurada!');
+    console.error('❌ [ERRO CRÍTICO] API_KEY não configurada!');
+    console.error('   Configure VITE_API_KEY ou API_KEY no Vercel');
     throw new Error("API_KEY não configurada no ambiente.");
   }
   
-  console.log('✅ [REQUEST] API_KEY encontrada! Tamanho:', apiKey.length, 'caracteres');
+  console.log(`✅ [SUCESSO] API_KEY encontrada! Tamanho: ${apiKey.length} caracteres`);
   return new GoogleGenAI({ apiKey });
 };
 
 /**
- * 2. DEFINIÇÃO DO SCHEMA (JSON ESTRUTURADO)
+ * 3. DEFINIÇÃO DO SCHEMA (JSON ESTRUTURADO)
  * Diz ao Gemini exatamente quais campos deve retornar
  */
 const analysisSchema: Schema = {
@@ -62,7 +80,7 @@ const analysisSchema: Schema = {
 };
 
 /**
- * 3. FUNÇÃO PRINCIPAL DE ANÁLISE
+ * 4. FUNÇÃO PRINCIPAL DE ANÁLISE
  */
 async function analyzeReportWithAI(reportText: string): Promise<any[]> {
   if (!reportText || reportText.length < 5) {
@@ -99,31 +117,32 @@ ${reportText.substring(0, 8000)}
       }
     });
 
-    console.log('✅ [ANALYSIS] Resposta recebida da API!');
-    const responseText = response.text;
+    console.log('✅ [ANALYSIS] Resposta recebida do Gemini!');
+    const text = response.text;
+    const data = JSON.parse(text);
     
-    if (!responseText) {
-      console.error('❌ [ANALYSIS] Resposta vazia da IA');
-      throw new Error("Resposta da IA vazia");
-    }
+    console.log(`📊 [ANALYSIS] ${data.length} consultores analisados`);
+    console.log('✅ [ANALYSIS] Análise concluída com sucesso!\n');
     
-    console.log('📝 [ANALYSIS] Parseando JSON...');
-    const rawResults = JSON.parse(responseText.trim());
+    return data;
     
-    console.log(`✅ [ANALYSIS] ${rawResults.length} consultores identificados`);
-    return rawResults;
-
   } catch (error: any) {
     console.error('❌ [ANALYSIS] Erro ao analisar relatório:', error.message);
     console.error('📋 [ANALYSIS] Stack:', error.stack);
-    throw error;
+    return [];
   }
 }
 
 /**
- * 4. HANDLER DA API (Vercel Serverless Function)
+ * 5. HANDLER PRINCIPAL DA API
  */
 export default async function handler(req: any, res: any) {
+  console.log('\n═══════════════════════════════════════════════════════════');
+  console.log(`📥 [REQUEST] ${new Date().toISOString()}`);
+  console.log(`📥 [REQUEST] Método: ${req.method}`);
+  console.log(`📥 [REQUEST] Versão da App: ${APP_VERSION.toString()}`);
+  console.log('═══════════════════════════════════════════════════════════\n');
+
   // ✅ Verificar método HTTP
   if (req.method !== 'POST') {
     console.warn('⚠️ [REQUEST] Método não permitido:', req.method);
@@ -131,23 +150,25 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    console.log('📥 [REQUEST] Requisição recebida');
-    
-    // ✅ Extrair dados da requisição
+    // ✅ Extrair texto do relatório
     const { reportText, gestorName } = req.body;
-
+    
     if (!reportText) {
       console.error('❌ [REQUEST] reportText não fornecido');
-      return res.status(400).json({ error: 'reportText é obrigatório' });
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'reportText é obrigatório',
+        timestamp: new Date().toISOString()
+      });
     }
 
-    console.log('📊 [REQUEST] Tamanho do texto:', reportText.length, 'caracteres');
+    console.log(`📄 [REQUEST] Tamanho do relatório: ${reportText.length} caracteres`);
 
-    // ✅ Analisar relatório com IA
-    const rawResults = await analyzeReportWithAI(reportText);
+    // ✅ Analisar com IA
+    const analysisResults = await analyzeReportWithAI(reportText);
 
-    // ✅ Mapear para formato interno do sistema
-    const results = rawResults.map((result: any) => ({
+    // ✅ Mapear para formato interno
+    const results = analysisResults.map((result: any) => ({
       consultantName: result.consultorNome,
       clientName: result.clienteNome,
       managerName: gestorName || "",
@@ -160,18 +181,26 @@ export default async function handler(req: any, res: any) {
       details: result.resumoSituacao
     }));
 
-    console.log('✅ [RESPONSE] Retornando resultados...');
-    return res.status(200).json({ results });
+    // ✅ Retornar resultado
+    console.log('📤 [RESPONSE] Enviando resultado ao cliente...');
+    return res.status(200).json({
+      success: true,
+      version: APP_VERSION.toString(),
+      timestamp: new Date().toISOString(),
+      results: results
+    });
 
   } catch (error: any) {
-    console.error('❌ [ERROR] Erro geral:', error.message);
+    console.error('❌ [ERROR] Erro na API:', error.message);
     console.error('📋 [ERROR] Stack:', error.stack);
-
+    
     return res.status(500).json({
       error: 'Internal Server Error',
-      message: error.message || 'Erro ao processar relatório',
-      details: error.toString(),
+      message: error.message,
+      version: APP_VERSION.toString(),
       timestamp: new Date().toISOString()
     });
+  } finally {
+    console.log('═══════════════════════════════════════════════════════════\n');
   }
 }
