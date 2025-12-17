@@ -2,36 +2,10 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para identificar consultores e analisar riscos automaticamente
  * 
- * v43 - CORRIGIDO: Modelo gemini-3-flash-preview (Google AI Studio)
+ * v44 - CORRIGIDO: API_KEY lida em RUNTIME (não em build time)
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
-
-// ✅ CORRETO: Acessar API_KEY do process.env (Backend)
-const apiKey = process.env.API_KEY;
-
-console.log('🔍 [STARTUP] Verificando API_KEY...');
-console.log('🔍 [STARTUP] NODE_ENV:', process.env.NODE_ENV);
-console.log('🔍 [STARTUP] API_KEY presente?', !!apiKey);
-if (apiKey) {
-  console.log('🔍 [STARTUP] API_KEY tamanho:', apiKey.length, 'caracteres');
-}
-
-// ✅ Inicializar Gemini com API_KEY
-let genAI: GoogleGenerativeAI | null = null;
-
-if (apiKey) {
-  try {
-    genAI = new GoogleGenerativeAI(apiKey);
-    console.log('✅ [STARTUP] GoogleGenerativeAI inicializado com sucesso!');
-  } catch (err: any) {
-    console.error('❌ [STARTUP] Erro ao inicializar GoogleGenerativeAI:', err.message);
-  }
-} else {
-  console.error('❌ [STARTUP] API_KEY não configurada! Configure em:');
-  console.error('   - Desenvolvimento: arquivo .env na raiz do projeto');
-  console.error('   - Produção: Vercel → Settings → Environment Variables');
-}
 
 export default async function handler(req: any, res: any) {
   // ✅ Verificar método HTTP
@@ -40,10 +14,20 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    // ✅ Verificar se API foi inicializada
-    if (!genAI) {
-      console.error('❌ [REQUEST] GoogleGenerativeAI não foi inicializado!');
-      console.error('❌ [REQUEST] API_KEY não configurada. Configure API_KEY no Vercel ou .env.local');
+    // ✅ CORRETO: Ler API_KEY em RUNTIME (dentro da função)
+    // Isso garante que a variável é lida quando a requisição chega, não durante o build
+    const apiKey = process.env.API_KEY;
+
+    console.log('🔍 [REQUEST] Verificando API_KEY...');
+    console.log('🔍 [REQUEST] NODE_ENV:', process.env.NODE_ENV);
+    console.log('🔍 [REQUEST] API_KEY presente?', !!apiKey);
+    if (apiKey) {
+      console.log('🔍 [REQUEST] API_KEY tamanho:', apiKey.length, 'caracteres');
+    }
+
+    // ✅ Validar se API_KEY existe
+    if (!apiKey) {
+      console.error('❌ [REQUEST] API_KEY não configurada!');
       return res.status(500).json({
         error: 'API não configurada',
         message: 'Chave de API Gemini não configurada. Configure API_KEY no Vercel ou .env.local',
@@ -51,6 +35,21 @@ export default async function handler(req: any, res: any) {
       });
     }
 
+    // ✅ Inicializar Gemini com API_KEY
+    let genAI: GoogleGenerativeAI;
+    try {
+      genAI = new GoogleGenerativeAI(apiKey);
+      console.log('✅ [REQUEST] GoogleGenerativeAI inicializado com sucesso!');
+    } catch (err: any) {
+      console.error('❌ [REQUEST] Erro ao inicializar GoogleGenerativeAI:', err.message);
+      return res.status(500).json({
+        error: 'Erro ao inicializar API',
+        message: err.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // ✅ Extrair dados da requisição
     const { reportText, gestorName } = req.body;
 
     if (!reportText) {
@@ -128,7 +127,7 @@ ${reportText}
 
     console.log('🤖 [ANALYSIS] Chamando Gemini API com modelo gemini-3-flash-preview...');
     
-    // ✅ CORRIGIDO: Usar gemini-3-flash-preview (conforme Google AI Studio)
+    // ✅ CORRETO: Usar gemini-3-flash-preview
     const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
     const result = await model.generateContent(prompt);
     const response = await result.response;
@@ -166,4 +165,3 @@ ${reportText}
     });
   }
 }
-
