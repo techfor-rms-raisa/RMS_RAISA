@@ -9,11 +9,10 @@ import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '..
 const getAIClient = () => {
   const apiKey = (typeof process !== 'undefined' && (process.env?.VITE_API_KEY || process.env?.API_KEY)) ||
                  import.meta.env?.VITE_API_KEY ||
-                 import.meta.env?.VITE_GEMINI_API ||
                  "";
   
   if (!apiKey) {
-    console.error("❌ API_KEY não configurada! Configure VITE_API_KEY ou VITE_GEMINI_API");
+    console.error("❌ API_KEY não configurada! Configure VITE_API_KEY");
     throw new Error("API_KEY não configurada");
   }
   

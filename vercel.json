@@ -1,4 +1,11 @@
 {
+  "functions": {
+    "api/**/*.ts": {
+      "runtime": "nodejs20.x",
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/repriorizacao",
@@ -13,10 +20,6 @@
       "schedule": "0 0 * * 0"
     }
   ],
-  "env": {
-    "VITE_API_KEY": "@vite_api_key",
-    "API_KEY": "@api_key"
-  },
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": "vite"
