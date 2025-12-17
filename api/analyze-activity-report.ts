@@ -2,7 +2,7 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para identificar consultores e analisar riscos automaticamente
  * 
- * v41 - Com logs de debug detalhados + fallback temporário
+ * v42 - CORRIGIDO: Modelo gemini-2.0-flash (sem -exp)
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -108,8 +108,8 @@ ${reportText}
     // console.log('🔑 API Key presente?', !!apiKey); // Removido para performance
     console.log('🤖 Chamando Gemini API...');
     
-    // Sintaxe CORRETA do @google/generative-ai
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+    // ✅ CORRIGIDO: Usar gemini-2.0-flash (sem -exp)
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     const result = await model.generateContent(prompt);
     const response = await result.response;
     const text = response.text();
