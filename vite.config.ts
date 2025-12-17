@@ -8,11 +8,19 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        allowedHosts: ['3000-id8kuotry735gknl0iee4-ab255f57.manusvm.computer', 'localhost', '127.0.0.1'],
       },
       plugins: [react()],
+      hmr: {
+        protocol: 'wss',
+        host: '3000-id8kuotry735gknl0iee4-ab255f57.manusvm.computer',
+        port: 443,
+      },
       define: {
         'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+        'process.env.SUPABASE_URL': JSON.stringify(env.SUPABASE_URL),
+        'process.env.SUPABASE_ANON_KEY': JSON.stringify(env.SUPABASE_ANON_KEY)
       },
       resolve: {
         alias: {

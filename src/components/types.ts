@@ -137,10 +137,9 @@ export interface Client {
   id: number;
   razao_social_cliente: string;
   ativo_cliente: boolean;
-  vip?: boolean;
-  id_gestao_comercial?: number | null; 
-  id_gestao_de_pessoas?: number | null; 
-  id_gestor_rs?: number | null; 
+  id_gestao_comercial: number; 
+  id_gestao_de_pessoas: number; 
+  id_gestor_rs: number; 
 }
 
 export interface AIAnalysisResult {
