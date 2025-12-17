@@ -2,7 +2,7 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para identificar consultores e analisar riscos automaticamente
  * 
- * v44 - CORRIGIDO: API_KEY lida em RUNTIME (não em build time)
+ * v45 - CORRIGIDO: Usar VITE_API_KEY (disponível no Vercel)
  */
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -14,23 +14,28 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    // ✅ CORRETO: Ler API_KEY em RUNTIME (dentro da função)
-    // Isso garante que a variável é lida quando a requisição chega, não durante o build
-    const apiKey = process.env.API_KEY;
+    // ✅ CORRETO: Usar VITE_API_KEY (que está configurada no Vercel)
+    // Fallback para API_KEY se VITE_API_KEY não existir
+    const apiKey = process.env.VITE_API_KEY || process.env.API_KEY;
 
     console.log('🔍 [REQUEST] Verificando API_KEY...');
     console.log('🔍 [REQUEST] NODE_ENV:', process.env.NODE_ENV);
-    console.log('🔍 [REQUEST] API_KEY presente?', !!apiKey);
+    console.log('🔍 [REQUEST] VITE_API_KEY presente?', !!process.env.VITE_API_KEY);
+    console.log('🔍 [REQUEST] API_KEY presente?', !!process.env.API_KEY);
+    console.log('🔍 [REQUEST] apiKey final presente?', !!apiKey);
     if (apiKey) {
-      console.log('🔍 [REQUEST] API_KEY tamanho:', apiKey.length, 'caracteres');
+      console.log('🔍 [REQUEST] apiKey tamanho:', apiKey.length, 'caracteres');
     }
 
     // ✅ Validar se API_KEY existe
     if (!apiKey) {
       console.error('❌ [REQUEST] API_KEY não configurada!');
+      console.error('❌ [REQUEST] Variáveis disponíveis:');
+      console.error('   - VITE_API_KEY:', !!process.env.VITE_API_KEY);
+      console.error('   - API_KEY:', !!process.env.API_KEY);
       return res.status(500).json({
         error: 'API não configurada',
-        message: 'Chave de API Gemini não configurada. Configure API_KEY no Vercel ou .env.local',
+        message: 'Chave de API Gemini não configurada. Configure VITE_API_KEY no Vercel',
         timestamp: new Date().toISOString()
       });
     }
