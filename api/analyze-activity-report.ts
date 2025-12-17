@@ -7,12 +7,12 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Usar VITE_GEMINI_API (configurada no Vercel)
-const apiKey = process.env.VITE_GEMINI_API || '';
+// Usar API_KEY (configurada no Vercel)
+const apiKey = process.env.API_KEY || '';
 
 // Fallback para desenvolvimento local
 if (!apiKey && process.env.NODE_ENV !== 'production') {
-  console.warn('⚠️ VITE_GEMINI_API não configurada. Configure no Vercel.');
+  console.warn('⚠️ API_KEY não configurada. Configure no Vercel.');
 }
 
 if (!apiKey) {

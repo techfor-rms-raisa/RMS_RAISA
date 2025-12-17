@@ -1,13 +1,13 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Usar GEMINI_API_KEY do ambiente Vercel (backend)
-const apiKey = process.env.GEMINI_API_KEY || '';
+// Usar API_KEY do ambiente Vercel (backend)
+const apiKey = process.env.API_KEY || '';
 
 if (!apiKey) {
-  console.error('❌ GEMINI_API_KEY não encontrada no ambiente Vercel!');
+  console.error('❌ API_KEY não encontrada no ambiente Vercel!');
 } else {
-  console.log('✅ GEMINI_API_KEY carregada com sucesso');
+  console.log('✅ API_KEY carregada com sucesso');
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -35,7 +35,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Verificar se API key está disponível
     if (!apiKey) {
-      throw new Error('API key is missing. Please configure GEMINI_API_KEY in Vercel environment variables.');
+      throw new Error('API key is missing. Please configure API_KEY in Vercel environment variables.');
     }
 
     let result;

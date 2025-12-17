@@ -2,13 +2,13 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Consultant, ConsultantReport, UsuarioCliente, Client } from './types';
 
 // Inicializar Gemini
-// Usar VITE_GEMINI_API (configurada no Vercel)
-const apiKey = (typeof process !== 'undefined' && process.env?.VITE_GEMINI_API) ||
-               import.meta.env?.VITE_GEMINI_API ||
+// Usar API_KEY (configurada no Vercel)
+const apiKey = (typeof process !== 'undefined' && process.env?.API_KEY) ||
+               import.meta.env?.API_KEY ||
                '';
 
 if (!apiKey) {
-  console.warn('⚠️ VITE_GEMINI_API não configurada. Recomendações não funcionarão.');
+  console.warn('⚠️ API_KEY não configurada. Recomendações não funcionarão.');
 }
 
 const genAI = new GoogleGenerativeAI(apiKey);

@@ -3,9 +3,9 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { AI_MODEL_NAME } from '../constants';
 import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '../components/types';
 
-// Usar VITE_GEMINI_API (configurada no Vercel)
-const apiKey = (typeof process !== 'undefined' && process.env?.VITE_GEMINI_API) ||
-               import.meta.env?.VITE_GEMINI_API ||
+// Usar API_KEY (configurada no Vercel)
+const apiKey = (typeof process !== 'undefined' && process.env?.API_KEY) ||
+               import.meta.env?.API_KEY ||
                "";
 const ai = new GoogleGenerativeAI(apiKey);
 
