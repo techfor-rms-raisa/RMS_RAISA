@@ -1861,10 +1861,10 @@ const processReportAnalysis = async (text: string, gestorName?: string): Promise
     
     // Importar GoogleGenerativeAI
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    const apiKey = import.meta.env.VITE_GEMINI_API;
     
     if (!apiKey) {
-      throw new Error('Chave de API Gemini não configurada. Configure VITE_GEMINI_API_KEY no .env.local');
+      throw new Error('Chave de API Gemini não configurada. Configure VITE_GEMINI_API no Vercel ou .env.local');}
     }
     
     const genAI = new GoogleGenerativeAI(apiKey);

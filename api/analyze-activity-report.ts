@@ -7,12 +7,13 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// Priorizar GEMINI_API_KEY (configurada no Vercel)
-const apiKey = process.env.GEMINI_API_KEY || 
-               process.env.VITE_GEMINI_API_KEY || 
-               process.env.VITE_GEMINI_API ||
-               process.env.NEXT_PUBLIC_GEMINI_API_KEY || 
-               '';
+// Usar VITE_GEMINI_API (configurada no Vercel)
+const apiKey = process.env.VITE_GEMINI_API || '';
+
+// Fallback para desenvolvimento local
+if (!apiKey && process.env.NODE_ENV !== 'production') {
+  console.warn('⚠️ VITE_GEMINI_API não configurada. Configure no Vercel.');
+}
 
 if (!apiKey) {
   console.error('❌ GEMINI API KEY não configurada!');

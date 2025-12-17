@@ -2,10 +2,9 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { RiskFactor } from '../components/types';
 import { AI_MODEL_NAME } from '../constants';
 
-// Access API Key - supporting both Backend (Vercel) and Frontend (Vite)
-const apiKey = (typeof process !== 'undefined' && process.env?.GEMINI_API_KEY) ||
-               import.meta.env?.VITE_GEMINI_API_KEY ||
-               import.meta.env?.VITE_API_KEY ||
+// Usar VITE_GEMINI_API (configurada no Vercel)
+const apiKey = (typeof process !== 'undefined' && process.env?.VITE_GEMINI_API) ||
+               import.meta.env?.VITE_GEMINI_API ||
                "";
 
 if (!apiKey) {
