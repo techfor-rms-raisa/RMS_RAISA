@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Candidatura, Vaga, PerguntaTecnica, RespostaCandidato, AvaliacaoIA } from '../../src/components/types';
+import { Candidatura, Vaga, PerguntaTecnica, RespostaCandidato, AvaliacaoIA } from '../types';
 import { useMockData } from '../../hooks/useMockData';
 
 interface EntrevistaProps {

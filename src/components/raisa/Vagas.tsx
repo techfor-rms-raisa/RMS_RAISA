@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Vaga } from '../../src/components/types';
+import { Vaga } from '../types';
 import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 
 interface VagasProps {

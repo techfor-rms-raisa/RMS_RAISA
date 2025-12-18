@@ -1,5 +1,5 @@
 import React from 'react';
-import { Consultant, ConsultantReport } from '../../src/components/types';
+import { Consultant, ConsultantReport } from '../types';
 
 interface MonthlyReportsModalProps {
   consultant: Consultant;

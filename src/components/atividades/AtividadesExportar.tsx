@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Client, Consultant, UsuarioCliente, ConsultantReport } from '../../src/components/types';
+import { Client, Consultant, UsuarioCliente, ConsultantReport } from '../types';
 
 interface AtividadesExportarProps {
     clients: Client[];

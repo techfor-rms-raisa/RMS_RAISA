@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pessoa } from '../../src/components/types';
+import { Pessoa } from '../types';
 
 interface TalentosProps {
     pessoas: Pessoa[];

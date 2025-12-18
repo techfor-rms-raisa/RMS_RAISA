@@ -1,4 +1,4 @@
-import { RiskScore } from './components/types';
+import { RiskScore } from './src/components/types';
 
 // ========================================
 // ESCALA DE RISCO: 5 NÍVEIS
@@ -44,4 +44,3 @@ export const COMPANY_NAME = "TECH FOR TI";
 export const AI_MODEL_NAME = "gemini-2.5-flash"; 
 
 // export const LOGO_BASE64 = 'data:image/png;base64,...'; // Removido para corrigir ERR_INVALID_URL
-

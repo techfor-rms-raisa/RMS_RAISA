@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { AIAnalysisResult, RiskScore, Recommendation, BehavioralFlag } from '../components/types';
 import { AI_MODEL_NAME } from '../constants';
 
@@ -11,7 +11,7 @@ if (!apiKey) {
     console.warn("API Key is missing. Please check your environment variables.");
 }
 
-const ai = new GoogleGenerativeAI(apiKey);
+const ai = new GoogleGenAI({ apiKey });
 
 // Existing Schema for Full Analysis (Legacy/Fallback)
     // Schema removed for compatibility with @google/generative-ai
@@ -36,10 +36,10 @@ export async function extractBehavioralFlags(reportText: string): Promise<Omit<B
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '[]');
     } catch (error) {
         console.error("Error extracting flags:", error);
@@ -66,10 +66,10 @@ export async function generatePredictiveAlert(recentFlags: BehavioralFlag[]): Pr
     `;
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        return response.text() || "Análise preditiva inconclusiva.";
+        // response é o próprio result
+        return result.text || "Análise preditiva inconclusiva.";
     } catch (error) {
         console.error("Error generating alert:", error);
         return "Erro na geração do alerta preditivo.";
@@ -97,11 +97,11 @@ export async function analyzeReport(reportText: string, managerName?: string): P
   `;
 
   try {
-    const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+    const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-    const response = await result.response;
+    // response é o próprio result
     
-    const jsonString = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+    const jsonString = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
     const rawResults = JSON.parse(jsonString || '[]');
 
     if (!Array.isArray(rawResults)) {
@@ -138,10 +138,10 @@ export async function generateTemplateContent(context: string): Promise<{ subjec
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"subject": "", "body": ""}');
     } catch (error) {
         console.error("Template Gen Error", error);
@@ -159,25 +159,18 @@ export async function analyzeFeedback(feedbackText: string, score: number): Prom
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Feedback Analysis Error", error);
         return { sentiment: "Neutro", riskLevel: "Baixo", keyPoints: [], suggestedAction: "Revisar manualmente" };
     }
 }
-// Tipos locais (TODO: Mover para types.ts)
-interface InterviewSummary {
-    narrativeSummary: string;
-    strengths: string[];
-    areasForDevelopment: string[];
-    culturalFitScore: number;
-    keyQuotes: Array<{ quote: string; speaker: string }>;
-    nextStepRecommendation: string;
-}
+// Importar tipo do interviewService para compatibilidade
+import type { InterviewSummary } from './interviewService';
 
 // --- RAISA: INTERVIEW SUMMARIZATION ---
 export async function summarizeInterview(transcript: string, jobDescription: string): Promise<InterviewSummary> {
@@ -205,10 +198,10 @@ export async function summarizeInterview(transcript: string, jobDescription: str
     `;
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}') as InterviewSummary;
     } catch (error) {
         console.error("Interview Summarization Error:", error);
@@ -268,10 +261,10 @@ export async function generateFinalAssessment(
     `;
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}') as FinalAssessment;
     } catch (error) {
         console.error("Final Assessment Error:", error);
@@ -329,10 +322,10 @@ export async function calculateVagaPriority(dados: any): Promise<any> {
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro ao calcular prioridade da vaga:", error);
@@ -397,10 +390,10 @@ export async function recommendAnalyst(dados: any): Promise<any> {
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '[]');
     } catch (error) {
         console.error("Erro ao recomendar analista:", error);
@@ -491,10 +484,10 @@ export async function improveJobDescription(
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"descricao_melhorada": "", "mudancas_sugeridas": []}');
     } catch (error) {
         console.error("Erro ao melhorar descrição da vaga:", error);
@@ -566,10 +559,10 @@ export async function suggestReprioritization(dados: {
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"deve_reprioritizar": false}');
     } catch (error) {
         console.error("Erro ao sugerir repriorização:", error);
@@ -654,10 +647,10 @@ export async function recommendQuestionsForVaga(dados: {
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"questoes": [], "insights": []}');
     } catch (error) {
         console.error("Erro ao recomendar questões:", error);
@@ -760,10 +753,10 @@ export async function recommendCandidateDecision(dados: {
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro ao recomendar decisão:", error);
@@ -829,10 +822,10 @@ export async function identifyRedFlags(dados: {
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{"flags": []}');
     } catch (error) {
         console.error("Erro ao identificar red flags:", error);
@@ -925,10 +918,10 @@ export async function analyzeRejectionPatterns(dados: {
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro ao analisar padrões de reprovação:", error);
@@ -1004,10 +997,10 @@ export async function predictCandidateRisk(dados: {
     // Schema removed - not supported by @google/generative-ai
 
     try {
-        const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+        const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-        const response = await result.response;
-        const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+        // response é o próprio result
+        const text = result.text.replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
         return JSON.parse(text || '{}');
     } catch (error) {
         console.error("Erro ao prever risco:", error);

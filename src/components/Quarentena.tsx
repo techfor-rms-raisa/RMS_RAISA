@@ -79,7 +79,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
 
   const getValidFinalScore = (consultant: Consultant): number | null => {
     const score = consultant.parecer_final_consultor;
-    if (score === null || score === undefined || score === '#FFFF') {
+    if (score === null || score === undefined || String(score) === '#FFFF') {
       return null;
     }
     const numScore = typeof score === 'string' ? parseInt(score, 10) : score;

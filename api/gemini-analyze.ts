@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
 // Usar API_KEY do ambiente Vercel (backend)
 const apiKey = process.env.API_KEY || '';
@@ -9,6 +9,8 @@ if (!apiKey) {
 } else {
   console.log('✅ API_KEY carregada com sucesso');
 }
+
+const ai = new GoogleGenAI({ apiKey });
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
@@ -99,12 +101,8 @@ ${reportText}
 \`\`\`
 `;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
-  
-  const result = await model.generateContent(prompt);
-  const response = await result.response;
-  const text = response.text();
+  const result = await ai.models.generateContent({ model: 'gemini-2.0-flash-exp', contents: prompt });
+  const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
   
@@ -158,12 +156,8 @@ ${reportText}
 \`\`\`
 `;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
-  
-  const result = await model.generateContent(prompt);
-  const response = await result.response;
-  const text = response.text();
+  const result = await ai.models.generateContent({ model: 'gemini-2.0-flash-exp', contents: prompt });
+  const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
   
@@ -176,12 +170,8 @@ ${reportText}
 }
 
 async function generateContent(model: string, prompt: string) {
-  const genAI = new GoogleGenerativeAI(apiKey);
-  const geminiModel = genAI.getGenerativeModel({ model: model || 'gemini-2.0-flash-exp' });
-  
-  const result = await geminiModel.generateContent(prompt);
-  const response = await result.response;
-  const text = response.text();
+  const result = await ai.models.generateContent({ model: model || 'gemini-2.0-flash-exp', contents: prompt });
+  const text = result.text || '';
 
   return { text };
 }

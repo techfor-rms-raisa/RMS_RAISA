@@ -3,10 +3,10 @@
  * Evita chamadas repetidas à API Gemini causando looping
  */
 
-import { Consultant, ConsultantReport } from './types';
+import { Consultant, ConsultantReport } from '../components/types';
 
 export interface IntelligentRecommendation {
-  tipo: 'AÇÃO IMEDIATA' | 'PREVENTIVO' | 'DESENVOLVIMENTO' | 'RECONHECIMENTO' | 'SUPORTE' | 'OBSERVAÇÃO';
+  tipo: 'AÇÃO IMEDIATA' | 'PREVENTIVO' | 'DESENVOLVIMENTO' | 'RECONHECIMENTO' | 'SUPORTE' | 'OBSERVAÇÃO' | 'FEEDBACK';
   descricao: string;
   prazo: string;
   responsavel: 'Gestor' | 'RH' | 'Coordenador';
@@ -33,10 +33,10 @@ export function loadRecommendationsFromSupabase(
       const latestReport = reports[0]; // Já vem ordenado por data
 
       // Priorizar recommendations_v2
-      if (latestReport.recommendations_v2) {
-        const parsed = typeof latestReport.recommendations_v2 === 'string'
-          ? JSON.parse(latestReport.recommendations_v2)
-          : latestReport.recommendations_v2;
+      if ((latestReport as any).recommendations_v2) {
+        const parsed = typeof (latestReport as any).recommendations_v2 === 'string'
+          ? JSON.parse((latestReport as any).recommendations_v2)
+          : (latestReport as any).recommendations_v2;
 
         if (parsed && parsed.resumo && Array.isArray(parsed.recomendacoes)) {
           console.log(`✅ Recomendações carregadas de recommendations_v2 para ${consultant.nome_consultores}`);
@@ -47,10 +47,10 @@ export function loadRecommendationsFromSupabase(
       // Fallback para recommendations
       if (latestReport.recommendations) {
         const parsed = typeof latestReport.recommendations === 'string'
-          ? JSON.parse(latestReport.recommendations)
+          ? JSON.parse(latestReport.recommendations as unknown as string)
           : latestReport.recommendations;
 
-        if (parsed && parsed.resumo && Array.isArray(parsed.recomendacoes)) {
+        if (parsed && (parsed as any).resumo && Array.isArray((parsed as any).recomendacoes)) {
           console.log(`✅ Recomendações carregadas de recommendations para ${consultant.nome_consultores}`);
           return parsed as IntelligentAnalysis;
         }

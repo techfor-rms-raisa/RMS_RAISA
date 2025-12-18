@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { analyzeCandidate } from '../../services/raisaService';
-import { RiskFactor } from '../../src/components/types';
+import { RiskFactor } from '../types';
 
 const AnaliseRisco: React.FC = () => {
     const [resumeText, setResumeText] = useState('');

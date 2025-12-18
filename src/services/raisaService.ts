@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { RiskFactor } from '../components/types';
 import { AI_MODEL_NAME } from '../constants';
 
@@ -11,11 +11,9 @@ if (!apiKey) {
     console.warn("API Key is missing for RAISA Service.");
 }
 
-const ai = new GoogleGenerativeAI(apiKey);
+const ai = new GoogleGenAI({ apiKey });
 
 export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFactor[]> => {
-  const model = AI_MODEL_NAME;
-
   const prompt = `
     Você é um especialista em análise de risco de candidatos para recrutamento em TI.
     Analise o currículo abaixo e identifique FATORES DE RISCO que podem indicar problemas futuros (Job Hopping, Gaps, Skills desatualizadas, etc.).
@@ -26,14 +24,10 @@ export const analyzeCandidate = async (curriculoTexto: string): Promise<RiskFact
     Retorne um JSON Array com fatores de risco.
   `;
 
-    // Schema removed - not supported by @google/generative-ai
-
   try {
-    const result = await ai.getGenerativeModel({ model: AI_MODEL_NAME }).generateContent(prompt);
+    const result = await ai.models.generateContent({ model: AI_MODEL_NAME, contents: prompt });
 
-    const response = await result.response;
-
-    const text = response.text().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+    const text = (result.text || '').replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
     return JSON.parse(text || '[]');
   } catch (error) {
     console.error('Erro na análise RAISA:', error);

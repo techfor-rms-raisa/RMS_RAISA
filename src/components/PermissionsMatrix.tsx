@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../config/supabase';
-import { useParams, useNavigate } from 'react-router-dom';
 
 interface Permissao {
     id: number;
@@ -22,10 +21,12 @@ interface Perfil {
     cor_badge: string;
 }
 
-export const PermissionsMatrix: React.FC = () => {
-    const { perfilId } = useParams<{ perfilId: string }>();
-    const navigate = useNavigate();
-    
+interface PermissionsMatrixProps {
+    perfilId?: string;
+    onNavigate?: (path: string) => void;
+}
+
+export const PermissionsMatrix: React.FC<PermissionsMatrixProps> = ({ perfilId, onNavigate }) => {
     const [perfil, setPerfil] = useState<Perfil | null>(null);
     const [permissoes, setPermissoes] = useState<Permissao[]>([]);
     const [permissoesAtivas, setPermissoesAtivas] = useState<Set<number>>(new Set());
@@ -209,7 +210,7 @@ export const PermissionsMatrix: React.FC = () => {
 
     const totalPermissoes = permissoes.length;
     const permissoesAtribuidas = permissoesAtivas.size;
-    const percentual = Math.round((permissoesAtribuidas / totalPermissoes) * 100);
+    const percentual = totalPermissoes > 0 ? Math.round((permissoesAtribuidas / totalPermissoes) * 100) : 0;
 
     return (
         <div className="p-6">
@@ -217,7 +218,7 @@ export const PermissionsMatrix: React.FC = () => {
             <div className="flex justify-between items-center mb-6">
                 <div className="flex items-center gap-4">
                     <button
-                        onClick={() => navigate('/perfis')}
+                        onClick={() => onNavigate?.('/perfis')}
                         className="text-gray-600 hover:text-gray-900"
                     >
                         ← Voltar
@@ -291,7 +292,7 @@ export const PermissionsMatrix: React.FC = () => {
                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         >
                             <option value="todos">Todos os Módulos</option>
-                            {Object.keys(permissoesPorModulo).map(modulo => (
+                            {Object.keys(permissoesPorModulo).sort().map(modulo => (
                                 <option key={modulo} value={modulo}>{modulo}</option>
                             ))}
                         </select>
@@ -299,30 +300,38 @@ export const PermissionsMatrix: React.FC = () => {
                 </div>
             </div>
 
-            {/* Matriz de Permissões */}
+            {/* Lista de Permissões por Módulo */}
             <div className="space-y-4">
-                {modulosFiltrados.map(modulo => {
-                    const permsDoModulo = permissoesPorModulo[modulo];
+                {modulosFiltrados.sort().map(modulo => {
+                    const permsDoModulo = permissoesPorModulo[modulo].filter(p => {
+                        if (!searchTerm) return true;
+                        return p.nome_permissao.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                               p.codigo_permissao.toLowerCase().includes(searchTerm.toLowerCase());
+                    });
+
                     const todasAtivas = permsDoModulo.every(p => permissoesAtivas.has(p.id));
-                    const algumaAtiva = permsDoModulo.some(p => permissoesAtivas.has(p.id));
+                    const algumasAtivas = permsDoModulo.some(p => permissoesAtivas.has(p.id));
 
                     return (
                         <div key={modulo} className="bg-white rounded-lg shadow overflow-hidden">
                             {/* Header do Módulo */}
-                            <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                            <div 
+                                className="flex items-center justify-between p-4 bg-gray-50 border-b cursor-pointer hover:bg-gray-100"
+                                onClick={() => handleToggleModulo(modulo)}
+                            >
                                 <div className="flex items-center gap-3">
                                     <input
                                         type="checkbox"
                                         checked={todasAtivas}
                                         ref={input => {
-                                            if (input) input.indeterminate = algumaAtiva && !todasAtivas;
+                                            if (input) {
+                                                input.indeterminate = algumasAtivas && !todasAtivas;
+                                            }
                                         }}
                                         onChange={() => handleToggleModulo(modulo)}
-                                        className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                                        className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
                                     />
-                                    <h3 className="text-lg font-bold text-gray-900 capitalize">
-                                        📦 {modulo}
-                                    </h3>
+                                    <h3 className="text-lg font-semibold text-gray-900">{modulo}</h3>
                                     <span className="text-sm text-gray-500">
                                         ({permsDoModulo.filter(p => permissoesAtivas.has(p.id)).length}/{permsDoModulo.length})
                                     </span>
@@ -330,72 +339,43 @@ export const PermissionsMatrix: React.FC = () => {
                             </div>
 
                             {/* Lista de Permissões */}
-                            <div className="divide-y divide-gray-200">
-                                {permsDoModulo.map(permissao => (
-                                    <div
-                                        key={permissao.id}
-                                        className="px-6 py-4 hover:bg-gray-50 transition"
+                            <div className="divide-y divide-gray-100">
+                                {permsDoModulo.map(perm => (
+                                    <div 
+                                        key={perm.id}
+                                        className="flex items-center justify-between p-4 hover:bg-gray-50"
                                     >
-                                        <label className="flex items-center gap-4 cursor-pointer">
+                                        <div className="flex items-center gap-3">
                                             <input
                                                 type="checkbox"
-                                                checked={permissoesAtivas.has(permissao.id)}
-                                                onChange={() => handleTogglePermissao(permissao.id)}
-                                                className="w-5 h-5 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                                                checked={permissoesAtivas.has(perm.id)}
+                                                onChange={() => handleTogglePermissao(perm.id)}
+                                                className="w-5 h-5 text-blue-600 rounded focus:ring-blue-500"
                                             />
-                                            <div className="flex-1">
-                                                <div className="flex items-center gap-3">
-                                                    <span className={`text-xl ${getCorAcao(permissao.acao)}`}>
-                                                        {getIconeAcao(permissao.acao)}
+                                            <div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={getCorAcao(perm.acao)}>
+                                                        {getIconeAcao(perm.acao)}
                                                     </span>
-                                                    <div>
-                                                        <div className="font-medium text-gray-900">
-                                                            {permissao.nome_permissao}
-                                                        </div>
-                                                        <div className="text-sm text-gray-500">
-                                                            {permissao.codigo_permissao}
-                                                        </div>
-                                                        {permissao.descricao && (
-                                                            <div className="text-sm text-gray-600 mt-1">
-                                                                {permissao.descricao}
-                                                            </div>
-                                                        )}
-                                                    </div>
+                                                    <span className="font-medium text-gray-900">
+                                                        {perm.nome_permissao}
+                                                    </span>
+                                                </div>
+                                                <div className="text-sm text-gray-500">
+                                                    {perm.codigo_permissao}
+                                                    {perm.descricao && ` - ${perm.descricao}`}
                                                 </div>
                                             </div>
-                                            <span className={`px-3 py-1 text-xs font-medium rounded-full capitalize ${
-                                                permissao.acao === 'criar' ? 'bg-green-100 text-green-800' :
-                                                permissao.acao === 'ler' ? 'bg-blue-100 text-blue-800' :
-                                                permissao.acao === 'editar' ? 'bg-yellow-100 text-yellow-800' :
-                                                permissao.acao === 'excluir' ? 'bg-red-100 text-red-800' :
-                                                'bg-purple-100 text-purple-800'
-                                            }`}>
-                                                {permissao.acao}
-                                            </span>
-                                        </label>
+                                        </div>
+                                        <span className={`px-2 py-1 text-xs font-medium rounded ${getCorAcao(perm.acao)} bg-opacity-10`}>
+                                            {perm.acao}
+                                        </span>
                                     </div>
                                 ))}
                             </div>
                         </div>
                     );
                 })}
-            </div>
-
-            {modulosFiltrados.length === 0 && (
-                <div className="bg-white rounded-lg shadow p-12 text-center text-gray-500">
-                    Nenhuma permissão encontrada com os filtros aplicados
-                </div>
-            )}
-
-            {/* Footer com botão de salvar */}
-            <div className="mt-6 flex justify-end">
-                <button
-                    onClick={handleSalvar}
-                    disabled={saving}
-                    className="bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 text-lg font-medium"
-                >
-                    {saving ? 'Salvando...' : '💾 Salvar Todas as Alterações'}
-                </button>
             </div>
         </div>
     );

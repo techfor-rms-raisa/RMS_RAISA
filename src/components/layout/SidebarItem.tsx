@@ -1,5 +1,5 @@
 import React from 'react';
-import { View } from '../../src/components/types';
+import { View } from '../types';
 
 interface SidebarItemProps {
     view: View;

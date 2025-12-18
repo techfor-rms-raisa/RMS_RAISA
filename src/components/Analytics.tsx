@@ -364,7 +364,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                                                 <div className="w-32 bg-gray-200 rounded-full h-2">
                                                     <div 
                                                         className={`h-2 rounded-full ${colors[index]}`}
-                                                        style={{ width: `${(count / consultants.length) * 100}%` }}
+                                                        style={{ width: `${(Number(count) / consultants.length) * 100}%` }}
                                                     />
                                                 </div>
                                                 <span className={`font-semibold ${textColors[index]} min-w-12`}>{count}</span>

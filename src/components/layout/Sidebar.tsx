@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, User } from '../../src/components/types';
+import { View, User } from '../types';
 import SidebarSection from './SidebarSection';
 import SidebarToggle from './SidebarToggle';
 import { APP_TITLE } from '../../constants';

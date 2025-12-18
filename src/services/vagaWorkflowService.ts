@@ -3,7 +3,7 @@
  * Gerencia o fluxo completo de 10 etapas de uma vaga
  */
 
-import { supabase } from '../lib/supabase';
+import { supabase } from '../Lib/supabase';
 import { improveJobDescription } from './geminiService';
 import { notificacaoService } from './notificacaoService';
 

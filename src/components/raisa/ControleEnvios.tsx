@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, CandidaturaEnvio } from '../../src/components/types';
+import { User, CandidaturaEnvio } from '../types';
 import { useMockData } from '../../hooks/useMockData';
 
 interface ControleEnviosProps {

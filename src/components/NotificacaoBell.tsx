@@ -7,11 +7,13 @@ import React, { useState, useEffect } from 'react';
 import { Bell, X, Check, CheckCheck } from 'lucide-react';
 import { notificacaoService, Notificacao } from '../services/notificacaoService';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
 
-export function NotificacaoBell() {
+interface NotificacaoBellProps {
+  onNavigate?: (path: string) => void;
+}
+
+export function NotificacaoBell({ onNavigate }: NotificacaoBellProps) {
   const { user } = useAuth();
-  const navigate = useNavigate();
   
   const [notificacoes, setNotificacoes] = useState<Notificacao[]>([]);
   const [naoLidas, setNaoLidas] = useState(0);
@@ -73,9 +75,9 @@ export function NotificacaoBell() {
       await handleMarcarComoLida(notificacao.id);
     }
     
-    // Navegar para o link relacionado
-    if (notificacao.link_relacionado) {
-      navigate(notificacao.link_relacionado);
+    // Navegar para o link relacionado (usando callback)
+    if (notificacao.link_relacionado && onNavigate) {
+      onNavigate(notificacao.link_relacionado);
       setIsOpen(false);
     }
   };

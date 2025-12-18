@@ -1,5 +1,5 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Consultant, ConsultantReport, UsuarioCliente, Client } from './types';
+import { GoogleGenAI } from '@google/genai';
+import { Consultant, ConsultantReport, UsuarioCliente, Client } from '../components/types';
 
 // Inicializar Gemini
 // Usar API_KEY (configurada no Vercel)
@@ -11,8 +11,7 @@ if (!apiKey) {
   console.warn('⚠️ API_KEY não configurada. Recomendações não funcionarão.');
 }
 
-const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+const ai = new GoogleGenAI({ apiKey });
 
 export interface IntelligentRecommendation {
   tipo: 'AÇÃO IMEDIATA' | 'PREVENTIVO' | 'DESENVOLVIMENTO' | 'RECONHECIMENTO' | 'SUPORTE' | 'OBSERVAÇÃO';
@@ -133,9 +132,9 @@ Retorne APENAS um JSON válido, sem explicações adicionais:
   "alertas": ["array de alertas se houver"]
 }`;
 
-    // Chamar Gemini
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
+    // Chamar Gemini usando o novo SDK
+    const result = await ai.models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+    const responseText = result.text || '';
 
     // Extrair JSON da resposta
     const jsonMatch = responseText.match(/\{[\s\S]*\}/);

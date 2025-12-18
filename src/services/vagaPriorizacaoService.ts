@@ -30,10 +30,10 @@ export async function coletarDadosVaga(vagaId: string): Promise<DadosVagaPriorid
             .from('vagas')
             .select(`
                 *,
-                clientes (
+                clients (
                     id,
                     razao_social_cliente,
-                    cliente_vip
+                    vip
                 )
             `)
             .eq('id', vagaId)
@@ -46,7 +46,7 @@ export async function coletarDadosVaga(vagaId: string): Promise<DadosVagaPriorid
 
         // Calcular dias em aberto
         const diasAberta = Math.floor(
-            (new Date().getTime() - new Date(vaga.createdAt).getTime()) / (1000 * 60 * 60 * 24)
+            (new Date().getTime() - new Date(vaga.created_at || vaga.criado_em).getTime()) / (1000 * 60 * 60 * 24)
         );
 
         // Buscar média de dias para fechar vagas similares (mesmo stack/senioridade)
@@ -59,8 +59,8 @@ export async function coletarDadosVaga(vagaId: string): Promise<DadosVagaPriorid
 
         // Calcular dias até data limite
         let diasAteDataLimite = null;
-        if (vaga.data_limite) {
-            const dataLimite = new Date(vaga.data_limite);
+        if (vaga.prazo_fechamento) {
+            const dataLimite = new Date(vaga.prazo_fechamento);
             const hoje = new Date();
             diasAteDataLimite = Math.floor((dataLimite.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24));
         }
@@ -68,19 +68,19 @@ export async function coletarDadosVaga(vagaId: string): Promise<DadosVagaPriorid
         return {
             vaga_id: vaga.id,
             titulo_vaga: vaga.titulo,
-            cliente_id: vaga.clientes?.id || 0,
-            cliente_nome: vaga.clientes?.razao_social_cliente || 'Cliente desconhecido',
-            cliente_vip: vaga.clientes?.cliente_vip || false,
+            cliente_id: vaga.clients?.id || vaga.cliente_id || 0,
+            cliente_nome: vaga.clients?.razao_social_cliente || 'Cliente desconhecido',
+            cliente_vip: vaga.clients?.vip || false,
             prazo_fechamento: vaga.prazo_fechamento,
-            faturamento_estimado: vaga.faturamento_estimado,
+            faturamento_estimado: vaga.faturamento_mensal,
             stack_tecnologica: vaga.stack_tecnologica || [],
             senioridade: vaga.senioridade,
             dias_vaga_aberta: diasAberta,
             media_dias_vagas_similares: historicoVagas?.tempo_medio_fechamento_dias,
-            flag_urgencia: vaga.flag_urgencia || 'Normal',
-            data_limite: vaga.data_limite,
+            flag_urgencia: vaga.urgente ? 'Urgente' : 'Normal',
+            data_limite: vaga.prazo_fechamento,
             dias_ate_data_limite: diasAteDataLimite,
-            qtde_maxima_distribuicao: vaga.qtde_maxima_distribuicao || 1
+            qtde_maxima_distribuicao: 1 // Valor padrão
         };
     } catch (error) {
         console.error('Erro ao coletar dados da vaga:', error);
@@ -174,7 +174,7 @@ export async function calcularPrioridadeVaga(vagaId: string): Promise<VagaPriori
             throw new Error('Não foi possível coletar dados da vaga');
         }
 
-        // 2. Buscar configuração ativa
+        // 2. Buscar configuração ativa (opcional, para uso futuro)
         const { data: config } = await supabase
             .from('config_priorizacao')
             .select('*')
@@ -183,10 +183,10 @@ export async function calcularPrioridadeVaga(vagaId: string): Promise<VagaPriori
             .limit(1)
             .single();
 
-        // 3. Chamar IA para calcular prioridade (passando configuração)
-        const resultado = await calculateVagaPriority(dadosVaga, config);
+        // 3. Chamar IA para calcular prioridade (função recebe apenas 1 argumento)
+        const resultado = await calculateVagaPriority(dadosVaga);
 
-        // 3. Montar objeto completo
+        // 4. Montar objeto completo
         const prioridade: VagaPriorizacaoScore = {
             vaga_id: vagaId,
             score_prioridade: resultado.score_prioridade,
@@ -197,7 +197,7 @@ export async function calcularPrioridadeVaga(vagaId: string): Promise<VagaPriori
             calculado_em: new Date().toISOString()
         };
 
-        // 4. Salvar no Supabase
+        // 5. Salvar no Supabase
         const { error } = await supabase
             .from('vaga_priorizacao')
             .upsert({
@@ -243,7 +243,7 @@ export async function recomendarAnalistasParaVaga(vagaId: string): Promise<Anali
             throw new Error('Dados insuficientes para recomendação');
         }
 
-        // 3. Buscar configuração ativa
+        // 3. Buscar configuração ativa (opcional, para uso futuro)
         const { data: config } = await supabase
             .from('config_distribuicao')
             .select('*')
@@ -252,14 +252,14 @@ export async function recomendarAnalistasParaVaga(vagaId: string): Promise<Anali
             .limit(1)
             .single();
 
-        // 4. Chamar IA para recomendar analistas (passando configuração)
+        // 4. Chamar IA para recomendar analistas (função recebe apenas 1 argumento)
         const dadosRecomendacao: DadosRecomendacaoAnalista = {
             vaga: dadosVaga,
             analistas_disponiveis: analistas,
             prioridade_vaga: prioridade
         };
 
-        const resultados = await recommendAnalyst(dadosRecomendacao, config);
+        const resultados = await recommendAnalyst(dadosRecomendacao);
 
         // 5. Limitar pela quantidade máxima de distribuição
         const qtdeMaxima = dadosVaga.qtde_maxima_distribuicao || 1;

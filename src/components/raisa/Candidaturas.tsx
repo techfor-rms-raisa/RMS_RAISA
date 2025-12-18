@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Candidatura, Vaga, Pessoa } from '../../src/components/types';
+import { Candidatura, Vaga, Pessoa } from '../types';
 
 interface CandidaturasProps {
     candidaturas: Candidatura[];
