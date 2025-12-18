@@ -1,254 +1,205 @@
 /**
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
- * Usa Gemini AI com Schema estruturado para análise de riscos
+ * Usa Gemini AI para análise de riscos de consultores
  * 
- * v48 - CORRIGIDO: Modelo e sintaxe do SDK @google/genai
+ * v49 - CORRIGIDO: Seguindo padrão do gemini-analyze.ts que funciona
+ * - Removido import de Type/Schema que causava erro no Vercel
+ * - Adicionado CORS headers
+ * - Adicionado tratamento OPTIONS
+ * - Cliente AI inicializado no top-level
  */
 
-import { GoogleGenAI, Type } from "@google/genai";
-import type { Schema } from "@google/genai";
-import { APP_VERSION, FEATURES_TRACE, ENV_TRACE, initializeTraces } from '../version';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { GoogleGenAI } from '@google/genai';
 
-/**
- * 1. INICIALIZAR TRACES NA PRIMEIRA EXECUÇÃO
- */
-let tracesInitialized = false;
+// ========================================
+// CONFIGURAÇÃO - TOP LEVEL (como no gemini-analyze.ts)
+// ========================================
 
-/**
- * 2. CONFIGURAÇÃO DO CLIENTE
- * Recupera a chave de API das variáveis de ambiente
- */
-const getAIClient = () => {
-  // Inicializar traces na primeira requisição
-  if (!tracesInitialized) {
-    console.log('\n🚀 PRIMEIRA REQUISIÇÃO - INICIALIZANDO TRACES\n');
-    initializeTraces();
-    tracesInitialized = true;
-  }
+const apiKey = process.env.API_KEY || process.env.VITE_API_KEY || '';
 
-  const apiKey = process.env.VITE_API_KEY || process.env.API_KEY;
-  
-  console.log('\n╔════════════════════════════════════════════════════════════╗');
-  console.log('║           📋 REQUISIÇÃO PARA ANÁLISE DE RELATÓRIO          ║');
-  console.log('╠════════════════════════════════════════════════════════════╣');
-  console.log(`║ Versão da App:         ${APP_VERSION.toString().padEnd(40)} ║`);
-  console.log(`║ NODE_ENV:              ${process.env.NODE_ENV?.padEnd(40) || 'unknown'.padEnd(40)} ║`);
-  console.log(`║ VITE_API_KEY presente: ${(!!process.env.VITE_API_KEY ? '✅ SIM' : '❌ NÃO').padEnd(40)} ║`);
-  console.log(`║ API_KEY presente:      ${(!!process.env.API_KEY ? '✅ SIM' : '❌ NÃO').padEnd(40)} ║`);
-  console.log(`║ API_KEY final:         ${(!!apiKey ? '✅ DISPONÍVEL' : '❌ NÃO DISPONÍVEL').padEnd(40)} ║`);
-  console.log('╚════════════════════════════════════════════════════════════╝\n');
-  
-  if (!apiKey) {
-    console.error('❌ [ERRO CRÍTICO] API_KEY não configurada!');
-    console.error('   Configure VITE_API_KEY ou API_KEY no Vercel');
-    throw new Error("API_KEY não configurada no ambiente.");
-  }
-  
-  console.log(`✅ [SUCESSO] API_KEY encontrada! Tamanho: ${apiKey.length} caracteres`);
-  return new GoogleGenAI({ apiKey });
-};
-
-/**
- * 3. DEFINIÇÃO DO SCHEMA (JSON ESTRUTURADO)
- * Diz ao Gemini exatamente quais campos deve retornar
- */
-const analysisSchema: Schema = {
-  type: Type.ARRAY,
-  items: {
-    type: Type.OBJECT,
-    properties: {
-      consultorNome: { type: Type.STRING },
-      clienteNome: { type: Type.STRING },
-      riscoConfirmado: { type: Type.INTEGER },
-      resumoSituacao: { type: Type.STRING },
-      padraoNegativoIdentificado: { type: Type.STRING },
-      alertaPreditivo: { type: Type.STRING },
-      recomendacoes: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            tipo: { type: Type.STRING },
-            foco: { type: Type.STRING },
-            descricao: { type: Type.STRING }
-          },
-          required: ["tipo", "foco", "descricao"]
-        }
-      }
-    },
-    required: ["consultorNome", "clienteNome", "riscoConfirmado", "resumoSituacao", "padraoNegativoIdentificado", "alertaPreditivo", "recomendacoes"]
-  }
-};
-
-/**
- * 4. MODELO GEMINI A SER USADO
- * CORRIGIDO: gemini-2.5-flash é o modelo correto e disponível
- */
-const AI_MODEL_NAME = 'gemini-2.5-flash';
-
-/**
- * 5. FUNÇÃO PRINCIPAL DE ANÁLISE
- */
-async function analyzeReportWithAI(reportText: string): Promise<any[]> {
-  if (!reportText || reportText.length < 5) {
-    console.warn('⚠️ [ANALYSIS] Texto do relatório muito curto ou vazio');
-    return [];
-  }
-
-  try {
-    console.log('🤖 [ANALYSIS] Inicializando cliente Gemini...');
-    const ai = getAIClient();
-    
-    console.log(`📌 [ANALYSIS] Modelo: ${AI_MODEL_NAME}`);
-    console.log('📝 [ANALYSIS] Preparando prompt...');
-    
-    const prompt = `
-Você é um Analista de Risco Contratual Sênior especializado em TI.
-Sua tarefa é ler o relatório de atividades abaixo e identificar:
-- Nível de Risco (1: Crítico, 2: Moderado, 3: Baixo, 4: Excelente)
-- Padrões de comportamento negativos
-- Recomendações estratégicas de retenção
-
-IMPORTANTE: Retorne apenas o JSON estruturado conforme o schema.
-
-RELATÓRIO:
-${reportText.substring(0, 8000)}
-    `;
-
-    console.log('🔄 [ANALYSIS] Chamando API Gemini...');
-    
-    // CORRIGIDO: Sintaxe correta do SDK @google/genai
-    const response = await ai.models.generateContent({
-      model: AI_MODEL_NAME,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: analysisSchema,
-      }
-    });
-
-    console.log('✅ [ANALYSIS] Resposta recebida do Gemini!');
-    
-    // CORRIGIDO: Acesso correto à resposta
-    const text = response.text;
-    
-    if (!text) {
-      console.error('❌ [ANALYSIS] Resposta vazia do Gemini');
-      return [];
-    }
-    
-    // Limpar possíveis marcadores de código
-    const cleanText = text
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-    
-    const data = JSON.parse(cleanText);
-    
-    console.log(`📊 [ANALYSIS] ${Array.isArray(data) ? data.length : 1} consultores analisados`);
-    console.log('✅ [ANALYSIS] Análise concluída com sucesso!\n');
-    
-    return Array.isArray(data) ? data : [data];
-    
-  } catch (error: any) {
-    console.error('❌ [ANALYSIS] Erro ao analisar relatório:', error.message);
-    console.error('📋 [ANALYSIS] Stack:', error.stack);
-    
-    // Log adicional para debug
-    if (error.response) {
-      console.error('📋 [ANALYSIS] Response status:', error.response.status);
-      console.error('📋 [ANALYSIS] Response data:', JSON.stringify(error.response.data, null, 2));
-    }
-    
-    return [];
-  }
+if (!apiKey) {
+  console.error('❌ API_KEY não encontrada no ambiente Vercel!');
+} else {
+  console.log('✅ API_KEY carregada com sucesso');
 }
 
-/**
- * 6. HANDLER PRINCIPAL DA API
- */
-export default async function handler(req: any, res: any) {
-  console.log('\n═══════════════════════════════════════════════════════════');
-  console.log(`📥 [REQUEST] ${new Date().toISOString()}`);
-  console.log(`📥 [REQUEST] Método: ${req.method}`);
-  console.log(`📥 [REQUEST] Versão da App: ${APP_VERSION.toString()}`);
-  console.log(`📥 [REQUEST] Modelo Gemini: ${AI_MODEL_NAME}`);
-  console.log('═══════════════════════════════════════════════════════════\n');
+// Inicializar cliente no top-level (como no arquivo que funciona)
+const ai = new GoogleGenAI({ apiKey });
 
-  // ✅ Verificar método HTTP
+// Modelo a ser usado
+const AI_MODEL = 'gemini-2.5-flash';
+
+// Versão da API
+const API_VERSION = 'v49';
+
+// ========================================
+// HANDLER PRINCIPAL
+// ========================================
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // CORS headers (como no gemini-analyze.ts)
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  // Tratamento OPTIONS (como no gemini-analyze.ts)
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  // Verificar método HTTP
   if (req.method !== 'POST') {
-    console.warn('⚠️ [REQUEST] Método não permitido:', req.method);
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
+  console.log(`\n📥 [REQUEST] ${new Date().toISOString()}`);
+  console.log(`📥 [REQUEST] Versão: ${API_VERSION}`);
+  console.log(`📥 [REQUEST] Modelo: ${AI_MODEL}`);
+
   try {
-    // ✅ Extrair texto do relatório
+    // Verificar API key
+    if (!apiKey) {
+      throw new Error('API key is missing. Please configure API_KEY in Vercel environment variables.');
+    }
+
+    // Extrair dados do body
     const { reportText, gestorName } = req.body;
     
     if (!reportText) {
-      console.error('❌ [REQUEST] reportText não fornecido');
       return res.status(400).json({
         error: 'Bad Request',
         message: 'reportText é obrigatório',
+        version: API_VERSION,
         timestamp: new Date().toISOString()
       });
     }
 
     console.log(`📄 [REQUEST] Tamanho do relatório: ${reportText.length} caracteres`);
 
-    // ✅ Analisar com IA
+    // Analisar com IA
     const analysisResults = await analyzeReportWithAI(reportText);
 
-    // ✅ Verificar se houve resultados
+    // Verificar se houve resultados
     if (!analysisResults || analysisResults.length === 0) {
-      console.warn('⚠️ [REQUEST] Nenhum resultado da análise');
       return res.status(200).json({
         success: true,
-        version: APP_VERSION.toString(),
-        model: AI_MODEL_NAME,
+        version: API_VERSION,
+        model: AI_MODEL,
         timestamp: new Date().toISOString(),
         results: [],
         message: 'Análise concluída, mas nenhum consultor foi identificado no relatório.'
       });
     }
 
-    // ✅ Mapear para formato interno
+    // Mapear para formato interno
     const results = analysisResults.map((result: any) => ({
-      consultantName: result.consultorNome,
-      clientName: result.clienteNome,
-      managerName: gestorName || "",
+      consultantName: result.consultorNome || result.consultantName || '',
+      clientName: result.clienteNome || result.clientName || '',
+      managerName: gestorName || '',
       reportMonth: new Date().getMonth() + 1,
-      riskScore: parseInt(result.riscoConfirmado, 10),
-      summary: result.resumoSituacao,
-      negativePattern: result.padraoNegativoIdentificado,
-      predictiveAlert: result.alertaPreditivo,
-      recommendations: result.recomendacoes || [],
-      details: result.resumoSituacao
+      riskScore: parseInt(result.riscoConfirmado || result.riskScore || '3', 10),
+      summary: result.resumoSituacao || result.summary || '',
+      negativePattern: result.padraoNegativoIdentificado || result.negativePattern || 'Nenhum',
+      predictiveAlert: result.alertaPreditivo || result.predictiveAlert || 'Nenhum',
+      recommendations: result.recomendacoes || result.recommendations || [],
+      details: result.resumoSituacao || result.summary || ''
     }));
 
-    // ✅ Retornar resultado
-    console.log('📤 [RESPONSE] Enviando resultado ao cliente...');
+    console.log(`✅ [RESPONSE] ${results.length} consultores analisados`);
+
     return res.status(200).json({
       success: true,
-      version: APP_VERSION.toString(),
-      model: AI_MODEL_NAME,
+      version: API_VERSION,
+      model: AI_MODEL,
       timestamp: new Date().toISOString(),
       results: results
     });
 
   } catch (error: any) {
-    console.error('❌ [ERROR] Erro na API:', error.message);
-    console.error('📋 [ERROR] Stack:', error.stack);
-    
+    console.error('❌ [ERROR]', error.message);
     return res.status(500).json({
-      error: 'Internal Server Error',
-      message: error.message,
-      version: APP_VERSION.toString(),
-      model: AI_MODEL_NAME,
+      success: false,
+      error: error.message || 'Erro ao processar requisição',
+      version: API_VERSION,
       timestamp: new Date().toISOString()
     });
-  } finally {
-    console.log('═══════════════════════════════════════════════════════════\n');
   }
+}
+
+// ========================================
+// FUNÇÃO DE ANÁLISE (seguindo padrão do gemini-analyze.ts)
+// ========================================
+
+async function analyzeReportWithAI(reportText: string): Promise<any[]> {
+  if (!reportText || reportText.length < 5) {
+    console.warn('⚠️ Texto do relatório muito curto ou vazio');
+    return [];
+  }
+
+  const prompt = `
+Você é um Analista de Risco Contratual Sênior especializado em TI.
+Sua tarefa é ler o relatório de atividades abaixo e identificar:
+- Nível de Risco (1: Crítico, 2: Moderado, 3: Baixo, 4: Excelente)
+- Padrões de comportamento negativos
+- Recomendações estratégicas de retenção
+
+**ESCALA DE RISCO:**
+- **1 (Crítico):** Saída confirmada ou iminente
+- **2 (Moderado):** Alta probabilidade de problemas
+- **3 (Baixo):** Problemas operacionais menores
+- **4 (Excelente):** Altamente satisfeito, engajado, produtivo
+
+**RELATÓRIO:**
+\`\`\`
+${reportText.substring(0, 8000)}
+\`\`\`
+
+**RESPONDA EM JSON (array de consultores):**
+\`\`\`json
+[
+  {
+    "consultorNome": "Nome do Consultor",
+    "clienteNome": "Nome do Cliente",
+    "riscoConfirmado": 1-4,
+    "resumoSituacao": "Resumo em 1-2 frases",
+    "padraoNegativoIdentificado": "Padrão negativo ou 'Nenhum'",
+    "alertaPreditivo": "Alerta preditivo ou 'Nenhum'",
+    "recomendacoes": [
+      {
+        "tipo": "AcaoImediata | QuestaoSondagem | RecomendacaoEstrategica",
+        "foco": "Consultor | Cliente | ProcessoInterno",
+        "descricao": "Descrição da recomendação"
+      }
+    ]
+  }
+]
+\`\`\`
+`;
+
+  console.log('🔄 Chamando API Gemini...');
+  
+  // Chamada seguindo o padrão do gemini-analyze.ts
+  const result = await ai.models.generateContent({ 
+    model: AI_MODEL, 
+    contents: prompt 
+  });
+  
+  const text = result.text || '';
+  
+  console.log('✅ Resposta recebida do Gemini');
+
+  // Extrair JSON da resposta (mesmo padrão do gemini-analyze.ts)
+  const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/\[[\s\S]*\]/) || text.match(/\{[\s\S]*\}/);
+  
+  if (!jsonMatch) {
+    console.error('❌ Falha ao extrair JSON da resposta');
+    throw new Error('Failed to parse AI response.');
+  }
+
+  const jsonText = jsonMatch[1] || jsonMatch[0];
+  const parsed = JSON.parse(jsonText);
+  
+  // Garantir que é um array
+  return Array.isArray(parsed) ? parsed : [parsed];
 }
