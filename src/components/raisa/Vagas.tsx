@@ -155,7 +155,8 @@ const Vagas: React.FC<VagasProps> = ({
         }
         
         if (editingVaga) {
-            updateVaga({ ...editingVaga, ...formData } as Vaga);
+            const vagaAtualizada = { ...editingVaga, ...formData } as Vaga;
+            updateVaga(vagaAtualizada);
         } else {
             addVaga(formData);
         }
