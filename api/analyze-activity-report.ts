@@ -2,18 +2,18 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para análise de riscos de consultores
  * 
- * v49 - CORRIGIDO: Seguindo padrão do gemini-analyze.ts que funciona
- * - Removido import de Type/Schema que causava erro no Vercel
- * - Adicionado CORS headers
- * - Adicionado tratamento OPTIONS
- * - Cliente AI inicializado no top-level
+ * v50 - CORRIGIDO: Escala de risco corrigida e prompt aprimorado
+ * - Escala de risco corrigida (1=Excelente, 5=Crítico)
+ * - Prompt aprimorado com critérios detalhados de classificação
+ * - Detecção de sinais críticos: assédio, conflitos, descontentamento
+ * - Palavras-chave de alerta para classificação automática
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
 // ========================================
-// CONFIGURAÇÃO - TOP LEVEL (como no gemini-analyze.ts)
+// CONFIGURAÇÃO - TOP LEVEL
 // ========================================
 
 const apiKey = process.env.API_KEY || process.env.VITE_API_KEY || '';
@@ -24,26 +24,26 @@ if (!apiKey) {
   console.log('✅ API_KEY carregada com sucesso');
 }
 
-// Inicializar cliente no top-level (como no arquivo que funciona)
+// Inicializar cliente no top-level
 const ai = new GoogleGenAI({ apiKey });
 
 // Modelo a ser usado
 const AI_MODEL = 'gemini-2.5-flash';
 
 // Versão da API
-const API_VERSION = 'v49';
+const API_VERSION = 'v50';
 
 // ========================================
 // HANDLER PRINCIPAL
 // ========================================
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS headers (como no gemini-analyze.ts)
+  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // Tratamento OPTIONS (como no gemini-analyze.ts)
+  // Tratamento OPTIONS
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -128,7 +128,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 // ========================================
-// FUNÇÃO DE ANÁLISE (seguindo padrão do gemini-analyze.ts)
+// FUNÇÃO DE ANÁLISE COM PROMPT APRIMORADO
 // ========================================
 
 async function analyzeReportWithAI(reportText: string): Promise<any[]> {
@@ -138,33 +138,75 @@ async function analyzeReportWithAI(reportText: string): Promise<any[]> {
   }
 
   const prompt = `
-Você é um Analista de Risco Contratual Sênior especializado em TI.
-Sua tarefa é ler o relatório de atividades abaixo e identificar:
-- Nível de Risco (1: Crítico, 2: Moderado, 3: Baixo, 4: Excelente)
-- Padrões de comportamento negativos
-- Recomendações estratégicas de retenção
+Você é um Analista de Risco Contratual Sênior especializado em Gestão de Pessoas em TI.
+Sua tarefa é analisar relatórios de atividades de consultores e classificar o RISCO DE RETENÇÃO.
 
-**ESCALA DE RISCO:**
-- **1 (Crítico):** Saída confirmada ou iminente
-- **2 (Moderado):** Alta probabilidade de problemas
-- **3 (Baixo):** Problemas operacionais menores
-- **4 (Excelente):** Altamente satisfeito, engajado, produtivo
+## ESCALA DE RISCO (IMPORTANTE - SIGA RIGOROSAMENTE):
 
-**RELATÓRIO:**
+| Score | Classificação | Critérios |
+|-------|---------------|-----------|
+| **1** | **Excelente** | Consultor altamente satisfeito, engajado, produtivo, sem nenhum problema reportado |
+| **2** | **Bom** | Consultor satisfeito, pequenos ajustes operacionais, sem riscos |
+| **3** | **Médio** | Problemas operacionais menores, necessita acompanhamento, alertas leves |
+| **4** | **Alto** | Problemas comportamentais, conflitos, insatisfação, requer intervenção |
+| **5** | **Crítico** | Risco iminente de saída, assédio, conflitos graves, rescisão provável |
+
+## SINAIS QUE ELEVAM O RISCO AUTOMATICAMENTE:
+
+### RISCO 5 (CRÍTICO) - Se qualquer um destes aparecer:
+- Menção a "assédio" (moral, sexual, qualquer tipo)
+- Rescisão solicitada ou confirmada
+- Consultor quer sair / pediu demissão
+- Conflito grave com cliente ou gestor
+- Fraude, desonestidade, mentira comprovada
+- Palavras: "rescisão", "demissão", "assédio", "processo", "advogado"
+
+### RISCO 4 (ALTO) - Se qualquer um destes aparecer:
+- Consultor "descontente", "insatisfeito", "desmotivado"
+- Conflito com gestor ou equipe
+- Situação descrita como "grave" ou "preocupante"
+- Não abre câmera nas reuniões (reincidente)
+- Reclamação do gestor (reincidente)
+- Comportamento inadequado
+- Palavras: "grosseiro", "mal-educado", "debochado", "ofendido", "grave", "preocupante"
+
+### RISCO 3 (MÉDIO) - Problemas operacionais:
+- Atrasos pontuais
+- Problemas de preenchimento de planilha
+- Necessidade de ajustes em entregas
+- Adaptação em andamento
+
+### RISCO 2 (BOM) - Situação estável:
+- Pequenos ajustes necessários
+- Feedback positivo com ressalvas menores
+- Em evolução positiva
+
+### RISCO 1 (EXCELENTE) - Apenas se:
+- Nenhum problema reportado
+- Feedback 100% positivo
+- Consultor elogiado
+- Altamente produtivo e engajado
+
+## REGRA DE OURO:
+**Na dúvida, classifique com risco MAIOR, não menor.**
+**Se houver qualquer sinal negativo, NÃO classifique como Excelente (1) ou Bom (2).**
+
+## RELATÓRIO PARA ANÁLISE:
 \`\`\`
 ${reportText.substring(0, 8000)}
 \`\`\`
 
-**RESPONDA EM JSON (array de consultores):**
+## RESPONDA EM JSON (array de consultores identificados):
 \`\`\`json
 [
   {
     "consultorNome": "Nome do Consultor",
-    "clienteNome": "Nome do Cliente",
-    "riscoConfirmado": 1-4,
-    "resumoSituacao": "Resumo em 1-2 frases",
-    "padraoNegativoIdentificado": "Padrão negativo ou 'Nenhum'",
-    "alertaPreditivo": "Alerta preditivo ou 'Nenhum'",
+    "clienteNome": "Nome do Cliente (se mencionado)",
+    "riscoConfirmado": 1-5,
+    "resumoSituacao": "Resumo objetivo em 2-3 frases",
+    "padraoNegativoIdentificado": "Descreva o padrão negativo ou 'Nenhum'",
+    "alertaPreditivo": "Risco futuro identificado ou 'Nenhum'",
+    "justificativaScore": "Explique por que atribuiu este score",
     "recomendacoes": [
       {
         "tipo": "AcaoImediata | QuestaoSondagem | RecomendacaoEstrategica",
@@ -175,11 +217,13 @@ ${reportText.substring(0, 8000)}
   }
 ]
 \`\`\`
+
+IMPORTANTE: Analise cuidadosamente o texto. Se houver menção a conflitos, assédio, descontentamento ou situações graves, o score DEVE ser 4 ou 5.
 `;
 
-  console.log('🔄 Chamando API Gemini...');
+  console.log('🔄 Chamando API Gemini com prompt aprimorado v50...');
   
-  // Chamada seguindo o padrão do gemini-analyze.ts
+  // Chamada à API
   const result = await ai.models.generateContent({ 
     model: AI_MODEL, 
     contents: prompt 
@@ -189,7 +233,7 @@ ${reportText.substring(0, 8000)}
   
   console.log('✅ Resposta recebida do Gemini');
 
-  // Extrair JSON da resposta (mesmo padrão do gemini-analyze.ts)
+  // Extrair JSON da resposta
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/\[[\s\S]*\]/) || text.match(/\{[\s\S]*\}/);
   
   if (!jsonMatch) {
