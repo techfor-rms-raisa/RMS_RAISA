@@ -1,10 +1,13 @@
 /**
- * Email Service - RMS RAISA v51
+ * Email Service - RMS RAISA v52.1
  * Serviço de envio de emails via Resend (backend)
  * Inclui notificação automática para Risco Crítico (Score 5)
  * 
  * ALTERAÇÃO v51: Migrado de EmailJS (frontend) para Resend (backend)
- * para garantir funcionamento em serverless functions
+ * ALTERAÇÃO v52.1: Template otimizado para evitar filtros de SPAM
+ * - Removidos emojis do assunto
+ * - Tom mais profissional
+ * - Assunto neutro: "RMS-RAISA: Atenção Necessária"
  */
 
 import { User, Consultant, Client, UsuarioCliente } from '../components/types';
@@ -109,7 +112,7 @@ export const sendRiskAlertEmail = async (
     return sendEmailViaAPI(
         recipientUser.email_usuario,
         recipientUser.nome_usuario,
-        `🚨 ALERTA CRÍTICO - ${consultant.nome_consultores} - Risco Máximo Detectado`,
+        `RMS-RAISA: Atenção Necessária - ${consultant.nome_consultores}`,
         'critical_risk',
         {
             consultantName: consultant.nome_consultores,
@@ -283,7 +286,7 @@ export const sendCriticalRiskNotifications = async (
         const success = await sendEmailViaAPI(
             user.email_usuario,
             user.nome_usuario,
-            `🚨 ALERTA CRÍTICO - ${consultant.nome_consultores} - Risco Máximo Detectado`,
+            `RMS-RAISA: Atenção Necessária - ${consultant.nome_consultores}`,
             'critical_risk',
             {
                 consultantName: consultant.nome_consultores,
