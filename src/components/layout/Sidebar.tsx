@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, User } from '../types';
+import { View, User } from '../../src/components/types';
 import SidebarSection from './SidebarSection';
 import SidebarToggle from './SidebarToggle';
 import { APP_TITLE } from '../../constants';
@@ -102,7 +102,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
 
                 <SidebarSection 
                     title="RAISA"
-                    subtitle="Recruitment And Intelligent Staff Allocation"
+                    subtitle="Recruitment AI System Assistant"
                     items={raisaItems}
                     currentUserRole={currentUser.tipo_usuario}
                     currentView={currentView}
