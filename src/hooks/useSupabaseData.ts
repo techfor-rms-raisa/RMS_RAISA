@@ -106,6 +106,7 @@ export const useSupabaseData = () => {
 
       if (error) throw error;
 
+      // ✅ v51: Corrigido - tabela app_users usa gestor_rs_id, não analista_rs_id
       const mappedUsers: User[] = (data || []).map((user: any) => ({
         id: user.id,
         nome_usuario: user.nome_usuario,
@@ -114,7 +115,8 @@ export const useSupabaseData = () => {
         ativo_usuario: user.ativo_usuario,
         receber_alertas_email: user.receber_alertas_email,
         tipo_usuario: user.tipo_usuario || 'Consulta',
-        analista_rs_id: user.analista_rs_id,
+        analista_rs_id: user.gestor_rs_id, // Mapeado de gestor_rs_id
+        gestor_rs_id: user.gestor_rs_id,
         perfil_id: user.perfil_id,
         perfil: null
       }));
@@ -131,6 +133,7 @@ export const useSupabaseData = () => {
     try {
       console.log('➕ Criando usuário:', newUser);
 
+      // ✅ v51: Corrigido - usar gestor_rs_id em vez de analista_rs_id
       const { data, error } = await supabase
         .from('app_users')
         .insert([{
@@ -141,7 +144,7 @@ export const useSupabaseData = () => {
           ativo_usuario: newUser.ativo_usuario ?? true,
           receber_alertas_email: newUser.receber_alertas_email ?? true,
           perfil_id: newUser.perfil_id || null,
-          analista_rs_id: newUser.analista_rs_id || null
+          gestor_rs_id: newUser.analista_rs_id || newUser.gestor_rs_id || null
         }])
         .select('*')
         .single();
@@ -156,7 +159,8 @@ export const useSupabaseData = () => {
         ativo_usuario: data.ativo_usuario,
         receber_alertas_email: data.receber_alertas_email,
         tipo_usuario: data.tipo_usuario || 'Consulta',
-        analista_rs_id: data.analista_rs_id,
+        analista_rs_id: data.gestor_rs_id, // Mapeado de gestor_rs_id
+        gestor_rs_id: data.gestor_rs_id,
         perfil_id: data.perfil_id,
         perfil: null
       };
@@ -176,6 +180,7 @@ export const useSupabaseData = () => {
     try {
       console.log('📝 Atualizando usuário:', id, updates);
 
+      // ✅ v51: Corrigido - usar gestor_rs_id em vez de analista_rs_id
       const { data, error } = await supabase
         .from('app_users')
         .update({
@@ -186,7 +191,7 @@ export const useSupabaseData = () => {
           ativo_usuario: updates.ativo_usuario,
           receber_alertas_email: updates.receber_alertas_email,
           perfil_id: updates.perfil_id,
-          analista_rs_id: updates.analista_rs_id
+          gestor_rs_id: updates.analista_rs_id || updates.gestor_rs_id
         })
         .eq('id', id)
         .select('*')
@@ -202,7 +207,8 @@ export const useSupabaseData = () => {
         ativo_usuario: data.ativo_usuario,
         receber_alertas_email: data.receber_alertas_email,
         tipo_usuario: data.tipo_usuario || 'Consulta',
-        analista_rs_id: data.analista_rs_id,
+        analista_rs_id: data.gestor_rs_id, // Mapeado de gestor_rs_id
+        gestor_rs_id: data.gestor_rs_id,
         perfil_id: data.perfil_id,
         perfil: null
       };
