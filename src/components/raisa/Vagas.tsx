@@ -1,12 +1,10 @@
 /**
- * Vagas.tsx - RMS RAISA v52.3
+ * Vagas.tsx - RMS RAISA v52.4
  * Componente de Gestão de Vagas
  * 
  * CORREÇÃO v52.2: Tratamento seguro do campo stack_tecnologica
  * NOVA FUNCIONALIDADE v52.3: Dropdowns de Cliente e Gestor do Cliente no header
- * - Filtro por cliente selecionado
- * - Dropdown de gestor associado ao cliente
- * - Vagas associadas ao cliente e gestor
+ * CORREÇÃO v52.4: Verificações de segurança para clients e usuariosCliente undefined
  */
 
 import React, { useState, useMemo } from 'react';
@@ -15,8 +13,8 @@ import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 
 interface VagasProps {
     vagas: Vaga[];
-    clients: Client[];
-    usuariosCliente: UsuarioCliente[];
+    clients?: Client[];  // Pode ser undefined durante carregamento
+    usuariosCliente?: UsuarioCliente[];  // Pode ser undefined durante carregamento
     addVaga: (v: any) => void;
     updateVaga: (v: Vaga) => void;
     deleteVaga: (id: string) => void;
@@ -40,7 +38,14 @@ const ensureStackArray = (stack: any): string[] => {
     return [];
 };
 
-const Vagas: React.FC<VagasProps> = ({ vagas, clients, usuariosCliente, addVaga, updateVaga, deleteVaga }) => {
+const Vagas: React.FC<VagasProps> = ({ 
+    vagas = [], 
+    clients = [], 
+    usuariosCliente = [], 
+    addVaga, 
+    updateVaga, 
+    deleteVaga 
+}) => {
     // Estados do modal
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingVaga, setEditingVaga] = useState<Vaga | null>(null);
@@ -62,29 +67,34 @@ const Vagas: React.FC<VagasProps> = ({ vagas, clients, usuariosCliente, addVaga,
     });
     const [techInput, setTechInput] = useState('');
 
+    // ✅ Garantir que clients e usuariosCliente sejam sempre arrays
+    const safeClients = Array.isArray(clients) ? clients : [];
+    const safeUsuariosCliente = Array.isArray(usuariosCliente) ? usuariosCliente : [];
+    const safeVagas = Array.isArray(vagas) ? vagas : [];
+
     // Filtrar gestores pelo cliente selecionado
     const gestoresDoCliente = useMemo(() => {
         if (!selectedClientId) return [];
-        return usuariosCliente.filter(g => g.id_cliente === selectedClientId && g.ativo !== false);
-    }, [selectedClientId, usuariosCliente]);
+        return safeUsuariosCliente.filter(g => g.id_cliente === selectedClientId && g.ativo !== false);
+    }, [selectedClientId, safeUsuariosCliente]);
 
     // Filtrar vagas pelo cliente selecionado
     const vagasFiltradas = useMemo(() => {
-        if (!selectedClientId) return vagas;
-        return vagas.filter(v => v.cliente_id === selectedClientId);
-    }, [selectedClientId, vagas]);
+        if (!selectedClientId) return safeVagas;
+        return safeVagas.filter(v => v.cliente_id === selectedClientId);
+    }, [selectedClientId, safeVagas]);
 
     // Obter nome do cliente pelo ID
     const getClientName = (clientId: number | null | undefined): string => {
         if (!clientId) return 'Não definido';
-        const client = clients.find(c => c.id === clientId);
+        const client = safeClients.find(c => c.id === clientId);
         return client?.nome_cliente || 'Cliente não encontrado';
     };
 
     // Obter nome do gestor pelo ID
     const getGestorName = (gestorId: number | null | undefined): string => {
         if (!gestorId) return '';
-        const gestor = usuariosCliente.find(g => g.id === gestorId);
+        const gestor = safeUsuariosCliente.find(g => g.id === gestorId);
         return gestor?.nome_gestor_cliente || '';
     };
 
@@ -147,6 +157,17 @@ const Vagas: React.FC<VagasProps> = ({ vagas, clients, usuariosCliente, addVaga,
         });
     };
 
+    // ✅ Ordenar clientes de forma segura
+    const sortedClients = useMemo(() => {
+        return safeClients
+            .filter(c => c && c.ativo_cliente !== false)
+            .sort((a, b) => {
+                const nameA = a?.nome_cliente || '';
+                const nameB = b?.nome_cliente || '';
+                return nameA.localeCompare(nameB);
+            });
+    }, [safeClients]);
+
     return (
         <div className="space-y-6">
             {/* Header com título e filtros */}
@@ -166,15 +187,11 @@ const Vagas: React.FC<VagasProps> = ({ vagas, clients, usuariosCliente, addVaga,
                                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 min-w-[180px]"
                             >
                                 <option value="">Todos os Clientes</option>
-                                {clients
-                                    .filter(c => c.ativo_cliente !== false)
-                                    .sort((a, b) => (a.nome_cliente || '').localeCompare(b.nome_cliente || ''))
-                                    .map(client => (
-                                        <option key={client.id} value={client.id}>
-                                            {client.nome_cliente}
-                                        </option>
-                                    ))
-                                }
+                                {sortedClients.map(client => (
+                                    <option key={client.id} value={client.id}>
+                                        {client.nome_cliente || `Cliente ${client.id}`}
+                                    </option>
+                                ))}
                             </select>
                         </div>
                         
@@ -195,7 +212,7 @@ const Vagas: React.FC<VagasProps> = ({ vagas, clients, usuariosCliente, addVaga,
                                 </option>
                                 {gestoresDoCliente.map(gestor => (
                                     <option key={gestor.id} value={gestor.id}>
-                                        {gestor.nome_gestor_cliente} - {gestor.cargo_gestor}
+                                        {gestor.nome_gestor_cliente || 'Gestor'} - {gestor.cargo_gestor || 'Cargo'}
                                     </option>
                                 ))}
                             </select>
@@ -324,15 +341,11 @@ const Vagas: React.FC<VagasProps> = ({ vagas, clients, usuariosCliente, addVaga,
                                     required
                                 >
                                     <option value="">Selecione o Cliente</option>
-                                    {clients
-                                        .filter(c => c.ativo_cliente !== false)
-                                        .sort((a, b) => (a.nome_cliente || '').localeCompare(b.nome_cliente || ''))
-                                        .map(client => (
-                                            <option key={client.id} value={client.id}>
-                                                {client.nome_cliente}
-                                            </option>
-                                        ))
-                                    }
+                                    {sortedClients.map(client => (
+                                        <option key={client.id} value={client.id}>
+                                            {client.nome_cliente || `Cliente ${client.id}`}
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
                             
