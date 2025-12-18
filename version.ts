@@ -5,7 +5,7 @@
  * Este arquivo é importado por analyze-activity-report.ts para mostrar
  * qual versão está rodando e quais variáveis de ambiente estão disponíveis
  * 
- * v48 - CORRIGIDO: Modelo gemini-2.5-flash
+ * v51 - NOVO: Notificação automática de Risco Crítico + Correção Failed to fetch
  */
 
 /**
@@ -16,7 +16,7 @@
 export const APP_VERSION = {
   major: 1,
   minor: 0,
-  patch: 48,
+  patch: 51,
   timestamp: new Date().toISOString(),
   
   toString(): string {
@@ -36,12 +36,12 @@ export const FEATURES_TRACE = {
   geminiAI: {
     enabled: true,
     sdk: '@google/genai',
-    model: 'gemini-2.5-flash', // CORRIGIDO: Modelo correto
+    model: 'gemini-2.5-flash',
     schema: 'structured'
   },
   reportAnalysis: {
     enabled: true,
-    version: '48'
+    version: '51'
   },
   technicalQuestions: {
     enabled: true,
@@ -50,6 +50,13 @@ export const FEATURES_TRACE = {
   cronJobs: {
     enabled: true,
     jobs: ['repriorizacao', 'analise-mensal', 'limpeza-notificacoes']
+  },
+  // 🚨 NOVO v51: Notificação de Risco Crítico
+  criticalRiskNotification: {
+    enabled: true,
+    version: '1.0',
+    triggerScore: 5,
+    recipients: ['gestor_rs_id', 'id_gestao_de_pessoas']
   }
 };
 
@@ -89,6 +96,7 @@ export function initializeTraces(): void {
   console.log(`║ Report Analysis:       ${(FEATURES_TRACE.reportAnalysis.enabled ? '✅' : '❌')} v${FEATURES_TRACE.reportAnalysis.version.padEnd(35)} ║`);
   console.log(`║ Technical Questions:   ${(FEATURES_TRACE.technicalQuestions.enabled ? '✅' : '❌')} v${FEATURES_TRACE.technicalQuestions.version.padEnd(35)} ║`);
   console.log(`║ Cron Jobs:             ${(FEATURES_TRACE.cronJobs.enabled ? '✅' : '❌')} ${FEATURES_TRACE.cronJobs.jobs.length} jobs ativo${FEATURES_TRACE.cronJobs.jobs.length > 1 ? 's' : ''.padEnd(32)} ║`);
+  console.log(`║ 🚨 Critical Risk Alert: ${(FEATURES_TRACE.criticalRiskNotification.enabled ? '✅' : '❌')} Score ${FEATURES_TRACE.criticalRiskNotification.triggerScore}                             ║`);
   console.log('╠════════════════════════════════════════════════════════════╣');
   console.log('║                    🌍 AMBIENTE DE EXECUÇÃO                ║');
   console.log('╠════════════════════════════════════════════════════════════╣');

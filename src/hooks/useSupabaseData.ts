@@ -1,11 +1,12 @@
 /**
  * useSupabaseData Hook - INTEGRAÇÃO 100% COMPLETA
  * Todas as entidades integradas ao Supabase
- * Versão: 2.0 - Completa
+ * Versão: 2.1 - Com notificação de Risco Crítico
  */
 
 import { useState, useEffect } from 'react';
 import { supabase } from '../config/supabase';
+import { sendCriticalRiskNotifications, isCriticalRisk } from '../services/emailService';
 import { 
   Consultant, Client, User, UsuarioCliente, CoordenadorCliente, 
   ConsultantReport, AIAnalysisResult, EmailTemplate, ComplianceCampaign, 
@@ -1841,7 +1842,36 @@ export const useSupabaseData = () => {
       
       console.log(`✅ Score atualizado: ${result.consultantName} - Mês ${result.reportMonth} - Risco ${result.riskScore}`);
       
-      // Verificar se deve ir para quarentena
+      // 🚨 NOVO: Verificar se é Risco Crítico (Score 5) e disparar notificações
+      if (isCriticalRisk(result.riskScore)) {
+        console.log(`🚨 RISCO CRÍTICO DETECTADO: ${result.consultantName} - Disparando notificações...`);
+        
+        // Buscar nome do cliente
+        const manager = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
+        const client = clients.find(c => c.id === manager?.id_cliente);
+        const clientName = client?.razao_social_cliente || 'Cliente não identificado';
+        
+        // Disparar notificações de email para usuários associados
+        try {
+          const notificationResult = await sendCriticalRiskNotifications(
+            consultant,
+            users,
+            clientName,
+            result.summary || 'Análise de risco identificou situação crítica'
+          );
+          
+          if (notificationResult.success) {
+            console.log(`✅ Notificações enviadas: ${notificationResult.emailsSent} email(s) para: ${notificationResult.recipients.join(', ')}`);
+          } else {
+            console.warn(`⚠️ Falha ao enviar notificações: ${notificationResult.errors.join(', ')}`);
+          }
+        } catch (emailError: any) {
+          console.error('❌ Erro ao enviar notificações de risco crítico:', emailError);
+          // Não interrompe o fluxo principal - apenas loga o erro
+        }
+      }
+      
+      // Verificar se deve ir para quarentena (escala antiga - mantido para compatibilidade)
       if (result.riskScore === 1 || result.riskScore === 2) {
         console.log(`⚠️ Consultor em QUARENTENA: ${result.consultantName}`);
       }
@@ -1931,58 +1961,116 @@ const processReportAnalysis = async (text: string, gestorName?: string): Promise
   };
 
   // ============================================
-  // 🔥 LAZY LOADING DE RELATÓRIOS (CORREÇÃO 403)
+  // 🔥 LAZY LOADING DE RELATÓRIOS (CORREÇÃO v51 - Failed to fetch)
   // ============================================
   
   /**
    * Carrega relatórios de um consultor específico sob demanda
    * Esta função deve ser chamada apenas quando o usuário clicar em "Ver Histórico"
+   * Inclui retry automático e tratamento robusto de erros
    * @param consultantId - ID do consultor
    * @returns Array de relatórios do consultor
    */
   const loadConsultantReports = async (consultantId: number): Promise<ConsultantReport[]> => {
-    try {
-      console.log(`📊 Carregando relatórios do consultor ${consultantId}...`);
-      
-      const { data, error } = await supabase
-        .from('consultant_reports')
-        .select('*')
-        .eq('consultant_id', consultantId)
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-      
-      const reports: ConsultantReport[] = (data || []).map((report: any) => ({
-        id: report.id,
-        month: report.month,
-        year: report.year,
-        riskScore: report.risk_score,
-        summary: report.summary,
-        negativePattern: report.negative_pattern,
-        predictiveAlert: report.predictive_alert,
-        recommendations: typeof report.recommendations === 'string' 
-          ? JSON.parse(report.recommendations) 
-          : report.recommendations,
-        content: report.content,
-        createdAt: report.created_at,
-        generatedBy: report.generated_by,
-        aiJustification: report.ai_justification
-      }));
-      
-      console.log(`✅ ${reports.length} relatórios carregados para consultor ${consultantId}`);
-      
-      // Atualizar o estado local do consultor com os relatórios
-      setConsultants(prev => prev.map(c => 
-        c.id === consultantId 
-          ? { ...c, consultant_reports: reports }
-          : c
-      ));
-      
-      return reports;
-    } catch (err: any) {
-      console.error(`❌ Erro ao carregar relatórios do consultor ${consultantId}:`, err);
-      throw err;
+    const MAX_RETRIES = 3;
+    const RETRY_DELAY = 1000; // 1 segundo
+    
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        console.log(`📊 Carregando relatórios do consultor ${consultantId}... (tentativa ${attempt}/${MAX_RETRIES})`);
+        
+        // Verificar se o Supabase está configurado
+        if (!supabase) {
+          throw new Error('Cliente Supabase não inicializado');
+        }
+        
+        const { data, error } = await supabase
+          .from('consultant_reports')
+          .select('*')
+          .eq('consultant_id', consultantId)
+          .order('created_at', { ascending: false });
+        
+        if (error) {
+          console.error(`❌ Erro Supabase (tentativa ${attempt}):`, error);
+          throw error;
+        }
+        
+        const reports: ConsultantReport[] = (data || []).map((report: any) => {
+          // Parse seguro de recommendations
+          let parsedRecommendations = [];
+          try {
+            if (typeof report.recommendations === 'string') {
+              parsedRecommendations = JSON.parse(report.recommendations);
+            } else if (Array.isArray(report.recommendations)) {
+              parsedRecommendations = report.recommendations;
+            }
+          } catch (parseError) {
+            console.warn(`⚠️ Erro ao parsear recommendations do relatório ${report.id}:`, parseError);
+            parsedRecommendations = [];
+          }
+          
+          return {
+            id: report.id,
+            month: report.month,
+            year: report.year,
+            riskScore: report.risk_score,
+            summary: report.summary || '',
+            negativePattern: report.negative_pattern || null,
+            predictiveAlert: report.predictive_alert || null,
+            recommendations: parsedRecommendations,
+            content: report.content || '',
+            createdAt: report.created_at || new Date().toISOString(),
+            generatedBy: report.generated_by || 'unknown',
+            aiJustification: report.ai_justification || ''
+          };
+        });
+        
+        console.log(`✅ ${reports.length} relatórios carregados para consultor ${consultantId}`);
+        
+        // Atualizar o estado local do consultor com os relatórios
+        setConsultants(prev => prev.map(c => 
+          c.id === consultantId 
+            ? { ...c, consultant_reports: reports }
+            : c
+        ));
+        
+        return reports;
+        
+      } catch (err: any) {
+        const isNetworkError = err.message?.includes('fetch') || 
+                               err.message?.includes('network') ||
+                               err.code === 'NETWORK_ERROR';
+        
+        console.error(`❌ Erro ao carregar relatórios (tentativa ${attempt}/${MAX_RETRIES}):`, {
+          message: err.message,
+          code: err.code,
+          hint: err.hint,
+          details: err.details
+        });
+        
+        // Se não é a última tentativa e é erro de rede, tentar novamente
+        if (attempt < MAX_RETRIES && isNetworkError) {
+          console.log(`⏳ Aguardando ${RETRY_DELAY * attempt}ms antes de tentar novamente...`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
+          continue;
+        }
+        
+        // Retornar array vazio em vez de lançar erro para não quebrar a UI
+        console.error(`❌ Falha definitiva ao carregar relatórios do consultor ${consultantId}:`, err);
+        
+        // Lançar erro com mensagem mais amigável
+        const friendlyError = new Error(
+          `Erro ao carregar relatórios: ${err.message || 'Falha na conexão com o servidor'}`
+        );
+        (friendlyError as any).code = err.code;
+        (friendlyError as any).hint = err.hint;
+        (friendlyError as any).details = err.details;
+        throw friendlyError;
+      }
     }
+    
+    // Fallback - retornar array vazio se todas as tentativas falharem
+    return [];
   };
 
   // ============================================
