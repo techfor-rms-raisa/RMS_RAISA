@@ -168,7 +168,7 @@ const Vagas: React.FC<VagasProps> = ({ vagas, clients, usuariosCliente, addVaga,
                                 <option value="">Todos os Clientes</option>
                                 {clients
                                     .filter(c => c.ativo_cliente !== false)
-                                    .sort((a, b) => a.nome_cliente.localeCompare(b.nome_cliente))
+                                    .sort((a, b) => (a.nome_cliente || '').localeCompare(b.nome_cliente || ''))
                                     .map(client => (
                                         <option key={client.id} value={client.id}>
                                             {client.nome_cliente}
@@ -326,7 +326,7 @@ const Vagas: React.FC<VagasProps> = ({ vagas, clients, usuariosCliente, addVaga,
                                     <option value="">Selecione o Cliente</option>
                                     {clients
                                         .filter(c => c.ativo_cliente !== false)
-                                        .sort((a, b) => a.nome_cliente.localeCompare(b.nome_cliente))
+                                        .sort((a, b) => (a.nome_cliente || '').localeCompare(b.nome_cliente || ''))
                                         .map(client => (
                                             <option key={client.id} value={client.id}>
                                                 {client.nome_cliente}
