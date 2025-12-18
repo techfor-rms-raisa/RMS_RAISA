@@ -190,7 +190,15 @@ const App: React.FC = () => {
       
       // RAISA Views
       case 'vagas':
-          return <Vagas vagas={vagas} addVaga={addVaga} updateVaga={updateVaga} deleteVaga={deleteVaga} />;
+          // ✅ v52.3: Adicionado clients e usuariosCliente para filtros de Cliente e Gestor
+          return <Vagas 
+            vagas={vagas} 
+            clients={clients} 
+            usuariosCliente={usuariosCliente}
+            addVaga={addVaga} 
+            updateVaga={updateVaga} 
+            deleteVaga={deleteVaga} 
+          />;
       case 'candidaturas':
           return <Candidaturas candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} updateStatus={updateCandidaturaStatus} />;
       case 'analise_risco':
