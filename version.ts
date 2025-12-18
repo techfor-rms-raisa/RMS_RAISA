@@ -5,7 +5,7 @@
  * Este arquivo é importado por analyze-activity-report.ts para mostrar
  * qual versão está rodando e quais variáveis de ambiente estão disponíveis
  * 
- * v51 - NOVO: Notificação automática de Risco Crítico + Correção Failed to fetch
+ * v52 - Migração para Resend (backend) + Correção destinatários via Cliente
  */
 
 /**
@@ -16,7 +16,7 @@
 export const APP_VERSION = {
   major: 1,
   minor: 0,
-  patch: 51,
+  patch: 52,
   timestamp: new Date().toISOString(),
   
   toString(): string {
@@ -41,7 +41,7 @@ export const FEATURES_TRACE = {
   },
   reportAnalysis: {
     enabled: true,
-    version: '51'
+    version: '52'
   },
   technicalQuestions: {
     enabled: true,

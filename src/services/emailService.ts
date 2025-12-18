@@ -1,92 +1,13 @@
 /**
  * Email Service - RMS RAISA v51
- * Serviço de envio de emails via EmailJS
+ * Serviço de envio de emails via Resend (backend)
  * Inclui notificação automática para Risco Crítico (Score 5)
+ * 
+ * ALTERAÇÃO v51: Migrado de EmailJS (frontend) para Resend (backend)
+ * para garantir funcionamento em serverless functions
  */
 
-import emailjs from '@emailjs/browser';
-import { User, Consultant, Client } from '../components/types';
-
-// --- EMAILJS CONFIGURATION ---
-const SERVICE_ID = "service_n9l30w7";
-const TEMPLATE_ID = "template_m4etler";
-const PUBLIC_KEY = "QZenXL-lVW_U_P2jT";
-
-// Initialize EmailJS
-emailjs.init(PUBLIC_KEY);
-
-/**
- * Envia email de recuperação de senha
- */
-export const sendPasswordRecoveryEmail = async (user: User): Promise<boolean> => {
-    const messageBody = `Olá ${user.nome_usuario}
-
-Você solicitou alteração de Senha, para fazer um novo Login, use a senha temporária "Novo@"
-Após efetuar o Login, altere a senha novamente de acordo com sua preferência.
-
-Grato
-
-TECH FOR TI 
-RMS - Risk Management Systems`;
-
-    const templateParams = {
-        to_name: user.nome_usuario,
-        to_email: user.email_usuario,
-        subject: "RMS - Risk Management Systems - Recuperação de senha",
-        message: messageBody,
-    };
-
-    try {
-        await emailjs.send(SERVICE_ID, TEMPLATE_ID, templateParams);
-        console.log(`✅ Email de recuperação enviado para ${user.email_usuario}`);
-        return true;
-    } catch (error) {
-        console.error("❌ Erro ao enviar email de recuperação:", error);
-        return false;
-    }
-};
-
-/**
- * Envia alerta de risco para um usuário específico
- */
-export const sendRiskAlertEmail = async (
-    recipientUser: User, 
-    consultant: Consultant, 
-    clientName: string,
-    hrManagerName: string
-): Promise<boolean> => {
-    const inclusionDate = consultant.data_inclusao_consultores 
-        ? new Date(consultant.data_inclusao_consultores).toLocaleDateString('pt-BR')
-        : 'Data não informada';
-
-    const messageBody = `Olá ${recipientUser.nome_usuario}
-
-Identificamos um grau de Risco 5 - CRÍTICO, para o Consultor ${consultant.nome_consultores} - ${consultant.cargo_consultores || 'Cargo não informado'} contratado em ${inclusionDate} 
-atuando no Cliente: ${clientName}.
-
-As estratégias de Retenção já foram publicadas e notificadas para ${hrManagerName}
-
-Grato
-
-TECHFOR TI 
-RMS - Risk Management Systems`;
-
-    const templateParams = {
-        to_name: recipientUser.nome_usuario,
-        to_email: recipientUser.email_usuario,
-        subject: "🚨 RMS - ALERTA CRÍTICO - Consultor em Risco Máximo",
-        message: messageBody,
-    };
-
-    try {
-        await emailjs.send(SERVICE_ID, TEMPLATE_ID, templateParams);
-        console.log(`✅ Alerta de Risco CRÍTICO enviado para ${recipientUser.email_usuario}`);
-        return true;
-    } catch (error) {
-        console.error("❌ Erro ao enviar alerta de risco:", error);
-        return false;
-    }
-};
+import { User, Consultant, Client, UsuarioCliente } from '../components/types';
 
 /**
  * Interface para resultado do envio de notificações
@@ -100,22 +21,136 @@ export interface CriticalRiskNotificationResult {
 }
 
 /**
- * 🚨 NOVA FUNÇÃO: Envia notificações de Risco Crítico (Score 5)
- * Notifica apenas os usuários associados ao consultor:
- * - Gestor de R&S (gestor_rs_id)
- * - Gestão de Pessoas (id_gestao_de_pessoas)
- * - Analista de R&S (analista_rs_id do usuário logado, se aplicável)
+ * Interface para resposta da API de email
+ */
+interface EmailAPIResponse {
+    success: boolean;
+    messageId?: string;
+    error?: string;
+    details?: string;
+}
+
+/**
+ * Envia email via API route do backend (Resend)
+ */
+const sendEmailViaAPI = async (
+    to: string,
+    toName: string,
+    subject: string,
+    type: 'critical_risk' | 'password_recovery' | 'general',
+    data: {
+        consultantName?: string;
+        consultantCargo?: string;
+        clientName?: string;
+        inclusionDate?: string;
+        summary: string;
+    }
+): Promise<boolean> => {
+    try {
+        console.log(`📧 Enviando email para ${to} via API...`);
+        
+        const response = await fetch('/api/send-email', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                to,
+                toName,
+                subject,
+                type,
+                ...data
+            })
+        });
+
+        const result: EmailAPIResponse = await response.json();
+
+        if (!response.ok || !result.success) {
+            console.error(`❌ Erro ao enviar email: ${result.error || 'Unknown error'}`);
+            return false;
+        }
+
+        console.log(`✅ Email enviado com sucesso! ID: ${result.messageId}`);
+        return true;
+    } catch (error: any) {
+        console.error('❌ Erro de conexão ao enviar email:', error.message);
+        return false;
+    }
+};
+
+/**
+ * Envia email de recuperação de senha
+ */
+export const sendPasswordRecoveryEmail = async (user: User): Promise<boolean> => {
+    return sendEmailViaAPI(
+        user.email_usuario,
+        user.nome_usuario,
+        "RMS - Risk Management Systems - Recuperação de senha",
+        'password_recovery',
+        {
+            summary: 'Solicitação de recuperação de senha'
+        }
+    );
+};
+
+/**
+ * Envia alerta de risco para um usuário específico
+ */
+export const sendRiskAlertEmail = async (
+    recipientUser: User, 
+    consultant: Consultant, 
+    clientName: string,
+    summary: string
+): Promise<boolean> => {
+    const inclusionDate = consultant.data_inclusao_consultores 
+        ? new Date(consultant.data_inclusao_consultores).toLocaleDateString('pt-BR')
+        : 'Data não informada';
+
+    return sendEmailViaAPI(
+        recipientUser.email_usuario,
+        recipientUser.nome_usuario,
+        `🚨 ALERTA CRÍTICO - ${consultant.nome_consultores} - Risco Máximo Detectado`,
+        'critical_risk',
+        {
+            consultantName: consultant.nome_consultores,
+            consultantCargo: consultant.cargo_consultores || 'Não informado',
+            clientName,
+            inclusionDate,
+            summary
+        }
+    );
+};
+
+/**
+ * 🚨 FUNÇÃO PRINCIPAL: Envia notificações de Risco Crítico (Score 5)
+ * 
+ * CORRIGIDO v52: Agora busca os destinatários através do CLIENTE + Administradores
+ * 
+ * Destinatários:
+ * - Gestão Comercial do cliente
+ * - Gestão de Pessoas do cliente
+ * - Focal R&S do cliente
+ * - Gestores específicos do consultor (se diferentes)
+ * - Todos os Administradores do sistema
+ * 
+ * Fluxo correto:
+ * 1. Consultor → gestor_imediato_id → usuarios_cliente
+ * 2. usuarios_cliente → id_cliente → clients
+ * 3. clients → id_gestao_comercial, id_gestao_de_pessoas, id_gestor_rs → app_users
+ * 4. Todos os usuários com tipo_usuario = 'Administrador'
  * 
  * @param consultant - Consultor que atingiu risco crítico
  * @param users - Lista de usuários do sistema (app_users)
- * @param clientName - Nome do cliente onde o consultor atua
+ * @param usuariosCliente - Lista de gestores de clientes
+ * @param clients - Lista de clientes
  * @param summary - Resumo da análise de risco
  * @returns Resultado do envio de notificações
  */
 export const sendCriticalRiskNotifications = async (
     consultant: Consultant,
     users: User[],
-    clientName: string,
+    usuariosCliente: UsuarioCliente[],
+    clients: Client[],
     summary: string
 ): Promise<CriticalRiskNotificationResult> => {
     const result: CriticalRiskNotificationResult = {
@@ -128,22 +163,77 @@ export const sendCriticalRiskNotifications = async (
 
     console.log(`🚨 Iniciando notificações de Risco Crítico para ${consultant.nome_consultores}...`);
 
-    // Coletar IDs dos usuários que devem ser notificados
+    // 1. Encontrar o gestor imediato do consultor (usuarios_cliente)
+    const gestorImediato = usuariosCliente.find(uc => uc.id === consultant.gestor_imediato_id);
+    
+    if (!gestorImediato) {
+        console.warn(`⚠️ Gestor imediato não encontrado para consultor ${consultant.nome_consultores}`);
+        result.errors.push('Gestor imediato não encontrado');
+    }
+
+    // 2. Encontrar o cliente através do gestor imediato
+    const client = gestorImediato 
+        ? clients.find(c => c.id === gestorImediato.id_cliente)
+        : null;
+
+    if (!client) {
+        console.warn(`⚠️ Cliente não encontrado para consultor ${consultant.nome_consultores}`);
+        result.errors.push('Cliente não encontrado');
+        return result;
+    }
+
+    const clientName = client.razao_social_cliente;
+    console.log(`📋 Cliente identificado: ${clientName} (ID: ${client.id})`);
+
+    // 3. Coletar IDs dos usuários que devem ser notificados (do CLIENTE)
     const userIdsToNotify: Set<number> = new Set();
 
-    // 1. Gestor de R&S do consultor
-    if (consultant.gestor_rs_id) {
+    // Gestão Comercial do cliente
+    if (client.id_gestao_comercial) {
+        userIdsToNotify.add(client.id_gestao_comercial);
+        console.log(`📧 Gestão Comercial (ID: ${client.id_gestao_comercial}) será notificado`);
+    }
+
+    // Gestão de Pessoas do cliente
+    if (client.id_gestao_de_pessoas) {
+        userIdsToNotify.add(client.id_gestao_de_pessoas);
+        console.log(`📧 Gestão de Pessoas (ID: ${client.id_gestao_de_pessoas}) será notificado`);
+    }
+
+    // Gestor R&S (Focal) do cliente
+    if (client.id_gestor_rs) {
+        userIdsToNotify.add(client.id_gestor_rs);
+        console.log(`📧 Focal R&S (ID: ${client.id_gestor_rs}) será notificado`);
+    }
+
+    // 4. Também notificar gestores específicos do consultor (se diferentes)
+    if (consultant.gestor_rs_id && !userIdsToNotify.has(consultant.gestor_rs_id)) {
         userIdsToNotify.add(consultant.gestor_rs_id);
-        console.log(`📧 Gestor R&S (ID: ${consultant.gestor_rs_id}) será notificado`);
+        console.log(`📧 Gestor R&S do consultor (ID: ${consultant.gestor_rs_id}) será notificado`);
     }
 
-    // 2. Gestão de Pessoas do consultor
-    if (consultant.id_gestao_de_pessoas) {
+    if (consultant.id_gestao_de_pessoas && !userIdsToNotify.has(consultant.id_gestao_de_pessoas)) {
         userIdsToNotify.add(consultant.id_gestao_de_pessoas);
-        console.log(`📧 Gestão de Pessoas (ID: ${consultant.id_gestao_de_pessoas}) será notificado`);
+        console.log(`📧 Gestão de Pessoas do consultor (ID: ${consultant.id_gestao_de_pessoas}) será notificado`);
     }
 
-    // Filtrar usuários que devem receber notificação
+    // 5. Notificar todos os Administradores do sistema
+    const adminUsers = users.filter(user => 
+        user.tipo_usuario === 'Administrador' && 
+        user.ativo_usuario !== false && 
+        user.receber_alertas_email !== false &&
+        user.email_usuario && 
+        user.email_usuario.includes('@')
+    );
+    
+    adminUsers.forEach(admin => {
+        if (!userIdsToNotify.has(admin.id)) {
+            userIdsToNotify.add(admin.id);
+            console.log(`📧 Administrador ${admin.nome_usuario} (ID: ${admin.id}) será notificado`);
+        }
+    });
+
+    // 6. Filtrar usuários que devem receber notificação
     const recipientUsers = users.filter(user => {
         // Verificar se o usuário está na lista de IDs a notificar
         const shouldNotify = userIdsToNotify.has(user.id);
@@ -155,15 +245,20 @@ export const sendCriticalRiskNotifications = async (
         // Verificar se tem email válido
         const hasValidEmail = user.email_usuario && user.email_usuario.includes('@');
 
-        if (shouldNotify && isActive && acceptsAlerts && hasValidEmail) {
+        if (shouldNotify) {
+            if (!isActive) {
+                console.log(`⚠️ Usuário ${user.nome_usuario} (ID: ${user.id}) está inativo - não será notificado`);
+                return false;
+            }
+            if (!acceptsAlerts) {
+                console.log(`⚠️ Usuário ${user.nome_usuario} (ID: ${user.id}) não aceita alertas por email`);
+                return false;
+            }
+            if (!hasValidEmail) {
+                console.log(`⚠️ Usuário ${user.nome_usuario} (ID: ${user.id}) não tem email válido`);
+                return false;
+            }
             return true;
-        }
-        
-        if (shouldNotify && !isActive) {
-            console.log(`⚠️ Usuário ${user.nome_usuario} (ID: ${user.id}) está inativo`);
-        }
-        if (shouldNotify && !acceptsAlerts) {
-            console.log(`⚠️ Usuário ${user.nome_usuario} (ID: ${user.id}) não aceita alertas por email`);
         }
         
         return false;
@@ -175,58 +270,40 @@ export const sendCriticalRiskNotifications = async (
         return result;
     }
 
-    console.log(`📬 ${recipientUsers.length} usuário(s) serão notificados`);
+    console.log(`📬 ${recipientUsers.length} usuário(s) serão notificados:`);
+    recipientUsers.forEach(u => console.log(`   - ${u.nome_usuario} (${u.email_usuario})`));
 
-    // Preparar data de inclusão
+    // 6. Preparar data de inclusão
     const inclusionDate = consultant.data_inclusao_consultores 
         ? new Date(consultant.data_inclusao_consultores).toLocaleDateString('pt-BR')
         : 'Data não informada';
 
-    // Enviar email para cada destinatário
+    // 7. Enviar email para cada destinatário
     for (const user of recipientUsers) {
-        const messageBody = `Olá ${user.nome_usuario},
+        const success = await sendEmailViaAPI(
+            user.email_usuario,
+            user.nome_usuario,
+            `🚨 ALERTA CRÍTICO - ${consultant.nome_consultores} - Risco Máximo Detectado`,
+            'critical_risk',
+            {
+                consultantName: consultant.nome_consultores,
+                consultantCargo: consultant.cargo_consultores || 'Não informado',
+                clientName,
+                inclusionDate,
+                summary
+            }
+        );
 
-🚨 ALERTA DE RISCO CRÍTICO 🚨
-
-Identificamos um grau de Risco 5 - CRÍTICO para o consultor abaixo:
-
-📋 DADOS DO CONSULTOR:
-• Nome: ${consultant.nome_consultores}
-• Cargo: ${consultant.cargo_consultores || 'Não informado'}
-• Cliente: ${clientName}
-• Data de Contratação: ${inclusionDate}
-
-📊 RESUMO DA ANÁLISE:
-${summary}
-
-⚠️ AÇÃO NECESSÁRIA:
-Este consultor requer atenção imediata. Por favor, acesse o sistema RMS para visualizar as estratégias de retenção recomendadas e tomar as providências necessárias.
-
----
-TECHFOR TI
-RMS - Risk Management Systems
-https://techfortirms.online`;
-
-        const templateParams = {
-            to_name: user.nome_usuario,
-            to_email: user.email_usuario,
-            subject: `🚨 ALERTA CRÍTICO - ${consultant.nome_consultores} - Risco Máximo Detectado`,
-            message: messageBody,
-        };
-
-        try {
-            await emailjs.send(SERVICE_ID, TEMPLATE_ID, templateParams);
-            console.log(`✅ Email enviado para ${user.nome_usuario} (${user.email_usuario})`);
+        if (success) {
             result.emailsSent++;
             result.recipients.push(user.email_usuario);
-        } catch (error: any) {
-            console.error(`❌ Falha ao enviar para ${user.email_usuario}:`, error);
+        } else {
             result.emailsFailed++;
-            result.errors.push(`Falha ao enviar para ${user.email_usuario}: ${error.message || 'Erro desconhecido'}`);
+            result.errors.push(`Falha ao enviar para ${user.email_usuario}`);
         }
 
-        // Pequeno delay entre envios para evitar rate limiting do EmailJS
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Pequeno delay entre envios para evitar rate limiting
+        await new Promise(resolve => setTimeout(resolve, 300));
     }
 
     result.success = result.emailsSent > 0;

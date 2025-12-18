@@ -1,7 +1,12 @@
 /**
  * useSupabaseData Hook - INTEGRAÇÃO 100% COMPLETA
  * Todas as entidades integradas ao Supabase
- * Versão: 2.1 - Com notificação de Risco Crítico
+ * Versão: 2.2 - Notificação de Risco Crítico via Resend (backend)
+ * 
+ * ALTERAÇÕES v51:
+ * - Migrado envio de email de EmailJS (frontend) para Resend (backend)
+ * - Corrigida lógica de identificação de destinatários via CLIENTE
+ * - Corrigido mapeamento de gestor_rs_id na tabela app_users
  */
 
 import { useState, useEffect } from 'react';
@@ -1848,21 +1853,19 @@ export const useSupabaseData = () => {
       
       console.log(`✅ Score atualizado: ${result.consultantName} - Mês ${result.reportMonth} - Risco ${result.riskScore}`);
       
-      // 🚨 NOVO: Verificar se é Risco Crítico (Score 5) e disparar notificações
+      // 🚨 v51: Verificar se é Risco Crítico (Score 5) e disparar notificações via Resend
       if (isCriticalRisk(result.riskScore)) {
         console.log(`🚨 RISCO CRÍTICO DETECTADO: ${result.consultantName} - Disparando notificações...`);
         
-        // Buscar nome do cliente
-        const manager = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
-        const client = clients.find(c => c.id === manager?.id_cliente);
-        const clientName = client?.razao_social_cliente || 'Cliente não identificado';
-        
-        // Disparar notificações de email para usuários associados
+        // Disparar notificações de email para usuários associados ao CLIENTE
+        // A função agora busca os destinatários corretamente via:
+        // consultor -> gestor_imediato -> cliente -> gestores do cliente
         try {
           const notificationResult = await sendCriticalRiskNotifications(
             consultant,
             users,
-            clientName,
+            usuariosCliente,
+            clients,
             result.summary || 'Análise de risco identificou situação crítica'
           );
           
