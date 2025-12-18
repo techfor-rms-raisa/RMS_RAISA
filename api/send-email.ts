@@ -1,6 +1,6 @@
 /**
  * API Route: Send Email via Resend
- * RMS-RAISA v52.1
+ * RMS-RAISA v52.2
  * 
  * Endpoint para envio de emails de alerta de risco crítico
  * Usa Resend como provedor de email (funciona em serverless)
@@ -30,6 +30,7 @@ interface EmailRequest {
   clientName?: string;
   inclusionDate?: string;
   summary: string;
+  gestaoPessoasName?: string; // Nome do Gestão de Pessoas do cliente
   type: 'critical_risk' | 'password_recovery' | 'general';
 }
 
@@ -208,7 +209,8 @@ function generateCriticalRiskEmailHTML(data: EmailRequest): string {
     
     <p style="font-size: 14px; color: #64748b; margin-top: 25px;">
       Atenciosamente,<br>
-      <strong>Equipe RMS-RAISA</strong>
+      <strong>${data.gestaoPessoasName || 'Equipe RMS-RAISA'}</strong><br>
+      <span style="font-size: 12px;">Gestão de Pessoas</span>
     </p>
     
   </div>
@@ -258,7 +260,8 @@ as estratégias de retenção sugeridas e registrar as ações tomadas.
 Acesse: https://techfortirms.online
 
 Atenciosamente,
-Equipe RMS-RAISA
+${data.gestaoPessoasName || 'Equipe RMS-RAISA'}
+Gestão de Pessoas
 
 ---
 TECHFOR TI
@@ -314,7 +317,8 @@ function generatePasswordRecoveryHTML(data: EmailRequest): string {
     
     <p style="font-size: 14px; color: #64748b; margin-top: 25px;">
       Atenciosamente,<br>
-      <strong>Equipe RMS-RAISA</strong>
+      <strong>${data.gestaoPessoasName || 'Equipe RMS-RAISA'}</strong><br>
+      <span style="font-size: 12px;">Gestão de Pessoas</span>
     </p>
     
   </div>
@@ -353,7 +357,8 @@ Por segurança, recomendamos que você altere esta senha após efetuar o login.
 Acesse: https://techfortirms.online
 
 Atenciosamente,
-Equipe RMS-RAISA
+${data.gestaoPessoasName || 'Equipe RMS-RAISA'}
+Gestão de Pessoas
 
 ---
 TECHFOR TI

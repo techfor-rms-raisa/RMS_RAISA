@@ -1,13 +1,11 @@
 /**
- * Email Service - RMS RAISA v52.1
+ * Email Service - RMS RAISA v52.2
  * Serviço de envio de emails via Resend (backend)
  * Inclui notificação automática para Risco Crítico (Score 5)
  * 
  * ALTERAÇÃO v51: Migrado de EmailJS (frontend) para Resend (backend)
  * ALTERAÇÃO v52.1: Template otimizado para evitar filtros de SPAM
- * - Removidos emojis do assunto
- * - Tom mais profissional
- * - Assunto neutro: "RMS-RAISA: Atenção Necessária"
+ * ALTERAÇÃO v52.2: Assinatura do email com nome do Gestão de Pessoas do cliente
  */
 
 import { User, Consultant, Client, UsuarioCliente } from '../components/types';
@@ -47,6 +45,7 @@ const sendEmailViaAPI = async (
         clientName?: string;
         inclusionDate?: string;
         summary: string;
+        gestaoPessoasName?: string; // Nome do Gestão de Pessoas do cliente
     }
 ): Promise<boolean> => {
     try {
@@ -281,6 +280,12 @@ export const sendCriticalRiskNotifications = async (
         ? new Date(consultant.data_inclusao_consultores).toLocaleDateString('pt-BR')
         : 'Data não informada';
 
+    // 6.1 Buscar nome do Gestão de Pessoas do cliente para assinatura do email
+    const gestaoPessoasUser = client.id_gestao_de_pessoas 
+        ? users.find(u => u.id === client.id_gestao_de_pessoas)
+        : null;
+    const gestaoPessoasName = gestaoPessoasUser?.nome_usuario || 'Equipe RMS-RAISA';
+
     // 7. Enviar email para cada destinatário
     for (const user of recipientUsers) {
         const success = await sendEmailViaAPI(
@@ -293,7 +298,8 @@ export const sendCriticalRiskNotifications = async (
                 consultantCargo: consultant.cargo_consultores || 'Não informado',
                 clientName,
                 inclusionDate,
-                summary
+                summary,
+                gestaoPessoasName
             }
         );
 
