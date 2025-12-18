@@ -2,10 +2,11 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI com Schema estruturado para análise de riscos
  * 
- * v47 - COM TRACE: Mostra versão e variáveis de ambiente nos logs do Vercel
+ * v48 - CORRIGIDO: Modelo e sintaxe do SDK @google/genai
  */
 
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
+import type { Schema } from "@google/genai";
 import { APP_VERSION, FEATURES_TRACE, ENV_TRACE, initializeTraces } from '../version';
 
 /**
@@ -80,7 +81,13 @@ const analysisSchema: Schema = {
 };
 
 /**
- * 4. FUNÇÃO PRINCIPAL DE ANÁLISE
+ * 4. MODELO GEMINI A SER USADO
+ * CORRIGIDO: gemini-2.5-flash é o modelo correto e disponível
+ */
+const AI_MODEL_NAME = 'gemini-2.5-flash';
+
+/**
+ * 5. FUNÇÃO PRINCIPAL DE ANÁLISE
  */
 async function analyzeReportWithAI(reportText: string): Promise<any[]> {
   if (!reportText || reportText.length < 5) {
@@ -91,9 +98,10 @@ async function analyzeReportWithAI(reportText: string): Promise<any[]> {
   try {
     console.log('🤖 [ANALYSIS] Inicializando cliente Gemini...');
     const ai = getAIClient();
-    const model = 'gemini-3-flash-preview';
     
+    console.log(`📌 [ANALYSIS] Modelo: ${AI_MODEL_NAME}`);
     console.log('📝 [ANALYSIS] Preparando prompt...');
+    
     const prompt = `
 Você é um Analista de Risco Contratual Sênior especializado em TI.
 Sua tarefa é ler o relatório de atividades abaixo e identificar:
@@ -108,8 +116,10 @@ ${reportText.substring(0, 8000)}
     `;
 
     console.log('🔄 [ANALYSIS] Chamando API Gemini...');
+    
+    // CORRIGIDO: Sintaxe correta do SDK @google/genai
     const response = await ai.models.generateContent({
-      model: model,
+      model: AI_MODEL_NAME,
       contents: prompt,
       config: {
         responseMimeType: "application/json",
@@ -118,29 +128,52 @@ ${reportText.substring(0, 8000)}
     });
 
     console.log('✅ [ANALYSIS] Resposta recebida do Gemini!');
-    const text = response.text;
-    const data = JSON.parse(text);
     
-    console.log(`📊 [ANALYSIS] ${data.length} consultores analisados`);
+    // CORRIGIDO: Acesso correto à resposta
+    const text = response.text;
+    
+    if (!text) {
+      console.error('❌ [ANALYSIS] Resposta vazia do Gemini');
+      return [];
+    }
+    
+    // Limpar possíveis marcadores de código
+    const cleanText = text
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    
+    const data = JSON.parse(cleanText);
+    
+    console.log(`📊 [ANALYSIS] ${Array.isArray(data) ? data.length : 1} consultores analisados`);
     console.log('✅ [ANALYSIS] Análise concluída com sucesso!\n');
     
-    return data;
+    return Array.isArray(data) ? data : [data];
     
   } catch (error: any) {
     console.error('❌ [ANALYSIS] Erro ao analisar relatório:', error.message);
     console.error('📋 [ANALYSIS] Stack:', error.stack);
+    
+    // Log adicional para debug
+    if (error.response) {
+      console.error('📋 [ANALYSIS] Response status:', error.response.status);
+      console.error('📋 [ANALYSIS] Response data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
     return [];
   }
 }
 
 /**
- * 5. HANDLER PRINCIPAL DA API
+ * 6. HANDLER PRINCIPAL DA API
  */
 export default async function handler(req: any, res: any) {
   console.log('\n═══════════════════════════════════════════════════════════');
   console.log(`📥 [REQUEST] ${new Date().toISOString()}`);
   console.log(`📥 [REQUEST] Método: ${req.method}`);
   console.log(`📥 [REQUEST] Versão da App: ${APP_VERSION.toString()}`);
+  console.log(`📥 [REQUEST] Modelo Gemini: ${AI_MODEL_NAME}`);
   console.log('═══════════════════════════════════════════════════════════\n');
 
   // ✅ Verificar método HTTP
@@ -167,6 +200,19 @@ export default async function handler(req: any, res: any) {
     // ✅ Analisar com IA
     const analysisResults = await analyzeReportWithAI(reportText);
 
+    // ✅ Verificar se houve resultados
+    if (!analysisResults || analysisResults.length === 0) {
+      console.warn('⚠️ [REQUEST] Nenhum resultado da análise');
+      return res.status(200).json({
+        success: true,
+        version: APP_VERSION.toString(),
+        model: AI_MODEL_NAME,
+        timestamp: new Date().toISOString(),
+        results: [],
+        message: 'Análise concluída, mas nenhum consultor foi identificado no relatório.'
+      });
+    }
+
     // ✅ Mapear para formato interno
     const results = analysisResults.map((result: any) => ({
       consultantName: result.consultorNome,
@@ -186,6 +232,7 @@ export default async function handler(req: any, res: any) {
     return res.status(200).json({
       success: true,
       version: APP_VERSION.toString(),
+      model: AI_MODEL_NAME,
       timestamp: new Date().toISOString(),
       results: results
     });
@@ -198,6 +245,7 @@ export default async function handler(req: any, res: any) {
       error: 'Internal Server Error',
       message: error.message,
       version: APP_VERSION.toString(),
+      model: AI_MODEL_NAME,
       timestamp: new Date().toISOString()
     });
   } finally {

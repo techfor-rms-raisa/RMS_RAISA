@@ -1,55 +1,128 @@
 /**
- * VERSION CONTROL & TRACE CONFIGURATION
- * Centraliza informações de versão e traces para debugging
+ * ARQUIVO DE VERSÃO E TRACE
+ * Fornece informações de versão e rastreamento para logs do Vercel
+ * 
+ * Este arquivo é importado por analyze-activity-report.ts para mostrar
+ * qual versão está rodando e quais variáveis de ambiente estão disponíveis
+ * 
+ * v48 - CORRIGIDO: Modelo gemini-2.5-flash
  */
 
-export const APP_VERSION = "V2.6";
+/**
+ * VERSÃO DA APLICAÇÃO
+ * Atualize este número sempre que fizer um novo deploy
+ * Formato: v[MAJOR].[MINOR].[PATCH]
+ */
+export const APP_VERSION = {
+  major: 1,
+  minor: 0,
+  patch: 48,
+  timestamp: new Date().toISOString(),
+  
+  toString(): string {
+    return `v${this.major}.${this.minor}.${this.patch}`;
+  },
+  
+  getFullInfo(): string {
+    return `${this.toString()} (${this.timestamp})`;
+  }
+};
 
-export interface FeatureTrace {
-  name: string;
-  enabled: boolean;
-  version: string;
-}
+/**
+ * FEATURES TRACE
+ * Lista de funcionalidades ativas nesta versão
+ */
+export const FEATURES_TRACE = {
+  geminiAI: {
+    enabled: true,
+    sdk: '@google/genai',
+    model: 'gemini-2.5-flash', // CORRIGIDO: Modelo correto
+    schema: 'structured'
+  },
+  reportAnalysis: {
+    enabled: true,
+    version: '48'
+  },
+  technicalQuestions: {
+    enabled: true,
+    version: '1.0'
+  },
+  cronJobs: {
+    enabled: true,
+    jobs: ['repriorizacao', 'analise-mensal', 'limpeza-notificacoes']
+  }
+};
 
-export const FEATURES_TRACE: FeatureTrace[] = [
-  { name: 'RMS Core', enabled: true, version: '2.6' },
-  { name: 'RAISA Recruitment', enabled: true, version: '1.0' },
-  { name: 'AI Analysis', enabled: true, version: '2.0' },
-  { name: 'Compliance Module', enabled: true, version: '1.5' },
-  { name: 'Behavioral Memory', enabled: true, version: '1.0' },
-];
+/**
+ * ENVIRONMENT TRACE
+ * Rastreamento de variáveis de ambiente
+ */
+export const ENV_TRACE = {
+  getEnvironmentInfo(): object {
+    return {
+      NODE_ENV: process.env.NODE_ENV || 'unknown',
+      VITE_API_KEY_present: !!process.env.VITE_API_KEY,
+      API_KEY_present: !!process.env.API_KEY,
+      VITE_SUPABASE_URL_present: !!process.env.VITE_SUPABASE_URL,
+      VITE_SUPABASE_ANON_KEY_present: !!process.env.VITE_SUPABASE_ANON_KEY,
+      vercelEnv: process.env.VERCEL_ENV || 'unknown',
+      vercelRegion: process.env.VERCEL_REGION || 'unknown'
+    };
+  }
+};
 
-export interface EnvTrace {
-  key: string;
-  present: boolean;
-  masked?: string;
-}
-
-export const ENV_TRACE: EnvTrace[] = [];
-
+/**
+ * INICIALIZAR TRACES
+ * Chamado na primeira requisição para logar informações de versão
+ */
 export function initializeTraces(): void {
-  console.log('╔════════════════════════════════════════════════════════════╗');
-  console.log(`║ RMS-RAISA ${APP_VERSION} - Trace Initialization              ║`);
+  console.log('\n╔════════════════════════════════════════════════════════════╗');
+  console.log('║                    🚀 RMS_RAISA INICIALIZADO              ║');
+  console.log('╠════════════════════════════════════════════════════════════╣');
+  console.log(`║ Versão:                ${APP_VERSION.toString().padEnd(40)} ║`);
+  console.log(`║ Build Time:            ${APP_VERSION.timestamp.padEnd(40)} ║`);
+  console.log('╠════════════════════════════════════════════════════════════╣');
+  console.log('║                       📋 FEATURES ATIVAS                  ║');
+  console.log('╠════════════════════════════════════════════════════════════╣');
+  console.log(`║ Gemini AI:             ${(FEATURES_TRACE.geminiAI.enabled ? '✅' : '❌')} ${FEATURES_TRACE.geminiAI.sdk.padEnd(35)} ║`);
+  console.log(`║ Modelo:                ${FEATURES_TRACE.geminiAI.model.padEnd(40)} ║`);
+  console.log(`║ Report Analysis:       ${(FEATURES_TRACE.reportAnalysis.enabled ? '✅' : '❌')} v${FEATURES_TRACE.reportAnalysis.version.padEnd(35)} ║`);
+  console.log(`║ Technical Questions:   ${(FEATURES_TRACE.technicalQuestions.enabled ? '✅' : '❌')} v${FEATURES_TRACE.technicalQuestions.version.padEnd(35)} ║`);
+  console.log(`║ Cron Jobs:             ${(FEATURES_TRACE.cronJobs.enabled ? '✅' : '❌')} ${FEATURES_TRACE.cronJobs.jobs.length} jobs ativo${FEATURES_TRACE.cronJobs.jobs.length > 1 ? 's' : ''.padEnd(32)} ║`);
+  console.log('╠════════════════════════════════════════════════════════════╣');
+  console.log('║                    🌍 AMBIENTE DE EXECUÇÃO                ║');
   console.log('╠════════════════════════════════════════════════════════════╣');
   
-  // Check environment variables
-  const envVars = ['API_KEY', 'VITE_API_KEY', 'SUPABASE_URL', 'SUPABASE_ANON_KEY'];
-  
-  envVars.forEach(key => {
-    const value = process.env[key];
-    const present = !!value;
-    const masked = present ? `${value.substring(0, 4)}...${value.substring(value.length - 4)}` : 'NOT SET';
-    
-    ENV_TRACE.push({ key, present, masked });
-    console.log(`║ ${key}: ${present ? '✅' : '❌'} ${masked.padEnd(20)} ║`);
+  const envInfo = ENV_TRACE.getEnvironmentInfo();
+  Object.entries(envInfo).forEach(([key, value]) => {
+    const displayValue = typeof value === 'boolean' 
+      ? (value ? '✅ SIM' : '❌ NÃO') 
+      : String(value);
+    console.log(`║ ${key.padEnd(28)} ${displayValue.padEnd(28)} ║`);
   });
   
-  console.log('╠════════════════════════════════════════════════════════════╣');
-  console.log('║ Features:                                                   ║');
+  console.log('╚════════════════════════════════════════════════════════════╝\n');
+}
+
+/**
+ * LOG DE VERSÃO
+ * Função auxiliar para logar a versão em qualquer lugar
+ */
+export function logVersion(): void {
+  console.log(`\n📌 RMS_RAISA ${APP_VERSION.getFullInfo()}\n`);
+}
+
+/**
+ * VERIFICAR VERSÃO
+ * Função para verificar se a versão está correta
+ */
+export function verifyVersion(expectedVersion: string): boolean {
+  const currentVersion = APP_VERSION.toString();
+  const isCorrect = currentVersion === expectedVersion;
   
-  FEATURES_TRACE.forEach(feature => {
-    console.log(`║ ${feature.enabled ? '✅' : '❌'} ${feature.name.padEnd(20)} v${feature.version.padEnd(10)} ║`);
-  });
+  if (!isCorrect) {
+    console.warn(`⚠️ [VERSION] Versão esperada: ${expectedVersion}, mas encontrada: ${currentVersion}`);
+  }
   
-  console.log('╚════════════════════════════════════════════════════════════╝');
+  return isCorrect;
 }
