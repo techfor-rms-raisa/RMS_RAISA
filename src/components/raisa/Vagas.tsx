@@ -1,10 +1,11 @@
 /**
- * Vagas.tsx - RMS RAISA v52.4
+ * Vagas.tsx - RMS RAISA v52.6
  * Componente de Gestão de Vagas
  * 
  * CORREÇÃO v52.2: Tratamento seguro do campo stack_tecnologica
  * NOVA FUNCIONALIDADE v52.3: Dropdowns de Cliente e Gestor do Cliente no header
  * CORREÇÃO v52.4: Verificações de segurança para clients e usuariosCliente undefined
+ * CORREÇÃO v52.6: Usa razao_social_cliente e adiciona dropdown de Gestor no modal
  */
 
 import React, { useState, useMemo } from 'react';
@@ -13,8 +14,8 @@ import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 
 interface VagasProps {
     vagas: Vaga[];
-    clients?: Client[];  // Pode ser undefined durante carregamento
-    usuariosCliente?: UsuarioCliente[];  // Pode ser undefined durante carregamento
+    clients?: Client[];
+    usuariosCliente?: UsuarioCliente[];
     addVaga: (v: any) => void;
     updateVaga: (v: Vaga) => void;
     deleteVaga: (id: string) => void;
@@ -56,14 +57,15 @@ const Vagas: React.FC<VagasProps> = ({
     const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
     const [selectedGestorId, setSelectedGestorId] = useState<number | null>(null);
     
-    // Estado do formulário
-    const [formData, setFormData] = useState<Partial<Vaga>>({
+    // Estado do formulário - agora inclui gestor_cliente_id
+    const [formData, setFormData] = useState<Partial<Vaga> & { gestor_cliente_id?: number | null }>({
         titulo: '', 
         descricao: '', 
         senioridade: 'Pleno', 
         stack_tecnologica: [], 
         status: 'aberta',
-        cliente_id: null
+        cliente_id: null,
+        gestor_cliente_id: null
     });
     const [techInput, setTechInput] = useState('');
 
@@ -72,11 +74,17 @@ const Vagas: React.FC<VagasProps> = ({
     const safeUsuariosCliente = Array.isArray(usuariosCliente) ? usuariosCliente : [];
     const safeVagas = Array.isArray(vagas) ? vagas : [];
 
-    // Filtrar gestores pelo cliente selecionado
+    // Filtrar gestores pelo cliente selecionado (header)
     const gestoresDoCliente = useMemo(() => {
         if (!selectedClientId) return [];
         return safeUsuariosCliente.filter(g => g.id_cliente === selectedClientId && g.ativo !== false);
     }, [selectedClientId, safeUsuariosCliente]);
+
+    // Filtrar gestores pelo cliente do formulário (modal)
+    const gestoresDoClienteForm = useMemo(() => {
+        if (!formData.cliente_id) return [];
+        return safeUsuariosCliente.filter(g => g.id_cliente === formData.cliente_id && g.ativo !== false);
+    }, [formData.cliente_id, safeUsuariosCliente]);
 
     // Filtrar vagas pelo cliente selecionado
     const vagasFiltradas = useMemo(() => {
@@ -84,11 +92,11 @@ const Vagas: React.FC<VagasProps> = ({
         return safeVagas.filter(v => v.cliente_id === selectedClientId);
     }, [selectedClientId, safeVagas]);
 
-    // Obter nome do cliente pelo ID
+    // ✅ Obter nome do cliente pelo ID - usa razao_social_cliente
     const getClientName = (clientId: number | null | undefined): string => {
         if (!clientId) return 'Não definido';
         const client = safeClients.find(c => c.id === clientId);
-        return client?.nome_cliente || 'Cliente não encontrado';
+        return client?.razao_social_cliente || 'Cliente não encontrado';
     };
 
     // Obter nome do gestor pelo ID
@@ -98,10 +106,19 @@ const Vagas: React.FC<VagasProps> = ({
         return gestor?.nome_gestor_cliente || '';
     };
 
-    // Quando muda o cliente, limpa o gestor selecionado
+    // Quando muda o cliente no header, limpa o gestor selecionado
     const handleClientChange = (clientId: number | null) => {
         setSelectedClientId(clientId);
         setSelectedGestorId(null);
+    };
+
+    // Quando muda o cliente no formulário, limpa o gestor selecionado no form
+    const handleFormClientChange = (clientId: number | null) => {
+        setFormData({
+            ...formData,
+            cliente_id: clientId,
+            gestor_cliente_id: null // Limpa o gestor quando muda o cliente
+        });
     };
 
     const openModal = (vaga?: Vaga) => {
@@ -110,7 +127,8 @@ const Vagas: React.FC<VagasProps> = ({
             setFormData({
                 ...vaga,
                 stack_tecnologica: ensureStackArray(vaga.stack_tecnologica),
-                cliente_id: vaga.cliente_id || selectedClientId
+                cliente_id: vaga.cliente_id || selectedClientId,
+                gestor_cliente_id: (vaga as any).gestor_cliente_id || null
             });
         } else {
             setEditingVaga(null);
@@ -120,7 +138,8 @@ const Vagas: React.FC<VagasProps> = ({
                 senioridade: 'Pleno', 
                 stack_tecnologica: [], 
                 status: 'aberta',
-                cliente_id: selectedClientId // Pré-preenche com cliente selecionado
+                cliente_id: selectedClientId,
+                gestor_cliente_id: selectedGestorId
             });
         }
         setIsModalOpen(true);
@@ -157,13 +176,13 @@ const Vagas: React.FC<VagasProps> = ({
         });
     };
 
-    // ✅ Ordenar clientes de forma segura
+    // ✅ Ordenar clientes de forma segura - usa razao_social_cliente
     const sortedClients = useMemo(() => {
         return safeClients
             .filter(c => c && c.ativo_cliente !== false)
             .sort((a, b) => {
-                const nameA = a?.nome_cliente || '';
-                const nameB = b?.nome_cliente || '';
+                const nameA = a?.razao_social_cliente || '';
+                const nameB = b?.razao_social_cliente || '';
                 return nameA.localeCompare(nameB);
             });
     }, [safeClients]);
@@ -189,7 +208,7 @@ const Vagas: React.FC<VagasProps> = ({
                                 <option value="">Todos os Clientes</option>
                                 {sortedClients.map(client => (
                                     <option key={client.id} value={client.id}>
-                                        {client.nome_cliente || `Cliente ${client.id}`}
+                                        {client.razao_social_cliente}
                                     </option>
                                 ))}
                             </select>
@@ -212,7 +231,7 @@ const Vagas: React.FC<VagasProps> = ({
                                 </option>
                                 {gestoresDoCliente.map(gestor => (
                                     <option key={gestor.id} value={gestor.id}>
-                                        {gestor.nome_gestor_cliente || 'Gestor'} - {gestor.cargo_gestor || 'Cargo'}
+                                        {gestor.nome_gestor_cliente} - {gestor.cargo_gestor || 'Gestor'}
                                     </option>
                                 ))}
                             </select>
@@ -336,17 +355,41 @@ const Vagas: React.FC<VagasProps> = ({
                                 <label className="text-sm font-bold text-gray-700">Cliente *</label>
                                 <select
                                     value={formData.cliente_id || ''}
-                                    onChange={(e) => setFormData({...formData, cliente_id: e.target.value ? Number(e.target.value) : null})}
+                                    onChange={(e) => handleFormClientChange(e.target.value ? Number(e.target.value) : null)}
                                     className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500"
                                     required
                                 >
                                     <option value="">Selecione o Cliente</option>
                                     {sortedClients.map(client => (
                                         <option key={client.id} value={client.id}>
-                                            {client.nome_cliente || `Cliente ${client.id}`}
+                                            {client.razao_social_cliente}
                                         </option>
                                     ))}
                                 </select>
+                            </div>
+
+                            {/* ✅ Gestor do Cliente - NOVO */}
+                            <div>
+                                <label className="text-sm font-bold text-gray-700">Gestor do Cliente</label>
+                                <select
+                                    value={formData.gestor_cliente_id || ''}
+                                    onChange={(e) => setFormData({...formData, gestor_cliente_id: e.target.value ? Number(e.target.value) : null})}
+                                    disabled={!formData.cliente_id}
+                                    className={`w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500 ${!formData.cliente_id ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                                >
+                                    <option value="">
+                                        {formData.cliente_id 
+                                            ? (gestoresDoClienteForm.length > 0 ? 'Selecione o Gestor (opcional)' : 'Nenhum gestor cadastrado para este cliente')
+                                            : 'Selecione um cliente primeiro'
+                                        }
+                                    </option>
+                                    {gestoresDoClienteForm.map(gestor => (
+                                        <option key={gestor.id} value={gestor.id}>
+                                            {gestor.nome_gestor_cliente} - {gestor.cargo_gestor || 'Gestor'}
+                                        </option>
+                                    ))}
+                                </select>
+                                <p className="text-xs text-gray-500 mt-1">Gestor responsável pela vaga no cliente</p>
                             </div>
                             
                             <input 
