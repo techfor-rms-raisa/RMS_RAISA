@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { APP_TITLE, APP_VERSION, AI_MODEL_NAME } from '../constants';
-import { User } from '../components/types';
+import { User } from '@/types';
 import { supabase } from '../config/supabase';
 
 interface LoginScreenProps {

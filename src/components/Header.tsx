@@ -1,6 +1,6 @@
 import React from 'react';
 import { APP_TITLE, APP_SUBTITLE, APP_VERSION, AI_MODEL_NAME, COMPANY_NAME } from '../constants';
-import { User } from '../components/types';
+import { User } from '@/types';
 
 interface HeaderProps {
     currentUser: User;

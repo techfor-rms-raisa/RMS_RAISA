@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useSupabaseData } from '../../hooks/useSupabaseData';
-import { Vaga, Client, User } from '../types';
+import { Vaga, Client, User } from '@/types';
 import { Plus, X } from 'lucide-react';
 
 interface VagasCriarProps {

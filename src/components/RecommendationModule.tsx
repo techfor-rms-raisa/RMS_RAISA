@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Consultant, Client, UsuarioCliente, ConsultantReport, CoordenadorCliente, User } from '../components/types';
+import { Consultant, Client, UsuarioCliente, ConsultantReport, CoordenadorCliente, User } from '@/types';
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
 import RecommendationCard from './RecommendationCard';
 import RecommendationsModal from './RecommendationsModal';

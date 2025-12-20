@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { X, Lightbulb, AlertCircle, TrendingUp } from 'lucide-react';
-import { Consultant } from '../components/types';
+import { Consultant } from '@/types';
 
 interface RecommendationsModalProps {
   consultant: Consultant;

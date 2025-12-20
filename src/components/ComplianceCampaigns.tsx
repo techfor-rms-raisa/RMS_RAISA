@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ComplianceCampaign, EmailTemplate, Consultant } from '../components/types';
+import { ComplianceCampaign, EmailTemplate, Consultant } from '@/types';
 
 interface CampaignsProps {
     campaigns: ComplianceCampaign[];

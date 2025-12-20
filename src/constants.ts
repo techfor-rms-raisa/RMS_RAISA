@@ -1,4 +1,4 @@
-import { RiskScore } from './components/types';
+import { RiskScore } from '@/types';
 
 // ========================================
 // ESCALA DE RISCO: 5 NÍVEIS

@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { analyzeReport } from '../services/geminiService';
-import { AIAnalysisResult } from '../components/types';
+import { AIAnalysisResult } from '@/types';
 import * as pdfjsLib from 'pdfjs-dist';
 
 const getPdfJs = () => {

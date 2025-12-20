@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { EmailTemplate, User, TemplateStatus } from '../components/types';
+import { EmailTemplate, User, TemplateStatus } from '@/types';
 import { generateTemplateContent } from '../services/geminiService';
 
 interface TemplateLibraryProps {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { RiskScore } from '../components/types';
+import { RiskScore } from '@/types';
 import { RISK_COLORS, RISK_MEANING } from '../constants';
 
 interface StatusCircleProps {

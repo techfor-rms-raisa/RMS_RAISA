@@ -3,7 +3,7 @@
  * Evita chamadas repetidas à API Gemini causando looping
  */
 
-import { Consultant, ConsultantReport } from '../components/types';
+import { Consultant, ConsultantReport } from '@/types';
 
 export interface IntelligentRecommendation {
   tipo: 'AÇÃO IMEDIATA' | 'PREVENTIVO' | 'DESENVOLVIMENTO' | 'RECONHECIMENTO' | 'SUPORTE' | 'OBSERVAÇÃO' | 'FEEDBACK';

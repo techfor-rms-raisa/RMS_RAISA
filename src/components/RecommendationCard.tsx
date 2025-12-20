@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AlertCircle, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { Consultant } from '../components/types';
+import { Consultant } from '@/types';
 import { IntelligentAnalysis } from '../services/recommendationService';
 
 interface RecommendationCardProps {

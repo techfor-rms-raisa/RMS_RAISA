@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { Consultant, ConsultantReport, UsuarioCliente, Client } from '../components/types';
+import { Consultant, ConsultantReport, UsuarioCliente, Client } from '@/types';
 
 // Inicializar Gemini
 // Usar API_KEY (configurada no Vercel)

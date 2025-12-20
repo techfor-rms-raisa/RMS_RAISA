@@ -8,7 +8,7 @@
  * ALTERAÇÃO v52.2: Assinatura do email com nome do Gestão de Pessoas do cliente
  */
 
-import { User, Consultant, Client, UsuarioCliente } from '../components/types';
+import { User, Consultant, Client, UsuarioCliente } from '@/types';
 
 /**
  * Interface para resultado do envio de notificações

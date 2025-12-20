@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { AIAnalysisResult, RiskScore, Recommendation, BehavioralFlag } from '../components/types';
+import { AIAnalysisResult, RiskScore, Recommendation, BehavioralFlag } from '@/types';
 import { AI_MODEL_NAME } from '../constants';
 
 // Usar API_KEY (configurada no Vercel)
@@ -209,7 +209,7 @@ export async function summarizeInterview(transcript: string, jobDescription: str
     }
 }
 
-import { Vaga, Candidatura } from '../components/types';
+import { Vaga, Candidatura } from '@/types';
 
 // Tipos locais (TODO: Mover para types.ts)
 interface FinalAssessment {

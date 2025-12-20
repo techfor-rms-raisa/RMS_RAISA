@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { Candidatura, Vaga, Pessoa } from '../types';
+import { Candidatura, Vaga, Pessoa } from '@/types';
 
 interface CandidaturasProps {
     candidaturas: Candidatura[];

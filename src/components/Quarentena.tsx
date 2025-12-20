@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Mail, Phone } from 'lucide-react';
 import { FocalRSIcon } from './icons/FocalRSIcon';
-import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '../components/types';
+import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '@/types';
 import ReportDetailsModal from './ReportDetailsModal';
 import HistoricoAtividadesModal from './HistoricoAtividadesModal';
 import RecommendationsModal from './RecommendationsModal';

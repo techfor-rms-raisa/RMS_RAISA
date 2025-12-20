@@ -1,6 +1,6 @@
 
 import { supabase } from './supabaseClient';
-import { CandidaturaEnvio, CandidaturaAprovacao } from '../components/types';
+import { CandidaturaEnvio, CandidaturaAprovacao } from '@/types';
 
 export const candidatureEnvioService = {
   

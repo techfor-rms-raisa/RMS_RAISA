@@ -1,5 +1,5 @@
 import React from 'react';
-import { Candidatura, Vaga, Pessoa } from '../types';
+import { Candidatura, Vaga, Pessoa } from '@/types';
 
 interface PipelineProps {
     candidaturas: Candidatura[];

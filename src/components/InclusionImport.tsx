@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import { Client, UsuarioCliente, CoordenadorCliente } from '../components/types';
+import { Client, UsuarioCliente, CoordenadorCliente } from '@/types';
 
 // Robustly resolve the pdfjs library object (reusing logic from FileUpload)
 const getPdfJs = () => {

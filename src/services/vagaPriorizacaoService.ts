@@ -14,7 +14,7 @@ import {
     Analista,
     DadosVagaPrioridade,
     DadosRecomendacaoAnalista
-} from '../components/types';
+} from '@/types';
 
 // ============================================
 // FUNÇÕES DE COLETA DE DADOS

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Client, User, UsuarioCliente, CoordenadorCliente, Consultant } from '../components/types';
+import { Client, User, UsuarioCliente, CoordenadorCliente, Consultant } from '@/types';
 import { Mail, Phone, Briefcase } from 'lucide-react';
 import { GestaoPessoasIcon } from './icons/GestaoPessoasIcon';
 import { FocalRSIcon } from './icons/FocalRSIcon';

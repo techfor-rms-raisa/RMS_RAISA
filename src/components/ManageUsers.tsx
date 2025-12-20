@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, UserRole } from '../components/types';
+import { User, UserRole } from '@/types';
 
 interface ManageUsersProps {
     users: User[];

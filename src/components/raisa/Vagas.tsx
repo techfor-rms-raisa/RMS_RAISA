@@ -9,7 +9,7 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { Vaga, Client, UsuarioCliente } from '../types';
+import { Vaga, Client, UsuarioCliente } from '@/types';
 import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 
 interface VagasProps {

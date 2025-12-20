@@ -6,7 +6,7 @@
 // COMO USAR:
 // import { User, Vaga, Client } from '@/types';
 // ou
-// import { User, Vaga, Client } from '../types';
+// import { User, Vaga, Client } from '@/types';
 // ============================================
 
 // Models (Vagas, Candidaturas, etc)

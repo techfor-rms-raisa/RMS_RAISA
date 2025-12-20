@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { AI_MODEL_NAME } from '../constants';
-import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '../components/types';
+import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '@/types';
 
 /**
  * Configuração do cliente Gemini

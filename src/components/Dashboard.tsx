@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore } from '../components/types';
+import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore } from '@/types';
 import StatusCircle from './StatusCircle';
 import ReportDetailsModal from './ReportDetailsModal';
 import MonthlyReportsModal from './MonthlyReportsModal';

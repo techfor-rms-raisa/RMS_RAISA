@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Vaga, Cliente, User } from '../types';
+import { Vaga, Cliente, User } from '@/types';
 
 interface VagasConsultarProps {
     vagas: Vaga[];

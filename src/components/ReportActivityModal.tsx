@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Consultant, UsuarioCliente } from '../components/types';
+import { Consultant, UsuarioCliente } from '@/types';
 
 interface ReportActivityModalProps {
     isOpen: boolean;

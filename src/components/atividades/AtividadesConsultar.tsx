@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Client, Consultant, UsuarioCliente, ConsultantReport, RiskScore } from '../types';
+import { Client, Consultant, UsuarioCliente, ConsultantReport, RiskScore } from '@/types';
 import MonthlyReportsModal from './MonthlyReportsModal'; // Importar o novo modal
 
 interface AtividadesConsultarProps {

@@ -6,7 +6,7 @@ import {
     buscarRecomendacoesAnalistas,
     atribuirAnalistaVaga
 } from '../../services/vagaPriorizacaoService';
-import { VagaPriorizacaoScore, AnalistaFitScore } from '../types';
+import { VagaPriorizacaoScore, AnalistaFitScore } from '@/types';
 
 interface VagaPriorizacaoManagerProps {
     vagaId: string;

@@ -1,5 +1,5 @@
 import React from 'react';
-import { RHAction, FeedbackResponse } from '../components/types';
+import { RHAction, FeedbackResponse } from '@/types';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface CompDashProps {

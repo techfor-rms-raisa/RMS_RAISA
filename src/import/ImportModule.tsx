@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
-import { Client, UsuarioCliente, CoordenadorCliente, User } from '../components/types';
+import { Client, UsuarioCliente, CoordenadorCliente, User } from '@/types';
 
 interface ImportModuleProps {
     users: User[];

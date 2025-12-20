@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason } from '../components/types';
+import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason } from '@/types';
 import { Mail, Phone, Search } from 'lucide-react';
 import InclusionImport from './InclusionImport';
 

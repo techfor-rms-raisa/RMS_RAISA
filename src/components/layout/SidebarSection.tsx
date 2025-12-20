@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, UserRole } from '../types';
+import { View, UserRole } from '@/types';
 import SidebarItem from './SidebarItem';
 
 interface ItemConfig {

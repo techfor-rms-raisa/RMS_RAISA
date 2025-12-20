@@ -1,5 +1,5 @@
 import React from 'react';
-import { Consultant, Client, UsuarioCliente, User } from '../components/types';
+import { Consultant, Client, UsuarioCliente, User } from '@/types';
 
 const ExportModule: React.FC<any> = () => {
     return (

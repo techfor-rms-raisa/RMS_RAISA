@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { analyzeFeedback } from '../services/geminiService';
-import { FeedbackResponse, RHAction } from '../components/types';
+import { FeedbackResponse, RHAction } from '@/types';
 
 interface PortalProps {
     token: string;

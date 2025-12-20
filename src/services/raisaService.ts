@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { RiskFactor } from '../components/types';
+import { RiskFactor } from '@/types';
 import { AI_MODEL_NAME } from '../constants';
 
 // Usar API_KEY (configurada no Vercel)
