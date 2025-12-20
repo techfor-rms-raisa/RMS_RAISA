@@ -2,8 +2,8 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para análise de riscos de consultores
  * 
- * v51 - CORRIGIDO: 
- * - Modelo Gemini corrigido para gemini-1.5-flash (válido)
+ * v52 - CORRIGIDO: 
+ * - Modelo alterado para gemini-2.0-flash-exp (compatível com @google/genai)
  * - Agora usa extractedMonth e extractedYear do frontend
  * - Timeout aumentado para requisições longas
  */
@@ -26,11 +26,11 @@ if (!apiKey) {
 // Inicializar cliente no top-level
 const ai = new GoogleGenAI({ apiKey });
 
-// ✅ CORREÇÃO: Modelo válido do Gemini
-const AI_MODEL = 'gemini-1.5-flash';
+// ✅ CORREÇÃO: Modelo que funciona com @google/genai
+const AI_MODEL = 'gemini-2.0-flash-exp';
 
 // Versão da API
-const API_VERSION = 'v51';
+const API_VERSION = 'v52';
 
 // ========================================
 // CONFIGURAÇÃO DE TIMEOUT PARA VERCEL PRO
@@ -242,7 +242,7 @@ ${reportText.substring(0, 8000)}
 IMPORTANTE: Analise cuidadosamente o texto. Se houver menção a conflitos, assédio, descontentamento ou situações graves, o score DEVE ser 4 ou 5.
 `;
 
-  console.log('📄 Chamando API Gemini com prompt aprimorado v51...');
+  console.log('📄 Chamando API Gemini com prompt aprimorado v52...');
   
   // Chamada à API
   const result = await ai.models.generateContent({ 
