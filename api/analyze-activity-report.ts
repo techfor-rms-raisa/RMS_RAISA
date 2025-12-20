@@ -2,11 +2,10 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para análise de riscos de consultores
  * 
- * v50 - CORRIGIDO: Escala de risco corrigida e prompt aprimorado
- * - Escala de risco corrigida (1=Excelente, 5=Crítico)
- * - Prompt aprimorado com critérios detalhados de classificação
- * - Detecção de sinais críticos: assédio, conflitos, descontentamento
- * - Palavras-chave de alerta para classificação automática
+ * v51 - CORRIGIDO: 
+ * - Modelo Gemini corrigido para gemini-1.5-flash (válido)
+ * - Agora usa extractedMonth e extractedYear do frontend
+ * - Timeout aumentado para requisições longas
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -27,11 +26,18 @@ if (!apiKey) {
 // Inicializar cliente no top-level
 const ai = new GoogleGenAI({ apiKey });
 
-// Modelo a ser usado
-const AI_MODEL = 'gemini-2.5-flash';
+// ✅ CORREÇÃO: Modelo válido do Gemini
+const AI_MODEL = 'gemini-1.5-flash';
 
 // Versão da API
-const API_VERSION = 'v50';
+const API_VERSION = 'v51';
+
+// ========================================
+// CONFIGURAÇÃO DE TIMEOUT PARA VERCEL PRO
+// ========================================
+export const config = {
+  maxDuration: 60 // 60 segundos (máximo Vercel Pro)
+};
 
 // ========================================
 // HANDLER PRINCIPAL
@@ -63,8 +69,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       throw new Error('API key is missing. Please configure API_KEY in Vercel environment variables.');
     }
 
-    // Extrair dados do body
-    const { reportText, gestorName } = req.body;
+    // ✅ CORREÇÃO: Extrair TODOS os dados do body, incluindo mês/ano extraídos
+    const { reportText, gestorName, extractedMonth, extractedYear } = req.body;
     
     if (!reportText) {
       return res.status(400).json({
@@ -76,6 +82,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     console.log(`📄 [REQUEST] Tamanho do relatório: ${reportText.length} caracteres`);
+    
+    // ✅ NOVO: Log do mês/ano recebidos
+    if (extractedMonth) {
+      console.log(`📅 [REQUEST] Mês extraído recebido na API: ${extractedMonth}`);
+    }
+    if (extractedYear) {
+      console.log(`📅 [REQUEST] Ano extraído recebido na API: ${extractedYear}`);
+    }
 
     // Analisar com IA
     const analysisResults = await analyzeReportWithAI(reportText);
@@ -92,12 +106,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    // ✅ CORREÇÃO: Usar o mês/ano extraídos do frontend, não o mês atual
+    const finalMonth = extractedMonth || (new Date().getMonth() + 1);
+    const finalYear = extractedYear || new Date().getFullYear();
+    
+    console.log(`📅 [RESPONSE] Usando Mês: ${finalMonth}, Ano: ${finalYear}`);
+
     // Mapear para formato interno
     const results = analysisResults.map((result: any) => ({
       consultantName: result.consultorNome || result.consultantName || '',
       clientName: result.clienteNome || result.clientName || '',
       managerName: gestorName || '',
-      reportMonth: new Date().getMonth() + 1,
+      reportMonth: finalMonth,      // ✅ CORREÇÃO: Usa mês extraído
+      reportYear: finalYear,        // ✅ NOVO: Inclui ano extraído
       riskScore: parseInt(result.riscoConfirmado || result.riskScore || '3', 10),
       summary: result.resumoSituacao || result.summary || '',
       negativePattern: result.padraoNegativoIdentificado || result.negativePattern || 'Nenhum',
@@ -221,7 +242,7 @@ ${reportText.substring(0, 8000)}
 IMPORTANTE: Analise cuidadosamente o texto. Se houver menção a conflitos, assédio, descontentamento ou situações graves, o score DEVE ser 4 ou 5.
 `;
 
-  console.log('🔄 Chamando API Gemini com prompt aprimorado v50...');
+  console.log('📄 Chamando API Gemini com prompt aprimorado v51...');
   
   // Chamada à API
   const result = await ai.models.generateContent({ 
