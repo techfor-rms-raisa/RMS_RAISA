@@ -1,6 +1,6 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Client, Consultant, UsuarioCliente, ConsultantReport, RiskScore } from '@/types';
-import MonthlyReportsModal from './MonthlyReportsModal'; // Importar o novo modal
+import MonthlyReportsModal from './MonthlyReportsModal';
 
 interface AtividadesConsultarProps {
     clients: Client[];
@@ -18,14 +18,11 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     const [selectedClient, setSelectedClient] = useState<string>('all');
     const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
     const [selectedMonth, setSelectedMonth] = useState<string>('all');
-    const [loadingReports, setLoadingReports] = useState(false);
-    const [consultantsWithReports, setConsultantsWithReports] = useState<Consultant[]>([]);
     
     // Estados para o modal
     const [showModal, setShowModal] = useState(false);
     const [modalData, setModalData] = useState<{ consultant: Consultant; month: number; reports: ConsultantReport[] } | null>(null);
-
-    const hasLoadedRef = useRef(false);
+    const [loadingModal, setLoadingModal] = useState(false);
 
     const months = [
         { value: 1, label: 'JAN' }, { value: 2, label: 'FEV' }, { value: 3, label: 'MAR' },
@@ -33,34 +30,6 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         { value: 7, label: 'JUL' }, { value: 8, label: 'AGO' }, { value: 9, label: 'SET' },
         { value: 10, label: 'OUT' }, { value: 11, label: 'NOV' }, { value: 12, label: 'DEZ' }
     ];
-
-    useEffect(() => {
-        if (hasLoadedRef.current || !loadConsultantReports || !consultants?.length) {
-            setConsultantsWithReports(consultants || []);
-            if(!hasLoadedRef.current) hasLoadedRef.current = true;
-            return;
-        }
-        
-        const loadAllReports = async () => {
-            setLoadingReports(true);
-            try {
-                const updatedConsultants = await Promise.all(
-                    consultants.map(async (c) => {
-                        const reports = await loadConsultantReports(c.id);
-                        return { ...c, consultant_reports: reports };
-                    })
-                );
-                setConsultantsWithReports(updatedConsultants);
-            } catch (error) {
-                console.error('❌ Erro ao carregar relatórios:', error);
-            } finally {
-                setLoadingReports(false);
-                hasLoadedRef.current = true;
-            }
-        };
-
-        loadAllReports();
-    }, [loadConsultantReports, consultants]);
 
     const getRiskColor = (score: RiskScore | null | undefined, type: 'bg' | 'text' | 'border' = 'bg') => {
         const colorMap: { [key in RiskScore]: string } = {
@@ -77,7 +46,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     };
 
     const dataGroupedByClient = useMemo(() => {
-        const activeConsultants = consultantsWithReports.filter(c => c.status === 'Ativo');
+        const activeConsultants = consultants.filter(c => c.status === 'Ativo');
         const clientMap = new Map<string, Consultant[]>();
 
         activeConsultants.forEach(consultant => {
@@ -99,7 +68,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
 
         return clientEntries.sort((a, b) => a[0].localeCompare(b[0]));
 
-    }, [consultantsWithReports, clients, usuariosCliente, selectedClient]);
+    }, [consultants, clients, usuariosCliente, selectedClient]);
 
     const statistics = useMemo(() => {
         const stats = { total: 0, excellent: 0, good: 0, medium: 0, high: 0, critical: 0 };
@@ -107,18 +76,13 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         stats.total = consultantsInFilter.length;
 
         consultantsInFilter.forEach(consultant => {
-            const reports = consultant.consultant_reports || consultant.reports || [];
-            let relevantReports = reports.filter(r => r.year === selectedYear);
-
-            if (selectedMonth !== 'all') {
-                relevantReports = relevantReports.filter(r => r.month === parseInt(selectedMonth));
-            }
-
-            const latestReport = [...relevantReports].sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())[0];
+            // Usar parecer_final_consultor ou campos parecer_X_consultor
+            let score: RiskScore | null = null;
             
-            let score = latestReport?.riskScore || null;
-
-            if (!score && selectedMonth === 'all') {
+            if (selectedMonth !== 'all') {
+                const monthField = `parecer_${selectedMonth}_consultor` as keyof Consultant;
+                score = consultant[monthField] as RiskScore | null;
+            } else {
                 score = consultant.parecer_final_consultor || null;
             }
 
@@ -134,50 +98,73 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         });
 
         return stats;
-    }, [dataGroupedByClient, selectedYear, selectedMonth]);
+    }, [dataGroupedByClient, selectedMonth]);
 
-    const getReportInfoForMonth = (consultant: Consultant, month: number): { score: RiskScore | null, count: number, reports: ConsultantReport[] } => {
-        const reports = consultant.consultant_reports || consultant.reports || [];
-        const monthReports = reports.filter(r => r.year === selectedYear && r.month === month);
-        
-        if (monthReports.length > 0) {
-            const latestReport = monthReports.sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())[0];
-            return { score: latestReport.riskScore, count: monthReports.length, reports: monthReports };
-        }
-
+    // ✅ OTIMIZADO: Usar apenas os campos parecer_X_consultor (sem carregar relatórios)
+    const getReportInfoForMonth = (consultant: Consultant, month: number): { score: RiskScore | null, hasData: boolean } => {
         const oldField = `parecer_${month}_consultor` as keyof Consultant;
         const oldScore = consultant[oldField] as RiskScore | null;
-        if(oldScore) return { score: oldScore, count: 1, reports: [] }; // Cannot show details for old data
+        
+        if (oldScore && oldScore !== null && String(oldScore) !== '#FFFF') {
+            return { score: oldScore, hasData: true };
+        }
 
-        return { score: null, count: 0, reports: [] };
+        return { score: null, hasData: false };
     };
 
-    const getFinalReportInfo = (consultant: Consultant): { score: RiskScore | null, totalCount: number } => {
-        const reports = consultant.consultant_reports || consultant.reports || [];
-        const yearReports = reports.filter(r => r.year === selectedYear);
-        const latestReport = [...yearReports].sort((a, b) => new Date(b.createdAt || b.created_at || 0).getTime() - new Date(a.createdAt || a.created_at || 0).getTime())[0];
-
-        let finalScore = latestReport?.riskScore || consultant.parecer_final_consultor || null;
+    const getFinalReportInfo = (consultant: Consultant): { score: RiskScore | null, hasData: boolean } => {
+        let finalScore = consultant.parecer_final_consultor || null;
         
-        if(yearReports.length === 0) {
-            for(let i = 12; i >= 1; i--) {
+        if (!finalScore || String(finalScore) === '#FFFF') {
+            // Buscar o último mês com score
+            for (let i = 12; i >= 1; i--) {
                 const oldField = `parecer_${i}_consultor` as keyof Consultant;
                 const oldScore = consultant[oldField] as RiskScore | null;
-                if(oldScore) {
+                if (oldScore && String(oldScore) !== '#FFFF') {
                     finalScore = oldScore;
                     break;
                 }
             }
         }
 
-        return { score: finalScore, totalCount: yearReports.length };
-    }
+        return { score: finalScore, hasData: !!finalScore };
+    };
 
-    // Função para abrir o modal
-    const handleCircleClick = (consultant: Consultant, month: number, reports: ConsultantReport[]) => {
-        if (reports.length > 0) {
-            setModalData({ consultant, month, reports });
-            setShowModal(true);
+    // ✅ LAZY LOADING: Carrega relatórios apenas quando o usuário clica
+    const handleCircleClick = async (consultant: Consultant, month: number) => {
+        if (!loadConsultantReports) {
+            console.warn('loadConsultantReports não disponível');
+            return;
+        }
+
+        setLoadingModal(true);
+        
+        try {
+            console.log(`📊 Carregando relatórios para ${consultant.nome_consultores}, mês ${month}...`);
+            
+            // Carregar relatórios APENAS deste consultor
+            const allReports = await loadConsultantReports(consultant.id);
+            
+            // Filtrar pelo mês e ano selecionado
+            const monthReports = allReports.filter(r => 
+                (r as any).month === month && (r as any).year === selectedYear
+            );
+            
+            console.log(`✅ ${monthReports.length} relatório(s) encontrado(s)`);
+            
+            if (monthReports.length > 0) {
+                setModalData({ consultant, month, reports: monthReports });
+                setShowModal(true);
+            } else {
+                // Mostrar modal vazio ou alerta
+                setModalData({ consultant, month, reports: [] });
+                setShowModal(true);
+            }
+        } catch (error) {
+            console.error('❌ Erro ao carregar relatórios:', error);
+            alert('Erro ao carregar relatórios. Tente novamente.');
+        } finally {
+            setLoadingModal(false);
         }
     };
 
@@ -252,58 +239,72 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                     </div>
                 </div>
 
-                {loadingReports && <div className="text-center p-10">⏳ Carregando relatórios...</div>}
+                {/* Loading indicator */}
+                {loadingModal && (
+                    <div className="fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-40">
+                        <div className="bg-white p-4 rounded-lg shadow-lg">
+                            <p className="text-gray-700">⏳ Carregando relatórios...</p>
+                        </div>
+                    </div>
+                )}
 
-                {!loadingReports && (
-                    <div className="space-y-6">
-                        {dataGroupedByClient.map(([clientName, clientConsultants]) => (
-                            <div key={clientName} className="bg-white rounded-lg shadow-md border border-gray-200">
-                                <div className="p-4 border-b border-gray-200">
-                                    <h3 className="font-bold text-lg text-gray-700">{clientName}</h3>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <table className="min-w-full">
-                                        <thead>
-                                            <tr className="border-b border-gray-200">
-                                                <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Consultor</th>
-                                                {months.map(m => <th key={m.value} className="px-2 py-3 text-center text-xs font-semibold text-gray-500 uppercase">{m.label}</th>)}
-                                                <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Total</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-200">
-                                            {clientConsultants.map(consultant => {
-                                                const finalReportInfo = getFinalReportInfo(consultant);
-                                                return (
-                                                    <tr key={consultant.id}>
-                                                        <td className="px-6 py-4 whitespace-nowrap">
-                                                            <div className="text-sm font-medium text-gray-900">{consultant.nome_consultores}</div>
-                                                        </td>
-                                                        {months.map(m => {
-                                                            const reportInfo = getReportInfoForMonth(consultant, m.value);
-                                                            return (
-                                                                <td key={m.value} className="px-2 py-4 text-center">
-                                                                    <div 
-                                                                        className={`mx-auto h-6 w-6 rounded-full flex items-center justify-center font-bold text-white text-xs cursor-pointer ${getRiskColor(reportInfo.score)}`}
-                                                                        onClick={() => handleCircleClick(consultant, m.value, reportInfo.reports)}
-                                                                    >
-                                                                        {reportInfo.count > 0 ? reportInfo.count : ''}
-                                                                    </div>
-                                                                </td>
-                                                            );
-                                                        })}
-                                                        <td className="px-6 py-4 text-center whitespace-nowrap">
-                                                            <div className={`mx-auto h-7 w-7 rounded-full flex items-center justify-center font-bold text-white ${getRiskColor(finalReportInfo.score)}`}>
-                                                                {finalReportInfo.totalCount}
-                                                            </div>
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
-                                </div>
+                <div className="space-y-6">
+                    {dataGroupedByClient.map(([clientName, clientConsultants]) => (
+                        <div key={clientName} className="bg-white rounded-lg shadow-md border border-gray-200">
+                            <div className="p-4 border-b border-gray-200">
+                                <h3 className="font-bold text-lg text-gray-700">{clientName}</h3>
                             </div>
-                        ))}
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full">
+                                    <thead>
+                                        <tr className="border-b border-gray-200">
+                                            <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Consultor</th>
+                                            {months.map(m => <th key={m.value} className="px-2 py-3 text-center text-xs font-semibold text-gray-500 uppercase">{m.label}</th>)}
+                                            <th className="px-6 py-3 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider">Final</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200">
+                                        {clientConsultants.map(consultant => {
+                                            const finalReportInfo = getFinalReportInfo(consultant);
+                                            return (
+                                                <tr key={consultant.id}>
+                                                    <td className="px-6 py-4 whitespace-nowrap">
+                                                        <div className="text-sm font-medium text-gray-900">{consultant.nome_consultores}</div>
+                                                    </td>
+                                                    {months.map(m => {
+                                                        const reportInfo = getReportInfoForMonth(consultant, m.value);
+                                                        return (
+                                                            <td key={m.value} className="px-2 py-4 text-center">
+                                                                <div 
+                                                                    className={`mx-auto h-6 w-6 rounded-full flex items-center justify-center font-bold text-white text-xs ${
+                                                                        reportInfo.hasData ? 'cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-indigo-400' : ''
+                                                                    } ${getRiskColor(reportInfo.score)}`}
+                                                                    onClick={() => reportInfo.hasData && handleCircleClick(consultant, m.value)}
+                                                                    title={reportInfo.hasData ? 'Clique para ver detalhes' : 'Sem dados'}
+                                                                >
+                                                                    {reportInfo.hasData ? '•' : ''}
+                                                                </div>
+                                                            </td>
+                                                        );
+                                                    })}
+                                                    <td className="px-6 py-4 text-center whitespace-nowrap">
+                                                        <div className={`mx-auto h-7 w-7 rounded-full flex items-center justify-center font-bold text-white ${getRiskColor(finalReportInfo.score)}`}>
+                                                            {finalReportInfo.score || '-'}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {dataGroupedByClient.length === 0 && (
+                    <div className="text-center py-10 text-gray-500">
+                        Nenhum consultor encontrado com os filtros selecionados.
                     </div>
                 )}
             </div>
