@@ -44,7 +44,7 @@ import AtividadesExportar from './components/atividades/AtividadesExportar';
 import { PermissionsProvider } from './hooks/usePermissions';
 
 import { useSupabaseData } from './hooks/useSupabaseData';
-import { AIAnalysisResult, User, View, FeedbackResponse, RHAction } from './types';
+import { AIAnalysisResult, User, View, FeedbackResponse, RHAction } from '@/types';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -64,7 +64,7 @@ const App: React.FC = () => {
     templates, campaigns, feedbackResponses, rhActions,
     vagas, pessoas, candidaturas, // RAISA Data
     updateConsultantScore, processReportAnalysis, 
-    loadConsultantReports, // 🔥 Lazy loading de relatórios
+    loadConsultantReports, // 📥 Lazy loading de relatórios
     addClient, updateClient, batchAddClients,
     addConsultant, updateConsultant, batchAddConsultants,
     addUser, updateUser,
@@ -106,10 +106,27 @@ const App: React.FC = () => {
       results.forEach(result => updateConsultantScore(result));
   };
 
-  const handleManualAnalysis = async (text: string, gestorName?: string) => {
+  // ============================================
+  // ✅ CORREÇÃO DO BUG: Agora recebe e passa extractedMonth e extractedYear
+  // ============================================
+  const handleManualAnalysis = async (
+    text: string, 
+    gestorName?: string,
+    extractedMonth?: number,  // ✅ NOVO PARÂMETRO
+    extractedYear?: number    // ✅ NOVO PARÂMETRO
+  ) => {
       try {
           console.log('📊 Iniciando análise de relatórios...');
-          const results = await processReportAnalysis(text, gestorName);
+          
+          // ✅ CORREÇÃO: Passa extractedMonth e extractedYear para processReportAnalysis
+          if (extractedMonth) {
+              console.log(`📅 Mês extraído recebido no App.tsx: ${extractedMonth}`);
+          }
+          if (extractedYear) {
+              console.log(`📅 Ano extraído recebido no App.tsx: ${extractedYear}`);
+          }
+          
+          const results = await processReportAnalysis(text, gestorName, extractedMonth, extractedYear);
           
           if (results.length === 0) {
               alert('⚠️ Nenhum relatório válido encontrado. Verifique o formato do arquivo.');
