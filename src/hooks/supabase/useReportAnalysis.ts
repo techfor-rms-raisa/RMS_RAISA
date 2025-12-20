@@ -2,6 +2,8 @@
  * useReportAnalysis Hook - Análise de Relatórios com IA
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui integração com Gemini AI e notificações de risco crítico
+ * 
+ * ✅ VERSÃO CORRIGIDA - BUG FIX: Aceita mês/ano extraídos do frontend
  */
 
 import { supabase } from '../../config/supabase';
@@ -16,19 +18,41 @@ export const useReportAnalysis = () => {
   /**
    * Processa análise de relatório com IA Gemini
    * Chama a API backend que tem acesso à API_KEY
+   * 
+   * ✅ CORREÇÃO: Aceita mês e ano extraídos como parâmetros opcionais
    */
-  const processReportAnalysis = async (text: string, gestorName?: string): Promise<AIAnalysisResult[]> => {
+  const processReportAnalysis = async (
+    text: string, 
+    gestorName?: string,
+    extractedMonth?: number,
+    extractedYear?: number
+  ): Promise<AIAnalysisResult[]> => {
     try {
       console.log('🤖 Processando análise de relatório com IA Gemini...');
-      console.log('📝 Tamanho do texto:', text.length, 'caracteres');
+      console.log('📄 Tamanho do texto:', text.length, 'caracteres');
       console.log('📋 Primeiros 100 caracteres:', text.substring(0, 100));
+      
+      // ✅ Log dos parâmetros de data
+      if (extractedMonth) {
+        console.log(`📅 Mês extraído pelo frontend: ${extractedMonth}`);
+      }
+      if (extractedYear) {
+        console.log(`📅 Ano extraído pelo frontend: ${extractedYear}`);
+      }
       
       console.log('📡 Enviando requisição para API Backend...');
       
+      // ✅ CORREÇÃO: Envia mês e ano extraídos para a API
       const response = await fetch('/api/analyze-activity-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportText: text, gestorName })
+        body: JSON.stringify({ 
+          reportText: text, 
+          gestorName,
+          // ✅ Novos parâmetros para correção do bug de data
+          extractedMonth,
+          extractedYear
+        })
       });
       
       if (!response.ok) {
@@ -42,23 +66,36 @@ export const useReportAnalysis = () => {
       const analysisResults = data.results || [];
       console.log(`✅ ${analysisResults.length} relatório(s) analisado(s) pela IA Gemini`);
       
+      // ✅ CORREÇÃO: Usar mês/ano extraídos se disponíveis, senão usar o que a API retornar
+      const defaultMonth = extractedMonth || new Date().getMonth() + 1;
+      const defaultYear = extractedYear || new Date().getFullYear();
+      
       // Mapear resultados para AIAnalysisResult
-      const results: AIAnalysisResult[] = analysisResults.map((analysis: any) => ({
-        consultantName: analysis.consultantName,
-        managerName: analysis.managerName,
-        reportMonth: analysis.reportMonth || new Date().getMonth() + 1,
-        riskScore: Math.max(1, Math.min(5, analysis.riskScore)) as 1 | 2 | 3 | 4 | 5,
-        summary: analysis.summary,
-        negativePattern: analysis.negativePattern || null,
-        predictiveAlert: analysis.predictiveAlert || null,
-        recommendations: (analysis.recommendations || []).map((rec: any) => {
-          if (typeof rec === 'string') {
-            return { tipo: 'RECOMENDACAO', descricao: rec };
-          }
-          return rec;
-        }),
-        details: analysis.details || analysis.summary
-      }));
+      const results: AIAnalysisResult[] = analysisResults.map((analysis: any) => {
+        // ✅ Prioriza: 1) Mês extraído pelo frontend, 2) Mês da API, 3) Mês atual
+        const reportMonth = extractedMonth || analysis.reportMonth || defaultMonth;
+        const reportYear = extractedYear || analysis.reportYear || defaultYear;
+        
+        console.log(`📊 Consultor: ${analysis.consultantName} → Mês: ${reportMonth}, Ano: ${reportYear}`);
+        
+        return {
+          consultantName: analysis.consultantName,
+          managerName: analysis.managerName || gestorName,
+          reportMonth: reportMonth,
+          reportYear: reportYear,
+          riskScore: Math.max(1, Math.min(5, analysis.riskScore)) as 1 | 2 | 3 | 4 | 5,
+          summary: analysis.summary,
+          negativePattern: analysis.negativePattern || null,
+          predictiveAlert: analysis.predictiveAlert || null,
+          recommendations: (analysis.recommendations || []).map((rec: any) => {
+            if (typeof rec === 'string') {
+              return { tipo: 'RECOMENDACAO', descricao: rec };
+            }
+            return rec;
+          }),
+          details: analysis.details || analysis.summary
+        };
+      });
       
       if (results.length === 0) {
         console.warn('⚠️ IA não encontrou relatórios válidos no texto fornecido');
@@ -77,6 +114,8 @@ export const useReportAnalysis = () => {
   /**
    * Atualiza o score de risco de um consultor e salva relatório
    * Dispara notificações de risco crítico quando necessário
+   * 
+   * ✅ CORREÇÃO: Usa reportYear se disponível no resultado
    */
   const updateConsultantScore = async (
     result: AIAnalysisResult,
@@ -88,10 +127,11 @@ export const useReportAnalysis = () => {
   ) => {
     try {
       console.log(`📊 Atualizando score do consultor: ${result.consultantName}`);
+      console.log(`📅 Mês do relatório: ${result.reportMonth}, Ano: ${(result as any).reportYear || new Date().getFullYear()}`);
       
-      // Buscar consultor pelo nome
+      // Buscar consultor pelo nome (case insensitive e trim)
       const consultant = consultants.find(c => 
-        c.nome_consultores.toLowerCase() === result.consultantName.toLowerCase()
+        c.nome_consultores.toLowerCase().trim() === result.consultantName.toLowerCase().trim()
       );
       
       if (!consultant) {
@@ -102,11 +142,14 @@ export const useReportAnalysis = () => {
       // Preparar campo do mês (parecer_1_consultor, parecer_2_consultor, etc)
       const monthField = `parecer_${result.reportMonth}_consultor` as keyof Consultant;
       
+      // ✅ CORREÇÃO: Usa o ano do resultado se disponível
+      const reportYear = (result as any).reportYear || new Date().getFullYear();
+      
       // Criar objeto de relatório
       const newReport: ConsultantReport = {
         id: `${consultant.id}_${result.reportMonth}_${Date.now()}`,
         month: result.reportMonth,
-        year: new Date().getFullYear(),
+        year: reportYear,
         riskScore: result.riskScore,
         summary: result.summary,
         negativePattern: result.negativePattern,
@@ -155,7 +198,7 @@ export const useReportAnalysis = () => {
         throw reportError;
       }
       
-      console.log(`✅ Relatório salvo (acumulativo): ${consultant.nome_consultores} - Mês ${newReport.month}`);
+      console.log(`✅ Relatório salvo (acumulativo): ${consultant.nome_consultores} - Mês ${newReport.month}/${newReport.year}`);
       
       // Atualizar estado local
       const updatedConsultant: Consultant = {
@@ -168,7 +211,7 @@ export const useReportAnalysis = () => {
         c.id === consultant.id ? updatedConsultant : c
       ));
       
-      console.log(`✅ Score atualizado: ${result.consultantName} - Mês ${result.reportMonth} - Risco ${result.riskScore}`);
+      console.log(`✅ Score atualizado: ${result.consultantName} - Mês ${result.reportMonth}/${reportYear} - Risco ${result.riskScore}`);
       
       // 🚨 Verificar se é Risco Crítico (Score 5) e disparar notificações via Resend
       if (isCriticalRisk(result.riskScore)) {

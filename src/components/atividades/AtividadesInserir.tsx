@@ -1,8 +1,8 @@
 // src/components/atividades/AtividadesInserir.tsx
-// ✅ VERSÃO OTIMIZADA - UI COMPACTA E EFICIENTE
+// ✅ VERSÃO CORRIGIDA - BUG FIX: Extração de data do relatório
 import React, { useState, useMemo, useEffect } from 'react';
-import { Client, Consultant, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '../types';
-import { User, Phone, Mail, Briefcase, Clock } from 'lucide-react';
+import { Client, Consultant, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '@/types';
+import { User, Phone, Mail, Briefcase, Clock, Calendar } from 'lucide-react';
 import HistoricoAtividadesModal from '../HistoricoAtividadesModal';
 
 interface AtividadesInserirProps {
@@ -12,10 +12,122 @@ interface AtividadesInserirProps {
     coordenadoresCliente?: CoordenadorCliente[];
     allReports?: ConsultantReport[];
     loadConsultantReports?: (consultantId: number) => Promise<ConsultantReport[]>;
-    onManualReport: (text: string, gestorName?: string) => Promise<void>;
+    onManualReport: (text: string, gestorName?: string, extractedMonth?: number, extractedYear?: number) => Promise<void>;
     preSelectedClient?: string;
     preSelectedConsultant?: string;
 }
+
+// ✅ FUNÇÃO PARA EXTRAIR DATA DO RELATÓRIO - CORREÇÃO DO BUG
+const extractDateFromReport = (text: string): { month: number | null; year: number | null; dateRange: string | null } => {
+    console.log('🔍 Iniciando extração de data do relatório...');
+    
+    // Mapeamento de meses em português
+    const monthNames: { [key: string]: number } = {
+        'janeiro': 1, 'jan': 1,
+        'fevereiro': 2, 'fev': 2,
+        'março': 3, 'marco': 3, 'mar': 3,
+        'abril': 4, 'abr': 4,
+        'maio': 5, 'mai': 5,
+        'junho': 6, 'jun': 6,
+        'julho': 7, 'jul': 7,
+        'agosto': 8, 'ago': 8,
+        'setembro': 9, 'set': 9,
+        'outubro': 10, 'out': 10,
+        'novembro': 11, 'nov': 11,
+        'dezembro': 12, 'dez': 12
+    };
+
+    let month: number | null = null;
+    let year: number | null = null;
+    let dateRange: string | null = null;
+
+    // Padrão 1: "Período de DD.MM.YYYY a DD.MM.YYYY" ou "Período de DD/MM/YYYY a DD/MM/YYYY"
+    const periodoRegex = /Período\s+de\s+(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})\s+a\s+(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})/i;
+    let match = text.match(periodoRegex);
+    
+    if (match) {
+        month = parseInt(match[2], 10);
+        year = parseInt(match[3], 10);
+        dateRange = `${match[1]}/${match[2]}/${match[3]} a ${match[4]}/${match[5]}/${match[6]}`;
+        console.log(`✅ Padrão 1 encontrado: Período ${dateRange} → Mês ${month}, Ano ${year}`);
+        return { month, year, dateRange };
+    }
+
+    // Padrão 2: "DD/MM/YYYY a DD/MM/YYYY" (sem "Período de")
+    const rangeRegex = /(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})\s+a\s+(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})/i;
+    match = text.match(rangeRegex);
+    
+    if (match) {
+        month = parseInt(match[2], 10);
+        year = parseInt(match[3], 10);
+        dateRange = `${match[1]}/${match[2]}/${match[3]} a ${match[4]}/${match[5]}/${match[6]}`;
+        console.log(`✅ Padrão 2 encontrado: ${dateRange} → Mês ${month}, Ano ${year}`);
+        return { month, year, dateRange };
+    }
+
+    // Padrão 3: "RELATÓRIO DE ATIVIDADES - OUTUBRO/2025" ou "Outubro/2025"
+    const monthYearRegex = /(?:RELATÓRIO[S]?\s+(?:DE\s+)?ATIVIDADES?\s*[-–]\s*)?([A-Za-záàâãéèêíïóôõöúç]+)\s*[\/\-]\s*(\d{4})/i;
+    match = text.match(monthYearRegex);
+    
+    if (match) {
+        const monthName = match[1].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (monthNames[monthName]) {
+            month = monthNames[monthName];
+            year = parseInt(match[2], 10);
+            dateRange = `${match[1]}/${match[2]}`;
+            console.log(`✅ Padrão 3 encontrado: ${dateRange} → Mês ${month}, Ano ${year}`);
+            return { month, year, dateRange };
+        }
+    }
+
+    // Padrão 4: "Mês de Outubro de 2025" ou "mês: outubro 2025"
+    const monthTextRegex = /(?:mês\s*(?:de|:)?\s*)([A-Za-záàâãéèêíïóôõöúç]+)(?:\s+de)?\s+(\d{4})/i;
+    match = text.match(monthTextRegex);
+    
+    if (match) {
+        const monthName = match[1].toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        if (monthNames[monthName]) {
+            month = monthNames[monthName];
+            year = parseInt(match[2], 10);
+            dateRange = `${match[1]} de ${match[2]}`;
+            console.log(`✅ Padrão 4 encontrado: ${dateRange} → Mês ${month}, Ano ${year}`);
+            return { month, year, dateRange };
+        }
+    }
+
+    // Padrão 5: Apenas data no formato DD/MM/YYYY (pega a primeira ocorrência)
+    const singleDateRegex = /(\d{1,2})[.\/](\d{1,2})[.\/](\d{4})/;
+    match = text.match(singleDateRegex);
+    
+    if (match) {
+        month = parseInt(match[2], 10);
+        year = parseInt(match[3], 10);
+        dateRange = `${match[1]}/${match[2]}/${match[3]}`;
+        console.log(`✅ Padrão 5 encontrado: ${dateRange} → Mês ${month}, Ano ${year}`);
+        return { month, year, dateRange };
+    }
+
+    // Padrão 6: Nome do mês solto no texto (última tentativa)
+    for (const [name, num] of Object.entries(monthNames)) {
+        const regex = new RegExp(`\\b${name}\\b`, 'i');
+        if (regex.test(text)) {
+            month = num;
+            // Tenta encontrar o ano próximo ao nome do mês
+            const yearMatch = text.match(new RegExp(`${name}\\s*(?:de\\s*)?(\\d{4})`, 'i'));
+            if (yearMatch) {
+                year = parseInt(yearMatch[1], 10);
+            } else {
+                year = new Date().getFullYear();
+            }
+            dateRange = `${name} ${year}`;
+            console.log(`✅ Padrão 6 encontrado: ${dateRange} → Mês ${month}, Ano ${year}`);
+            return { month, year, dateRange };
+        }
+    }
+
+    console.warn('⚠️ Nenhum padrão de data encontrado no relatório');
+    return { month: null, year: null, dateRange: null };
+};
 
 const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     clients,
@@ -40,6 +152,11 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     const [uploadedFile, setUploadedFile] = useState<File | null>(null);
     const [extractedText, setExtractedText] = useState<string>('');
     const [isExtracting, setIsExtracting] = useState(false);
+
+    // ✅ NOVO: Estados para data extraída do arquivo importado
+    const [extractedMonth, setExtractedMonth] = useState<number | null>(null);
+    const [extractedYear, setExtractedYear] = useState<number | null>(null);
+    const [extractedDateRange, setExtractedDateRange] = useState<string | null>(null);
 
     // Estado para modal de histórico
     const [showHistoricoModal, setShowHistoricoModal] = useState(false);
@@ -83,27 +200,25 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     const managerData = useMemo(() => {
         if (!selectedConsultantData) return null;
         
-        // Primeiro tenta buscar o gestor imediato
         const manager = usuariosCliente.find(u => u.id === selectedConsultantData.gestor_imediato_id);
         
         if (manager) {
             return {
                 nome: manager.nome_gestor_cliente,
                 cargo: manager.cargo_gestor,
-                email: `gestor${manager.id}@cliente.com`,
+                email: manager.email_gestor || `gestor${manager.id}@cliente.com`,
                 celular: manager.celular || 'Não informado',
                 tipo: 'Gestor'
             };
         }
         
-        // Se não encontrar gestor, tenta buscar coordenador
         if (selectedConsultantData.coordenador_id) {
             const coordenador = coordenadoresCliente.find(c => c.id === selectedConsultantData.coordenador_id);
             if (coordenador) {
                 return {
                     nome: coordenador.nome_coordenador_cliente,
                     cargo: coordenador.cargo_coordenador_cliente,
-                    email: `coordenador${coordenador.id}@cliente.com`,
+                    email: coordenador.email_coordenador || `coordenador${coordenador.id}@cliente.com`,
                     celular: coordenador.celular || 'Não informado',
                     tipo: 'Coordenador'
                 };
@@ -130,34 +245,56 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
         }
     };
 
-    // Handler para upload de arquivo
+    // ✅ Handler para upload de arquivo - CORRIGIDO
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
         setUploadedFile(file);
         setIsExtracting(true);
+        
+        // Resetar estados de data extraída
+        setExtractedMonth(null);
+        setExtractedYear(null);
+        setExtractedDateRange(null);
 
         try {
+            let fullText = '';
+            
             if (file.type === 'application/pdf') {
                 const arrayBuffer = await file.arrayBuffer();
                 const pdfjsLib = await import('pdfjs-dist');
                 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
                 const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-                let fullText = '';
+                
                 for (let i = 1; i <= pdf.numPages; i++) {
                     const page = await pdf.getPage(i);
                     const textContent = await page.getTextContent();
                     fullText += textContent.items.map((item: any) => item.str).join(' ') + '\n';
                 }
-                setExtractedText(fullText);
             } else if (file.type === 'text/plain') {
-                const text = await file.text();
-                setExtractedText(text);
+                fullText = await file.text();
             } else {
                 alert('Por favor, selecione um arquivo PDF ou TXT.');
                 setUploadedFile(null);
+                setIsExtracting(false);
+                return;
             }
+
+            setExtractedText(fullText);
+
+            // ✅ CORREÇÃO: Extrair data automaticamente do texto
+            const { month, year, dateRange } = extractDateFromReport(fullText);
+            
+            if (month !== null) {
+                setExtractedMonth(month);
+                setExtractedYear(year);
+                setExtractedDateRange(dateRange);
+                console.log(`📅 Data extraída com sucesso: Mês ${month}, Ano ${year}`);
+            } else {
+                console.warn('⚠️ Não foi possível extrair a data automaticamente');
+            }
+
         } catch (error) {
             console.error('Erro ao extrair texto:', error);
             alert('Erro ao processar arquivo. Tente novamente.');
@@ -167,13 +304,26 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
         }
     };
 
+    // ✅ Handler para importação - CORRIGIDO para passar mês/ano extraídos
     const handleImportSubmit = async () => {
         if (!extractedText) return;
         setIsSubmitting(true);
         try {
-            await onManualReport(extractedText);
+            // Passa o mês e ano extraídos para a função de processamento
+            await onManualReport(
+                extractedText, 
+                undefined, 
+                extractedMonth || undefined, 
+                extractedYear || undefined
+            );
+            
+            // Limpar estados
             setExtractedText('');
             setUploadedFile(null);
+            setExtractedMonth(null);
+            setExtractedYear(null);
+            setExtractedDateRange(null);
+            
             alert('Relatório importado e processado com sucesso!');
         } catch (error) {
             console.error('Erro ao processar relatório:', error);
@@ -196,7 +346,8 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             const reportText = `◆ ${consultant?.nome_consultores || ''} | ${client?.razao_social_cliente || ''}\n${activities}`;
             const gestorName = manager?.nome_gestor_cliente || 'Não especificado';
 
-            await onManualReport(reportText, gestorName);
+            // Passa o mês selecionado manualmente
+            await onManualReport(reportText, gestorName, month, new Date().getFullYear());
 
             setActivities('');
             setSelectedConsultant('');
@@ -221,6 +372,11 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     };
 
     const months = Array.from({ length: 12 }, (_, i) => ({ value: i + 1, label: new Date(0, i).toLocaleString('pt-BR', { month: 'long' }) }));
+
+    // ✅ Função para obter nome do mês
+    const getMonthName = (monthNum: number): string => {
+        return new Date(0, monthNum - 1).toLocaleString('pt-BR', { month: 'long' });
+    };
 
     return (
         <div className="max-w-6xl mx-auto p-4">
@@ -411,6 +567,51 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
                         {uploadedFile && <div className="mt-3 text-sm text-gray-600"><p><strong>Arquivo:</strong> {uploadedFile.name}</p></div>}
                         {isExtracting && <p className="mt-3 text-blue-600 text-sm">Extraindo texto...</p>}
                     </div>
+
+                    {/* ✅ NOVO: Card mostrando a data extraída */}
+                    {extractedText && (
+                        <div className="bg-gradient-to-r from-green-50 to-blue-50 border border-green-200 rounded-lg p-4">
+                            <div className="flex items-center gap-3">
+                                <Calendar className="w-5 h-5 text-green-600" />
+                                <div>
+                                    <h4 className="text-sm font-semibold text-green-800">Data do Relatório</h4>
+                                    {extractedMonth !== null ? (
+                                        <p className="text-sm text-green-700">
+                                            <strong>Período detectado:</strong> {extractedDateRange || `${getMonthName(extractedMonth)} de ${extractedYear}`}
+                                            <span className="ml-2 px-2 py-0.5 bg-green-100 text-green-800 rounded text-xs font-medium">
+                                                Mês {extractedMonth} / {extractedYear}
+                                            </span>
+                                        </p>
+                                    ) : (
+                                        <p className="text-sm text-amber-600">
+                                            ⚠️ Não foi possível detectar a data automaticamente. O mês atual será usado.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                            
+                            {/* ✅ Seletor manual caso a detecção falhe ou esteja incorreta */}
+                            <div className="mt-3 flex items-center gap-4">
+                                <span className="text-xs text-gray-600">Corrigir mês manualmente:</span>
+                                <select 
+                                    value={extractedMonth || new Date().getMonth() + 1} 
+                                    onChange={(e) => setExtractedMonth(parseInt(e.target.value))}
+                                    className="border border-gray-300 rounded px-2 py-1 text-sm"
+                                >
+                                    {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                                </select>
+                                <input 
+                                    type="number" 
+                                    value={extractedYear || new Date().getFullYear()} 
+                                    onChange={(e) => setExtractedYear(parseInt(e.target.value))}
+                                    min="2020" 
+                                    max="2030"
+                                    className="border border-gray-300 rounded px-2 py-1 text-sm w-20"
+                                />
+                            </div>
+                        </div>
+                    )}
+
                     {extractedText && (
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Texto Extraído</label>
