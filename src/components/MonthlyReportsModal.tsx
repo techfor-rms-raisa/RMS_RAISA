@@ -1,6 +1,5 @@
 import React from 'react';
 import { Consultant, ConsultantReport } from '@/types';
-import './MonthlyReportsModal.css';
 
 interface MonthlyReportsModalProps {
   consultant: Consultant;
@@ -9,182 +8,154 @@ interface MonthlyReportsModalProps {
   onClose: () => void;
 }
 
-const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({
-  consultant,
-  month,
-  reports,
-  onClose
-}) => {
-  
-  const monthNames = [
+const months = [
     'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
-  ];
+];
 
-  const formatDate = (dateString: string | undefined): string => {
-    if (!dateString) return 'Data não disponível';
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('pt-BR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    } catch {
-      return 'Data inválida';
-    }
-  };
+const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ consultant, month, reports, onClose }) => {
 
-  const getScoreColor = (score: number | null): string => {
-    if (score === null || score === undefined) return '#757575';
-    const colors: { [key: number]: string } = {
-      5: '#d32f2f',
-      4: '#f57c00',
-      3: '#fbc02d',
-      2: '#388e3c',
-      1: '#1976d2'
+    // ✅ CORREÇÃO: Formatar data de criação do registro
+    const formatCreatedDate = (dateString: string | undefined) => {
+        if (!dateString) return null;
+        try {
+            return new Date(dateString).toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch {
+            return null;
+        }
     };
-    return colors[score] || '#757575';
-  };
 
-  const getScoreLabel = (score: number | null): string => {
-    if (score === null || score === undefined) return 'N/A';
-    const labels: { [key: number]: string } = {
-      5: 'CRÍTICO',
-      4: 'ALTO',
-      3: 'MODERADO',
-      2: 'BAIXO',
-      1: 'MÍNIMO'
+    // ✅ NOVO: Formatar o período de referência do relatório (mês/ano)
+    const formatReportPeriod = (reportMonth: number | undefined, reportYear: number | undefined) => {
+        if (reportMonth && reportYear) {
+            return `${months[reportMonth - 1]} de ${reportYear}`;
+        }
+        if (reportMonth) {
+            return months[reportMonth - 1];
+        }
+        return null;
     };
-    return labels[score] || 'DESCONHECIDO';
-  };
 
-  return (
-    <div className="monthly-reports-modal-overlay" onClick={onClose}>
-      <div className="monthly-reports-modal" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="monthly-reports-modal-header">
-          <div className="modal-header-content">
-            <h3 className="modal-title">
-              Histórico de Atividades - {monthNames[month - 1]}
-            </h3>
-            <p className="modal-subtitle">
-              {consultant.nome_consultores}
-            </p>
-            <p className="modal-info">
-              {consultant.cargo_consultores || 'Cargo não informado'}
-            </p>
-          </div>
-          <button 
-            className="monthly-reports-modal-close" 
-            onClick={onClose}
-            aria-label="Fechar modal"
-          >
-            ×
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="monthly-reports-modal-body">
-          {reports.length > 0 ? (
-            <div className="reports-list">
-              <div className="reports-count">
-                <span className="count-badge">{reports.length}</span>
-                <span className="count-text">
-                  {reports.length === 1 ? 'relatório encontrado' : 'relatórios encontrados'}
-                </span>
-              </div>
-
-              {reports.map((report, idx) => (
-                <div key={idx} className="report-card">
-                  {/* Header do Card */}
-                  <div className="report-card-header">
-                    <div className="report-date-info">
-                      <span className="report-date-label">Data do Relatório:</span>
-                      <span className="report-date-value">
-                        {formatDate(report.data_relatorio || report.created_at)}
-                      </span>
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+            <div className="bg-white rounded-lg shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+                {/* Cabeçalho */}
+                <div className="bg-indigo-600 text-white p-4 rounded-t-lg">
+                    <div className="flex justify-between items-center">
+                        <h2 className="text-xl font-bold">Histórico de Atividades - {months[month - 1]}</h2>
+                        <button onClick={onClose} className="text-white hover:text-gray-200 text-2xl">&times;</button>
                     </div>
-                    
-                    {report.score !== null && report.score !== undefined && (
-                      <div 
-                        className="report-score-badge"
-                        style={{ backgroundColor: getScoreColor(report.score) }}
-                      >
-                        <span className="score-label">RISCO</span>
-                        <span className="score-value">{getScoreLabel(report.score)}</span>
-                        <span className="score-number">Score {report.score}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Conteúdo do Relatório */}
-                  <div className="report-content">
-                    <h4 className="report-content-title">Relatório de Atividade</h4>
-                    <div className="report-content-text">
-                      {report.relatorio_atividade || report.content || 'Conteúdo não disponível'}
+                    <div className="mt-2">
+                        <p className="font-semibold">{consultant.nome_consultores}</p>
+                        <p className="text-sm opacity-90">{consultant.cargo_consultores || 'Cargo não informado'}</p>
                     </div>
-                  </div>
-
-                  {/* Análise de Risco (se existir) */}
-                  {report.analise_risco && (
-                    <div className="report-analysis">
-                      <h4 className="report-analysis-title">⚠️ Análise de Risco</h4>
-                      <div className="report-analysis-text">
-                        {report.analise_risco}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Recomendações (se existirem) */}
-                  {report.recomendacoes && (
-                    <div className="report-recommendations">
-                      <h4 className="report-recommendations-title">💡 Recomendações</h4>
-                      <div className="report-recommendations-text">
-                        {report.recomendacoes}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Metadados Adicionais */}
-                  <div className="report-metadata">
-                    {report.created_by && (
-                      <div className="metadata-item">
-                        <span className="metadata-label">Criado por:</span>
-                        <span className="metadata-value">{report.created_by}</span>
-                      </div>
-                    )}
-                    {report.updated_at && (
-                      <div className="metadata-item">
-                        <span className="metadata-label">Última atualização:</span>
-                        <span className="metadata-value">{formatDate(report.updated_at)}</span>
-                      </div>
-                    )}
-                  </div>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-state-icon">📋</div>
-              <p className="empty-state-text">
-                Nenhum relatório encontrado para {monthNames[month - 1]}
-              </p>
-            </div>
-          )}
-        </div>
 
-        {/* Footer */}
-        <div className="monthly-reports-modal-footer">
-          <button className="modal-close-button" onClick={onClose}>
-            Fechar
-          </button>
+                {/* Corpo */}
+                <div className="p-6 overflow-y-auto flex-grow">
+                    <div className="bg-indigo-500 text-white p-3 rounded-md mb-6">
+                        <p>{reports.length} relatório(s) encontrado(s)</p>
+                    </div>
+
+                    {reports.length > 0 ? (
+                        <div className="space-y-4">
+                            {reports.map((report: any) => {
+                                // ✅ Acessar campos do Supabase (snake_case)
+                                const reportMonth = report.month;
+                                const reportYear = report.year;
+                                const reportPeriod = formatReportPeriod(reportMonth, reportYear);
+                                const createdDate = formatCreatedDate(report.created_at);
+                                const riskScore = report.risk_score;
+                                
+                                return (
+                                    <div key={report.id} className="border border-gray-200 rounded-lg p-4">
+                                        {/* ✅ CORREÇÃO: Exibir período de referência e data de registro */}
+                                        <div className="flex flex-wrap gap-4 text-sm text-gray-500 mb-3">
+                                            {reportPeriod && (
+                                                <p className="flex items-center gap-1">
+                                                    <span className="font-medium text-indigo-600">📅 PERÍODO:</span> 
+                                                    <span className="text-gray-700 font-semibold">{reportPeriod}</span>
+                                                </p>
+                                            )}
+                                            {createdDate && (
+                                                <p className="flex items-center gap-1">
+                                                    <span className="text-gray-400">Registrado em:</span> 
+                                                    <span>{createdDate}</span>
+                                                </p>
+                                            )}
+                                        </div>
+                                        
+                                        {/* Score de Risco */}
+                                        {riskScore && (
+                                            <div className="mb-3">
+                                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                                                    riskScore === 1 ? 'bg-green-100 text-green-800' :
+                                                    riskScore === 2 ? 'bg-blue-100 text-blue-800' :
+                                                    riskScore === 3 ? 'bg-yellow-100 text-yellow-800' :
+                                                    riskScore === 4 ? 'bg-orange-100 text-orange-800' :
+                                                    'bg-red-100 text-red-800'
+                                                }`}>
+                                                    Risco: {riskScore} - {
+                                                        riskScore === 1 ? 'Excelente' :
+                                                        riskScore === 2 ? 'Bom' :
+                                                        riskScore === 3 ? 'Médio' :
+                                                        riskScore === 4 ? 'Alto' :
+                                                        'Crítico'
+                                                    }
+                                                </span>
+                                            </div>
+                                        )}
+                                        
+                                        <h3 className="font-bold text-gray-800 mb-2">Relatório de Atividade</h3>
+                                        <div 
+                                            className="prose prose-sm max-w-none text-gray-700"
+                                            dangerouslySetInnerHTML={{ __html: report.summary || report.content || '<p>Nenhum conteúdo disponível.</p>' }}
+                                        ></div>
+                                        
+                                        {/* Padrão Negativo */}
+                                        {report.negative_pattern && report.negative_pattern !== 'Nenhum' && (
+                                            <div className="mt-3 p-2 bg-amber-50 border border-amber-200 rounded text-sm">
+                                                <span className="font-medium text-amber-700">⚠️ Padrão Identificado:</span>
+                                                <p className="text-amber-600 mt-1">{report.negative_pattern}</p>
+                                            </div>
+                                        )}
+                                        
+                                        {/* Alerta Preditivo */}
+                                        {report.predictive_alert && report.predictive_alert !== 'Nenhum' && (
+                                            <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-sm">
+                                                <span className="font-medium text-red-700">🔮 Alerta Preditivo:</span>
+                                                <p className="text-red-600 mt-1">{report.predictive_alert}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : (
+                        <div className="text-center py-10">
+                            <p className="text-gray-500">Nenhum relatório detalhado encontrado para este mês.</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Rodapé */}
+                <div className="p-4 bg-gray-50 rounded-b-lg border-t border-gray-200 flex justify-end">
+                    <button 
+                        onClick={onClose} 
+                        className="px-6 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition"
+                    >
+                        Fechar
+                    </button>
+                </div>
+            </div>
         </div>
-      </div>
-    </div>
-  );
+    );
 };
 
 export default MonthlyReportsModal;
