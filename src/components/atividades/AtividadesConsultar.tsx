@@ -76,17 +76,48 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         stats.total = consultantsInFilter.length;
 
         consultantsInFilter.forEach(consultant => {
-            // Usar parecer_final_consultor ou campos parecer_X_consultor
             let score: RiskScore | null = null;
             
+            // Primeiro: tentar usar relatórios
+            const reports = consultant.consultant_reports || consultant.reports || [];
+            
             if (selectedMonth !== 'all') {
-                const monthField = `parecer_${selectedMonth}_consultor` as keyof Consultant;
-                score = consultant[monthField] as RiskScore | null;
+                const monthNum = parseInt(selectedMonth);
+                const monthReports = reports.filter((r: any) => 
+                    r.year === selectedYear && r.month === monthNum
+                );
+                
+                if (monthReports.length > 0) {
+                    const latestReport = [...monthReports].sort((a: any, b: any) => 
+                        new Date(b.created_at || b.createdAt || 0).getTime() - 
+                        new Date(a.created_at || a.createdAt || 0).getTime()
+                    )[0];
+                    score = (latestReport as any).risk_score || (latestReport as any).riskScore || null;
+                }
+                
+                // Fallback para campo parecer_X_consultor
+                if (!score) {
+                    const monthField = `parecer_${selectedMonth}_consultor` as keyof Consultant;
+                    score = consultant[monthField] as RiskScore | null;
+                }
             } else {
-                score = consultant.parecer_final_consultor || null;
+                // Todos os meses - usar parecer_final ou último relatório
+                const yearReports = reports.filter((r: any) => r.year === selectedYear);
+                
+                if (yearReports.length > 0) {
+                    const latestReport = [...yearReports].sort((a: any, b: any) => 
+                        new Date(b.created_at || b.createdAt || 0).getTime() - 
+                        new Date(a.created_at || a.createdAt || 0).getTime()
+                    )[0];
+                    score = (latestReport as any).risk_score || (latestReport as any).riskScore || null;
+                }
+                
+                if (!score) {
+                    score = consultant.parecer_final_consultor || null;
+                }
             }
 
-            if (score) {
+            if (score && String(score) !== '#FFFF') {
                 switch (score) {
                     case 1: stats.excellent++; break;
                     case 2: stats.good++; break;
@@ -98,25 +129,61 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         });
 
         return stats;
-    }, [dataGroupedByClient, selectedMonth]);
+    }, [dataGroupedByClient, selectedMonth, selectedYear]);
 
-    // ✅ OTIMIZADO: Usar apenas os campos parecer_X_consultor (sem carregar relatórios)
-    const getReportInfoForMonth = (consultant: Consultant, month: number): { score: RiskScore | null, hasData: boolean } => {
+    // ✅ CORRIGIDO: Usar relatórios que já vêm com o consultant + campos parecer_X_consultor
+    const getReportInfoForMonth = (consultant: Consultant, month: number): { score: RiskScore | null, count: number, hasData: boolean } => {
+        // Primeiro: tentar usar relatórios que já vieram com o consultant
+        const reports = consultant.consultant_reports || consultant.reports || [];
+        const monthReports = reports.filter((r: any) => 
+            r.year === selectedYear && r.month === month
+        );
+        
+        if (monthReports.length > 0) {
+            // Ordenar para pegar o mais recente
+            const latestReport = [...monthReports].sort((a: any, b: any) => 
+                new Date(b.created_at || b.createdAt || 0).getTime() - 
+                new Date(a.created_at || a.createdAt || 0).getTime()
+            )[0];
+            
+            const score = (latestReport as any).risk_score || (latestReport as any).riskScore || null;
+            return { score, count: monthReports.length, hasData: true };
+        }
+
+        // Fallback: usar campo parecer_X_consultor
         const oldField = `parecer_${month}_consultor` as keyof Consultant;
         const oldScore = consultant[oldField] as RiskScore | null;
         
         if (oldScore && oldScore !== null && String(oldScore) !== '#FFFF') {
-            return { score: oldScore, hasData: true };
+            return { score: oldScore, count: 1, hasData: true };
         }
 
-        return { score: null, hasData: false };
+        return { score: null, count: 0, hasData: false };
     };
 
-    const getFinalReportInfo = (consultant: Consultant): { score: RiskScore | null, hasData: boolean } => {
-        let finalScore = consultant.parecer_final_consultor || null;
+    const getFinalReportInfo = (consultant: Consultant): { score: RiskScore | null, totalCount: number } => {
+        // Contar relatórios do ano
+        const reports = consultant.consultant_reports || consultant.reports || [];
+        const yearReports = reports.filter((r: any) => r.year === selectedYear);
         
+        // Pegar score do relatório mais recente ou do parecer_final
+        let finalScore: RiskScore | null = null;
+        
+        if (yearReports.length > 0) {
+            const latestReport = [...yearReports].sort((a: any, b: any) => 
+                new Date(b.created_at || b.createdAt || 0).getTime() - 
+                new Date(a.created_at || a.createdAt || 0).getTime()
+            )[0];
+            finalScore = (latestReport as any).risk_score || (latestReport as any).riskScore || null;
+        }
+        
+        // Fallback para parecer_final_consultor
         if (!finalScore || String(finalScore) === '#FFFF') {
-            // Buscar o último mês com score
+            finalScore = consultant.parecer_final_consultor || null;
+        }
+        
+        // Fallback: buscar o último mês com score
+        if (!finalScore || String(finalScore) === '#FFFF') {
             for (let i = 12; i >= 1; i--) {
                 const oldField = `parecer_${i}_consultor` as keyof Consultant;
                 const oldScore = consultant[oldField] as RiskScore | null;
@@ -127,7 +194,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
             }
         }
 
-        return { score: finalScore, hasData: !!finalScore };
+        return { score: finalScore, totalCount: yearReports.length };
     };
 
     // ✅ LAZY LOADING: Carrega relatórios apenas quando o usuário clica
@@ -280,16 +347,16 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                                                                         reportInfo.hasData ? 'cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-indigo-400' : ''
                                                                     } ${getRiskColor(reportInfo.score)}`}
                                                                     onClick={() => reportInfo.hasData && handleCircleClick(consultant, m.value)}
-                                                                    title={reportInfo.hasData ? 'Clique para ver detalhes' : 'Sem dados'}
+                                                                    title={reportInfo.hasData ? `${reportInfo.count} relatório(s) - Clique para ver detalhes` : 'Sem dados'}
                                                                 >
-                                                                    {reportInfo.hasData ? '•' : ''}
+                                                                    {reportInfo.count > 0 ? reportInfo.count : ''}
                                                                 </div>
                                                             </td>
                                                         );
                                                     })}
                                                     <td className="px-6 py-4 text-center whitespace-nowrap">
                                                         <div className={`mx-auto h-7 w-7 rounded-full flex items-center justify-center font-bold text-white ${getRiskColor(finalReportInfo.score)}`}>
-                                                            {finalReportInfo.score || '-'}
+                                                            {finalReportInfo.totalCount > 0 ? finalReportInfo.totalCount : (finalReportInfo.score || '-')}
                                                         </div>
                                                     </td>
                                                 </tr>
