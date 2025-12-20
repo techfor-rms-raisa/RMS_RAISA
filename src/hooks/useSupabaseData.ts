@@ -17,7 +17,7 @@ import {
   ConsultantReport, AIAnalysisResult, EmailTemplate, ComplianceCampaign, 
   FeedbackRequest, FeedbackResponse, RHAction, BehavioralFlag, 
   LearningFeedbackLoop, Vaga, Pessoa, Candidatura
-} from '../components/types';
+} from '@/types';
 
 export const useSupabaseData = () => {
   // ============================================
