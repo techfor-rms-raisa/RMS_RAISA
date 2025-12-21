@@ -29,6 +29,40 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
         'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
     ];
 
+    // ============================================================================
+    // ✅ CORREÇÃO: Buscar anos REAIS do Supabase (consultores + relatórios)
+    // ============================================================================
+    const availableYears = useMemo(() => {
+        const currentYear = new Date().getFullYear();
+        const uniqueYears = new Set<number>();
+        
+        // 1. Extrair anos do campo ano_vigencia dos consultores
+        consultants.forEach(c => {
+            if (c.ano_vigencia !== null && c.ano_vigencia !== undefined && !isNaN(c.ano_vigencia)) {
+                uniqueYears.add(c.ano_vigencia);
+            }
+        });
+        
+        // 2. Extrair anos dos relatórios (consultant_reports)
+        consultants.forEach(c => {
+            const reports = c.consultant_reports || c.reports || [];
+            reports.forEach((r: any) => {
+                const reportYear = r.year || r.reportYear;
+                if (reportYear !== null && reportYear !== undefined && !isNaN(reportYear)) {
+                    uniqueYears.add(reportYear);
+                }
+            });
+        });
+        
+        // 3. Se não encontrou nenhum ano, adicionar apenas o ano atual como fallback
+        if (uniqueYears.size === 0) {
+            uniqueYears.add(currentYear);
+        }
+        
+        // Converter para array e ordenar (mais recente primeiro)
+        return [...uniqueYears].sort((a, b) => b - a);
+    }, [consultants]);
+
     // ✅ Carregar relatórios apenas UMA VEZ quando o componente monta
     useEffect(() => {
         // ⚠️ Se já foi carregado, não carregar novamente
@@ -246,7 +280,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                         onChange={(e) => setSelectedYear(parseInt(e.target.value))}
                         className="w-full border border-gray-300 rounded-lg p-2"
                     >
-                        {[2024, 2025, 2026].map(y => (
+                        {availableYears.map(y => (
                             <option key={y} value={y}>{y}</option>
                         ))}
                     </select>

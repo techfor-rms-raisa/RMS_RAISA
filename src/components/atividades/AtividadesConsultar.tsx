@@ -31,6 +31,40 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         { value: 10, label: 'OUT' }, { value: 11, label: 'NOV' }, { value: 12, label: 'DEZ' }
     ];
 
+    // ============================================================================
+    // ✅ CORREÇÃO: Buscar anos REAIS do Supabase (consultores + relatórios)
+    // ============================================================================
+    const availableYears = useMemo(() => {
+        const currentYear = new Date().getFullYear();
+        const uniqueYears = new Set<number>();
+        
+        // 1. Extrair anos do campo ano_vigencia dos consultores
+        consultants.forEach(c => {
+            if (c.ano_vigencia !== null && c.ano_vigencia !== undefined && !isNaN(c.ano_vigencia)) {
+                uniqueYears.add(c.ano_vigencia);
+            }
+        });
+        
+        // 2. Extrair anos dos relatórios (consultant_reports)
+        consultants.forEach(c => {
+            const reports = c.consultant_reports || c.reports || [];
+            reports.forEach((r: any) => {
+                const reportYear = r.year || r.reportYear;
+                if (reportYear !== null && reportYear !== undefined && !isNaN(reportYear)) {
+                    uniqueYears.add(reportYear);
+                }
+            });
+        });
+        
+        // 3. Se não encontrou nenhum ano, adicionar apenas o ano atual como fallback
+        if (uniqueYears.size === 0) {
+            uniqueYears.add(currentYear);
+        }
+        
+        // Converter para array e ordenar (mais recente primeiro)
+        return [...uniqueYears].sort((a, b) => b - a);
+    }, [consultants]);
+
     const getRiskColor = (score: RiskScore | null | undefined, type: 'bg' | 'text' | 'border' = 'bg') => {
         const colorMap: { [key in RiskScore]: string } = {
             1: 'green-500',
@@ -249,7 +283,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                             onChange={(e) => setSelectedYear(parseInt(e.target.value))}
                             className="mt-1 w-full border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm p-2"
                         >
-                            {[2024, 2025, 2026].map(y => <option key={y} value={y}>{y}</option>)}
+                            {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
                         </select>
                     </div>
                     <div>

@@ -43,7 +43,39 @@ const Dashboard: React.FC<DashboardProps> = ({
     reports: ConsultantReport[];
   } | null>(null);
 
-  const availableYears = useMemo(() => [...new Set(consultants.map(c => c.ano_vigencia))].sort((a: number, b: number) => b - a), [consultants]);
+  // ============================================================================
+  // ✅ CORREÇÃO: Buscar anos REAIS do Supabase (consultores + relatórios)
+  // ============================================================================
+  const availableYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const uniqueYears = new Set<number>();
+    
+    // 1. Extrair anos do campo ano_vigencia dos consultores
+    consultants.forEach(c => {
+      if (c.ano_vigencia !== null && c.ano_vigencia !== undefined && !isNaN(c.ano_vigencia)) {
+        uniqueYears.add(c.ano_vigencia);
+      }
+    });
+    
+    // 2. Extrair anos dos relatórios (consultant_reports)
+    consultants.forEach(c => {
+      const reports = c.consultant_reports || c.reports || [];
+      reports.forEach((r: any) => {
+        const reportYear = r.year || r.reportYear;
+        if (reportYear !== null && reportYear !== undefined && !isNaN(reportYear)) {
+          uniqueYears.add(reportYear);
+        }
+      });
+    });
+    
+    // 3. Se não encontrou nenhum ano, adicionar apenas o ano atual como fallback
+    if (uniqueYears.size === 0) {
+      uniqueYears.add(currentYear);
+    }
+    
+    // Converter para array e ordenar (mais recente primeiro)
+    return [...uniqueYears].sort((a, b) => b - a);
+  }, [consultants]);
 
   // ============================================================================
   // EFEITO 1: Inicializar o ano selecionado apenas uma vez
@@ -129,10 +161,14 @@ const Dashboard: React.FC<DashboardProps> = ({
       const managers = clientManagers.map(manager => {
         let managerConsultants = consultants.filter(c => c.gestor_imediato_id === manager.id && c.status === 'Ativo');
         
-        // Filtrar por ano
-        if (selectedYear !== new Date().getFullYear()) {
-          managerConsultants = managerConsultants.filter(c => c.ano_vigencia === selectedYear);
-        }
+        // ✅ CORREÇÃO: Filtrar por ano - consultores sem ano_vigencia aparecem em todos os anos
+        managerConsultants = managerConsultants.filter(c => {
+          // Se o consultor não tem ano_vigencia definido, mostrar em todos os anos
+          if (c.ano_vigencia === null || c.ano_vigencia === undefined) {
+            return true;
+          }
+          return c.ano_vigencia === selectedYear;
+        });
 
         // Aplicar filtro de score selecionado
         if (selectedScore !== 'all') {
@@ -494,4 +530,3 @@ const Dashboard: React.FC<DashboardProps> = ({
 };
 
 export default Dashboard;
-
