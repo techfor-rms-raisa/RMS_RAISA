@@ -172,27 +172,44 @@ export const useConsultants = () => {
 
   /**
    * Atualiza um consultor existente
+   * ✅ CORRIGIDO: Aceita tanto (id, updates) quanto (consultant)
    */
-  const updateConsultant = async (id: number, updates: Partial<Consultant>) => {
+  const updateConsultant = async (consultantOrId: number | Consultant, updates?: Partial<Consultant>) => {
     try {
-      console.log('📝 Atualizando consultor:', id, updates);
+      // ✅ Detectar formato de chamada
+      let id: number;
+      let updateData: Partial<Consultant>;
+      
+      if (typeof consultantOrId === 'number') {
+        // Formato: updateConsultant(id, updates)
+        id = consultantOrId;
+        updateData = updates || {};
+      } else {
+        // Formato: updateConsultant(consultant)
+        id = consultantOrId.id;
+        updateData = consultantOrId;
+      }
+      
+      console.log('📝 Atualizando consultor:', id, updateData);
 
       const { data, error } = await supabase
         .from('consultants')
         .update({
-          nome_consultores: updates.nome_consultores,
-          email_consultor: updates.email_consultor,
-          cpf: updates.cpf,
-          cargo_consultores: updates.cargo_consultores,
-          status: updates.status,
-          data_saida: updates.data_saida,
-          motivo_desligamento: updates.motivo_desligamento,
-          valor_faturamento: updates.valor_faturamento,
-          valor_pagamento: updates.valor_pagamento,
-          gestor_imediato_id: updates.gestor_imediato_id,
-          coordenador_id: updates.coordenador_id,
-          analista_rs_id: updates.analista_rs_id,
-          id_gestao_de_pessoas: updates.id_gestao_de_pessoas
+          nome_consultores: updateData.nome_consultores,
+          email_consultor: updateData.email_consultor,
+          celular: updateData.celular,
+          cpf: updateData.cpf,
+          cargo_consultores: updateData.cargo_consultores,
+          ano_vigencia: updateData.ano_vigencia,
+          status: updateData.status,
+          data_saida: updateData.data_saida,
+          motivo_desligamento: updateData.motivo_desligamento,
+          valor_faturamento: updateData.valor_faturamento,
+          valor_pagamento: updateData.valor_pagamento,
+          gestor_imediato_id: updateData.gestor_imediato_id,
+          coordenador_id: updateData.coordenador_id,
+          analista_rs_id: updateData.analista_rs_id,
+          id_gestao_de_pessoas: updateData.id_gestao_de_pessoas
         })
         .eq('id', id)
         .select()
