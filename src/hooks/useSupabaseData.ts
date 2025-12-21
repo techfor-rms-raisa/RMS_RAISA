@@ -85,6 +85,8 @@ export const useSupabaseData = () => {
         coordenadoresHook.loadCoordenadoresCliente(),
         templatesHook.loadTemplates(),
         campaignsHook.loadCampaigns(),
+        campaignsHook.loadFeedbackResponses(),  // ✅ NOVO: Carregar feedbacks
+        campaignsHook.loadRHActions(),          // ✅ NOVO: Carregar ações de RH
         vagasHook.loadVagas(),
         pessoasHook.loadPessoas(),
         candidaturasHook.loadCandidaturas()
@@ -94,6 +96,7 @@ export const useSupabaseData = () => {
       const names = [
         'Users', 'Clients', 'Consultants', 'UsuariosCliente', 
         'CoordenadoresCliente', 'Templates', 'Campaigns', 
+        'FeedbackResponses', 'RHActions',  // ✅ NOVO: Nomes adicionados
         'Vagas', 'Pessoas', 'Candidaturas'
       ];
       
@@ -109,7 +112,7 @@ export const useSupabaseData = () => {
       
       if (failures.length > 0) {
         console.warn(`⚠️ ${failures.length} tabela(s) falharam ao carregar: ${failures.join(', ')}`);
-        if (failures.length < 10) {
+        if (failures.length < 12) {
           setError(null); // Continuar mesmo com falhas parciais
         }
       }
@@ -215,14 +218,21 @@ export const useSupabaseData = () => {
     updateTemplate: templatesHook.updateTemplate,
     deleteTemplate: templatesHook.deleteTemplate,
 
-    // Campanhas (✅ Completo)
+    // Campanhas e Compliance (✅ v3.0 - Análise Temporal)
     campaigns: campaignsHook.campaigns,
     addCampaign: campaignsHook.addCampaign,
     updateCampaign: campaignsHook.updateCampaign,
     feedbackResponses: campaignsHook.feedbackResponses,
     addFeedbackResponse: campaignsHook.addFeedbackResponse,
+    loadFeedbackResponses: campaignsHook.loadFeedbackResponses,
     rhActions: campaignsHook.rhActions,
     addRHAction: campaignsHook.addRHAction,
+    loadRHActions: campaignsHook.loadRHActions,
+    updateRHActionStatus: campaignsHook.updateRHActionStatus,
+    // ✅ NOVO v3.0: Funções de análise temporal
+    getSentimentByMonth: campaignsHook.getSentimentByMonth,
+    getYearComparison: campaignsHook.getYearComparison,
+    getComplianceKPIs: campaignsHook.getComplianceKPIs,
 
     // RAISA - Vagas (✅ Completo)
     vagas: vagasHook.vagas,

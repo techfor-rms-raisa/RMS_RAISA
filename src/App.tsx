@@ -64,7 +64,7 @@ const App: React.FC = () => {
     templates, campaigns, feedbackResponses, rhActions,
     vagas, pessoas, candidaturas, // RAISA Data
     updateConsultantScore, processReportAnalysis, 
-    loadConsultantReports, // 📥 Lazy loading de relatórios
+    loadConsultantReports, // 🔥 Lazy loading de relatórios
     addClient, updateClient, batchAddClients,
     addConsultant, updateConsultant, batchAddConsultants,
     addUser, updateUser,
@@ -184,8 +184,14 @@ const App: React.FC = () => {
           return <TemplateLibrary templates={templates} currentUser={currentUser!} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} />;
       case 'campaigns':
           return <ComplianceCampaigns campaigns={campaigns} templates={templates} consultants={consultants} addCampaign={addCampaign} onSimulateLink={handleSimulateLink} />;
+      
+      // ✅ CORRIGIDO: Apenas um return com consultants como prop
       case 'compliance_dashboard':
-          return <ComplianceDashboard rhActions={rhActions} feedbackResponses={feedbackResponses} />;
+          return <ComplianceDashboard 
+              rhActions={rhActions} 
+              feedbackResponses={feedbackResponses} 
+              consultants={consultants} 
+          />;
       
       // Atividades Views
       case 'atividades_inserir':

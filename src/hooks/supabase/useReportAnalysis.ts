@@ -3,17 +3,116 @@
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui integração com Gemini AI e notificações de risco crítico
  * 
- * ✅ VERSÃO CORRIGIDA - BUG FIX: Aceita mês/ano extraídos do frontend
+ * ✅ VERSÃO 2.0 - COMPLIANCE INTEGRATION
+ * - Salva feedback automaticamente após análise da IA
+ * - Deriva sentiment e risk_level do score
+ * - Suporta análise temporal (month/year)
  */
 
 import { supabase } from '../../config/supabase';
 import { sendCriticalRiskNotifications, isCriticalRisk } from '../../services/emailService';
 import { 
   Consultant, ConsultantReport, AIAnalysisResult, 
-  User, UsuarioCliente, Client 
+  User, UsuarioCliente, Client, FeedbackResponse 
 } from '@/types';
 
+// ============================================================================
+// HELPERS: Cálculo de Sentiment e Risk Level
+// ============================================================================
+
+/**
+ * Deriva o sentiment baseado no score de risco (1-5)
+ * 1-2 = Positivo (consultor saudável)
+ * 3 = Neutro (atenção necessária)
+ * 4-5 = Negativo (risco alto)
+ */
+const deriveSentiment = (riskScore: number): 'Positivo' | 'Neutro' | 'Negativo' => {
+  if (riskScore <= 2) return 'Positivo';
+  if (riskScore === 3) return 'Neutro';
+  return 'Negativo';
+};
+
+/**
+ * Deriva o risk level baseado no score de risco (1-5)
+ */
+const deriveRiskLevel = (riskScore: number): 'Baixo' | 'Médio' | 'Alto' => {
+  if (riskScore <= 2) return 'Baixo';
+  if (riskScore === 3) return 'Médio';
+  return 'Alto';
+};
+
+/**
+ * Converte score de risco (1-5) para escala de feedback (0-10)
+ * Score 1 (Excelente) → 10
+ * Score 5 (Crítico) → 2
+ */
+const convertRiskToFeedbackScore = (riskScore: number): number => {
+  const mapping: { [key: number]: number } = {
+    1: 10,  // Excelente
+    2: 8,   // Bom
+    3: 5,   // Médio
+    4: 3,   // Alto
+    5: 1    // Crítico
+  };
+  return mapping[riskScore] || 5;
+};
+
 export const useReportAnalysis = () => {
+
+  /**
+   * ✅ NOVO: Salva feedback no Supabase após análise da IA
+   */
+  const saveFeedbackFromAnalysis = async (
+    consultantId: number,
+    riskScore: number,
+    summary: string,
+    month: number,
+    year: number
+  ): Promise<void> => {
+    try {
+      const sentiment = deriveSentiment(riskScore);
+      const riskLevel = deriveRiskLevel(riskScore);
+      const feedbackScore = convertRiskToFeedbackScore(riskScore);
+
+      console.log(`💾 Salvando feedback: Consultor ${consultantId}, Score ${riskScore} → Sentiment: ${sentiment}`);
+
+      const { error } = await supabase
+        .from('feedback_responses')
+        .insert([{
+          consultant_id: consultantId,
+          score: feedbackScore,
+          comment: summary,
+          month: month,
+          year: year,
+          sentiment: sentiment,
+          risk_level: riskLevel,
+          source: 'ai_analysis'
+        }]);
+
+      if (error) {
+        // Se falhar por causa de campos novos não existentes, tenta sem eles
+        if (error.message.includes('column') || error.code === '42703') {
+          console.warn('⚠️ Campos novos não existem ainda, salvando versão básica...');
+          const { error: basicError } = await supabase
+            .from('feedback_responses')
+            .insert([{
+              consultant_id: consultantId,
+              score: feedbackScore,
+              comment: summary
+            }]);
+          
+          if (basicError) throw basicError;
+        } else {
+          throw error;
+        }
+      }
+
+      console.log(`✅ Feedback salvo: Consultor ${consultantId} - ${sentiment} (${month}/${year})`);
+    } catch (err: any) {
+      console.error('❌ Erro ao salvar feedback:', err);
+      // Não interrompe o fluxo principal
+    }
+  };
 
   /**
    * Processa análise de relatório com IA Gemini
@@ -115,7 +214,7 @@ export const useReportAnalysis = () => {
    * Atualiza o score de risco de um consultor e salva relatório
    * Dispara notificações de risco crítico quando necessário
    * 
-   * ✅ CORREÇÃO: Usa reportYear se disponível no resultado
+   * ✅ v2.0: Salva feedback automaticamente para análise de compliance
    */
   const updateConsultantScore = async (
     result: AIAnalysisResult,
@@ -200,6 +299,15 @@ export const useReportAnalysis = () => {
       
       console.log(`✅ Relatório salvo (acumulativo): ${consultant.nome_consultores} - Mês ${newReport.month}/${newReport.year}`);
       
+      // ✅ NOVO v2.0: Salvar feedback para análise de compliance
+      await saveFeedbackFromAnalysis(
+        consultant.id,
+        result.riskScore,
+        result.summary || 'Análise de relatório de atividades',
+        result.reportMonth,
+        reportYear
+      );
+      
       // Atualizar estado local
       const updatedConsultant: Consultant = {
         ...consultant,
@@ -238,7 +346,7 @@ export const useReportAnalysis = () => {
       }
       
       // Verificar se deve ir para quarentena
-      if (result.riskScore === 1 || result.riskScore === 2) {
+      if (result.riskScore === 4 || result.riskScore === 5) {
         console.log(`⚠️ Consultor em QUARENTENA: ${result.consultantName}`);
       }
       
@@ -258,6 +366,10 @@ export const useReportAnalysis = () => {
   return {
     processReportAnalysis,
     updateConsultantScore,
-    migrateYearlyData
+    migrateYearlyData,
+    // ✅ Exportar helpers para uso externo se necessário
+    deriveSentiment,
+    deriveRiskLevel,
+    saveFeedbackFromAnalysis
   };
 };
