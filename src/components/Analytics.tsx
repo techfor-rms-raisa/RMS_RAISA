@@ -132,17 +132,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
     // DADOS: Evolução Média do Score de Risco - ANO ATUAL vs ANO ANTERIOR
     // ============================================================================
     
-    /**
-     * Calcula a média dos scores por mês para um determinado ano
-     * Usa parecer_X_consultor para ano vigente
-     * Usa consultant_reports para anos anteriores
-     */
     const getScoreEvolutionForYear = (year: number) => {
         return Array.from({ length: 12 }, (_, i) => {
             const month = i + 1;
             
             if (year === currentYear) {
-                // Ano atual: usar campos parecer_X_consultor
                 const key = `parecer_${month}_consultor` as keyof Consultant;
                 const scores = activeConsultants
                     .map(c => c[key] as number)
@@ -154,7 +148,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                 
                 return avg !== null ? parseFloat(avg.toFixed(2)) : null;
             } else {
-                // Anos anteriores: usar consultant_reports se disponível
                 const reportsForMonth = consultants.flatMap(c => 
                     (c.consultant_reports || []).filter(r => 
                         r.year === year && r.month === month
@@ -171,7 +164,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
         });
     };
 
-    // ✅ Dados para gráfico comparativo (Ano Atual vs Ano Anterior)
     const yearComparisonScoreData = useMemo(() => {
         const currentYearScores = getScoreEvolutionForYear(selectedYear);
         const previousYearScores = getScoreEvolutionForYear(selectedYear - 1);
@@ -192,7 +184,6 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
             .filter(c => c.parecer_final_consultor === 5)
             .sort((a, b) => (b.valor_faturamento || 0) - (a.valor_faturamento || 0))
             .map(c => {
-                // Buscar gestor
                 const manager = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
                 const client = manager 
                     ? clients.find(cl => cl.id === manager.id_cliente) 
@@ -210,7 +201,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
     }, [activeConsultants, usuariosCliente, clients]);
 
     // ============================================================================
-    // DADOS: Consultores por Gestor (para aba Por Gestor)
+    // DADOS: Consultores por Gestor
     // ============================================================================
     const consultantsByManager = useMemo(() => {
         const grouped: { [key: string]: { count: number; clientName: string } } = {};
@@ -274,6 +265,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
         </button>
     );
 
+    // ✅ PADRONIZADO: KPICard com mesmo estilo do Dashboard
     const KPICard = ({ label, value, subtitle, bgColor, textColor, borderColor }: { 
         label: string; 
         value: string | number; 
@@ -282,9 +274,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
         textColor: string;
         borderColor: string;
     }) => (
-        <div className={`${bgColor} p-5 rounded-lg border-t-4 ${borderColor}`}>
-            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">{label}</p>
-            <h3 className={`text-3xl font-black ${textColor} mt-1`}>{value}</h3>
+        <div className={`${bgColor} p-4 rounded-lg border-t-4 ${borderColor} shadow`}>
+            <p className={`text-2xl font-bold ${textColor}`}>{value}</p>
+            <p className="text-sm text-gray-600">{label}</p>
             {subtitle && <p className="text-xs text-gray-500 mt-1">{subtitle}</p>}
         </div>
     );
@@ -301,25 +293,23 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
             {/* Header */}
             <div className="flex justify-between items-center">
                 <div>
-                    <h2 className="text-3xl font-bold text-gray-800">Analytics & Insights</h2>
-                    <p className="text-gray-500 text-sm mt-1">Análise completa da carteira de consultores</p>
+                    <h2 className="text-2xl font-bold text-[#4D5253]">Analytics & Insights</h2>
+                    <p className="text-gray-500 text-xs mt-1">Análise completa da carteira de consultores</p>
                 </div>
 
-                {/* Seletor de Ano (visível apenas na aba Risk) */}
-                {activeTab === 'risk' && (
-                    <div className="flex items-center gap-3">
-                        <label className="text-sm font-medium text-gray-600">Ano:</label>
-                        <select
-                            value={selectedYear}
-                            onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                            className="border border-gray-300 rounded-lg px-4 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        >
-                            {[currentYear, currentYear - 1, currentYear - 2].map(year => (
-                                <option key={year} value={year}>{year}</option>
-                            ))}
-                        </select>
-                    </div>
-                )}
+                {/* Seletor de Ano */}
+                <div className="flex items-center gap-3">
+                    <label className="text-sm font-bold text-gray-700">Ano:</label>
+                    <select
+                        value={selectedYear}
+                        onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                        className="border border-gray-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                    >
+                        {[currentYear, currentYear - 1, currentYear - 2].map(year => (
+                            <option key={year} value={year}>{year}</option>
+                        ))}
+                    </select>
+                </div>
             </div>
 
             {/* Tabs */}
@@ -335,40 +325,24 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
             {/* ============================================================================ */}
             {activeTab === 'overview' && (
                 <div className="space-y-6">
-                    {/* KPIs Simplificados */}
+                    {/* KPIs - Padronizado igual Dashboard */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <KPICard 
-                            label="Total Consultores" 
-                            value={consultants.length} 
-                            subtitle="Todos os status"
-                            bgColor="bg-white" 
-                            textColor="text-blue-600" 
-                            borderColor="border-blue-500" 
-                        />
-                        <KPICard 
-                            label="Ativos" 
-                            value={kpis.total} 
-                            subtitle={`${Math.round((kpis.total / consultants.length) * 100)}% do total`}
-                            bgColor="bg-white" 
-                            textColor="text-green-600" 
-                            borderColor="border-green-500" 
-                        />
-                        <KPICard 
-                            label="Clientes" 
-                            value={kpis.totalClients} 
-                            subtitle="Clientes ativos"
-                            bgColor="bg-white" 
-                            textColor="text-purple-600" 
-                            borderColor="border-purple-500" 
-                        />
-                        <KPICard 
-                            label="Gestores" 
-                            value={kpis.totalManagers} 
-                            subtitle="Gestores ativos"
-                            bgColor="bg-white" 
-                            textColor="text-orange-600" 
-                            borderColor="border-orange-500" 
-                        />
+                        <div className="bg-gray-100 p-4 rounded-lg text-center shadow">
+                            <p className="text-2xl font-bold text-gray-800">{consultants.length}</p>
+                            <p className="text-sm text-gray-600">Total Consultores</p>
+                        </div>
+                        <div className="bg-green-100 p-4 rounded-lg text-center shadow">
+                            <p className="text-2xl font-bold text-green-700">{kpis.total}</p>
+                            <p className="text-sm text-green-700">Ativos</p>
+                        </div>
+                        <div className="bg-purple-100 p-4 rounded-lg text-center shadow">
+                            <p className="text-2xl font-bold text-purple-700">{kpis.totalClients}</p>
+                            <p className="text-sm text-purple-700">Clientes</p>
+                        </div>
+                        <div className="bg-orange-100 p-4 rounded-lg text-center shadow">
+                            <p className="text-2xl font-bold text-orange-700">{kpis.totalManagers}</p>
+                            <p className="text-sm text-orange-700">Gestores</p>
+                        </div>
                     </div>
 
                     {/* Gráficos */}
@@ -401,8 +375,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                                             `${value} consultores`,
                                             `${name} - ${props.payload.description}`
                                         ]}
+                                        contentStyle={{ fontSize: '12px' }}
                                     />
-                                    <Legend />
+                                    <Legend wrapperStyle={{ fontSize: '12px' }} />
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
@@ -413,9 +388,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                             <ResponsiveContainer width="100%" height={250}>
                                 <BarChart data={consultantsByManager} layout="vertical">
                                     <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis type="number" />
+                                    <XAxis type="number" tick={{ fontSize: 10 }} />
                                     <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10 }} />
-                                    <Tooltip />
+                                    <Tooltip contentStyle={{ fontSize: '12px' }} />
                                     <Bar dataKey="value" fill="#6366F1" name="Consultores" />
                                 </BarChart>
                             </ResponsiveContainer>
@@ -429,40 +404,24 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
             {/* ============================================================================ */}
             {activeTab === 'risk' && (
                 <div className="space-y-6">
-                    {/* KPIs de Risco */}
+                    {/* KPIs de Risco - Padronizado igual Dashboard */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <KPICard 
-                            label="Total Ativos" 
-                            value={kpis.total} 
-                            subtitle="Consultores em operação"
-                            bgColor="bg-white" 
-                            textColor="text-blue-600" 
-                            borderColor="border-blue-500" 
-                        />
-                        <KPICard 
-                            label="Risco Crítico" 
-                            value={kpis.critical} 
-                            subtitle="Ação Imediata Necessária"
-                            bgColor="bg-white" 
-                            textColor="text-red-600" 
-                            borderColor="border-red-500" 
-                        />
-                        <KPICard 
-                            label="Risco Moderado" 
-                            value={kpis.moderate} 
-                            subtitle="Atenção Necessária"
-                            bgColor="bg-white" 
-                            textColor="text-yellow-600" 
-                            borderColor="border-yellow-500" 
-                        />
-                        <KPICard 
-                            label="Seguros" 
-                            value={kpis.safe} 
-                            subtitle="Scores 1 e 2"
-                            bgColor="bg-white" 
-                            textColor="text-green-600" 
-                            borderColor="border-green-500" 
-                        />
+                        <div className="bg-gray-100 p-4 rounded-lg text-center shadow">
+                            <p className="text-2xl font-bold text-gray-800">{kpis.total}</p>
+                            <p className="text-sm text-gray-600">Total Ativos</p>
+                        </div>
+                        <div className="bg-red-100 p-4 rounded-lg text-center shadow">
+                            <p className="text-2xl font-bold text-red-700">{kpis.critical}</p>
+                            <p className="text-sm text-red-700">Risco Crítico</p>
+                        </div>
+                        <div className="bg-yellow-100 p-4 rounded-lg text-center shadow">
+                            <p className="text-2xl font-bold text-yellow-700">{kpis.moderate}</p>
+                            <p className="text-sm text-yellow-700">Risco Moderado</p>
+                        </div>
+                        <div className="bg-green-100 p-4 rounded-lg text-center shadow">
+                            <p className="text-2xl font-bold text-green-700">{kpis.safe}</p>
+                            <p className="text-sm text-green-700">Seguros</p>
+                        </div>
                     </div>
 
                     {/* Gráficos - Linha 1 */}
@@ -489,8 +448,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                                     </Pie>
                                     <Tooltip 
                                         formatter={(value: number, name: string) => [`${value} consultores`, name]}
+                                        contentStyle={{ fontSize: '12px' }}
                                     />
-                                    <Legend />
+                                    <Legend wrapperStyle={{ fontSize: '12px' }} />
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
@@ -501,10 +461,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                             <ResponsiveContainer width="100%" height={300}>
                                 <BarChart data={clientsVolumeRiskData}>
                                     <CartesianGrid strokeDasharray="3 3" />
-                                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{ fontSize: 10 }} />
-                                    <YAxis />
-                                    <Tooltip />
-                                    <Legend />
+                                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={80} tick={{ fontSize: 9 }} />
+                                    <YAxis tick={{ fontSize: 10 }} />
+                                    <Tooltip contentStyle={{ fontSize: '12px' }} />
+                                    <Legend wrapperStyle={{ fontSize: '12px' }} />
                                     <Bar dataKey="total" fill="#9CA3AF" name="Total Consultores" />
                                     <Bar dataKey="emRisco" fill="#EF4444" name="Em Risco (4 ou 5)" />
                                 </BarChart>
@@ -512,13 +472,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                         </div>
                     </div>
 
-                    {/* ✅ GRÁFICO ATUALIZADO: Evolução do Score (Ano Atual vs Ano Anterior) */}
+                    {/* Gráfico de Evolução (Ano Atual vs Ano Anterior) */}
                     <div className="bg-white rounded-xl shadow-sm p-6">
                         <div className="mb-4">
                             <h3 className="text-lg font-bold text-blue-600">
                                 Evolução Média do Score de Risco (Ano Atual vs Ano Anterior)
                             </h3>
-                            <p className="text-sm text-gray-500">
+                            <p className="text-xs text-gray-500">
                                 Média dos scores de todos os consultores ativos. Compare {selectedYear} com {selectedYear - 1}. 
                                 (Escala: 1=Excelente, 5=Crítico)
                             </p>
@@ -530,13 +490,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                                     <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                                     <XAxis 
                                         dataKey="monthName" 
-                                        tick={{ fontSize: 11, fill: '#6B7280' }}
+                                        tick={{ fontSize: 10, fill: '#6B7280' }}
                                         axisLine={{ stroke: '#D1D5DB' }}
                                     />
                                     <YAxis 
                                         domain={[0, 5]}
                                         ticks={[1, 2, 3, 4, 5]}
-                                        tick={{ fontSize: 11, fill: '#6B7280' }}
+                                        tick={{ fontSize: 10, fill: '#6B7280' }}
                                         axisLine={{ stroke: '#D1D5DB' }}
                                     />
                                     <Tooltip 
@@ -547,10 +507,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                                         contentStyle={{ 
                                             borderRadius: '8px', 
                                             border: 'none', 
-                                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)' 
+                                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                                            fontSize: '12px'
                                         }}
                                     />
-                                    <Legend />
+                                    <Legend wrapperStyle={{ fontSize: '12px' }} />
                                     
                                     {/* Linha Ano Atual */}
                                     <Line 
@@ -627,14 +588,14 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                                                 <td className="px-6 py-4 whitespace-nowrap">
                                                     <div className="text-sm font-bold text-gray-900">{c.nome}</div>
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                                <td className="px-6 py-4 whitespace-nowrap text-xs text-gray-600">
                                                     {c.cargo}
                                                 </td>
-                                                <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-900">
+                                                <td className="px-6 py-4 whitespace-nowrap text-xs font-semibold text-gray-900">
                                                     {formatCurrency(c.faturamento)}
                                                 </td>
                                                 <td className="px-6 py-4 whitespace-nowrap">
-                                                    <div className="text-sm text-gray-900">{c.gestor}</div>
+                                                    <div className="text-xs text-gray-900">{c.gestor}</div>
                                                     <div className="text-xs text-gray-500">({c.cliente})</div>
                                                 </td>
                                             </tr>
@@ -643,7 +604,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                                         <tr>
                                             <td colSpan={4} className="px-6 py-12 text-center">
                                                 <div className="text-green-500 text-4xl mb-2">✅</div>
-                                                <p className="text-gray-500 font-medium">
+                                                <p className="text-gray-500 font-medium text-sm">
                                                     Nenhum consultor em risco crítico (Score 5)
                                                 </p>
                                             </td>
@@ -664,7 +625,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                     <div className="bg-white rounded-lg shadow p-6">
                         <h3 className="text-lg font-semibold text-gray-800 mb-4">Consultores por Cliente</h3>
                         <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
+                            <table className="w-full text-xs">
                                 <thead className="bg-gray-100 border-b">
                                     <tr>
                                         <th className="px-6 py-3 text-left font-semibold text-gray-700">Cliente</th>
@@ -707,7 +668,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                     <div className="bg-white rounded-lg shadow p-6">
                         <h3 className="text-lg font-semibold text-gray-800 mb-4">Consultores por Gestor</h3>
                         <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
+                            <table className="w-full text-xs">
                                 <thead className="bg-gray-100 border-b">
                                     <tr>
                                         <th className="px-6 py-3 text-left font-semibold text-gray-700">Gestor</th>
