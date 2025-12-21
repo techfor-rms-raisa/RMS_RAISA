@@ -201,10 +201,10 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
     }, [activeConsultants, usuariosCliente, clients]);
 
     // ============================================================================
-    // DADOS: Consultores por Gestor
+    // DADOS: Consultores por Gestor (com Em Risco e Seguros)
     // ============================================================================
     const consultantsByManager = useMemo(() => {
-        const grouped: { [key: string]: { count: number; clientName: string } } = {};
+        const grouped: { [key: string]: { count: number; emRisco: number; clientName: string } } = {};
         
         activeConsultants.forEach(c => {
             const manager = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
@@ -212,15 +212,25 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
             const client = manager ? clients.find(cl => cl.id === manager.id_cliente) : null;
             
             if (!grouped[managerName]) {
-                grouped[managerName] = { count: 0, clientName: client?.razao_social_cliente || '-' };
+                grouped[managerName] = { count: 0, emRisco: 0, clientName: client?.razao_social_cliente || '-' };
             }
             grouped[managerName].count++;
+            
+            // Em Risco = Score 4 ou 5
+            if (c.parecer_final_consultor === 4 || c.parecer_final_consultor === 5) {
+                grouped[managerName].emRisco++;
+            }
         });
         
         return Object.entries(grouped)
-            .map(([name, data]) => ({ name, value: data.count, clientName: data.clientName }))
-            .sort((a, b) => b.value - a.value)
-            .slice(0, 10);
+            .map(([name, data]) => ({ 
+                name, 
+                total: data.count, 
+                emRisco: data.emRisco,
+                seguros: data.count - data.emRisco,
+                clientName: data.clientName 
+            }))
+            .sort((a, b) => b.total - a.total);
     }, [activeConsultants, usuariosCliente, clients]);
 
     // ============================================================================
@@ -386,12 +396,12 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                         <div className="bg-white rounded-lg shadow p-6">
                             <h3 className="text-lg font-semibold text-gray-800 mb-4">Top 10 Gestores por Consultores</h3>
                             <ResponsiveContainer width="100%" height={250}>
-                                <BarChart data={consultantsByManager} layout="vertical">
+                                <BarChart data={consultantsByManager.slice(0, 10)} layout="vertical">
                                     <CartesianGrid strokeDasharray="3 3" />
                                     <XAxis type="number" tick={{ fontSize: 10 }} />
                                     <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10 }} />
                                     <Tooltip contentStyle={{ fontSize: '12px' }} />
-                                    <Bar dataKey="value" fill="#6366F1" name="Consultores" />
+                                    <Bar dataKey="total" fill="#6366F1" name="Consultores" />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
@@ -672,7 +682,9 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                                 <thead className="bg-gray-100 border-b">
                                     <tr>
                                         <th className="px-6 py-3 text-left font-semibold text-gray-700">Gestor</th>
-                                        <th className="px-6 py-3 text-center font-semibold text-gray-700">Consultores</th>
+                                        <th className="px-6 py-3 text-center font-semibold text-gray-700">Total</th>
+                                        <th className="px-6 py-3 text-center font-semibold text-gray-700">Em Risco</th>
+                                        <th className="px-6 py-3 text-center font-semibold text-gray-700">Seguros</th>
                                         <th className="px-6 py-3 text-left font-semibold text-gray-700">Cliente</th>
                                     </tr>
                                 </thead>
@@ -680,7 +692,19 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                                     {consultantsByManager.map((item, idx) => (
                                         <tr key={idx} className="border-b hover:bg-gray-50">
                                             <td className="px-6 py-3 text-gray-800 font-medium">{item.name}</td>
-                                            <td className="px-6 py-3 text-center text-gray-600">{item.value}</td>
+                                            <td className="px-6 py-3 text-center text-gray-600">{item.total}</td>
+                                            <td className="px-6 py-3 text-center">
+                                                <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                                    item.emRisco > 0 ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-500'
+                                                }`}>
+                                                    {item.emRisco}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-3 text-center">
+                                                <span className="px-2 py-1 rounded text-xs font-bold bg-green-100 text-green-700">
+                                                    {item.seguros}
+                                                </span>
+                                            </td>
                                             <td className="px-6 py-3 text-gray-600">{item.clientName}</td>
                                         </tr>
                                     ))}
