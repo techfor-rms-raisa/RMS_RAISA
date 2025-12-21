@@ -12,8 +12,15 @@ interface AnalyticsProps {
     users: User[];
 }
 
+// ============================================================================
+// CONSTANTES
+// ============================================================================
+const MONTH_NAMES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+
 const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCliente, users }) => {
     const [activeTab, setActiveTab] = useState<'overview' | 'risk' | 'clients' | 'managers'>('overview');
+    const currentYear = new Date().getFullYear();
+    const [selectedYear, setSelectedYear] = useState(currentYear);
 
     // ============================================================================
     // FILTRO: Apenas consultores ativos
@@ -122,27 +129,60 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
     }, [clients, usuariosCliente, activeConsultants]);
 
     // ============================================================================
-    // DADOS: Evolução Média do Score de Risco (Ano Vigente)
+    // DADOS: Evolução Média do Score de Risco - ANO ATUAL vs ANO ANTERIOR
     // ============================================================================
-    const monthlyScoreEvolutionData = useMemo(() => {
+    
+    /**
+     * Calcula a média dos scores por mês para um determinado ano
+     * Usa parecer_X_consultor para ano vigente
+     * Usa consultant_reports para anos anteriores
+     */
+    const getScoreEvolutionForYear = (year: number) => {
         return Array.from({ length: 12 }, (_, i) => {
             const month = i + 1;
-            const key = `parecer_${month}_consultor` as keyof Consultant;
             
-            const scores = activeConsultants
-                .map(c => c[key] as number)
-                .filter(s => s !== null && s !== undefined && !isNaN(s) && s >= 1 && s <= 5);
-            
-            const avg = scores.length > 0 
-                ? scores.reduce((a, b) => a + b, 0) / scores.length 
-                : null;
-            
-            return { 
-                month: `Mês ${month}`, 
-                score: avg !== null ? parseFloat(avg.toFixed(2)) : null 
-            };
+            if (year === currentYear) {
+                // Ano atual: usar campos parecer_X_consultor
+                const key = `parecer_${month}_consultor` as keyof Consultant;
+                const scores = activeConsultants
+                    .map(c => c[key] as number)
+                    .filter(s => s !== null && s !== undefined && !isNaN(s) && s >= 1 && s <= 5);
+                
+                const avg = scores.length > 0 
+                    ? scores.reduce((a, b) => a + b, 0) / scores.length 
+                    : null;
+                
+                return avg !== null ? parseFloat(avg.toFixed(2)) : null;
+            } else {
+                // Anos anteriores: usar consultant_reports se disponível
+                const reportsForMonth = consultants.flatMap(c => 
+                    (c.consultant_reports || []).filter(r => 
+                        r.year === year && r.month === month
+                    )
+                );
+                
+                if (reportsForMonth.length > 0) {
+                    const avg = reportsForMonth.reduce((sum, r) => sum + (r.risk_score || 0), 0) / reportsForMonth.length;
+                    return parseFloat(avg.toFixed(2));
+                }
+                
+                return null;
+            }
         });
-    }, [activeConsultants]);
+    };
+
+    // ✅ Dados para gráfico comparativo (Ano Atual vs Ano Anterior)
+    const yearComparisonScoreData = useMemo(() => {
+        const currentYearScores = getScoreEvolutionForYear(selectedYear);
+        const previousYearScores = getScoreEvolutionForYear(selectedYear - 1);
+
+        return Array.from({ length: 12 }, (_, i) => ({
+            month: `Mês ${i + 1}`,
+            monthName: MONTH_NAMES[i],
+            [`${selectedYear}`]: currentYearScores[i],
+            [`${selectedYear - 1}`]: previousYearScores[i]
+        }));
+    }, [selectedYear, activeConsultants, consultants, currentYear]);
 
     // ============================================================================
     // DADOS: Consultores em Atenção Prioritária (Score 5)
@@ -195,11 +235,26 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
     // ============================================================================
     // DADOS: Status de Consultores (Overview)
     // ============================================================================
-    const statusData = [
-        { name: 'Ativo', value: kpis.statusDistribution.active, fill: '#10B981' },
-        { name: 'Perdido', value: kpis.statusDistribution.lost, fill: '#F59E0B' },
-        { name: 'Encerrado', value: kpis.statusDistribution.terminated, fill: '#EF4444' }
-    ].filter(d => d.value > 0);
+    const statusData = useMemo(() => [
+        { 
+            name: 'Ativo', 
+            value: kpis.statusDistribution.active, 
+            fill: '#10B981',
+            description: 'Operante no cliente com score de 1 a 5'
+        },
+        { 
+            name: 'Perdido', 
+            value: kpis.statusDistribution.lost, 
+            fill: '#F59E0B',
+            description: 'Rescisão por iniciativa própria ou demissão pelo cliente'
+        },
+        { 
+            name: 'Encerrado', 
+            value: kpis.statusDistribution.terminated, 
+            fill: '#EF4444',
+            description: 'Contrato finalizado normalmente'
+        }
+    ].filter(d => d.value > 0), [kpis]);
 
     // ============================================================================
     // COMPONENTES AUXILIARES
@@ -228,35 +283,51 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
         borderColor: string;
     }) => (
         <div className={`${bgColor} p-5 rounded-lg border-t-4 ${borderColor}`}>
-            <p className={`text-xs font-bold ${textColor} uppercase tracking-wider`}>{label}</p>
-            <h3 className={`text-4xl font-black ${textColor} mt-1`}>{value}</h3>
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wider">{label}</p>
+            <h3 className={`text-3xl font-black ${textColor} mt-1`}>{value}</h3>
             {subtitle && <p className="text-xs text-gray-500 mt-1">{subtitle}</p>}
         </div>
     );
 
-    const formatCurrency = (val: number) => 
-        val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+    const formatCurrency = (value: number) => {
+        return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+    };
 
     // ============================================================================
     // RENDER
     // ============================================================================
-
     return (
-        <div className="p-6 bg-gray-50 min-h-screen">
+        <div className="p-6 space-y-6">
             {/* Header */}
-            <div className="mb-8">
-                <h1 className="text-4xl font-bold text-gray-900 mb-2">📊 Analytics & Insights</h1>
-                <p className="text-gray-600">Análise detalhada de consultores, clientes e performance</p>
+            <div className="flex justify-between items-center">
+                <div>
+                    <h2 className="text-3xl font-bold text-gray-800">Analytics & Insights</h2>
+                    <p className="text-gray-500 text-sm mt-1">Análise completa da carteira de consultores</p>
+                </div>
+
+                {/* Seletor de Ano (visível apenas na aba Risk) */}
+                {activeTab === 'risk' && (
+                    <div className="flex items-center gap-3">
+                        <label className="text-sm font-medium text-gray-600">Ano:</label>
+                        <select
+                            value={selectedYear}
+                            onChange={(e) => setSelectedYear(parseInt(e.target.value))}
+                            className="border border-gray-300 rounded-lg px-4 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                            {[currentYear, currentYear - 1, currentYear - 2].map(year => (
+                                <option key={year} value={year}>{year}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
             </div>
 
             {/* Tabs */}
-            <div className="bg-white rounded-lg shadow mb-6 border-b border-gray-200">
-                <div className="flex gap-0">
-                    <TabButton id="overview" label="Visão Geral" icon="📈" />
-                    <TabButton id="risk" label="Análise de Risco" icon="⚠️" />
-                    <TabButton id="clients" label="Por Cliente" icon="🏢" />
-                    <TabButton id="managers" label="Por Gestor" icon="👥" />
-                </div>
+            <div className="flex space-x-1 bg-white rounded-lg p-1 shadow">
+                <TabButton id="overview" label="Visão Geral" icon="📊" />
+                <TabButton id="risk" label="Análise de Risco" icon="⚠️" />
+                <TabButton id="clients" label="Por Cliente" icon="🏢" />
+                <TabButton id="managers" label="Por Gestor" icon="👤" />
             </div>
 
             {/* ============================================================================ */}
@@ -264,63 +335,88 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
             {/* ============================================================================ */}
             {activeTab === 'overview' && (
                 <div className="space-y-6">
-                    {/* KPIs Principais */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <div className="bg-white rounded-lg shadow p-6 border-l-4 border-blue-500">
-                            <p className="text-gray-600 text-sm font-medium">Total de Consultores</p>
-                            <p className="text-3xl font-bold text-gray-900 mt-2">{consultants.length}</p>
-                        </div>
-                        <div className="bg-white rounded-lg shadow p-6 border-l-4 border-green-500">
-                            <p className="text-gray-600 text-sm font-medium">Consultores Ativos</p>
-                            <p className="text-3xl font-bold text-gray-900 mt-2">{kpis.statusDistribution.active}</p>
-                        </div>
-                        <div className="bg-white rounded-lg shadow p-6 border-l-4 border-purple-500">
-                            <p className="text-gray-600 text-sm font-medium">Total de Clientes</p>
-                            <p className="text-3xl font-bold text-gray-900 mt-2">{kpis.totalClients}</p>
-                        </div>
-                        <div className="bg-white rounded-lg shadow p-6 border-l-4 border-cyan-500">
-                            <p className="text-gray-600 text-sm font-medium">Total de Gestores</p>
-                            <p className="text-3xl font-bold text-gray-900 mt-2">{kpis.totalManagers}</p>
-                        </div>
+                    {/* KPIs Simplificados */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <KPICard 
+                            label="Total Consultores" 
+                            value={consultants.length} 
+                            subtitle="Todos os status"
+                            bgColor="bg-white" 
+                            textColor="text-blue-600" 
+                            borderColor="border-blue-500" 
+                        />
+                        <KPICard 
+                            label="Ativos" 
+                            value={kpis.total} 
+                            subtitle={`${Math.round((kpis.total / consultants.length) * 100)}% do total`}
+                            bgColor="bg-white" 
+                            textColor="text-green-600" 
+                            borderColor="border-green-500" 
+                        />
+                        <KPICard 
+                            label="Clientes" 
+                            value={kpis.totalClients} 
+                            subtitle="Clientes ativos"
+                            bgColor="bg-white" 
+                            textColor="text-purple-600" 
+                            borderColor="border-purple-500" 
+                        />
+                        <KPICard 
+                            label="Gestores" 
+                            value={kpis.totalManagers} 
+                            subtitle="Gestores ativos"
+                            bgColor="bg-white" 
+                            textColor="text-orange-600" 
+                            borderColor="border-orange-500" 
+                        />
                     </div>
 
-                    {/* Gráficos Overview */}
+                    {/* Gráficos */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        {/* Distribuição por Status */}
+                        {/* Consultores por Status */}
                         <div className="bg-white rounded-lg shadow p-6">
-                            <h3 className="text-lg font-semibold text-gray-800 mb-4">Consultores por Status</h3>
-                            <ResponsiveContainer width="100%" height={300}>
+                            <h3 className="text-lg font-semibold text-gray-800 mb-2">Consultores por Status</h3>
+                            <p className="text-xs text-gray-500 mb-4">
+                                <strong>Ativo:</strong> Operante no cliente | 
+                                <strong> Perdido:</strong> Rescisão própria ou demissão | 
+                                <strong> Encerrado:</strong> Contrato finalizado
+                            </p>
+                            <ResponsiveContainer width="100%" height={250}>
                                 <PieChart>
-                                    <Pie
-                                        data={statusData}
-                                        cx="50%"
-                                        cy="50%"
-                                        labelLine={false}
+                                    <Pie 
+                                        data={statusData} 
+                                        dataKey="value" 
+                                        nameKey="name" 
+                                        cx="50%" 
+                                        cy="50%" 
+                                        outerRadius={80}
                                         label={({ name, value }) => `${name}: ${value}`}
-                                        outerRadius={100}
-                                        fill="#8884d8"
-                                        dataKey="value"
                                     >
                                         {statusData.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={entry.fill} />
+                                            <Cell key={index} fill={entry.fill} />
                                         ))}
                                     </Pie>
-                                    <Tooltip formatter={(value) => `${value} consultores`} />
+                                    <Tooltip 
+                                        formatter={(value: number, name: string, props: any) => [
+                                            `${value} consultores`,
+                                            `${name} - ${props.payload.description}`
+                                        ]}
+                                    />
                                     <Legend />
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
 
-                        {/* Top Gestores por Volume */}
+                        {/* Top 10 Gestores */}
                         <div className="bg-white rounded-lg shadow p-6">
                             <h3 className="text-lg font-semibold text-gray-800 mb-4">Top 10 Gestores por Consultores</h3>
-                            <ResponsiveContainer width="100%" height={300}>
+                            <ResponsiveContainer width="100%" height={250}>
                                 <BarChart data={consultantsByManager} layout="vertical">
                                     <CartesianGrid strokeDasharray="3 3" />
                                     <XAxis type="number" />
-                                    <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 11 }} />
+                                    <YAxis dataKey="name" type="category" width={120} tick={{ fontSize: 10 }} />
                                     <Tooltip />
-                                    <Bar dataKey="value" fill="#8B5CF6" name="Consultores" />
+                                    <Bar dataKey="value" fill="#6366F1" name="Consultores" />
                                 </BarChart>
                             </ResponsiveContainer>
                         </div>
@@ -329,75 +425,72 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
             )}
 
             {/* ============================================================================ */}
-            {/* RISK ANALYSIS TAB - TOTALMENTE REFORMULADA */}
+            {/* RISK TAB */}
             {/* ============================================================================ */}
             {activeTab === 'risk' && (
                 <div className="space-y-6">
-                    {/* 4 Cards de KPIs de Risco */}
+                    {/* KPIs de Risco */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <KPICard 
-                            label="TOTAL ATIVOS" 
-                            value={kpis.total}
-                            bgColor="bg-blue-50"
-                            textColor="text-blue-700"
-                            borderColor="border-blue-500"
+                            label="Total Ativos" 
+                            value={kpis.total} 
+                            subtitle="Consultores em operação"
+                            bgColor="bg-white" 
+                            textColor="text-blue-600" 
+                            borderColor="border-blue-500" 
                         />
                         <KPICard 
-                            label="RISCO CRÍTICO" 
-                            value={kpis.critical}
+                            label="Risco Crítico" 
+                            value={kpis.critical} 
                             subtitle="Ação Imediata Necessária"
-                            bgColor="bg-red-50"
-                            textColor="text-red-700"
-                            borderColor="border-red-500"
+                            bgColor="bg-white" 
+                            textColor="text-red-600" 
+                            borderColor="border-red-500" 
                         />
                         <KPICard 
-                            label="RISCO MODERADO" 
-                            value={kpis.moderate}
+                            label="Risco Moderado" 
+                            value={kpis.moderate} 
                             subtitle="Atenção Necessária"
-                            bgColor="bg-yellow-50"
-                            textColor="text-yellow-700"
-                            borderColor="border-yellow-500"
+                            bgColor="bg-white" 
+                            textColor="text-yellow-600" 
+                            borderColor="border-yellow-500" 
                         />
                         <KPICard 
-                            label="SEGUROS" 
-                            value={kpis.safe}
+                            label="Seguros" 
+                            value={kpis.safe} 
                             subtitle="Scores 1 e 2"
-                            bgColor="bg-green-50"
-                            textColor="text-green-700"
-                            borderColor="border-green-500"
+                            bgColor="bg-white" 
+                            textColor="text-green-600" 
+                            borderColor="border-green-500" 
                         />
                     </div>
 
-                    {/* Gráficos de Risco - Linha 1 */}
+                    {/* Gráficos - Linha 1 */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        {/* Distribuição de Risco (Carteira Total) - Donut */}
+                        {/* Donut Chart - Distribuição de Risco */}
                         <div className="bg-white rounded-lg shadow p-6">
                             <h3 className="text-lg font-semibold text-gray-800 mb-4">Distribuição de Risco (Carteira Total)</h3>
-                            <ResponsiveContainer width="100%" height={300}>
+                            <ResponsiveContainer width="100%" height={250}>
                                 <PieChart>
-                                    <Pie
-                                        data={riskDistributionDonutData}
-                                        cx="50%"
-                                        cy="50%"
+                                    <Pie 
+                                        data={riskDistributionDonutData} 
+                                        dataKey="value" 
+                                        nameKey="name" 
+                                        cx="50%" 
+                                        cy="50%" 
                                         innerRadius={60}
                                         outerRadius={100}
                                         paddingAngle={3}
-                                        dataKey="value"
+                                        label={({ name, value }) => `${value}`}
                                     >
                                         {riskDistributionDonutData.map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={entry.color} />
+                                            <Cell key={index} fill={entry.color} />
                                         ))}
                                     </Pie>
-                                    <Tooltip formatter={(value) => `${value} consultores`} />
-                                    <Legend 
-                                        verticalAlign="bottom" 
-                                        height={36}
-                                        formatter={(value, entry: any) => (
-                                            <span style={{ color: entry.color }}>
-                                                {value} ({entry.payload.value})
-                                            </span>
-                                        )}
+                                    <Tooltip 
+                                        formatter={(value: number, name: string) => [`${value} consultores`, name]}
                                     />
+                                    <Legend />
                                 </PieChart>
                             </ResponsiveContainer>
                         </div>
@@ -419,33 +512,87 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                         </div>
                     </div>
 
-                    {/* Gráfico de Evolução - Linha 2 */}
-                    <div className="bg-white rounded-lg shadow p-6">
-                        <h3 className="text-lg font-semibold text-blue-600 mb-2">
-                            Evolução Média do Score de Risco (Ano Vigente)
-                        </h3>
-                        <p className="text-sm text-gray-500 mb-4">
-                            Média dos Scores de todos os consultores ativos. (Maior é Melhor)
-                        </p>
-                        <ResponsiveContainer width="100%" height={250}>
-                            <LineChart data={monthlyScoreEvolutionData}>
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                                <YAxis domain={[0, 5]} ticks={[1, 2, 3, 4, 5]} />
-                                <Tooltip 
-                                    formatter={(value: any) => value !== null ? value.toFixed(2) : 'N/A'}
-                                    labelFormatter={(label) => label}
-                                />
-                                <Line 
-                                    type="monotone" 
-                                    dataKey="score" 
-                                    stroke="#6366F1" 
-                                    strokeWidth={3}
-                                    dot={{ fill: '#6366F1', strokeWidth: 2, r: 5 }}
-                                    connectNulls={false}
-                                />
-                            </LineChart>
-                        </ResponsiveContainer>
+                    {/* ✅ GRÁFICO ATUALIZADO: Evolução do Score (Ano Atual vs Ano Anterior) */}
+                    <div className="bg-white rounded-xl shadow-sm p-6">
+                        <div className="mb-4">
+                            <h3 className="text-lg font-bold text-blue-600">
+                                Evolução Média do Score de Risco (Ano Atual vs Ano Anterior)
+                            </h3>
+                            <p className="text-sm text-gray-500">
+                                Média dos scores de todos os consultores ativos. Compare {selectedYear} com {selectedYear - 1}. 
+                                (Escala: 1=Excelente, 5=Crítico)
+                            </p>
+                        </div>
+
+                        <div className="h-72">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={yearComparisonScoreData}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                                    <XAxis 
+                                        dataKey="monthName" 
+                                        tick={{ fontSize: 11, fill: '#6B7280' }}
+                                        axisLine={{ stroke: '#D1D5DB' }}
+                                    />
+                                    <YAxis 
+                                        domain={[0, 5]}
+                                        ticks={[1, 2, 3, 4, 5]}
+                                        tick={{ fontSize: 11, fill: '#6B7280' }}
+                                        axisLine={{ stroke: '#D1D5DB' }}
+                                    />
+                                    <Tooltip 
+                                        formatter={(value: any, name: string) => [
+                                            value !== null ? value.toFixed(2) : 'Sem dados',
+                                            name
+                                        ]}
+                                        contentStyle={{ 
+                                            borderRadius: '8px', 
+                                            border: 'none', 
+                                            boxShadow: '0 4px 12px rgba(0,0,0,0.15)' 
+                                        }}
+                                    />
+                                    <Legend />
+                                    
+                                    {/* Linha Ano Atual */}
+                                    <Line 
+                                        type="monotone" 
+                                        dataKey={`${selectedYear}`}
+                                        name={`${selectedYear} (Atual)`}
+                                        stroke="#3B82F6" 
+                                        strokeWidth={3}
+                                        dot={{ fill: '#3B82F6', strokeWidth: 2, r: 5 }}
+                                        activeDot={{ r: 7 }}
+                                        connectNulls={false}
+                                    />
+                                    
+                                    {/* Linha Ano Anterior */}
+                                    <Line 
+                                        type="monotone" 
+                                        dataKey={`${selectedYear - 1}`}
+                                        name={`${selectedYear - 1} (Anterior)`}
+                                        stroke="#F97316" 
+                                        strokeWidth={2}
+                                        strokeDasharray="5 5"
+                                        dot={{ fill: '#F97316', strokeWidth: 2, r: 4 }}
+                                        connectNulls={false}
+                                    />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+
+                        {/* Legenda de Interpretação */}
+                        <div className="mt-4 flex flex-wrap gap-4 text-xs text-gray-500">
+                            <div className="flex items-center gap-2">
+                                <div className="w-4 h-0.5 bg-blue-500"></div>
+                                <span><strong className="text-blue-600">{selectedYear}</strong>: Ano atual</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <div className="w-4 h-0.5 bg-orange-500 border-dashed"></div>
+                                <span><strong className="text-orange-500">{selectedYear - 1}</strong>: Ano anterior (referência)</span>
+                            </div>
+                            <div className="ml-auto text-gray-400">
+                                💡 Scores mais baixos indicam menor risco (1=Excelente, 5=Crítico)
+                            </div>
+                        </div>
                     </div>
 
                     {/* Tabela de Atenção Prioritária (Score 5) */}
