@@ -162,7 +162,7 @@ const ManageClients: React.FC<ManageClientsProps> = ({
     const [selectedManagerId, setSelectedManagerId] = useState<number | null>(null);
 
     // Form Data
-    const [clientForm, setClientForm] = useState({ razao_social_cliente: '', id_gestao_comercial: '', id_gestao_de_pessoas: '', id_gestor_rs: '' });
+    const [clientForm, setClientForm] = useState({ razao_social_cliente: '', id_gestao_comercial: '', id_gestao_de_pessoas: '', id_gestor_rs: '', vip: false, ativo_cliente: true });
     const [managerForm, setManagerForm] = useState({ nome_gestor_cliente: '', cargo_gestor: '', email_gestor: '', celular_gestor: '' });
     const [coordForm, setCoordForm] = useState({ nome_coordenador_cliente: '', cargo_coordenador_cliente: '', email_coordenador: '', celular_coordenador: '' });
 
@@ -174,11 +174,13 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                 razao_social_cliente: client.razao_social_cliente,
                 id_gestao_comercial: String(client.id_gestao_comercial),
                 id_gestao_de_pessoas: String(client.id_gestao_de_pessoas),
-                id_gestor_rs: String(client.id_gestor_rs)
+                id_gestor_rs: String(client.id_gestor_rs),
+                vip: client.vip || false,
+                ativo_cliente: client.ativo_cliente !== false
             });
         } else {
             setEditingClient(null);
-            setClientForm({ razao_social_cliente: '', id_gestao_comercial: '', id_gestao_de_pessoas: '', id_gestor_rs: '' });
+            setClientForm({ razao_social_cliente: '', id_gestao_comercial: '', id_gestao_de_pessoas: '', id_gestor_rs: '', vip: false, ativo_cliente: true });
         }
         setIsClientModalOpen(true);
     };
@@ -190,7 +192,8 @@ const ManageClients: React.FC<ManageClientsProps> = ({
             id_gestao_comercial: parseInt(clientForm.id_gestao_comercial),
             id_gestao_de_pessoas: parseInt(clientForm.id_gestao_de_pessoas),
             id_gestor_rs: parseInt(clientForm.id_gestor_rs),
-            ativo_cliente: true
+            vip: clientForm.vip,
+            ativo_cliente: clientForm.ativo_cliente
         };
         
         if (editingClient) {
@@ -478,7 +481,7 @@ const ManageClients: React.FC<ManageClientsProps> = ({
             {/* MODAL CLIENT */}
             {isClientModalOpen && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white p-6 rounded-lg w-full max-w-md max-h-96 overflow-y-auto">
+                    <div className="bg-white p-6 rounded-lg w-full max-w-md max-h-[500px] overflow-y-auto">
                         <h3 className="font-bold text-lg mb-4">{editingClient ? 'Editar' : 'Novo'} Cliente</h3>
                         <form onSubmit={handleClientSubmit} className="space-y-3">
                             <div>
@@ -506,6 +509,29 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                                     {users.map(u => <option key={u.id} value={u.id}>{u.nome_usuario}</option>)}
                                 </select>
                             </div>
+                            
+                            {/* Checkboxes VIP e Ativo */}
+                            <div className="flex gap-6 pt-2">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={clientForm.vip} 
+                                        onChange={e => setClientForm({...clientForm, vip: e.target.checked})}
+                                        className="w-4 h-4 text-yellow-500 rounded focus:ring-yellow-500"
+                                    />
+                                    <span className="text-sm font-medium text-gray-700">⭐ Cliente VIP</span>
+                                </label>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={clientForm.ativo_cliente} 
+                                        onChange={e => setClientForm({...clientForm, ativo_cliente: e.target.checked})}
+                                        className="w-4 h-4 text-green-600 rounded focus:ring-green-500"
+                                    />
+                                    <span className="text-sm font-medium text-gray-700">✓ Cliente Ativo</span>
+                                </label>
+                            </div>
+
                             <div className="flex justify-end gap-2 mt-4">
                                 <button type="button" onClick={() => setIsClientModalOpen(false)} className="bg-gray-300 px-4 py-2 rounded">Cancelar</button>
                                 <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded">Salvar</button>
