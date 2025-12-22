@@ -12,7 +12,7 @@ interface ManageClientsProps {
     coordenadoresCliente: CoordenadorCliente[];
     consultants: Consultant[];
     addClient: (c: any) => void;
-    updateClient: (c: Client) => void;
+    updateClient: (id: number, updates: Partial<Client>) => void;
     addUsuarioCliente: (u: any) => void;
     updateUsuarioCliente: (u: UsuarioCliente) => void;
     addCoordenadorCliente: (c: any) => void;
@@ -198,11 +198,8 @@ const ManageClients: React.FC<ManageClientsProps> = ({
         };
         
         if (clientForm.id > 0) {
-            // PARTIAL UPDATE: Envia objeto com ID + dados atualizados
-            updateClient({ 
-                id: clientForm.id,
-                ...data 
-            } as Client);
+            // UPDATE: Passa ID como primeiro parâmetro e dados como segundo
+            updateClient(clientForm.id, data);
         } else {
             // CREATE: Envia dados completos
             addClient(data);
