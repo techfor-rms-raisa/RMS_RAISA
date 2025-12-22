@@ -162,7 +162,7 @@ const ManageClients: React.FC<ManageClientsProps> = ({
     const [selectedManagerId, setSelectedManagerId] = useState<number | null>(null);
 
     // Form Data
-    const [clientForm, setClientForm] = useState({ razao_social_cliente: '', id_gestao_comercial: '', id_gestao_de_pessoas: '', id_gestor_rs: '', vip: false, ativo_cliente: true });
+    const [clientForm, setClientForm] = useState({ id: 0, razao_social_cliente: '', id_gestao_comercial: '', id_gestao_de_pessoas: '', id_gestor_rs: '', vip: false, ativo_cliente: true });
     const [managerForm, setManagerForm] = useState({ nome_gestor_cliente: '', cargo_gestor: '', email_gestor: '', celular_gestor: '' });
     const [coordForm, setCoordForm] = useState({ nome_coordenador_cliente: '', cargo_coordenador_cliente: '', email_coordenador: '', celular_coordenador: '' });
 
@@ -171,6 +171,7 @@ const ManageClients: React.FC<ManageClientsProps> = ({
         if (client) {
             setEditingClient(client);
             setClientForm({
+                id: client.id,
                 razao_social_cliente: client.razao_social_cliente,
                 id_gestao_comercial: String(client.id_gestao_comercial),
                 id_gestao_de_pessoas: String(client.id_gestao_de_pessoas),
@@ -180,7 +181,7 @@ const ManageClients: React.FC<ManageClientsProps> = ({
             });
         } else {
             setEditingClient(null);
-            setClientForm({ razao_social_cliente: '', id_gestao_comercial: '', id_gestao_de_pessoas: '', id_gestor_rs: '', vip: false, ativo_cliente: true });
+            setClientForm({ id: 0, razao_social_cliente: '', id_gestao_comercial: '', id_gestao_de_pessoas: '', id_gestor_rs: '', vip: false, ativo_cliente: true });
         }
         setIsClientModalOpen(true);
     };
@@ -196,9 +197,12 @@ const ManageClients: React.FC<ManageClientsProps> = ({
             ativo_cliente: clientForm.ativo_cliente
         };
         
-        if (editingClient) {
-            // PARTIAL UPDATE: Mescla dados antigos com novos (apenas campos editáveis)
-            updateClient({ ...editingClient, ...data });
+        if (clientForm.id > 0) {
+            // PARTIAL UPDATE: Envia objeto com ID + dados atualizados
+            updateClient({ 
+                id: clientForm.id,
+                ...data 
+            } as Client);
         } else {
             // CREATE: Envia dados completos
             addClient(data);
