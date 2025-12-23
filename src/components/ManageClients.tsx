@@ -393,7 +393,7 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                                     + Novo Gestor
                                 </button>
 
-                                {usuariosCliente.filter(u => u.id_cliente === client.id).map(manager => (
+                                {usuariosCliente.filter(u => u.id_cliente === client.id && u.ativo !== false).map(manager => (
                                     <div key={manager.id} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:shadow-md transition">
                                         {/* Cabeçalho do Gestor */}
                                         <div className="flex justify-between items-start mb-3">
@@ -451,7 +451,7 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                                                 </button>
                                             </div>
 
-                                            {coordenadoresCliente.filter(c => c.id_gestor_cliente === manager.id).map(coord => (
+                                            {coordenadoresCliente.filter(c => c.id_gestor_cliente === manager.id && c.ativo !== false).map(coord => (
                                                 <div key={coord.id} className="bg-purple-50 border border-purple-200 rounded-lg p-3">
                                                     <div className="flex justify-between items-start mb-2">
                                                         <div className="flex-1">
