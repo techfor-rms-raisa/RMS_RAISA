@@ -3,7 +3,6 @@ import { Client, User, UsuarioCliente, CoordenadorCliente, Consultant } from '@/
 import { Mail, Phone, Briefcase } from 'lucide-react';
 import { GestaoPessoasIcon } from './icons/GestaoPessoasIcon';
 import { FocalRSIcon } from './icons/FocalRSIcon';
-import InclusionImport from './InclusionImport';
 
 interface ManageClientsProps {
     clients: Client[];
@@ -15,8 +14,10 @@ interface ManageClientsProps {
     updateClient: (id: number, updates: Partial<Client>) => void;
     addUsuarioCliente: (u: any) => void;
     updateUsuarioCliente: (u: UsuarioCliente) => void;
+    inactivateGestor?: (id: number) => void; // ✅ NOVO: Para excluir/inativar gestor
     addCoordenadorCliente: (c: any) => void;
     updateCoordenadorCliente: (c: CoordenadorCliente) => void;
+    inactivateCoordenador?: (id: number) => void; // ✅ NOVO: Para excluir/inativar coordenador
     currentUser: User;
 }
 
@@ -144,13 +145,16 @@ const updateCoordinatorPayload = (
 
 const ManageClients: React.FC<ManageClientsProps> = ({ 
     clients, users, usuariosCliente, coordenadoresCliente, consultants,
-    addClient, updateClient, addUsuarioCliente, updateUsuarioCliente,
-    addCoordenadorCliente, updateCoordenadorCliente, currentUser
+    addClient, updateClient, addUsuarioCliente, updateUsuarioCliente, inactivateGestor,
+    addCoordenadorCliente, updateCoordenadorCliente, inactivateCoordenador, currentUser
 }) => {
     // States for Modals
     const [isClientModalOpen, setIsClientModalOpen] = useState(false);
     const [isManagerModalOpen, setIsManagerModalOpen] = useState(false);
     const [isCoordModalOpen, setIsCoordModalOpen] = useState(false);
+
+    // ✅ NOVO: Estado para filtro de clientes
+    const [clientStatusFilter, setClientStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
 
     // States for Editing
     const [editingClient, setEditingClient] = useState<Client | null>(null);
@@ -299,12 +303,34 @@ const ManageClients: React.FC<ManageClientsProps> = ({
         <div className="bg-white p-6 rounded-lg shadow-md">
             <div className="flex justify-between items-center mb-6">
                 <h2 className="text-2xl font-bold text-[#4D5253]">Gestão de Clientes</h2>
-                <button onClick={() => openClientModal()} className="bg-[#533738] text-white px-4 py-2 rounded">+ Novo Cliente</button>
+                
+                {/* ✅ NOVO: Filtro e botão lado a lado */}
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                        <label className="text-sm font-medium text-gray-600">Filtrar:</label>
+                        <select 
+                            value={clientStatusFilter}
+                            onChange={(e) => setClientStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                        >
+                            <option value="all">Todos</option>
+                            <option value="active">Ativos</option>
+                            <option value="inactive">Inativos</option>
+                        </select>
+                    </div>
+                    <button onClick={() => openClientModal()} className="bg-[#533738] text-white px-4 py-2 rounded">+ Novo Cliente</button>
+                </div>
             </div>
 
             {/* CLIENTS LIST */}
             <div className="space-y-6">
-                {clients.map(client => {
+                {clients
+                    .filter(client => {
+                        if (clientStatusFilter === 'active') return client.ativo_cliente === true;
+                        if (clientStatusFilter === 'inactive') return client.ativo_cliente === false;
+                        return true; // 'all'
+                    })
+                    .map(client => {
                     const commercialManager = users.find(u => u.id === client.id_gestao_comercial);
                     const peopleManager = users.find(u => u.id === client.id_gestao_de_pessoas);
                     const rsAnalyst = users.find(u => u.id === client.id_gestor_rs);
@@ -564,9 +590,32 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Celular</label>
                                 <input className="w-full border p-2 rounded" placeholder="DDD-99999-9999" value={managerForm.celular_gestor} onChange={e => setManagerForm({...managerForm, celular_gestor: e.target.value})} />
                             </div>
-                            <div className="flex justify-end gap-2 mt-4">
-                                <button type="button" onClick={() => setIsManagerModalOpen(false)} className="bg-gray-300 px-4 py-2 rounded">Cancelar</button>
-                                <button type="submit" className="bg-orange-600 text-white px-4 py-2 rounded">Salvar</button>
+                            
+                            {/* ✅ NOVO: Botões com opção de Excluir */}
+                            <div className="flex justify-between items-center mt-4">
+                                {/* Botão Excluir (apenas ao editar) */}
+                                <div>
+                                    {editingManager && inactivateGestor && (
+                                        <button 
+                                            type="button" 
+                                            onClick={() => {
+                                                if (window.confirm(`Tem certeza que deseja excluir o gestor "${editingManager.nome_gestor_cliente}"?\n\nEsta ação irá inativar o gestor.`)) {
+                                                    inactivateGestor(editingManager.id);
+                                                    setIsManagerModalOpen(false);
+                                                }
+                                            }} 
+                                            className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition"
+                                        >
+                                            🗑️ Excluir
+                                        </button>
+                                    )}
+                                </div>
+                                
+                                {/* Botões Cancelar e Salvar */}
+                                <div className="flex gap-2">
+                                    <button type="button" onClick={() => setIsManagerModalOpen(false)} className="bg-gray-300 px-4 py-2 rounded">Cancelar</button>
+                                    <button type="submit" className="bg-orange-600 text-white px-4 py-2 rounded">Salvar</button>
+                                </div>
                             </div>
                         </form>
                     </div>
@@ -595,16 +644,37 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Celular</label>
                                 <input className="w-full border p-2 rounded" placeholder="DDD-99999-9999" value={coordForm.celular_coordenador} onChange={e => setCoordForm({...coordForm, celular_coordenador: e.target.value})} />
                             </div>
-                            <div className="flex justify-end gap-2 mt-4">
-                                <button type="button" onClick={() => setIsCoordModalOpen(false)} className="bg-gray-300 px-4 py-2 rounded">Cancelar</button>
-                                <button type="submit" className="bg-purple-600 text-white px-4 py-2 rounded">Salvar</button>
+                            
+                            {/* ✅ NOVO: Botões com opção de Excluir */}
+                            <div className="flex justify-between items-center mt-4">
+                                {/* Botão Excluir (apenas ao editar) */}
+                                <div>
+                                    {editingCoord && inactivateCoordenador && (
+                                        <button 
+                                            type="button" 
+                                            onClick={() => {
+                                                if (window.confirm(`Tem certeza que deseja excluir o coordenador "${editingCoord.nome_coordenador_cliente}"?\n\nEsta ação irá inativar o coordenador.`)) {
+                                                    inactivateCoordenador(editingCoord.id);
+                                                    setIsCoordModalOpen(false);
+                                                }
+                                            }} 
+                                            className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition"
+                                        >
+                                            🗑️ Excluir
+                                        </button>
+                                    )}
+                                </div>
+                                
+                                {/* Botões Cancelar e Salvar */}
+                                <div className="flex gap-2">
+                                    <button type="button" onClick={() => setIsCoordModalOpen(false)} className="bg-gray-300 px-4 py-2 rounded">Cancelar</button>
+                                    <button type="submit" className="bg-purple-600 text-white px-4 py-2 rounded">Salvar</button>
+                                </div>
                             </div>
                         </form>
                     </div>
                 </div>
             )}
-
-            <InclusionImport />
         </div>
     );
 };

@@ -68,8 +68,8 @@ const App: React.FC = () => {
     addClient, updateClient, batchAddClients,
     addConsultant, updateConsultant, batchAddConsultants,
     addUser, updateUser,
-    addUsuarioCliente, updateUsuarioCliente, batchAddManagers,
-    addCoordenadorCliente, updateCoordenadorCliente, batchAddCoordinators,
+    addUsuarioCliente, updateUsuarioCliente, batchAddManagers, inactivateGestor,
+    addCoordenadorCliente, updateCoordenadorCliente, batchAddCoordinators, inactivateCoordenador,
     migrateYearlyData,
     addTemplate, updateTemplate, deleteTemplate,
     addCampaign, updateCampaign,
@@ -167,7 +167,7 @@ const App: React.FC = () => {
       case 'users':
         return <ManageUsers users={users} addUser={addUser} updateUser={updateUser} currentUser={currentUser!} migrateYearlyData={migrateYearlyData} />;
       case 'clients':
-        return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={updateClient} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={updateUsuarioCliente} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={updateCoordenadorCliente} currentUser={currentUser!} />;
+        return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={updateClient} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={updateUsuarioCliente} inactivateGestor={inactivateGestor} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={updateCoordenadorCliente} inactivateCoordenador={inactivateCoordenador} currentUser={currentUser!} />;
       case 'consultants':
         return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} batchAddConsultants={batchAddConsultants} updateConsultant={updateConsultant} currentUser={currentUser!} onNavigateToAtividades={handleNavigateToAtividades} />;
       case 'quarantine':
