@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { Client, UsuarioCliente, CoordenadorCliente } from '@/types';
@@ -85,8 +84,13 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let startDateStr = '';
             let hourlyRateStr = '';
             let celularStr = '';
-            let cpfStr = ''; // ✅ NOVO: CPF do consultor
-            let valorPagamentoStr = ''; // ✅ NOVO: Valor de pagamento do consultor
+            let cpfStr = '';
+            let valorPagamentoStr = '';
+            let emailStr = ''; // ✅ NOVO: Email do consultor
+            let cnpjStr = ''; // ✅ NOVO: CNPJ (para PJ)
+            let empresaStr = ''; // ✅ NOVO: Empresa (para PJ)
+            let dtAniversarioStr = ''; // ✅ NOVO: Data de aniversário
+            let especialidadeStr = ''; // ✅ NOVO: Especialidade
 
             for (let i = 0; i < lines.length; i++) {
                 const cleanLine = lines[i];
@@ -101,16 +105,51 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 if (cleanLine.match(/^DATA DE INÍCIO:/i)) {
                     startDateStr = cleanLine.replace(/^DATA DE INÍCIO:/i, '').trim();
                 }
-                if (cleanLine.match(/TELEFONE CELULAR/i)) {
-                    const match = cleanLine.match(/TELEFONE CELULAR\s*:?\s*([\d\s\-\(\)]+)/i);
+                
+                // ✅ NOVO: Extrair Email
+                if (cleanLine.match(/^E-?MAIL:/i) || cleanLine.match(/^EMAIL:/i)) {
+                    emailStr = cleanLine.replace(/^E-?MAIL:/i, '').replace(/^EMAIL:/i, '').trim();
+                }
+                
+                // Telefone Celular (melhorado)
+                if (cleanLine.match(/TELEFONE CELULAR|CELULAR/i)) {
+                    const match = cleanLine.match(/(?:TELEFONE CELULAR|CELULAR)\s*:?\s*([\d\s\-\(\)]+)/i);
                     if (match) {
                         celularStr = match[1].trim().replace(/\s+/g, '');
                     }
+                    // Strategy 2: Look at next line if current doesn't have number
+                    if (!celularStr && i + 1 < lines.length) {
+                        const nextLine = lines[i+1];
+                        const phoneMatch = nextLine.match(/^[\d\s\-\(\)]+$/);
+                        if (phoneMatch) {
+                            celularStr = phoneMatch[0].trim().replace(/\s+/g, '');
+                        }
+                    }
                 }
                 
-                // ✅ NOVO: Extrair CPF do bloco "DADOS DO PROFISSIONAL"
+                // CPF do Profissional
                 if (cleanLine.match(/^CPF:/i)) {
                     cpfStr = cleanLine.replace(/^CPF:/i, '').trim();
+                }
+                
+                // ✅ NOVO: CNPJ (para PJ)
+                if (cleanLine.match(/^CNPJ:/i)) {
+                    cnpjStr = cleanLine.replace(/^CNPJ:/i, '').trim();
+                }
+                
+                // ✅ NOVO: Empresa/Razão Social PJ
+                if (cleanLine.match(/^EMPRESA:|^RAZÃO SOCIAL:/i)) {
+                    empresaStr = cleanLine.replace(/^EMPRESA:|^RAZÃO SOCIAL:/i, '').trim();
+                }
+                
+                // ✅ NOVO: Data de Aniversário
+                if (cleanLine.match(/^DATA DE NASCIMENTO:|^ANIVERSÁRIO:|^DT\. NASCIMENTO:/i)) {
+                    dtAniversarioStr = cleanLine.replace(/^DATA DE NASCIMENTO:|^ANIVERSÁRIO:|^DT\. NASCIMENTO:/i, '').trim();
+                }
+                
+                // ✅ NOVO: Especialidade
+                if (cleanLine.match(/^ESPECIALIDADE:|^ÁREA:/i)) {
+                    especialidadeStr = cleanLine.replace(/^ESPECIALIDADE:|^ÁREA:/i, '').trim();
                 }
                 
                 // LOGIC: Find "FATURAMENTO MENSAL" and capture value (either same line or next line)
@@ -131,9 +170,9 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                      }
                 }
                 
-                // ✅ NOVO: Extrair Valor do bloco "DADOS DE PAGAMENTO"
+                // Valor do bloco "DADOS DE PAGAMENTO"
                 // Procurar por "VALOR" ou "SALÁRIO" ou "PAGAMENTO" seguido de valor
-                if (cleanLine.match(/VALOR.*PAGAMENTO|SAL[ÁA]RIO|^VALOR:/i)) {
+                if (cleanLine.match(/VALOR.*PAGAMENTO|SALÁRIO|^VALOR:/i)) {
                     // Strategy 1: Look on the same line
                     let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
                     
@@ -154,6 +193,14 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                  const match = text.match(/NOME:\s*(?!SOLICITANTE)(.*)/i);
                  if (match) consultantName = match[1].trim();
             }
+            
+            // ✅ NOVO: Fallback para email (busca no texto completo)
+            if (!emailStr) {
+                const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                if (emailMatch) {
+                    emailStr = emailMatch[0];
+                }
+            }
 
             // Parse Values
             // 1. Date (dd/mm/yyyy -> yyyy-mm-dd)
@@ -161,7 +208,16 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             if (startDateStr) {
                 const parts = startDateStr.split('/');
                 if (parts.length === 3) {
-                    startDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+                    startDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                }
+            }
+            
+            // ✅ NOVO: Parse Data de Aniversário
+            let dtAniversario: string | null = null;
+            if (dtAniversarioStr) {
+                const parts = dtAniversarioStr.split('/');
+                if (parts.length === 3) {
+                    dtAniversario = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
                 }
             }
 
@@ -178,7 +234,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ NOVO: 3. Parse Valor Pagamento (valor mensal que o consultor recebe)
+            // 3. Parse Valor Pagamento (valor mensal que o consultor recebe)
             let valorPagamento = 0;
             if (valorPagamentoStr) {
                 // Normalize currency: remove dots (thousands), replace comma with dot
@@ -214,45 +270,101 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                  
                  if (looseMgr) {
                      targetManagerId = looseMgr.id;
+                     console.warn(`⚠️ Gestor encontrado por busca aproximada: "${looseMgr.nome_gestor_cliente}" para "${cleanManagerName}"`);
                  } else {
-                     // Fallback to first manager of client if exists (with warning logic, silent here but functional)
-                     const clientManagers = managers.filter(m => m.id_cliente === client.id);
+                     // Fallback to first manager of client if exists (with warning)
+                     const clientManagers = managers.filter(m => m.id_cliente === client.id && m.ativo);
                      if (clientManagers.length > 0) {
                          targetManagerId = clientManagers[0].id;
+                         console.warn(`⚠️ Gestor não encontrado. Usando primeiro gestor ativo do cliente: "${clientManagers[0].nome_gestor_cliente}"`);
                      } else {
-                         throw new Error(`Nenhum gestor encontrado para o cliente ${clientName}.`);
+                         throw new Error(`Nenhum gestor ativo encontrado para o cliente "${clientName}".`);
                      }
                  }
             }
 
             // Coordinator Match
-            let targetCoordId = null;
+            let targetCoordId: number | null = null;
             if (coordName && targetManagerId) {
                  const cleanCoordName = coordName.replace(/_/g, '').trim();
                  const coord = coordinators.find(c => c.id_gestor_cliente === targetManagerId && normalize(c.nome_coordenador_cliente) === normalize(cleanCoordName));
-                 if (coord) targetCoordId = coord.id;
+                 if (coord) {
+                     targetCoordId = coord.id;
+                 } else {
+                     // ✅ NOVO: Busca aproximada para coordenador
+                     const firstPartCoord = cleanCoordName.split(' ')[0];
+                     const looseCoord = coordinators.find(c => c.id_gestor_cliente === targetManagerId && normalize(c.nome_coordenador_cliente).includes(normalize(firstPartCoord)));
+                     if (looseCoord) {
+                         targetCoordId = looseCoord.id;
+                         console.warn(`⚠️ Coordenador encontrado por busca aproximada: "${looseCoord.nome_coordenador_cliente}" para "${cleanCoordName}"`);
+                     }
+                 }
             }
+            
+            // ✅ NOVO: Calcular ano_vigencia baseado na data de inclusão
+            const startDateObj = new Date(startDate);
+            const anoVigencia = startDateObj.getFullYear();
 
             // --- 3. CONSTRUCT DATA ---
             const newConsultantData = {
-                ano_vigencia: new Date().getFullYear(),
+                // Campos obrigatórios
+                ano_vigencia: anoVigencia,
                 nome_consultores: consultantName,
                 cargo_consultores: role || 'Consultor',
                 data_inclusao_consultores: startDate,
-                celular: celularStr || '', // Celular extraído do PDF
-                cpf: cpfStr || '', // ✅ NOVO: CPF extraído do PDF
-                status: 'Ativo',
+                status: 'Ativo' as const,
+                
+                // ✅ NOVO: Flag ativo separado do status
+                ativo_consultor: true,
+                
+                // Dados de contato
+                celular: celularStr || '',
+                email_consultor: emailStr || '', // ✅ NOVO
+                cpf: cpfStr || '',
+                
+                // ✅ NOVO: Dados PJ
+                cnpj_consultor: cnpjStr || null,
+                empresa_consultor: empresaStr || null,
+                
+                // ✅ NOVO: Dados adicionais
+                dt_aniversario: dtAniversario,
+                especialidade: especialidadeStr || null,
+                
+                // Relacionamentos
                 gestor_imediato_id: targetManagerId,
                 coordenador_id: targetCoordId,
-                valor_faturamento: billingValue || 0, // Saved as Calculated Monthly Value
-                valor_pagamento: valorPagamento || 0, // ✅ NOVO: Valor de pagamento extraído do PDF
-                // Defaults
-                analista_rs_id: client.id_gestor_rs,
-                id_gestao_de_pessoas: client.id_gestao_de_pessoas,
+                
+                // Valores financeiros
+                valor_faturamento: billingValue || 0, // Valor mensal calculado (hora * 168)
+                valor_pagamento: valorPagamento || 0, // Valor que o consultor recebe
+                
+                // Herdar do Cliente
+                analista_rs_id: client.id_gestor_rs || null,
+                id_gestao_de_pessoas: client.id_gestao_de_pessoas || null,
             };
 
+            // Log para debug
+            console.log('📋 Dados extraídos do PDF:', {
+                cliente: clientName,
+                consultor: consultantName,
+                gestor: managerName,
+                coordenador: coordName,
+                email: emailStr,
+                celular: celularStr,
+                cpf: cpfStr,
+                cnpj: cnpjStr,
+                empresa: empresaStr,
+                dataInicio: startDate,
+                valorHora: hourlyRateStr,
+                valorFaturamento: billingValue,
+                valorPagamento: valorPagamento,
+                anoVigencia: anoVigencia
+            });
+            
+            console.log('💾 Dados para inserção:', newConsultantData);
+
             onImport(newConsultantData);
-            setMessage({ text: `Ficha de Inclusão "${consultantName}" concluída com sucesso!`, type: 'success' });
+            setMessage({ text: `Ficha de Inclusão "${consultantName}" processada com sucesso!`, type: 'success' });
 
         } catch (error) {
             console.error(error);

@@ -89,7 +89,7 @@ export interface ConsultantReport {
   id: string;
   month: number;
   year: number;
-  riskScore: import('./models').RiskScore;
+  riskScore: import('./types_models').RiskScore;
   summary: string;
   negativePattern?: string;
   predictiveAlert?: string;
@@ -115,35 +115,44 @@ export interface Consultant {
   data_inclusao_consultores: string;
   data_ultima_alteracao?: string; 
   data_saida?: string;
-  status: import('./models').ConsultantStatus; 
-  motivo_desligamento?: import('./models').TerminationReason;
+  status: import('./types_models').ConsultantStatus; 
+  motivo_desligamento?: import('./types_models').TerminationReason;
   valor_faturamento?: number;
   valor_pagamento?: number;
   gestor_imediato_id: number; 
   coordenador_id: number | null; 
   
-  parecer_1_consultor: import('./models').RiskScore | null;
-  parecer_2_consultor: import('./models').RiskScore | null;
-  parecer_3_consultor: import('./models').RiskScore | null;
-  parecer_4_consultor: import('./models').RiskScore | null;
-  parecer_5_consultor: import('./models').RiskScore | null;
-  parecer_6_consultor: import('./models').RiskScore | null;
-  parecer_7_consultor: import('./models').RiskScore | null;
-  parecer_8_consultor: import('./models').RiskScore | null;
-  parecer_9_consultor: import('./models').RiskScore | null;
-  parecer_10_consultor: import('./models').RiskScore | null;
-  parecer_11_consultor: import('./models').RiskScore | null;
-  parecer_12_consultor: import('./models').RiskScore | null;
+  // ✅ NOVOS CAMPOS (baseados na planilha Colunas_Consultants.csv)
+  ativo_consultor?: boolean; // Flag ativo (separado do status)
+  especialidade?: string | null;
+  dt_aniversario?: string | null; // Formato: YYYY-MM-DD
+  cnpj_consultor?: string | null; // Para consultores PJ
+  empresa_consultor?: string | null; // Razão social do PJ
   
-  parecer_final_consultor: import('./models').RiskScore | null;
+  // Pareceres mensais
+  parecer_1_consultor: import('./types_models').RiskScore | null;
+  parecer_2_consultor: import('./types_models').RiskScore | null;
+  parecer_3_consultor: import('./types_models').RiskScore | null;
+  parecer_4_consultor: import('./types_models').RiskScore | null;
+  parecer_5_consultor: import('./types_models').RiskScore | null;
+  parecer_6_consultor: import('./types_models').RiskScore | null;
+  parecer_7_consultor: import('./types_models').RiskScore | null;
+  parecer_8_consultor: import('./types_models').RiskScore | null;
+  parecer_9_consultor: import('./types_models').RiskScore | null;
+  parecer_10_consultor: import('./types_models').RiskScore | null;
+  parecer_11_consultor: import('./types_models').RiskScore | null;
+  parecer_12_consultor: import('./types_models').RiskScore | null;
+  
+  parecer_final_consultor: import('./types_models').RiskScore | null;
   reports: ConsultantReport[];
   consultant_reports?: ConsultantReport[];
   recommendations?: Recommendation[];
 
-  analista_rs_id: number | null;
-  id_gestao_de_pessoas: number | null;
+  // Relacionamentos com app.users
+  analista_rs_id: number | null; // FK -> app.users (Analista R&S)
+  id_gestao_de_pessoas: number | null; // FK -> app.users (Gestão de Pessoas)
   
-  // Vínculos com candidatos
+  // Vínculos com candidatos (RAISA)
   pessoa_id?: number | null;
   candidatura_id?: number | null;
   curriculo_url?: string | null;
