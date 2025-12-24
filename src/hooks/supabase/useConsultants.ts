@@ -2,6 +2,8 @@
  * useConsultants Hook - Gerenciamento de Consultores
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui lazy loading de relatórios
+ * 
+ * ✅ ATUALIZADO: Suporte completo a todos os campos da tabela consultants
  */
 
 import { useState } from 'react';
@@ -40,12 +42,19 @@ export const useConsultants = () => {
         data_saida: consultant.data_saida,
         status: consultant.status,
         motivo_desligamento: consultant.motivo_desligamento,
+        ativo_consultor: consultant.ativo_consultor, // ✅ NOVO
         valor_faturamento: consultant.valor_faturamento,
         valor_pagamento: consultant.valor_pagamento,
         gestor_imediato_id: consultant.gestor_imediato_id,
         coordenador_id: consultant.coordenador_id,
         analista_rs_id: consultant.analista_rs_id,
         id_gestao_de_pessoas: consultant.id_gestao_de_pessoas,
+        // ✅ NOVOS CAMPOS
+        especialidade: consultant.especialidade,
+        dt_aniversario: consultant.dt_aniversario,
+        cnpj_consultor: consultant.cnpj_consultor,
+        empresa_consultor: consultant.empresa_consultor,
+        // Pareceres
         parecer_1_consultor: consultant.parecer_1_consultor,
         parecer_2_consultor: consultant.parecer_2_consultor,
         parecer_3_consultor: consultant.parecer_3_consultor,
@@ -77,6 +86,7 @@ export const useConsultants = () => {
 
   /**
    * Adiciona um novo consultor com recuperação automática de CV
+   * ✅ ATUALIZADO: Suporte a todos os campos da tabela
    */
   const addConsultant = async (newConsultant: Omit<Consultant, 'id'>) => {
     try {
@@ -132,18 +142,40 @@ export const useConsultants = () => {
       const { data, error } = await supabase
         .from('consultants')
         .insert([{
+          // Campos obrigatórios
           nome_consultores: newConsultant.nome_consultores,
-          email_consultor: newConsultant.email_consultor,
-          cpf: newConsultant.cpf,
           cargo_consultores: newConsultant.cargo_consultores,
           data_inclusao_consultores: newConsultant.data_inclusao_consultores,
           status: newConsultant.status || 'Ativo',
-          valor_faturamento: newConsultant.valor_faturamento,
-          valor_pagamento: newConsultant.valor_pagamento,
+          ano_vigencia: newConsultant.ano_vigencia || new Date().getFullYear(),
+          
+          // ✅ NOVO: Flag ativo separado do status
+          ativo_consultor: newConsultant.ativo_consultor ?? true,
+          
+          // Dados de contato
+          email_consultor: newConsultant.email_consultor || null,
+          celular: newConsultant.celular || null,
+          cpf: newConsultant.cpf || null,
+          
+          // ✅ NOVO: Dados PJ
+          cnpj_consultor: (newConsultant as any).cnpj_consultor || null,
+          empresa_consultor: (newConsultant as any).empresa_consultor || null,
+          
+          // ✅ NOVO: Dados adicionais
+          dt_aniversario: (newConsultant as any).dt_aniversario || null,
+          especialidade: (newConsultant as any).especialidade || null,
+          
+          // Valores financeiros
+          valor_faturamento: newConsultant.valor_faturamento || null,
+          valor_pagamento: newConsultant.valor_pagamento || null,
+          
+          // Relacionamentos
           gestor_imediato_id: newConsultant.gestor_imediato_id,
-          coordenador_id: newConsultant.coordenador_id,
+          coordenador_id: newConsultant.coordenador_id || null,
           analista_rs_id: cvData.analista_rs_id || newConsultant.analista_rs_id || null,
-          id_gestao_de_pessoas: newConsultant.id_gestao_de_pessoas,
+          id_gestao_de_pessoas: newConsultant.id_gestao_de_pessoas || null,
+          
+          // Vínculo com candidato (recuperação automática de CV)
           pessoa_id: cvData.pessoa_id || null,
           candidatura_id: cvData.candidatura_id || null,
           curriculo_url: cvData.curriculo_url || null,
@@ -173,6 +205,7 @@ export const useConsultants = () => {
   /**
    * Atualiza um consultor existente
    * ✅ CORRIGIDO: Aceita tanto (id, updates) quanto (consultant)
+   * ✅ ATUALIZADO: Suporte a todos os campos da tabela
    */
   const updateConsultant = async (consultantOrId: number | Consultant, updates?: Partial<Consultant>) => {
     try {
@@ -195,6 +228,7 @@ export const useConsultants = () => {
       const { data, error } = await supabase
         .from('consultants')
         .update({
+          // Campos básicos
           nome_consultores: updateData.nome_consultores,
           email_consultor: updateData.email_consultor,
           celular: updateData.celular,
@@ -204,12 +238,25 @@ export const useConsultants = () => {
           status: updateData.status,
           data_saida: updateData.data_saida,
           motivo_desligamento: updateData.motivo_desligamento,
+          
+          // ✅ NOVO: Flag ativo
+          ativo_consultor: (updateData as any).ativo_consultor,
+          
+          // Valores financeiros
           valor_faturamento: updateData.valor_faturamento,
           valor_pagamento: updateData.valor_pagamento,
+          
+          // Relacionamentos
           gestor_imediato_id: updateData.gestor_imediato_id,
           coordenador_id: updateData.coordenador_id,
           analista_rs_id: updateData.analista_rs_id,
-          id_gestao_de_pessoas: updateData.id_gestao_de_pessoas
+          id_gestao_de_pessoas: updateData.id_gestao_de_pessoas,
+          
+          // ✅ NOVOS CAMPOS
+          especialidade: (updateData as any).especialidade,
+          dt_aniversario: (updateData as any).dt_aniversario,
+          cnpj_consultor: (updateData as any).cnpj_consultor,
+          empresa_consultor: (updateData as any).empresa_consultor
         })
         .eq('id', id)
         .select()
@@ -219,7 +266,7 @@ export const useConsultants = () => {
 
       const updatedConsultant: Consultant = {
         ...data,
-        reports: []
+        reports: consultants.find(c => c.id === id)?.reports || []
       };
 
       setConsultants(prev => prev.map(c => c.id === id ? updatedConsultant : c));
@@ -234,7 +281,8 @@ export const useConsultants = () => {
   };
 
   /**
-   * Adiciona múltiplos consultores em lote com recuperação de CVs
+   * Adiciona múltiplos consultores em lote
+   * ✅ ATUALIZADO: Suporte a todos os campos da tabela
    */
   const batchAddConsultants = async (newConsultants: Omit<Consultant, 'id'>[]) => {
     try {
@@ -269,17 +317,38 @@ export const useConsultants = () => {
           if (!pessoa && c.email_consultor) pessoa = cvMap.get(`email:${c.email_consultor}`);
           
           return {
+            // Campos obrigatórios
             nome_consultores: c.nome_consultores,
-            email_consultor: c.email_consultor,
-            cpf: c.cpf,
             cargo_consultores: c.cargo_consultores,
             data_inclusao_consultores: c.data_inclusao_consultores,
             status: c.status || 'Ativo',
-            valor_faturamento: c.valor_faturamento,
+            ano_vigencia: c.ano_vigencia || new Date().getFullYear(),
+            
+            // ✅ NOVO: Flag ativo
+            ativo_consultor: (c as any).ativo_consultor ?? true,
+            
+            // Dados de contato
+            email_consultor: c.email_consultor || null,
+            celular: c.celular || null,
+            cpf: c.cpf || null,
+            
+            // ✅ NOVOS CAMPOS
+            cnpj_consultor: (c as any).cnpj_consultor || null,
+            empresa_consultor: (c as any).empresa_consultor || null,
+            dt_aniversario: (c as any).dt_aniversario || null,
+            especialidade: (c as any).especialidade || null,
+            
+            // Valores financeiros
+            valor_faturamento: c.valor_faturamento || null,
+            valor_pagamento: c.valor_pagamento || null,
+            
+            // Relacionamentos
             gestor_imediato_id: c.gestor_imediato_id,
-            coordenador_id: c.coordenador_id,
-            analista_rs_id: c.analista_rs_id,
-            id_gestao_de_pessoas: c.id_gestao_de_pessoas,
+            coordenador_id: c.coordenador_id || null,
+            analista_rs_id: c.analista_rs_id || null,
+            id_gestao_de_pessoas: c.id_gestao_de_pessoas || null,
+            
+            // Vínculo com candidato
             pessoa_id: pessoa?.id || null,
             curriculo_url: pessoa?.curriculo_url || null,
             curriculo_uploaded_at: pessoa?.curriculo_url ? new Date().toISOString() : null
@@ -316,6 +385,7 @@ export const useConsultants = () => {
         .from('consultants')
         .update({
           status: 'Encerrado',
+          ativo_consultor: false, // ✅ NOVO: Atualizar flag ativo
           data_saida: dataDesligamento,
           motivo_desligamento: motivoDesligamento || undefined
         })
@@ -454,3 +524,4 @@ export const useConsultants = () => {
     loadConsultantReports
   };
 };
+
