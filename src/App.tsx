@@ -210,7 +210,7 @@ const App: React.FC = () => {
       case 'atividades_consultar':
           return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={memoizedLoadConsultantReports} />;
       case 'atividades_exportar':
-          return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={memoizedLoadConsultantReports} />;
+          return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} users={users} loadConsultantReports={memoizedLoadConsultantReports} />;
       
       // RAISA Views
       case 'vagas':
