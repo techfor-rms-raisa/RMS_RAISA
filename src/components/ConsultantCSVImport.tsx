@@ -52,6 +52,87 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
         return String(str).trim();
     };
 
+    /**
+     * Limpa e valida CPF - máximo 14 caracteres (XXX.XXX.XXX-XX)
+     * Remove espaços extras e caracteres inválidos
+     */
+    const cleanCPF = (cpf: any): string | null => {
+        if (!cpf || cpf === 'null' || cpf === 'undefined' || cpf === '***') return null;
+        
+        let cleaned = String(cpf).trim();
+        
+        // Se estiver vazio após trim, retorna null
+        if (!cleaned) return null;
+        
+        // Remove espaços internos
+        cleaned = cleaned.replace(/\s+/g, '');
+        
+        // Se for apenas números, formata como CPF
+        const onlyNumbers = cleaned.replace(/\D/g, '');
+        if (onlyNumbers.length === 11) {
+            cleaned = `${onlyNumbers.slice(0,3)}.${onlyNumbers.slice(3,6)}.${onlyNumbers.slice(6,9)}-${onlyNumbers.slice(9,11)}`;
+        }
+        
+        // Corrige formato errado (ponto em vez de hífen no final): XXX.XXX.XXX.XX -> XXX.XXX.XXX-XX
+        if (/^\d{3}\.\d{3}\.\d{3}\.\d{2}$/.test(cleaned)) {
+            cleaned = cleaned.slice(0, 11) + '-' + cleaned.slice(12);
+        }
+        
+        // Garantir que não exceda 14 caracteres
+        if (cleaned.length > 14) {
+            cleaned = cleaned.slice(0, 14);
+        }
+        
+        return cleaned || null;
+    };
+
+    /**
+     * Limpa e valida CNPJ - máximo 18 caracteres (XX.XXX.XXX/XXXX-XX)
+     * Remove espaços extras e caracteres inválidos
+     */
+    const cleanCNPJ = (cnpj: any): string | null => {
+        if (!cnpj || cnpj === 'null' || cnpj === 'undefined' || cnpj === '***') return null;
+        
+        let cleaned = String(cnpj).trim();
+        
+        // Se estiver vazio após trim, retorna null
+        if (!cleaned) return null;
+        
+        // Remove espaços internos
+        cleaned = cleaned.replace(/\s+/g, '');
+        
+        // Remove aspas que possam ter sobrado do CSV
+        cleaned = cleaned.replace(/"/g, '');
+        
+        // Se for apenas números, formata como CNPJ
+        const onlyNumbers = cleaned.replace(/\D/g, '');
+        if (onlyNumbers.length === 14) {
+            cleaned = `${onlyNumbers.slice(0,2)}.${onlyNumbers.slice(2,5)}.${onlyNumbers.slice(5,8)}/${onlyNumbers.slice(8,12)}-${onlyNumbers.slice(12,14)}`;
+        }
+        
+        // Garantir que não exceda 18 caracteres
+        if (cleaned.length > 18) {
+            cleaned = cleaned.slice(0, 18);
+        }
+        
+        return cleaned || null;
+    };
+
+    /**
+     * Limpa telefone/celular - remove caracteres especiais extras
+     */
+    const cleanPhone = (phone: any): string | null => {
+        if (!phone || phone === 'null' || phone === 'undefined') return null;
+        
+        let cleaned = String(phone).trim();
+        if (!cleaned) return null;
+        
+        // Remove espaços extras mas mantém formato legível
+        cleaned = cleaned.replace(/\s+/g, ' ').trim();
+        
+        return cleaned || null;
+    };
+
     // ===== CONVERSÕES DE FORMATO =====
     
     /**
@@ -407,7 +488,7 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
         const consultantData = {
             nome_consultores: nomeConsultor,
             email_consultor: cleanText(rowData['email_consultor']) || null,
-            cpf: cleanText(rowData['cpf']) || null,
+            cpf: cleanCPF(rowData['cpf']),
             cargo_consultores: cleanText(rowData['cargo_consultores']) || 'Consultor',
             ano_vigencia: parseInt(rowData['ano_vigencia']) || new Date().getFullYear(),
             data_inclusao_consultores: dateBRToISO(rowData['data_inclusao_consultores']) || new Date().toISOString().split('T')[0],
@@ -422,9 +503,9 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
             id_gestao_de_pessoas: gpId,
             valor_faturamento: parseCurrencyBR(rowData['valor_faturamento']),
             valor_pagamento: parseCurrencyBR(rowData['valor_pagamento']),
-            celular: cleanText(rowData['celular']) || null,
+            celular: cleanPhone(rowData['celular']),
             dt_aniversario: dateBRToISO(rowData['dt_aniversario']),
-            cnpj_consultor: cleanText(rowData['cnpj_consultor']) || null,
+            cnpj_consultor: cleanCNPJ(rowData['cnpj_consultor']),
             empresa_consultor: cleanText(rowData['empresa_consultor']) || null,
         };
 
