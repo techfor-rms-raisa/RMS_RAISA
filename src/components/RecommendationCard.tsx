@@ -23,18 +23,33 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  // Determinar cor e label baseado no score
-  const riskScore = consultant.parecer_final_consultor || 3;
+  // ✅ CORRIGIDO: Determinar cor e label baseado no score (tratar nulo)
+  const rawScore = consultant.parecer_final_consultor;
+  const riskScore = (rawScore !== null && rawScore !== undefined && !isNaN(Number(rawScore))) 
+    ? Number(rawScore) 
+    : null;
   
   const riskConfig = {
-    1: { label: 'EXCELENTE', color: 'bg-green-50', border: 'border-green-500', icon: '🟢', textColor: 'text-green-900' },
-    2: { label: 'BOM', color: 'bg-blue-50', border: 'border-blue-500', icon: '🔵', textColor: 'text-blue-900' },
-    3: { label: 'MÉDIO', color: 'bg-yellow-50', border: 'border-yellow-500', icon: '🟡', textColor: 'text-yellow-900' },
-    4: { label: 'ALTO', color: 'bg-orange-50', border: 'border-orange-600', icon: '🟠', textColor: 'text-orange-900' },
-    5: { label: 'CRÍTICO', color: 'bg-red-50', border: 'border-red-700', icon: '🔴', textColor: 'text-red-900' }
+    1: { label: 'EXCELENTE', color: 'bg-green-50', border: 'border-green-500', icon: '🟢', textColor: 'text-green-900', badgeColor: 'bg-green-500' },
+    2: { label: 'BOM', color: 'bg-blue-50', border: 'border-blue-500', icon: '🔵', textColor: 'text-blue-900', badgeColor: 'bg-blue-500' },
+    3: { label: 'MÉDIO', color: 'bg-yellow-50', border: 'border-yellow-500', icon: '🟡', textColor: 'text-yellow-900', badgeColor: 'bg-yellow-500' },
+    4: { label: 'ALTO', color: 'bg-orange-50', border: 'border-orange-600', icon: '🟠', textColor: 'text-orange-900', badgeColor: 'bg-orange-500' },
+    5: { label: 'CRÍTICO', color: 'bg-red-50', border: 'border-red-700', icon: '🔴', textColor: 'text-red-900', badgeColor: 'bg-red-500' }
   };
 
-  const config = riskConfig[riskScore as keyof typeof riskConfig] || riskConfig[3];
+  // ✅ NOVO: Config para score indefinido
+  const defaultConfig = { 
+    label: 'INDEFINIDO', 
+    color: 'bg-gray-50', 
+    border: 'border-gray-400', 
+    icon: '⚪', 
+    textColor: 'text-gray-700',
+    badgeColor: 'bg-gray-400'
+  };
+
+  const config = riskScore !== null 
+    ? (riskConfig[riskScore as keyof typeof riskConfig] || defaultConfig)
+    : defaultConfig;
 
   // Determinar ícone de tendência
   const getTrendIcon = () => {
@@ -80,7 +95,9 @@ const RecommendationCard: React.FC<RecommendationCardProps> = ({
           >
             <div className="text-2xl mb-1">{config.icon}</div>
             <div className={`text-xs font-bold ${config.textColor} uppercase`}>{config.label}</div>
-            <div className={`text-sm font-bold ${config.textColor}`}>Score {riskScore}</div>
+            <div className={`text-sm font-bold ${config.textColor}`}>
+              {riskScore !== null ? `Score ${riskScore}` : 'Sem Score'}
+            </div>
           </button>
         </div>
       </div>

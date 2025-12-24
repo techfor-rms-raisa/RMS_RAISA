@@ -85,14 +85,26 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     };
 
     // Filtrar consultores que precisam de recomendação
+    // ✅ CORRIGIDO: Só mostra consultores com score válido (não mostra sem relatórios)
     const filteredList = useMemo(() => {
         let list = consultants.filter(c => {
             if (c.status !== 'Ativo') return false;
 
             // Verificar parecer_final_consultor (1-5)
             const finalScore = getValidFinalScore(c);
+            
+            // ✅ CORREÇÃO: Só mostrar consultores com score válido
+            // Scores 3, 4, 5 = Precisam de acompanhamento/ação
+            // Scores 1, 2 = Bom desempenho (opcional mostrar)
+            if (finalScore === null) {
+                // Sem score válido = Não mostra (precisa importar relatórios primeiro)
+                return false;
+            }
+            
+            // Mostrar consultores com score de risco (3, 4 ou 5)
+            // OU consultores novos com qualquer score (para acompanhamento de integração)
             const isNew = isNewConsultant(c);
-            const hasRiskScore = finalScore !== null && [5, 4, 3].includes(finalScore);
+            const hasRiskScore = [5, 4, 3].includes(finalScore);
             
             return hasRiskScore || isNew;
         });
@@ -298,10 +310,38 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
 
                 {/* Empty State */}
                 {filteredList.length === 0 && (
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-8 text-center">
-                        <div className="text-6xl mb-4">🎉</div>
-                        <h3 className="text-xl font-bold text-green-800 mb-2">Nenhuma Recomendação Necessária!</h3>
-                        <p className="text-green-600">Todos os consultores estão com desempenho satisfatório.</p>
+                    <div className={`border rounded-lg p-8 text-center ${
+                        consultants.filter(c => c.status === 'Ativo').length === 0 
+                            ? 'bg-yellow-50 border-yellow-200' 
+                            : consultants.filter(c => c.status === 'Ativo' && getValidFinalScore(c) !== null).length === 0
+                                ? 'bg-blue-50 border-blue-200'
+                                : 'bg-green-50 border-green-200'
+                    }`}>
+                        {consultants.filter(c => c.status === 'Ativo').length === 0 ? (
+                            // Nenhum consultor ativo
+                            <>
+                                <div className="text-6xl mb-4">📋</div>
+                                <h3 className="text-xl font-bold text-yellow-800 mb-2">Nenhum Consultor Cadastrado</h3>
+                                <p className="text-yellow-600">Importe consultores para visualizar recomendações.</p>
+                            </>
+                        ) : consultants.filter(c => c.status === 'Ativo' && getValidFinalScore(c) !== null).length === 0 ? (
+                            // Consultores existem mas sem score válido
+                            <>
+                                <div className="text-6xl mb-4">📊</div>
+                                <h3 className="text-xl font-bold text-blue-800 mb-2">Aguardando Dados de Avaliação</h3>
+                                <p className="text-blue-600">
+                                    Os consultores ainda não possuem relatórios de atividades importados.<br/>
+                                    Importe os relatórios para gerar análises e recomendações.
+                                </p>
+                            </>
+                        ) : (
+                            // Consultores com score mas nenhum precisa de atenção
+                            <>
+                                <div className="text-6xl mb-4">🎉</div>
+                                <h3 className="text-xl font-bold text-green-800 mb-2">Nenhuma Recomendação Necessária!</h3>
+                                <p className="text-green-600">Todos os consultores estão com desempenho satisfatório.</p>
+                            </>
+                        )}
                     </div>
                 )}
 

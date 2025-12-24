@@ -22,47 +22,72 @@ export interface IntelligentAnalysis {
 /**
  * Carrega recomendações persistidas do Supabase
  * Prioriza recommendations_v2, depois recommendations
+ * 
+ * ✅ CORRIGIDO: Não gera recomendações fallback quando não há relatórios
  */
 export function loadRecommendationsFromSupabase(
   consultant: Consultant,
   reports: ConsultantReport[]
 ): IntelligentAnalysis {
   try {
-    // 1️⃣ Tentar carregar do relatório mais recente
-    if (reports && reports.length > 0) {
-      const latestReport = reports[0]; // Já vem ordenado por data
+    // 1️⃣ Se não tem relatórios, retornar análise vazia
+    if (!reports || reports.length === 0) {
+      console.log(`⚠️ Sem relatórios para ${consultant.nome_consultores} - análise indisponível`);
+      return {
+        resumo: 'Sem dados suficientes para análise. Aguardando importação de relatórios de atividades.',
+        recomendacoes: [],
+        alertas: ['Nenhum relatório de atividades encontrado para este consultor.']
+      };
+    }
 
-      // Priorizar recommendations_v2
-      if ((latestReport as any).recommendations_v2) {
-        const parsed = typeof (latestReport as any).recommendations_v2 === 'string'
-          ? JSON.parse((latestReport as any).recommendations_v2)
-          : (latestReport as any).recommendations_v2;
+    // 2️⃣ Tentar carregar do relatório mais recente
+    const latestReport = reports[0]; // Já vem ordenado por data
 
-        if (parsed && parsed.resumo && Array.isArray(parsed.recomendacoes)) {
-          console.log(`✅ Recomendações carregadas de recommendations_v2 para ${consultant.nome_consultores}`);
-          return parsed as IntelligentAnalysis;
-        }
-      }
+    // Priorizar recommendations_v2
+    if ((latestReport as any).recommendations_v2) {
+      const parsed = typeof (latestReport as any).recommendations_v2 === 'string'
+        ? JSON.parse((latestReport as any).recommendations_v2)
+        : (latestReport as any).recommendations_v2;
 
-      // Fallback para recommendations
-      if (latestReport.recommendations) {
-        const parsed = typeof latestReport.recommendations === 'string'
-          ? JSON.parse(latestReport.recommendations as unknown as string)
-          : latestReport.recommendations;
-
-        if (parsed && (parsed as any).resumo && Array.isArray((parsed as any).recomendacoes)) {
-          console.log(`✅ Recomendações carregadas de recommendations para ${consultant.nome_consultores}`);
-          return parsed as IntelligentAnalysis;
-        }
+      if (parsed && parsed.resumo && Array.isArray(parsed.recomendacoes)) {
+        console.log(`✅ Recomendações carregadas de recommendations_v2 para ${consultant.nome_consultores}`);
+        return parsed as IntelligentAnalysis;
       }
     }
 
-    // 2️⃣ Se não encontrou, gerar recomendações baseadas no score
-    console.log(`⚠️ Nenhuma recomendação persistida encontrada para ${consultant.nome_consultores}, usando fallback`);
-    return generateFallbackRecommendations(consultant.parecer_final_consultor || 3);
+    // Fallback para recommendations
+    if (latestReport.recommendations) {
+      const parsed = typeof latestReport.recommendations === 'string'
+        ? JSON.parse(latestReport.recommendations as unknown as string)
+        : latestReport.recommendations;
+
+      if (parsed && (parsed as any).resumo && Array.isArray((parsed as any).recomendacoes)) {
+        console.log(`✅ Recomendações carregadas de recommendations para ${consultant.nome_consultores}`);
+        return parsed as IntelligentAnalysis;
+      }
+    }
+
+    // 3️⃣ Se tem relatórios mas não tem recomendações persistidas, gerar fallback baseado no score
+    const score = consultant.parecer_final_consultor;
+    if (score !== null && score !== undefined && !isNaN(Number(score))) {
+      console.log(`⚠️ Gerando recomendações fallback para ${consultant.nome_consultores} (Score: ${score})`);
+      return generateFallbackRecommendations(Number(score));
+    }
+
+    // 4️⃣ Sem score válido, retornar análise pendente
+    console.log(`⚠️ Sem score válido para ${consultant.nome_consultores} - análise pendente`);
+    return {
+      resumo: 'Análise pendente. O consultor possui relatórios mas ainda não foi avaliado.',
+      recomendacoes: [],
+      alertas: ['Score de avaliação ainda não foi calculado.']
+    };
   } catch (error) {
     console.error(`❌ Erro ao carregar recomendações do Supabase:`, error);
-    return generateFallbackRecommendations(consultant.parecer_final_consultor || 3);
+    return {
+      resumo: 'Erro ao carregar análise. Por favor, tente novamente.',
+      recomendacoes: [],
+      alertas: ['Erro técnico ao processar dados.']
+    };
   }
 }
 

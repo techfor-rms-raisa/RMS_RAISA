@@ -68,8 +68,8 @@ const App: React.FC = () => {
     addClient, updateClient, batchAddClients,
     addConsultant, updateConsultant, batchAddConsultants,
     addUser, updateUser,
-    addUsuarioCliente, updateUsuarioCliente, batchAddManagers, inactivateGestor,
-    addCoordenadorCliente, updateCoordenadorCliente, batchAddCoordinators, inactivateCoordenador,
+    addUsuarioCliente, updateUsuarioCliente, batchAddManagers,
+    addCoordenadorCliente, updateCoordenadorCliente, batchAddCoordinators,
     migrateYearlyData,
     addTemplate, updateTemplate, deleteTemplate,
     addCampaign, updateCampaign,
@@ -108,6 +108,7 @@ const App: React.FC = () => {
 
   // ============================================
   // ✅ CORREÇÃO DO BUG: Agora recebe e passa extractedMonth e extractedYear
+  // ✅ v2.1: Salva texto original do relatório em 'content'
   // ============================================
   const handleManualAnalysis = async (
     text: string, 
@@ -135,9 +136,9 @@ const App: React.FC = () => {
           
           console.log(`✅ ${results.length} relatório(s) analisado(s). Atualizando consultores...`);
           
-          // Atualizar score de cada consultor
+          // ✅ CORREÇÃO v2.1: Atualizar score de cada consultor passando o texto original
           for (const result of results) {
-              await updateConsultantScore(result);
+              await updateConsultantScore(result, text); // ✅ Passa texto original
           }
           
           alert(`✅ Análise concluída com sucesso!\n\n${results.length} consultor(es) atualizado(s).\n\nVerifique o Dashboard para ver os resultados.`);
@@ -167,9 +168,9 @@ const App: React.FC = () => {
       case 'users':
         return <ManageUsers users={users} addUser={addUser} updateUser={updateUser} currentUser={currentUser!} migrateYearlyData={migrateYearlyData} />;
       case 'clients':
-        return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={updateClient} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={updateUsuarioCliente} inactivateGestor={inactivateGestor} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={updateCoordenadorCliente} inactivateCoordenador={inactivateCoordenador} currentUser={currentUser!} />;
+        return <ManageClients clients={clients} users={users} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} consultants={consultants} addClient={addClient} updateClient={updateClient} addUsuarioCliente={addUsuarioCliente} updateUsuarioCliente={updateUsuarioCliente} addCoordenadorCliente={addCoordenadorCliente} updateCoordenadorCliente={updateCoordenadorCliente} currentUser={currentUser!} />;
       case 'consultants':
-        return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} batchAddConsultants={batchAddConsultants} updateConsultant={updateConsultant} currentUser={currentUser!} onNavigateToAtividades={handleNavigateToAtividades} />;
+        return <ManageConsultants consultants={consultants} usuariosCliente={usuariosCliente} clients={clients} coordenadoresCliente={coordenadoresCliente} users={users} addConsultant={addConsultant} updateConsultant={updateConsultant} currentUser={currentUser!} onNavigateToAtividades={handleNavigateToAtividades} />;
       case 'quarantine':
         return <Quarentena consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} onNavigateToRecommendations={(consultant) => { setContextualConsultant(consultant.nome_consultores); setCurrentView('recommendations'); }} />;
       case 'recommendations':

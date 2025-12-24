@@ -155,16 +155,18 @@ export const useSupabaseData = () => {
 
   // ============================================
   // WRAPPER PARA updateConsultantScore
+  // ✅ v2.1: Aceita originalContent para salvar texto original do relatório
   // ============================================
   
-  const updateConsultantScore = async (result: AIAnalysisResult) => {
+  const updateConsultantScore = async (result: AIAnalysisResult, originalContent?: string) => {
     return reportAnalysisHook.updateConsultantScore(
       result,
       consultantsHook.consultants,
       consultantsHook.setConsultants,
       usersHook.users,
       gestoresHook.usuariosCliente,
-      clientsHook.clients
+      clientsHook.clients,
+      originalContent // ✅ NOVO: Passa texto original
     );
   };
 
