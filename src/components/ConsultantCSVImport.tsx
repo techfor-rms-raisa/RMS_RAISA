@@ -245,16 +245,72 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
 
     // ===== PARSER DO CSV =====
 
+    /**
+     * Parser CSV robusto que lida com:
+     * - Campos entre aspas
+     * - Quebras de linha dentro de campos entre aspas
+     * - Aspas escapadas ("")
+     */
     const parseCSV = (content: string): string[][] => {
-        const lines = content.split('\n');
         const result: string[][] = [];
+        let currentRow: string[] = [];
+        let currentCell = '';
+        let insideQuotes = false;
         
-        for (const line of lines) {
-            if (!line.trim()) continue;
+        for (let i = 0; i < content.length; i++) {
+            const char = content[i];
+            const nextChar = content[i + 1];
             
-            // Split por ponto-e-vírgula (separador do CSV BR)
-            const cells = line.split(';').map(cell => cell.trim());
-            result.push(cells);
+            if (insideQuotes) {
+                // Dentro de aspas
+                if (char === '"') {
+                    if (nextChar === '"') {
+                        // Aspas escapadas ("") - adiciona uma aspa
+                        currentCell += '"';
+                        i++; // Pula a próxima aspa
+                    } else {
+                        // Fim do campo entre aspas
+                        insideQuotes = false;
+                    }
+                } else {
+                    // Qualquer outro caractere (incluindo \n) é parte do campo
+                    currentCell += char;
+                }
+            } else {
+                // Fora de aspas
+                if (char === '"') {
+                    // Início de campo entre aspas
+                    insideQuotes = true;
+                } else if (char === ';') {
+                    // Fim do campo (separador)
+                    currentRow.push(currentCell.trim());
+                    currentCell = '';
+                } else if (char === '\n' || (char === '\r' && nextChar === '\n')) {
+                    // Fim da linha
+                    if (char === '\r') i++; // Pula o \n do \r\n
+                    
+                    currentRow.push(currentCell.trim());
+                    
+                    // Só adiciona linhas não vazias
+                    if (currentRow.some(cell => cell !== '')) {
+                        result.push(currentRow);
+                    }
+                    
+                    currentRow = [];
+                    currentCell = '';
+                } else if (char !== '\r') {
+                    // Caractere normal
+                    currentCell += char;
+                }
+            }
+        }
+        
+        // Adicionar última célula e linha se houver
+        if (currentCell || currentRow.length > 0) {
+            currentRow.push(currentCell.trim());
+            if (currentRow.some(cell => cell !== '')) {
+                result.push(currentRow);
+            }
         }
         
         return result;
