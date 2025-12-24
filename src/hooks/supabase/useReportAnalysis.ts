@@ -215,6 +215,7 @@ export const useReportAnalysis = () => {
    * Dispara notificações de risco crítico quando necessário
    * 
    * ✅ v2.0: Salva feedback automaticamente para análise de compliance
+   * ✅ v2.1: Salva texto original do relatório em 'content'
    */
   const updateConsultantScore = async (
     result: AIAnalysisResult,
@@ -222,7 +223,8 @@ export const useReportAnalysis = () => {
     setConsultants: React.Dispatch<React.SetStateAction<Consultant[]>>,
     users: User[],
     usuariosCliente: UsuarioCliente[],
-    clients: Client[]
+    clients: Client[],
+    originalContent?: string // ✅ NOVO: Texto original do relatório
   ) => {
     try {
       console.log(`📊 Atualizando score do consultor: ${result.consultantName}`);
@@ -244,17 +246,18 @@ export const useReportAnalysis = () => {
       // ✅ CORREÇÃO: Usa o ano do resultado se disponível
       const reportYear = (result as any).reportYear || new Date().getFullYear();
       
+      // ✅ CORREÇÃO v2.1: Salvar texto ORIGINAL em content, resumo da IA em summary
       // Criar objeto de relatório
       const newReport: ConsultantReport = {
         id: `${consultant.id}_${result.reportMonth}_${Date.now()}`,
         month: result.reportMonth,
         year: reportYear,
         riskScore: result.riskScore,
-        summary: result.summary,
+        summary: result.summary, // Resumo gerado pela IA
         negativePattern: result.negativePattern,
         predictiveAlert: result.predictiveAlert,
         recommendations: result.recommendations,
-        content: result.details,
+        content: originalContent || result.details || result.summary, // ✅ Prioriza texto original
         createdAt: new Date().toISOString(),
         generatedBy: 'manual',
         aiJustification: 'Análise baseada em relatório de atividades manual'
