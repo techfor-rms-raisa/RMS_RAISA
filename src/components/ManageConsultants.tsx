@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason } from '@/types';
 import { Mail, Phone, Search, Building2, Calendar, CreditCard, User as UserIcon, Briefcase, DollarSign, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import InclusionImport from './InclusionImport';
-import ConsultantCSVImport from './ConsultantCSVImport';
 
 interface ManageConsultantsProps {
     consultants: Consultant[];
@@ -11,7 +10,6 @@ interface ManageConsultantsProps {
     coordenadoresCliente: CoordenadorCliente[];
     users: User[];
     addConsultant: (c: any) => void;
-    batchAddConsultants?: (consultants: any[]) => void;
     updateConsultant: (c: Consultant) => void;
     currentUser: User;
     onNavigateToAtividades: () => void;
@@ -52,7 +50,7 @@ const ScoreBadge: React.FC<{ score: number | null | undefined; label: string }> 
 // ===== COMPONENTE PRINCIPAL =====
 const ManageConsultants: React.FC<ManageConsultantsProps> = ({ 
     consultants, usuariosCliente, clients, coordenadoresCliente, users, 
-    addConsultant, batchAddConsultants, updateConsultant, currentUser, onNavigateToAtividades 
+    addConsultant, updateConsultant, currentUser, onNavigateToAtividades 
 }) => {
     const [isFormOpen, setIsFormOpen] = useState(false);
     const [editingConsultant, setEditingConsultant] = useState<Consultant | null>(null);
@@ -216,9 +214,6 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
     return (
         <div className="bg-white rounded-lg shadow-sm p-6">
             {!isReadOnly && <InclusionImport clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} onImport={addConsultant} />}
-            {!isReadOnly && batchAddConsultants && (
-                <ConsultantCSVImport clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} users={users} onImportBatch={batchAddConsultants} />
-            )}
 
             <div className="flex justify-between items-center mb-8">
                 <h2 className="text-3xl font-bold text-gray-900">Gerenciar Consultores</h2>

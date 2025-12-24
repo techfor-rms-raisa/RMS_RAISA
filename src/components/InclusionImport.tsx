@@ -142,14 +142,16 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     empresaStr = cleanLine.replace(/^EMPRESA:|^RAZÃO SOCIAL:/i, '').trim();
                 }
                 
-                // ✅ NOVO: Data de Aniversário
-                if (cleanLine.match(/^DATA DE NASCIMENTO:|^ANIVERSÁRIO:|^DT\. NASCIMENTO:/i)) {
-                    dtAniversarioStr = cleanLine.replace(/^DATA DE NASCIMENTO:|^ANIVERSÁRIO:|^DT\. NASCIMENTO:/i, '').trim();
+                // ✅ NOVO: Data de Aniversário/Nascimento
+                // Formatos: "DT NASCIMENTO:", "DT. NASCIMENTO:", "DATA DE NASCIMENTO:", "ANIVERSÁRIO:"
+                if (cleanLine.match(/^DATA DE NASCIMENTO:|^ANIVERSÁRIO:|^DT\.?\s*NASCIMENTO:/i)) {
+                    dtAniversarioStr = cleanLine.replace(/^DATA DE NASCIMENTO:|^ANIVERSÁRIO:|^DT\.?\s*NASCIMENTO:/i, '').trim();
                 }
                 
-                // ✅ NOVO: Especialidade
-                if (cleanLine.match(/^ESPECIALIDADE:|^ÁREA:/i)) {
-                    especialidadeStr = cleanLine.replace(/^ESPECIALIDADE:|^ÁREA:/i, '').trim();
+                // ✅ NOVO: Especialidade/Tecnologia
+                // Formatos: "ESPECIALIDADE:", "ÁREA:", "TECNOLOGIA:"
+                if (cleanLine.match(/^ESPECIALIDADE:|^ÁREA:|^TECNOLOGIA:/i)) {
+                    especialidadeStr = cleanLine.replace(/^ESPECIALIDADE:|^ÁREA:|^TECNOLOGIA:/i, '').trim();
                 }
                 
                 // LOGIC: Find "FATURAMENTO MENSAL" and capture value (either same line or next line)
@@ -171,18 +173,21 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // Valor do bloco "DADOS DE PAGAMENTO"
-                // Procurar por "VALOR" ou "SALÁRIO" ou "PAGAMENTO" seguido de valor
-                if (cleanLine.match(/VALOR.*PAGAMENTO|SALÁRIO|^VALOR:/i)) {
+                // Procurar por "VALOR" seguido de valor monetário
+                // Formatos: "VALOR: R$ 67,00/h" ou "VALOR" na linha e valor na próxima
+                if (cleanLine.match(/^VALOR\s*$/i) || cleanLine.match(/^VALOR:/i) || cleanLine.match(/VALOR.*R\$/i)) {
                     // Strategy 1: Look on the same line
-                    let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
+                    // Captura valor mesmo com /h no final: R$ 67,00/h -> 67,00
+                    let match = cleanLine.match(/R?\$?\s*([\d.,]+)(?:\/h)?/i);
                     
                     // Strategy 2: If not found, look at the next line
                     if (!match && i + 1 < lines.length) {
                         const nextLine = lines[i+1];
-                        match = nextLine.match(/R?\$?\s*([\d.,]+)/);
+                        match = nextLine.match(/R?\$?\s*([\d.,]+)(?:\/h)?/);
                     }
                     
-                    if (match) {
+                    if (match && !valorPagamentoStr) {
+                        // Só captura se ainda não tiver valor (evita sobrescrever)
                         valorPagamentoStr = match[1];
                     }
                 }
@@ -221,7 +226,8 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
 
-            // 2. Billing Calculation (Value found * 168)
+            // 2. Parse Valor Faturamento (valor HORA do faturamento)
+            // O banco armazena o valor HORA, não o valor mensal
             let billingValue = 0;
             if (hourlyRateStr) {
                 // Normalize currency: remove dots (thousands), replace comma with dot
@@ -230,11 +236,12 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 const normalizedValue = parseFloat(normalizedString);
                 
                 if (!isNaN(normalizedValue)) {
-                    billingValue = normalizedValue * 168;
+                    billingValue = normalizedValue; // Valor hora (sem multiplicar por 168)
                 }
             }
             
-            // 3. Parse Valor Pagamento (valor mensal que o consultor recebe)
+            // 3. Parse Valor Pagamento (valor HORA que o consultor recebe)
+            // O banco armazena o valor HORA, não o valor mensal
             let valorPagamento = 0;
             if (valorPagamentoStr) {
                 // Normalize currency: remove dots (thousands), replace comma with dot
@@ -242,7 +249,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 const normalizedValue = parseFloat(normalizedString);
                 
                 if (!isNaN(normalizedValue)) {
-                    valorPagamento = normalizedValue;
+                    valorPagamento = normalizedValue; // Valor hora
                 }
             }
 
@@ -335,8 +342,8 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 coordenador_id: targetCoordId,
                 
                 // Valores financeiros
-                valor_faturamento: billingValue || 0, // Valor mensal calculado (hora * 168)
-                valor_pagamento: valorPagamento || 0, // Valor que o consultor recebe
+                valor_faturamento: billingValue || 0, // Valor HORA do faturamento
+                valor_pagamento: valorPagamento || 0, // Valor HORA que o consultor recebe
                 
                 // Herdar do Cliente
                 analista_rs_id: client.id_gestor_rs || null,
@@ -355,8 +362,11 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 cnpj: cnpjStr,
                 empresa: empresaStr,
                 dataInicio: startDate,
-                valorHora: hourlyRateStr,
+                dtAniversario: dtAniversarioStr,
+                especialidade: especialidadeStr,
+                valorHoraFaturamento: hourlyRateStr,
                 valorFaturamento: billingValue,
+                valorHoraPagamento: valorPagamentoStr,
                 valorPagamento: valorPagamento,
                 anoVigencia: anoVigencia
             });

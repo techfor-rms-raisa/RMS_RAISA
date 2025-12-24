@@ -130,6 +130,21 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
         // Remove espaços extras mas mantém formato legível
         cleaned = cleaned.replace(/\s+/g, ' ').trim();
         
+        // Limitar a 15 caracteres (limite do banco de dados)
+        // Se maior, remove formatação e mantém só números
+        if (cleaned.length > 15) {
+            const onlyNumbers = cleaned.replace(/[^0-9]/g, '');
+            // Formata como DDD + número (XX XXXXX-XXXX = 14 chars)
+            if (onlyNumbers.length >= 10) {
+                const ddd = onlyNumbers.slice(0, 2);
+                const parte1 = onlyNumbers.slice(2, 7);
+                const parte2 = onlyNumbers.slice(7, 11);
+                cleaned = `${ddd} ${parte1}-${parte2}`;
+            } else {
+                cleaned = onlyNumbers.slice(0, 15);
+            }
+        }
+        
         return cleaned || null;
     };
 
