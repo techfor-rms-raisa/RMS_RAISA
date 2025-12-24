@@ -512,6 +512,39 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
         return { rowNumber, data: consultantData, errors, warnings };
     };
 
+    /**
+     * Lê arquivo com detecção automática de encoding
+     * Tenta UTF-8 primeiro, depois Windows-1252 (comum em CSVs do Excel BR)
+     */
+    const readFileWithEncoding = async (file: File): Promise<string> => {
+        // Primeiro, tenta ler como UTF-8
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // Tenta decodificar como UTF-8
+        const utf8Decoder = new TextDecoder('utf-8');
+        const utf8Content = utf8Decoder.decode(arrayBuffer);
+        
+        // Verifica se tem caracteres de substituição (indica encoding errado)
+        // O caractere � (U+FFFD) aparece quando UTF-8 não consegue decodificar
+        if (!utf8Content.includes('\uFFFD') && !utf8Content.includes('�')) {
+            console.log('📄 Arquivo lido como UTF-8');
+            return utf8Content;
+        }
+        
+        // Se UTF-8 falhou, tenta Windows-1252 (padrão do Excel no Windows BR)
+        try {
+            const win1252Decoder = new TextDecoder('windows-1252');
+            const win1252Content = win1252Decoder.decode(arrayBuffer);
+            console.log('📄 Arquivo lido como Windows-1252');
+            return win1252Content;
+        } catch (e) {
+            console.log('📄 Fallback para ISO-8859-1');
+            // Fallback para ISO-8859-1 (Latin-1)
+            const latin1Decoder = new TextDecoder('iso-8859-1');
+            return latin1Decoder.decode(arrayBuffer);
+        }
+    };
+
     // ===== HANDLERS =====
 
     const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -528,8 +561,8 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
                 throw new Error('Formato inválido. Por favor selecione um arquivo CSV.');
             }
 
-            // Ler arquivo
-            const content = await file.text();
+            // Ler arquivo com detecção de encoding
+            const content = await readFileWithEncoding(file);
             const rows = parseCSV(content);
 
             if (rows.length < 2) {
