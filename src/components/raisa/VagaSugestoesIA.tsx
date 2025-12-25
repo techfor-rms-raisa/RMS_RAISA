@@ -9,7 +9,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Vaga } from '@/types';
-import { useVagaAnaliseIA, VagaAnaliseIADB, SugestaoIA } from '../../hooks/Supabase/useVagaAnaliseIA';
+import { useVagaAnaliseIA, VagaAnaliseIADB, SugestaoIA } from '../../hooks/supabase/useVagaAnaliseIA';
 
 interface VagaSugestoesIAProps {
   vaga: Vaga;

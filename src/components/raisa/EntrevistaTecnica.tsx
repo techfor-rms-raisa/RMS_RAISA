@@ -12,7 +12,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Candidatura, Vaga } from '@/types';
-import { useRaisaInterview, PerguntaTecnicaDB, AvaliacaoIADB } from '../../hooks/Supabase/useRaisaInterview';
+import { useRaisaInterview, PerguntaTecnicaDB, AvaliacaoIADB } from '../../hooks/supabase/useRaisaInterview';
 
 interface EntrevistaTecnicaProps {
     candidaturas: Candidatura[];

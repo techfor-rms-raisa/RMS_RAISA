@@ -11,7 +11,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { User } from '@/types';
-import { useRaisaEnvios, EnvioEnriquecido } from '../../hooks/Supabase/useRaisaEnvios';
+import { useRaisaEnvios, EnvioEnriquecido } from '../../hooks/supabase/useRaisaEnvios';
 
 interface ControleEnviosProps {
   currentUser: User;
