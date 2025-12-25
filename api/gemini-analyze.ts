@@ -55,6 +55,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await generateContent(payload.model, payload.prompt);
         break;
 
+      case 'analise_vaga':
+        result = await analyzeJobDescription(payload.dados);
+        break;
+
       default:
         return res.status(400).json({ error: `Ação desconhecida: ${action}` });
     }
@@ -174,4 +178,121 @@ async function generateContent(model: string, prompt: string) {
   const text = result.text || '';
 
   return { text };
+}
+
+// ========================================
+// ANÁLISE DE VAGAS (RAISA)
+// ========================================
+
+async function analyzeJobDescription(dados: any) {
+  const prompt = `
+Você é um **Especialista em Recrutamento de TI** e **Copywriter de Vagas**.
+
+Analise a seguinte vaga e sugira melhorias para torná-la mais atrativa e eficaz.
+
+**VAGA ATUAL:**
+- Título: ${dados.titulo}
+- Descrição: ${dados.descricao || 'Não informada'}
+- Senioridade: ${dados.senioridade || 'Não informada'}
+- Stack: ${JSON.stringify(dados.stack_tecnologica || [])}
+- Requisitos Obrigatórios: ${JSON.stringify(dados.requisitos_obrigatorios || [])}
+- Requisitos Desejáveis: ${JSON.stringify(dados.requisitos_desejaveis || [])}
+- Regime: ${dados.regime_contratacao || 'Não informado'}
+- Modalidade: ${dados.modalidade || 'Não informada'}
+- Benefícios: ${dados.beneficios || 'Não informados'}
+- Faixa Salarial: ${dados.salario_min || 'N/A'} - ${dados.salario_max || 'N/A'}
+
+**TAREFA:**
+Analise cada campo e sugira melhorias quando necessário. Avalie:
+1. **Clareza**: A vaga está clara e objetiva?
+2. **Atratividade**: A vaga é atraente para candidatos?
+3. **Completude**: Todos os campos importantes estão preenchidos?
+4. **SEO**: A vaga usa termos que candidatos buscam?
+
+**RESPONDA EM JSON:**
+\`\`\`json
+{
+  "sugestoes": {
+    "titulo": {
+      "campo": "titulo",
+      "original": "Título atual",
+      "sugerido": "Título melhorado (ou null se OK)",
+      "motivo": "Motivo da sugestão",
+      "prioridade": "alta | media | baixa"
+    },
+    "descricao": {
+      "campo": "descricao",
+      "original": "Descrição atual",
+      "sugerido": "Descrição melhorada (ou null se OK)",
+      "motivo": "Motivo da sugestão",
+      "prioridade": "alta | media | baixa"
+    },
+    "requisitos": {
+      "campo": "requisitos_obrigatorios",
+      "original": "Requisitos atuais",
+      "sugerido": "Requisitos melhorados (ou null se OK)",
+      "motivo": "Motivo da sugestão",
+      "prioridade": "alta | media | baixa"
+    },
+    "beneficios": {
+      "campo": "beneficios",
+      "original": "Benefícios atuais",
+      "sugerido": "Benefícios sugeridos (ou null se OK)",
+      "motivo": "Motivo da sugestão",
+      "prioridade": "alta | media | baixa"
+    },
+    "keywords": ["keyword1", "keyword2", "keyword3"],
+    "tom_sugerido": "Formal | Informal | Técnico",
+    "melhorias_gerais": ["Sugestão 1", "Sugestão 2"]
+  },
+  "confidence_score": 75,
+  "confidence_detalhado": {
+    "clareza": 80,
+    "atratividade": 70,
+    "completude": 65,
+    "seo": 60
+  },
+  "total_ajustes": 3,
+  "campos_ajustados": ["descricao", "beneficios", "requisitos"],
+  "qualidade_sugestao": 80,
+  "requer_revisao_manual": false
+}
+\`\`\`
+
+**REGRAS:**
+- Se um campo está bom, não inclua sugestão para ele
+- Seja específico nas sugestões
+- Mantenha o core da vaga, apenas melhore a apresentação
+- Prioridade "alta" para campos vazios ou confusos
+- Prioridade "media" para melhorias de atratividade
+- Prioridade "baixa" para otimizações menores
+`;
+
+  const result = await ai.models.generateContent({ model: 'gemini-2.0-flash-exp', contents: prompt });
+  const text = result.text || '';
+
+  const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
+  
+  if (!jsonMatch) {
+    // Retornar resposta padrão se parsing falhar
+    return {
+      sugestoes: {
+        melhorias_gerais: ['Não foi possível analisar a vaga automaticamente. Revise manualmente.']
+      },
+      confidence_score: 50,
+      confidence_detalhado: {
+        clareza: 50,
+        atratividade: 50,
+        completude: 50,
+        seo: 50
+      },
+      total_ajustes: 0,
+      campos_ajustados: [],
+      qualidade_sugestao: 50,
+      requer_revisao_manual: true
+    };
+  }
+
+  const jsonText = jsonMatch[1] || jsonMatch[0];
+  return JSON.parse(jsonText);
 }

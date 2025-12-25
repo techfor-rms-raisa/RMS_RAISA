@@ -24,6 +24,8 @@ import Pipeline from './components/raisa/Pipeline';
 import BancoTalentos from './components/raisa/BancoTalentos';
 import ControleEnvios from './components/raisa/ControleEnvios'; 
 import EntrevistaTecnica from './components/raisa/EntrevistaTecnica';
+// ✅ NOVO: Componente de Sugestões IA para Vagas
+import VagaSugestoesIA from './components/raisa/VagaSugestoesIA';
 
 // RAISA Dashboard Imports
 import DashboardFunilConversao from './components/raisa/DashboardFunilConversao';
@@ -44,7 +46,7 @@ import AtividadesExportar from './components/atividades/AtividadesExportar';
 import { PermissionsProvider } from './hooks/usePermissions';
 
 import { useSupabaseData } from './hooks/useSupabaseData';
-import { AIAnalysisResult, User, View, FeedbackResponse, RHAction } from '@/types';
+import { AIAnalysisResult, User, View, FeedbackResponse, RHAction, Vaga } from '@/types';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -55,8 +57,11 @@ const App: React.FC = () => {
   const [contextualClient, setContextualClient] = useState<string>('');
   const [contextualConsultant, setContextualConsultant] = useState<string>('');
 
+  // ✅ NOVO: Estado para modal de sugestões IA
+  const [vagaParaSugestao, setVagaParaSugestao] = useState<Vaga | null>(null);
+
   useEffect(() => {
-      console.log("ORBIT.ai V2.0 Loaded");
+      console.log("ORBIT.ai V2.0 + RAISA Integrado Loaded");
   }, []);
   
   const { 
@@ -158,6 +163,21 @@ const App: React.FC = () => {
       if (action) addRHAction(action);
   };
 
+  // ✅ NOVO: Handler para entrevista completa
+  const handleEntrevistaCompleta = (candidaturaId: number, resultado: 'aprovado' | 'reprovado') => {
+    console.log(`✅ Entrevista finalizada: Candidatura ${candidaturaId} - ${resultado}`);
+    // Atualizar status da candidatura no estado local
+    updateCandidaturaStatus(String(candidaturaId), resultado === 'aprovado' ? 'aprovado_interno' : 'reprovado_interno');
+  };
+
+  // ✅ NOVO: Handler para aplicar sugestões da IA na vaga
+  const handleAplicarSugestoes = (vagaAtualizada: Partial<Vaga>) => {
+    if (vagaParaSugestao) {
+      updateVaga({ ...vagaParaSugestao, ...vagaAtualizada } as Vaga);
+      setVagaParaSugestao(null);
+    }
+  };
+
   const renderContent = () => {
     if (currentView === 'feedback_portal' && simulatedToken) {
         return <FeedbackPortal token={simulatedToken} onSubmit={handleFeedbackSubmit} onClose={() => { setSimulatedToken(null); setCurrentView('campaigns'); }} />;
@@ -212,7 +232,9 @@ const App: React.FC = () => {
       case 'atividades_exportar':
           return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} users={users} loadConsultantReports={memoizedLoadConsultantReports} />;
       
-      // RAISA Views
+      // ============================================
+      // RAISA Views - ✅ INTEGRADO COM SUPABASE
+      // ============================================
       case 'vagas':
           // ✅ v52.3: Adicionado clients e usuariosCliente para filtros de Cliente e Gestor
           return <Vagas 
@@ -231,10 +253,19 @@ const App: React.FC = () => {
           return <Pipeline candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} />;
       case 'talentos':
           return <BancoTalentos pessoas={pessoas} addPessoa={addPessoa} updatePessoa={updatePessoa} />;
+      
+      // ✅ ATUALIZADO: ControleEnvios com props corretas (integrado Supabase)
       case 'controle_envios':
           return <ControleEnvios currentUser={currentUser!} />;
+      
+      // ✅ ATUALIZADO: EntrevistaTecnica com props corretas (integrado Supabase)
       case 'entrevista_tecnica':
-          return <EntrevistaTecnica />;
+          return <EntrevistaTecnica 
+            candidaturas={candidaturas}
+            vagas={vagas}
+            currentUserId={currentUser?.id || 1}
+            onEntrevistaCompleta={handleEntrevistaCompleta}
+          />;
       
       // RAISA Dashboard Views
       case 'dashboard_funil':
@@ -281,6 +312,16 @@ const App: React.FC = () => {
               {renderContent()}
           </main>
         </div>
+
+        {/* ✅ NOVO: Modal de Sugestões IA para Vagas */}
+        {vagaParaSugestao && currentUser && (
+          <VagaSugestoesIA
+            vaga={vagaParaSugestao}
+            onClose={() => setVagaParaSugestao(null)}
+            onAplicarSugestoes={handleAplicarSugestoes}
+            currentUserId={currentUser.id}
+          />
+        )}
       </div>
     </PermissionsProvider>
   );
