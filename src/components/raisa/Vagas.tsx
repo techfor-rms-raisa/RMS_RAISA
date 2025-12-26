@@ -1,16 +1,18 @@
 /**
- * Vagas.tsx - RMS RAISA v52.6
+ * Vagas.tsx - RMS RAISA v53.0
  * Componente de Gestão de Vagas
  * 
  * CORREÇÃO v52.2: Tratamento seguro do campo stack_tecnologica
  * NOVA FUNCIONALIDADE v52.3: Dropdowns de Cliente e Gestor do Cliente no header
  * CORREÇÃO v52.4: Verificações de segurança para clients e usuariosCliente undefined
  * CORREÇÃO v52.6: Usa razao_social_cliente e adiciona dropdown de Gestor no modal
+ * NOVA FUNCIONALIDADE v53.0: Integração com CVMatchingPanel - Busca Inteligente de CVs
  */
 
 import React, { useState, useMemo } from 'react';
 import { Vaga, Client, UsuarioCliente } from '@/types';
 import VagaPriorizacaoManager from './VagaPriorizacaoManager';
+import CVMatchingPanel from './CVMatchingPanel';
 
 interface VagasProps {
     vagas: Vaga[];
@@ -19,6 +21,7 @@ interface VagasProps {
     addVaga: (v: any) => void;
     updateVaga: (v: Vaga) => void;
     deleteVaga: (id: string) => void;
+    currentUserId?: number;
 }
 
 /**
@@ -45,13 +48,17 @@ const Vagas: React.FC<VagasProps> = ({
     usuariosCliente = [], 
     addVaga, 
     updateVaga, 
-    deleteVaga 
+    deleteVaga,
+    currentUserId = 1
 }) => {
     // Estados do modal
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingVaga, setEditingVaga] = useState<Vaga | null>(null);
     const [priorizacaoVagaId, setPriorizacaoVagaId] = useState<string | null>(null);
     const [priorizacaoVagaTitulo, setPriorizacaoVagaTitulo] = useState<string>('');
+    
+    // ✅ NOVO v53: Estado para Busca de CVs
+    const [buscaCVVaga, setBuscaCVVaga] = useState<Vaga | null>(null);
     
     // Estados dos filtros de header
     const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
@@ -176,6 +183,28 @@ const Vagas: React.FC<VagasProps> = ({
             stack_tecnologica: (formData.stack_tecnologica || []).filter(t => t !== techToRemove)
         });
     };
+
+    // ✅ NOVO v53: Handler para abrir busca de CVs
+    const handleBuscarCVs = (vaga: Vaga) => {
+        const stackArray = ensureStackArray(vaga.stack_tecnologica);
+        if (stackArray.length === 0) {
+            alert('Esta vaga não possui stack tecnológica definida. Adicione tecnologias para buscar CVs aderentes.');
+            return;
+        }
+        setBuscaCVVaga(vaga);
+    };
+
+    // ✅ NOVO v53: Handler quando candidatura é criada da busca
+    const handleCandidaturaCriada = (candidaturaId: number) => {
+        console.log(`✅ Candidatura ${candidaturaId} criada via busca de CVs`);
+    };
+
+    // Ordenar clientes alfabeticamente
+    const sortedClients = useMemo(() => {
+        return [...safeClients].sort((a, b) => 
+            (a.razao_social_cliente || '').localeCompare(b.razao_social_cliente || '')
+        );
+    }, [safeClients]);
 
     // ✅ Ordenar clientes de forma segura - usa razao_social_cliente
     const sortedClients = useMemo(() => {
@@ -327,7 +356,15 @@ const Vagas: React.FC<VagasProps> = ({
                                 
                                 <div className="flex justify-between items-center pt-4 border-t">
                                     <span className="text-sm font-medium text-gray-500">{vaga.senioridade}</span>
-                                    <div className="space-x-2">
+                                    <div className="flex flex-wrap gap-2">
+                                        {/* ✅ NOVO v53: Botão de Buscar CVs */}
+                                        <button 
+                                            onClick={() => handleBuscarCVs(vaga)} 
+                                            className="text-green-600 hover:text-green-800 hover:underline text-sm font-semibold"
+                                            title="Buscar candidatos aderentes"
+                                        >
+                                            🔍 CVs
+                                        </button>
                                         <button 
                                             onClick={() => { setPriorizacaoVagaId(vaga.id); setPriorizacaoVagaTitulo(vaga.titulo); }} 
                                             className="text-orange-600 hover:underline text-sm font-semibold"
@@ -496,6 +533,16 @@ const Vagas: React.FC<VagasProps> = ({
                     vagaId={priorizacaoVagaId}
                     vagaTitulo={priorizacaoVagaTitulo}
                     onClose={() => setPriorizacaoVagaId(null)}
+                />
+            )}
+
+            {/* ✅ NOVO v53: Modal de Busca de CVs */}
+            {buscaCVVaga && (
+                <CVMatchingPanel
+                    vaga={buscaCVVaga}
+                    onClose={() => setBuscaCVVaga(null)}
+                    onCandidaturaCriada={handleCandidaturaCriada}
+                    currentUserId={currentUserId}
                 />
             )}
         </div>
