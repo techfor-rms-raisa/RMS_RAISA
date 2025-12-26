@@ -15,7 +15,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Pessoa } from '@/types';
 import CVUploadProcessor from './CVUploadProcessor';
-import { supabase } from '../../config/supabase';
+import { supabase } from '@/config/supabase';
 
 interface TalentosProps {
     pessoas: Pessoa[];

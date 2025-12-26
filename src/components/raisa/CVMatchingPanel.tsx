@@ -9,7 +9,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Vaga } from '@/types';
-import { useRaisaCVSearch, CandidatoMatch } from '../../hooks/Supabase/useRaisaCVSearch';
+import { useRaisaCVSearch, CandidatoMatch } from '@/hooks/Supabase/useRaisaCVSearch';
 
 interface CVMatchingPanelProps {
   vaga: Vaga;
