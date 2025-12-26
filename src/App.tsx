@@ -16,6 +16,9 @@ import FeedbackPortal from './components/FeedbackPortal';
 import Quarentena from './components/Quarentena';
 import Sidebar from './components/layout/Sidebar'; 
 
+// ✅ NOVO: Import do componente Movimentações
+import MovimentacoesConsultores from './components/MovimentacoesConsultores';
+
 // RAISA Imports
 import Vagas from './components/raisa/Vagas';
 import Candidaturas from './components/raisa/Candidaturas';
@@ -197,6 +200,11 @@ const App: React.FC = () => {
         return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} />;
       case 'analytics':
         return <Analytics consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
+      
+      // ✅ NOVO: Movimentações de Consultores
+      case 'movimentacoes':
+        return <MovimentacoesConsultores />;
+      
       case 'export': 
         return <ExportModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
       case 'import':

@@ -26,6 +26,8 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
         { view: 'consultants', label: 'Consultores', icon: 'fa-solid fa-users', roles: ['Administrador', 'Gestão de Pessoas'] },
         { view: 'clients', label: 'Clientes', icon: 'fa-solid fa-building', roles: ['Administrador', 'Gestão Comercial'] },
         { view: 'analytics', label: 'Analytics', icon: 'fa-solid fa-chart-line', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
+        // ✅ NOVO: Movimentações de Consultores
+        { view: 'movimentacoes', label: 'Movimentações', icon: 'fa-solid fa-arrow-right-arrow-left', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
         { view: 'compliance_dashboard', label: 'Compliance', icon: 'fa-solid fa-clipboard-check', roles: ['Administrador', 'Gestão de Pessoas', 'Gestão Comercial'] },
         { view: 'templates', label: 'Templates', icon: 'fa-regular fa-envelope', roles: ['Administrador', 'Gestão de Pessoas'] },
         { view: 'campaigns', label: 'Campanhas', icon: 'fa-solid fa-bullhorn', roles: ['Administrador'] },
