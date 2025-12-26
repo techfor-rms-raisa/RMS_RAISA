@@ -19,6 +19,9 @@ import Sidebar from './components/layout/Sidebar';
 // ✅ NOVO: Import do componente Movimentações
 import MovimentacoesConsultores from './components/MovimentacoesConsultores';
 
+// ✅ NOVO: Import do componente Posição Comercial
+import PosicaoComercial from './components/PosicaoComercial';
+
 // RAISA Imports
 import Vagas from './components/raisa/Vagas';
 import Candidaturas from './components/raisa/Candidaturas';
@@ -204,6 +207,10 @@ const App: React.FC = () => {
       // ✅ NOVO: Movimentações de Consultores
       case 'movimentacoes':
         return <MovimentacoesConsultores />;
+      
+      // ✅ NOVO: Posição Comercial
+      case 'posicao_comercial':
+        return <PosicaoComercial />;
       
       case 'export': 
         return <ExportModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;

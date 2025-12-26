@@ -28,6 +28,8 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
         { view: 'analytics', label: 'Analytics', icon: 'fa-solid fa-chart-line', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
         // ✅ NOVO: Movimentações de Consultores
         { view: 'movimentacoes', label: 'Movimentações', icon: 'fa-solid fa-arrow-right-arrow-left', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
+        // ✅ NOVO: Posição Comercial
+        { view: 'posicao_comercial', label: 'Posição Comercial', icon: 'fa-solid fa-chart-bar', roles: ['Administrador', 'Gestão Comercial', 'Gestão de Pessoas'] },
         { view: 'compliance_dashboard', label: 'Compliance', icon: 'fa-solid fa-clipboard-check', roles: ['Administrador', 'Gestão de Pessoas', 'Gestão Comercial'] },
         { view: 'templates', label: 'Templates', icon: 'fa-regular fa-envelope', roles: ['Administrador', 'Gestão de Pessoas'] },
         { view: 'campaigns', label: 'Campanhas', icon: 'fa-solid fa-bullhorn', roles: ['Administrador'] },
