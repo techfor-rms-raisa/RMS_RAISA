@@ -1,53 +1,308 @@
-import React from 'react';
-import { Candidatura, Vaga, Pessoa } from '@/types';
+/**
+ * Pipeline.tsx - Pipeline de Vagas com Distribuição Inteligente
+ * 
+ * Funcionalidades:
+ * - Visualização Kanban das vagas por status
+ * - Botão de Distribuição Inteligente por vaga
+ * - Indicador de analistas atribuídos
+ * - Estatísticas de candidatos por analista
+ * 
+ * Versão: 2.0 - Integração com Distribuição
+ * Data: 26/12/2024
+ */
 
-interface PipelineProps {
-    candidaturas: Candidatura[];
-    vagas: Vaga[];
-    pessoas: Pessoa[];
+import React, { useState, useEffect } from 'react';
+import { supabase } from '@/config/supabase';
+import DistribuicaoVagasPanel from './DistribuicaoVagasPanel';
+
+interface Vaga {
+  id: number;
+  titulo: string;
+  status: string;
+  cliente_id: number;
+  cliente_nome?: string;
+  prioridade?: string;
+  data_abertura?: string;
+  total_candidatos?: number;
+  analistas_count?: number;
 }
 
-const Pipeline: React.FC<PipelineProps> = ({ candidaturas, vagas, pessoas }) => {
-    const columns = [
-        { id: 'triagem', label: 'Triagem', color: 'border-gray-400' },
-        { id: 'entrevista', label: 'Entrevista', color: 'border-blue-500' },
-        { id: 'teste_tecnico', label: 'Teste Técnico', color: 'border-yellow-500' },
-        { id: 'aprovado', label: 'Aprovado', color: 'border-green-500' }
-    ];
+interface VagaComDistribuicao extends Vaga {
+  analistas?: {
+    id: number;
+    nome: string;
+    candidatos_atribuidos: number;
+  }[];
+}
 
-    const getPessoaName = (id: string) => pessoas.find(p => p.id === id)?.nome || 'Unknown';
-    const getVagaTitle = (id: string) => vagas.find(v => v.id === id)?.titulo || 'Unknown';
+interface PipelineProps {
+  currentUserId?: number;
+}
 
-    return (
-        <div className="h-full overflow-x-auto">
-            <h2 className="text-2xl font-bold mb-6 text-gray-800">Pipeline de Contratação</h2>
-            <div className="flex gap-4 min-w-[1000px] h-[calc(100vh-200px)]">
-                {columns.map(col => {
-                    const items = candidaturas.filter(c => c.status === col.id);
-                    return (
-                        <div key={col.id} className="flex-1 bg-gray-100 rounded-lg p-4 flex flex-col">
-                            <div className={`border-b-4 ${col.color} pb-3 mb-4 flex justify-between items-center`}>
-                                <h3 className="font-bold text-gray-700 uppercase">{col.label}</h3>
-                                <span className="bg-white px-2 py-1 rounded text-sm font-bold shadow-sm">{items.length}</span>
-                            </div>
-                            <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
-                                {items.map(c => (
-                                    <div key={c.id} className="bg-white p-4 rounded shadow-sm hover:shadow-md transition-shadow cursor-pointer">
-                                        <h4 className="font-bold text-gray-800">{getPessoaName(c.pessoa_id)}</h4>
-                                        <p className="text-xs text-gray-500 mt-1">{getVagaTitle(c.vaga_id)}</p>
-                                        <div className="mt-3 flex justify-between items-center text-xs text-gray-400">
-                                            <span>{new Date(c.createdAt).toLocaleDateString()}</span>
-                                            <span>#{c.id.slice(-4)}</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
+// Colunas do Pipeline
+const COLUNAS_PIPELINE = [
+  { status: 'aberta', titulo: '📂 Abertas', cor: 'bg-blue-500' },
+  { status: 'em_andamento', titulo: '🔄 Em Andamento', cor: 'bg-yellow-500' },
+  { status: 'em_selecao', titulo: '👥 Em Seleção', cor: 'bg-purple-500' },
+  { status: 'finalizada', titulo: '✅ Finalizadas', cor: 'bg-green-500' },
+  { status: 'cancelada', titulo: '❌ Canceladas', cor: 'bg-red-500' }
+];
+
+const Pipeline: React.FC<PipelineProps> = ({ currentUserId }) => {
+  // Estados
+  const [vagas, setVagas] = useState<VagaComDistribuicao[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Modal de Distribuição
+  const [showDistribuicao, setShowDistribuicao] = useState(false);
+  const [vagaSelecionada, setVagaSelecionada] = useState<VagaComDistribuicao | null>(null);
+
+  // Carregar vagas com dados de distribuição
+  const carregarVagas = async () => {
+    setLoading(true);
+    try {
+      // Buscar vagas
+      const { data: vagasData, error: vagasError } = await supabase
+        .from('vagas')
+        .select(`
+          id,
+          titulo,
+          status,
+          cliente_id,
+          prioridade,
+          data_abertura,
+          cliente:clients(razao_social_cliente)
+        `)
+        .order('data_abertura', { ascending: false });
+
+      if (vagasError) throw vagasError;
+
+      // Para cada vaga, buscar distribuição e contagem de candidatos
+      const vagasComDados = await Promise.all(
+        (vagasData || []).map(async (vaga) => {
+          // Contar candidatos
+          const { count: totalCandidatos } = await supabase
+            .from('candidaturas')
+            .select('*', { count: 'exact', head: true })
+            .eq('vaga_id', vaga.id);
+
+          // Buscar analistas da distribuição
+          const { data: distribuicao } = await supabase
+            .from('vaga_analista_distribuicao')
+            .select(`
+              analista_id,
+              candidatos_atribuidos,
+              analista:app_users(nome_usuario)
+            `)
+            .eq('vaga_id', vaga.id)
+            .eq('ativo', true);
+
+          return {
+            ...vaga,
+            cliente_nome: vaga.cliente?.razao_social_cliente,
+            total_candidatos: totalCandidatos || 0,
+            analistas_count: distribuicao?.length || 0,
+            analistas: (distribuicao || []).map(d => ({
+              id: d.analista_id,
+              nome: d.analista?.nome_usuario || '',
+              candidatos_atribuidos: d.candidatos_atribuidos
+            }))
+          };
+        })
+      );
+
+      setVagas(vagasComDados);
+    } catch (err: any) {
+      console.error('Erro ao carregar vagas:', err);
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    carregarVagas();
+  }, []);
+
+  // Abrir modal de distribuição
+  const handleAbrirDistribuicao = (vaga: VagaComDistribuicao) => {
+    setVagaSelecionada(vaga);
+    setShowDistribuicao(true);
+  };
+
+  // Fechar modal e recarregar
+  const handleFecharDistribuicao = () => {
+    setShowDistribuicao(false);
+    setVagaSelecionada(null);
+    carregarVagas(); // Recarregar para atualizar contadores
+  };
+
+  // Filtrar vagas por status
+  const getVagasPorStatus = (status: string) => {
+    return vagas.filter(v => v.status === status);
+  };
+
+  // Renderizar card de vaga
+  const renderVagaCard = (vaga: VagaComDistribuicao) => (
+    <div 
+      key={vaga.id}
+      className="bg-white rounded-lg shadow-sm border p-4 mb-3 hover:shadow-md transition-shadow"
+    >
+      {/* Header */}
+      <div className="flex justify-between items-start mb-2">
+        <h4 className="font-medium text-gray-800 text-sm line-clamp-2">
+          {vaga.titulo}
+        </h4>
+        {vaga.prioridade === 'alta' && (
+          <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded">
+            🔥 Alta
+          </span>
+        )}
+      </div>
+
+      {/* Cliente */}
+      <p className="text-xs text-gray-500 mb-3">
+        {vaga.cliente_nome || 'Cliente não informado'}
+      </p>
+
+      {/* Stats */}
+      <div className="flex gap-4 text-xs text-gray-600 mb-3">
+        <span title="Total de candidatos">
+          👤 {vaga.total_candidatos} candidatos
+        </span>
+        <span title="Analistas atribuídos">
+          👥 {vaga.analistas_count} analistas
+        </span>
+      </div>
+
+      {/* Analistas atribuídos */}
+      {vaga.analistas && vaga.analistas.length > 0 && (
+        <div className="mb-3 p-2 bg-indigo-50 rounded text-xs">
+          <div className="font-medium text-indigo-700 mb-1">Distribuição:</div>
+          <div className="flex flex-wrap gap-1">
+            {vaga.analistas.map(a => (
+              <span 
+                key={a.id}
+                className="bg-white px-2 py-0.5 rounded border border-indigo-200"
+                title={`${a.candidatos_atribuidos} candidatos atribuídos`}
+              >
+                {a.nome.split(' ')[0]} ({a.candidatos_atribuidos})
+              </span>
+            ))}
+          </div>
         </div>
+      )}
+
+      {/* Botão Distribuição */}
+      <button
+        onClick={() => handleAbrirDistribuicao(vaga)}
+        className={`w-full py-2 rounded text-sm font-medium transition-colors ${
+          vaga.analistas_count > 0
+            ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+        }`}
+      >
+        {vaga.analistas_count > 0 ? '👥 Gerenciar Distribuição' : '+ Configurar Distribuição'}
+      </button>
+    </div>
+  );
+
+  // Loading
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          <p className="mt-2 text-gray-500">Carregando pipeline...</p>
+        </div>
+      </div>
     );
+  }
+
+  // Erro
+  if (error) {
+    return (
+      <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-lg">
+        <p className="font-medium">Erro ao carregar pipeline</p>
+        <p className="text-sm">{error}</p>
+        <button 
+          onClick={carregarVagas}
+          className="mt-2 text-sm underline"
+        >
+          Tentar novamente
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="h-full">
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800">Pipeline de Vagas</h2>
+          <p className="text-sm text-gray-500">
+            {vagas.length} vagas • {vagas.reduce((sum, v) => sum + (v.total_candidatos || 0), 0)} candidatos total
+          </p>
+        </div>
+        <button
+          onClick={carregarVagas}
+          className="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
+        >
+          🔄 Atualizar
+        </button>
+      </div>
+
+      {/* Kanban Board */}
+      <div className="flex gap-4 overflow-x-auto pb-4">
+        {COLUNAS_PIPELINE.map(coluna => {
+          const vagasColuna = getVagasPorStatus(coluna.status);
+          
+          return (
+            <div 
+              key={coluna.status}
+              className="flex-shrink-0 w-80"
+            >
+              {/* Header da coluna */}
+              <div className={`${coluna.cor} text-white px-4 py-2 rounded-t-lg flex justify-between items-center`}>
+                <span className="font-medium">{coluna.titulo}</span>
+                <span className="bg-white/20 px-2 py-0.5 rounded text-sm">
+                  {vagasColuna.length}
+                </span>
+              </div>
+
+              {/* Cards */}
+              <div className="bg-gray-100 rounded-b-lg p-3 min-h-[400px] max-h-[calc(100vh-300px)] overflow-y-auto">
+                {vagasColuna.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400 text-sm">
+                    Nenhuma vaga
+                  </div>
+                ) : (
+                  vagasColuna.map(vaga => renderVagaCard(vaga))
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Modal de Distribuição */}
+      {showDistribuicao && vagaSelecionada && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <DistribuicaoVagasPanel
+              vagaId={vagaSelecionada.id}
+              vagaTitulo={vagaSelecionada.titulo}
+              clienteNome={vagaSelecionada.cliente_nome}
+              onClose={handleFecharDistribuicao}
+              currentUserId={currentUserId}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default Pipeline;
