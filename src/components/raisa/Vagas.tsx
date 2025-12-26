@@ -199,13 +199,6 @@ const Vagas: React.FC<VagasProps> = ({
         console.log(`✅ Candidatura ${candidaturaId} criada via busca de CVs`);
     };
 
-    // Ordenar clientes alfabeticamente
-    const sortedClients = useMemo(() => {
-        return [...safeClients].sort((a, b) => 
-            (a.razao_social_cliente || '').localeCompare(b.razao_social_cliente || '')
-        );
-    }, [safeClients]);
-
     // ✅ Ordenar clientes de forma segura - usa razao_social_cliente
     const sortedClients = useMemo(() => {
         return safeClients
