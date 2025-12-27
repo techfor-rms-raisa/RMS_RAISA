@@ -1,35 +1,22 @@
 /**
  * CVImportIA.tsx - Importação Inteligente de CVs com IA
  * 
- * CORRIGIDO: Usa o mesmo padrão de API do geminiService.ts
- * - Pacote: @google/genai
- * - Variável: API_KEY
- * - Modelo: AI_MODEL_NAME (gemini-2.5-flash)
+ * CORRIGIDO v1.2: Usa API backend /api/gemini-analyze
+ * - NÃO usa API key no frontend (segurança)
+ * - Chama endpoint Vercel que tem a API_KEY configurada
  * 
- * Versão: 1.1
+ * Versão: 1.2
  * Data: 27/12/2024
  */
 
 import React, { useState, useRef } from 'react';
 import { supabase } from '../../config/supabase';
-import { GoogleGenAI } from "@google/genai";
-import { AI_MODEL_NAME } from '../../constants';
 import { 
   Upload, Sparkles, Check, X, AlertCircle, 
   User, Briefcase, GraduationCap,
   Globe, Code, ChevronDown, ChevronUp, Save, RefreshCw,
   Loader2, Eye
 } from 'lucide-react';
-
-// ============================================
-// CONFIGURAÇÃO DA API GEMINI (mesmo padrão do geminiService)
-// ============================================
-
-const apiKey = (typeof process !== 'undefined' && process.env?.API_KEY) ||
-               (import.meta.env?.API_KEY as string) ||
-               "";
-
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 // ============================================
 // TIPOS
@@ -252,7 +239,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       setTextoCV(texto);
       setProgresso(40);
 
-      await processarComIA(texto);
+      await processarComIA(texto, file);
 
     } catch (err: any) {
       console.error('Erro no processamento:', err);
@@ -261,108 +248,74 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     }
   };
 
-  // Extrair texto do PDF usando Gemini Vision
+  // Extrair texto do PDF - agora apenas converte para base64
   const extrairTextoPDF = async (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const base64 = (reader.result as string).split(',')[1];
-          
-          if (!ai) {
-            resolve(`[Conteúdo do PDF: ${file.name}]\n\nAPI_KEY não configurada.`);
-            return;
-          }
-
-          const result = await ai.models.generateContent({
-            model: AI_MODEL_NAME,
-            contents: [{
-              role: 'user',
-              parts: [
-                {
-                  inlineData: {
-                    mimeType: 'application/pdf',
-                    data: base64
-                  }
-                },
-                {
-                  text: 'Extraia todo o texto deste currículo/CV em PDF. Mantenha a estrutura e formatação. Retorne apenas o texto extraído, sem comentários.'
-                }
-              ]
-            }]
-          });
-
-          const texto = result.text || '';
-          resolve(texto);
-
-        } catch (err) {
-          console.error('Erro ao extrair PDF:', err);
-          reject(err);
-        }
+      reader.onload = () => {
+        // Retorna apenas o base64, o backend vai extrair o texto
+        const base64 = (reader.result as string).split(',')[1];
+        resolve(base64);
       };
       reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
       reader.readAsDataURL(file);
     });
   };
 
-  // Processar texto com IA (usando o padrão geminiService)
-  const processarComIA = async (texto: string) => {
+  // Processar CV usando API backend (Vercel + Gemini)
+  const processarComIA = async (textoOuBase64: string, file?: File) => {
     setProgresso(50);
 
-    if (!ai) {
-      console.warn('⚠️ API_KEY não configurada. Usando extração básica.');
-      const dadosBasicos = extrairDadosBasicos(texto);
-      setDadosExtraidos(dadosBasicos);
-      setProgresso(100);
-      setEtapaAtual(3);
-      return;
-    }
-
     try {
-      const prompt = buildPromptExtracaoCV(texto);
-
-      console.log('🤖 Processando CV com Gemini...');
+      console.log('🤖 Enviando CV para processamento via API backend...');
       
-      const result = await ai.models.generateContent({
-        model: AI_MODEL_NAME,
-        contents: prompt
+      // Determinar se é PDF (base64) ou texto
+      const isPDF = file?.type === 'application/pdf';
+      
+      const response = await fetch('/api/gemini-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'extrair_cv',
+          payload: isPDF 
+            ? { base64PDF: textoOuBase64 }
+            : { textoCV: textoOuBase64 }
+        })
       });
 
-      setProgresso(80);
-
-      const textResponse = result.text;
-
-      if (!textResponse) {
-        throw new Error('Resposta vazia da IA');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Erro na API');
       }
 
-      // Limpar e parsear JSON
-      const jsonClean = textResponse
-        .replace(/^```json\n?/i, '')
-        .replace(/^```\n?/i, '')
-        .replace(/```$/i, '')
-        .trim();
+      const result = await response.json();
+      setProgresso(80);
 
-      const resultado = JSON.parse(jsonClean);
+      if (!result.success || !result.data) {
+        throw new Error('Resposta inválida da API');
+      }
+
+      const dados = result.data.dados;
+      const textoOriginal = result.data.texto_original || '';
 
       const dadosCompletos: DadosExtraidos = {
-        nome: resultado.dados_pessoais?.nome || '',
-        email: resultado.dados_pessoais?.email || '',
-        telefone: resultado.dados_pessoais?.telefone || '',
-        linkedin_url: resultado.dados_pessoais?.linkedin_url || '',
-        cidade: resultado.dados_pessoais?.cidade || '',
-        estado: resultado.dados_pessoais?.estado || '',
-        titulo_profissional: resultado.dados_profissionais?.titulo_profissional || '',
-        senioridade: resultado.dados_profissionais?.senioridade || 'pleno',
+        nome: dados.dados_pessoais?.nome || '',
+        email: dados.dados_pessoais?.email || '',
+        telefone: dados.dados_pessoais?.telefone || '',
+        linkedin_url: dados.dados_pessoais?.linkedin_url || '',
+        cidade: dados.dados_pessoais?.cidade || '',
+        estado: dados.dados_pessoais?.estado || '',
+        titulo_profissional: dados.dados_profissionais?.titulo_profissional || '',
+        senioridade: dados.dados_profissionais?.senioridade || 'pleno',
         disponibilidade: 'imediata',
         modalidade_preferida: 'remoto',
         pretensao_salarial: null,
-        resumo_profissional: resultado.dados_profissionais?.resumo_profissional || '',
-        skills: resultado.skills || [],
-        experiencias: resultado.experiencias || [],
-        formacao: resultado.formacao || [],
-        idiomas: resultado.idiomas || [],
-        cv_texto_original: texto,
+        resumo_profissional: dados.dados_profissionais?.resumo_profissional || '',
+        skills: dados.skills || [],
+        experiencias: dados.experiencias || [],
+        formacao: dados.formacao || [],
+        idiomas: dados.idiomas || [],
+        cv_texto_original: textoOriginal,
         cv_processado: true,
         cv_processado_em: new Date().toISOString()
       };
@@ -374,8 +327,13 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
     } catch (err: any) {
       console.error('Erro ao processar com IA:', err);
-      const dadosBasicos = extrairDadosBasicos(texto);
+      // Fallback: extração básica
+      const textoFallback = typeof textoOuBase64 === 'string' && !textoOuBase64.includes('base64') 
+        ? textoOuBase64 
+        : '';
+      const dadosBasicos = extrairDadosBasicos(textoFallback);
       setDadosExtraidos(dadosBasicos);
+      setErro('Erro na IA. Preencha os dados manualmente.');
       setProgresso(100);
       setEtapaAtual(3);
     }
@@ -630,11 +588,10 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
               {/* Info da API */}
               <div className="mt-6 p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600">
-                  {ai ? (
-                    <span className="text-green-600">✅ API Gemini configurada ({AI_MODEL_NAME})</span>
-                  ) : (
-                    <span className="text-orange-600">⚠️ API_KEY não configurada - usando extração básica</span>
-                  )}
+                  <span className="text-green-600">✅ API Gemini via backend (gemini-2.0-flash-exp)</span>
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  O processamento é feito no servidor Vercel para maior segurança.
                 </p>
               </div>
             </div>

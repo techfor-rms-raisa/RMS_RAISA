@@ -59,6 +59,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await analyzeJobDescription(payload.dados);
         break;
 
+      // ✅ NOVA ACTION: Extração de CV com IA (RAISA)
+      case 'extrair_cv':
+        result = await extrairDadosCV(payload.textoCV, payload.base64PDF);
+        break;
+
       default:
         return res.status(400).json({ error: `Ação desconhecida: ${action}` });
     }
@@ -295,4 +300,160 @@ Analise cada campo e sugira melhorias quando necessário. Avalie:
 
   const jsonText = jsonMatch[1] || jsonMatch[0];
   return JSON.parse(jsonText);
+}
+
+// ========================================
+// EXTRAÇÃO DE CV (RAISA - Banco de Talentos)
+// ========================================
+
+async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
+  console.log('🤖 [Gemini] Iniciando extração de CV...');
+
+  let textoParaAnalisar = textoCV || '';
+
+  // Se recebeu PDF em base64, primeiro extrair o texto
+  if (base64PDF && !textoCV) {
+    console.log('📄 Extraindo texto do PDF...');
+    
+    const resultPDF = await ai.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: [{
+        role: 'user',
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'application/pdf',
+              data: base64PDF
+            }
+          },
+          {
+            text: 'Extraia todo o texto deste currículo/CV em PDF. Mantenha a estrutura e formatação. Retorne apenas o texto extraído, sem comentários adicionais.'
+          }
+        ]
+      }]
+    });
+
+    textoParaAnalisar = resultPDF.text || '';
+    console.log(`📄 Texto extraído: ${textoParaAnalisar.substring(0, 200)}...`);
+  }
+
+  if (!textoParaAnalisar) {
+    throw new Error('Nenhum texto para analisar. Envie textoCV ou base64PDF.');
+  }
+
+  // Prompt para extração estruturada
+  const prompt = `Você é um especialista em análise de currículos de TI. Analise o CV abaixo e extraia TODAS as informações estruturadas.
+
+CURRÍCULO:
+==================
+${textoParaAnalisar}
+==================
+
+INSTRUÇÕES:
+1. Extraia dados pessoais com cuidado (nome completo, email, telefone, LinkedIn)
+2. Identifique o título profissional mais adequado
+3. Detecte a senioridade baseada nas experiências (junior, pleno, senior, especialista)
+4. Extraia TODAS as skills técnicas mencionadas
+5. Liste todas as experiências profissionais
+6. Liste toda formação acadêmica e certificações
+7. Identifique idiomas e níveis
+
+RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
+{
+  "dados_pessoais": {
+    "nome": "Nome Completo",
+    "email": "email@exemplo.com",
+    "telefone": "(11) 99999-9999",
+    "linkedin_url": "https://linkedin.com/in/perfil",
+    "cidade": "São Paulo",
+    "estado": "SP"
+  },
+  "dados_profissionais": {
+    "titulo_profissional": "Desenvolvedor Full Stack Senior",
+    "senioridade": "senior",
+    "resumo_profissional": "Resumo do perfil profissional em 2-3 frases"
+  },
+  "skills": [
+    {
+      "nome": "React",
+      "categoria": "frontend",
+      "nivel": "avancado",
+      "anos_experiencia": 4
+    }
+  ],
+  "experiencias": [
+    {
+      "empresa": "Nome da Empresa",
+      "cargo": "Cargo Ocupado",
+      "data_inicio": "2020-01",
+      "data_fim": null,
+      "atual": true,
+      "descricao": "Descrição das atividades",
+      "tecnologias": ["React", "Node.js"]
+    }
+  ],
+  "formacao": [
+    {
+      "tipo": "graduacao",
+      "curso": "Ciência da Computação",
+      "instituicao": "Universidade XYZ",
+      "ano_conclusao": 2018,
+      "em_andamento": false
+    }
+  ],
+  "idiomas": [
+    {
+      "idioma": "Inglês",
+      "nivel": "avancado"
+    }
+  ]
+}
+
+REGRAS:
+- Se não encontrar um dado, use string vazia "" ou null
+- Categorias de skill: frontend, backend, database, devops, mobile, soft_skill, tool, other
+- Níveis de skill: basico, intermediario, avancado, especialista
+- Níveis de idioma: basico, intermediario, avancado, fluente, nativo
+- Tipos de formação: graduacao, pos_graduacao, mba, mestrado, doutorado, tecnico, certificacao, curso_livre`;
+
+  const result = await ai.models.generateContent({ 
+    model: 'gemini-2.0-flash-exp', 
+    contents: prompt 
+  });
+  
+  const text = result.text || '';
+  console.log('🤖 Resposta da IA recebida');
+
+  // Limpar e parsear JSON
+  const jsonClean = text
+    .replace(/^```json\n?/i, '')
+    .replace(/^```\n?/i, '')
+    .replace(/```$/i, '')
+    .trim();
+
+  try {
+    const dadosExtraidos = JSON.parse(jsonClean);
+    console.log('✅ CV extraído com sucesso:', dadosExtraidos.dados_pessoais?.nome);
+    
+    return {
+      sucesso: true,
+      dados: dadosExtraidos,
+      texto_original: textoParaAnalisar
+    };
+  } catch (parseError) {
+    console.error('❌ Erro ao parsear JSON:', parseError);
+    
+    // Tentar extrair JSON do texto
+    const jsonMatch = text.match(/{[\s\S]*}/);
+    if (jsonMatch) {
+      const dadosExtraidos = JSON.parse(jsonMatch[0]);
+      return {
+        sucesso: true,
+        dados: dadosExtraidos,
+        texto_original: textoParaAnalisar
+      };
+    }
+    
+    throw new Error('Falha ao parsear resposta da IA');
+  }
 }
