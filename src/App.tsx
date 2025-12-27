@@ -27,7 +27,7 @@ import Vagas from './components/raisa/Vagas';
 import Candidaturas from './components/raisa/Candidaturas';
 import AnaliseRisco from './components/raisa/AnaliseRisco';
 import Pipeline from './components/raisa/Pipeline';
-import BancoTalentos from './components/raisa/BancoTalentos_v2';
+import BancoTalentos from './components/raisa/BancoTalentos_v3';
 import ControleEnvios from './components/raisa/ControleEnvios'; 
 import EntrevistaTecnica from './components/raisa/EntrevistaTecnica';
 // ✅ NOVO: Componente de Sugestões IA para Vagas
