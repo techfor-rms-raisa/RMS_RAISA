@@ -19,7 +19,7 @@ import {
   PosicaoComercialItem,
   FiltrosPosicao,
   TotaisPosicao
-} from '@/hooks/Supabase/usePosicaoComercial';
+} from '../hooks/Supabase/usePosicaoComercial';
 
 // ============================================
 // FORMATADORES
