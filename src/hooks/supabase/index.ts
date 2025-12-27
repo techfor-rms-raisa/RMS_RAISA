@@ -30,3 +30,7 @@ export { useCVGenerator } from './useCVGenerator';
 
 // Hooks Recomendação de Candidatos (Sprint 2 - Integração 27/12/2024)
 export { useRecomendacaoCandidato } from './useRecomendacaoCandidato';
+
+// Hooks Dashboards (Sprint 3 - Integração 27/12/2024)
+export { useDashboardRAISA } from './useDashboardRAISA';
+export { useRaisaMetrics } from './useRaisaMetrics';
