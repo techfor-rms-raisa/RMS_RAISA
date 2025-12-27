@@ -23,3 +23,7 @@ export { useRaisaInterview } from './useRaisaInterview';
 export { useRaisaEnvios } from './useRaisaEnvios';
 export { useVagaAnaliseIA } from './useVagaAnaliseIA';
 export { useRaisaCVSearch } from './useRaisaCVSearch';
+
+// Hooks CV (Sprint 1 - Integração 27/12/2024)
+export { useCVTemplates } from './useCVTemplates';
+export { useCVGenerator } from './useCVGenerator';

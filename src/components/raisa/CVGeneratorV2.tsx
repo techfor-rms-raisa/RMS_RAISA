@@ -1,5 +1,5 @@
 /**
- * CVGeneratorV2.tsx - Gerador de CV Padronizado v2.0
+ * CVGeneratorV2.tsx - Gerador de CV Padronizado v2.1
  * 
  * Baseado nos templates reais:
  * - Techfor Padrão (vermelho)
@@ -12,8 +12,13 @@
  * - Motivo de saída
  * - Dados pessoais completos
  * 
- * Versão: 2.0
- * Data: 26/12/2024
+ * INTEGRAÇÃO SUPABASE v2.1 (Sprint 1 - 27/12/2024):
+ * - Usa useCVGenerator hook para salvar CVs
+ * - Usa useCVTemplates hook para carregar templates
+ * - Tabelas: cv_gerado, cv_template
+ * 
+ * Versão: 2.1
+ * Data: 27/12/2024
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -29,6 +34,10 @@ import {
   NIVEIS_IDIOMA,
   MODALIDADES_TRABALHO
 } from '@/types/cvTypes';
+
+// ✅ NOVO: Hooks de integração Supabase
+import { useCVGenerator } from '@/hooks/supabase/useCVGenerator';
+import { useCVTemplates } from '@/hooks/supabase/useCVTemplates';
 
 interface CVGeneratorV2Props {
   candidaturaId: number;
@@ -60,11 +69,29 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
   onCVGerado,
   currentUserId
 }) => {
+  // ✅ NOVO: Hooks Supabase para persistência
+  const { 
+    cvAtual, 
+    saveCV, 
+    aprovarCV, 
+    loadCVByCandidatura,
+    loading: loadingCV,
+    error: errorCV 
+  } = useCVGenerator();
+  
+  const { 
+    templates, 
+    loadTemplates, 
+    getTemplateByNome,
+    loading: loadingTemplates 
+  } = useCVTemplates();
+
   // Estados principais
   const [etapa, setEtapa] = useState<EtapaGeracao>('template');
   const [templateSelecionado, setTemplateSelecionado] = useState<TemplateType>('techfor');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cvSalvoId, setCvSalvoId] = useState<number | null>(null);
   
   // Dados do candidato
   const [dados, setDados] = useState<DadosCandidatoTechfor>({
@@ -81,6 +108,22 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
     hard_skills_tabela: [],
     idiomas: []
   });
+
+  // ✅ NOVO: Carregar CV existente e templates ao montar
+  useEffect(() => {
+    const init = async () => {
+      // Carregar templates disponíveis
+      await loadTemplates();
+      
+      // Verificar se já existe CV para esta candidatura
+      const cvExistente = await loadCVByCandidatura(candidaturaId);
+      if (cvExistente) {
+        setDados(cvExistente.dados_processados);
+        console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ')');
+      }
+    };
+    init();
+  }, [candidaturaId, loadTemplates, loadCVByCandidatura]);
   
   // Preview HTML
   const [htmlPreview, setHtmlPreview] = useState<string>('');
@@ -186,6 +229,56 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
       setEtapa('preview');
     } catch (err: any) {
       setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ✅ NOVO: Função para finalizar e salvar CV no Supabase
+  const handleFinalizarCV = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // Buscar template_id se disponível
+      let templateId: number | undefined;
+      const templateNome = templateSelecionado === 'tsystems' ? 'T-Systems' : 'Techfor';
+      const templateDB = await getTemplateByNome(templateNome);
+      if (templateDB) {
+        templateId = templateDB.id;
+      }
+
+      // Salvar CV no Supabase
+      const cvSalvo = await saveCV({
+        candidatura_id: candidaturaId,
+        template_id: templateId,
+        cv_original_url: cvOriginalTexto ? undefined : undefined, // URL do CV original se disponível
+        dados_processados: dados,
+        cv_html: htmlPreview,
+        gerado_por: currentUserId,
+        metadados: {
+          template_tipo: templateSelecionado,
+          tem_capa: !!htmlCapa,
+          vaga_info: vagaInfo
+        }
+      });
+
+      if (cvSalvo) {
+        setCvSalvoId(cvSalvo.id);
+        console.log('✅ CV salvo no Supabase (ID: ' + cvSalvo.id + ', versão: ' + cvSalvo.versao + ')');
+        
+        // Callback para o componente pai
+        if (onCVGerado) {
+          onCVGerado(cvSalvo.id);
+        }
+
+        setEtapa('finalizado');
+      } else {
+        throw new Error('Falha ao salvar CV no banco de dados');
+      }
+    } catch (err: any) {
+      console.error('❌ Erro ao finalizar CV:', err);
+      setError(err.message || 'Erro ao salvar CV');
     } finally {
       setLoading(false);
     }
@@ -749,11 +842,23 @@ Recomendamos o(a) [NOME]..."
             <div className="text-center py-12">
               <div className="text-6xl mb-4">✅</div>
               <h3 className="text-2xl font-bold text-gray-800 mb-2">CV Gerado com Sucesso!</h3>
-              <p className="text-gray-500 mb-8">
+              <p className="text-gray-500 mb-4">
                 O CV foi gerado no formato {templateSelecionado === 'tsystems' ? 'T-Systems' : 'Techfor'}
               </p>
+              
+              {/* ✅ NOVO: Info do CV salvo no Supabase */}
+              {cvSalvoId && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-6 max-w-md mx-auto">
+                  <p className="text-green-800 text-sm">
+                    💾 <strong>CV salvo no banco de dados</strong>
+                  </p>
+                  <p className="text-green-600 text-xs mt-1">
+                    ID: {cvSalvoId} | Versão: {cvAtual?.versao || 1}
+                  </p>
+                </div>
+              )}
 
-              <div className="flex justify-center gap-4">
+              <div className="flex justify-center gap-4 flex-wrap">
                 <button className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
                   📥 Baixar PDF
                 </button>
@@ -763,6 +868,29 @@ Recomendamos o(a) [NOME]..."
                 >
                   👁️ Ver Preview
                 </button>
+                
+                {/* ✅ NOVO: Botão de aprovar CV */}
+                {cvSalvoId && !cvAtual?.aprovado && (
+                  <button 
+                    onClick={async () => {
+                      if (currentUserId && cvSalvoId) {
+                        const sucesso = await aprovarCV(cvSalvoId, currentUserId);
+                        if (sucesso) {
+                          alert('✅ CV aprovado para envio ao cliente!');
+                        }
+                      }
+                    }}
+                    className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  >
+                    ✓ Aprovar para Envio
+                  </button>
+                )}
+                
+                {cvAtual?.aprovado && (
+                  <span className="px-6 py-3 bg-green-100 text-green-800 rounded-lg flex items-center">
+                    ✓ CV Aprovado
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -837,10 +965,11 @@ Recomendamos o(a) [NOME]..."
                   ← Editar
                 </button>
                 <button
-                  onClick={() => setEtapa('finalizado')}
-                  className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                  onClick={handleFinalizarCV}
+                  disabled={loading || loadingCV}
+                  className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
                 >
-                  ✓ Finalizar CV
+                  {loading || loadingCV ? '💾 Salvando...' : '✓ Finalizar CV'}
                 </button>
               </>
             )}
