@@ -16,10 +16,8 @@ import FeedbackPortal from './components/FeedbackPortal';
 import Quarentena from './components/Quarentena';
 import Sidebar from './components/layout/Sidebar'; 
 
-// ✅ NOVO: Import do componente Movimentações
+// ✅ Componentes RMS Novos
 import MovimentacoesConsultores from './components/MovimentacoesConsultores';
-
-// ✅ NOVO: Import do componente Posição Comercial
 import PosicaoComercial from './components/PosicaoComercial';
 
 // RAISA Imports
@@ -30,8 +28,10 @@ import Pipeline from './components/raisa/Pipeline';
 import BancoTalentos from './components/raisa/BancoTalentos';
 import ControleEnvios from './components/raisa/ControleEnvios'; 
 import EntrevistaTecnica from './components/raisa/EntrevistaTecnica';
-// ✅ NOVO: Componente de Sugestões IA para Vagas
 import VagaSugestoesIA from './components/raisa/VagaSugestoesIA';
+
+// ✅ NOVO: LinkedIn Import Panel (Fase 7)
+import LinkedInImportPanel from './components/raisa/LinkedInImportPanel';
 
 // RAISA Dashboard Imports
 import DashboardFunilConversao from './components/raisa/DashboardFunilConversao';
@@ -40,6 +40,11 @@ import DashboardPerformanceAnalista from './components/raisa/DashboardPerformanc
 import DashboardPerformanceGeral from './components/raisa/DashboardPerformanceGeral';
 import DashboardPerformanceCliente from './components/raisa/DashboardPerformanceCliente';
 import DashboardAnaliseTempo from './components/raisa/DashboardAnaliseTempo';
+
+// ✅ NOVO: Dashboards IA (Fases 6 e 7)
+import DashboardMLLearning from './components/raisa/DashboardMLLearning';
+import DashboardPerformanceIA from './components/raisa/DashboardPerformanceIA';
+import DashboardRaisaMetrics from './components/raisa/DashboardRaisaMetrics';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -52,7 +57,7 @@ import AtividadesExportar from './components/atividades/AtividadesExportar';
 import { PermissionsProvider } from './hooks/usePermissions';
 
 import { useSupabaseData } from './hooks/useSupabaseData';
-import { AIAnalysisResult, User, View, FeedbackResponse, RHAction, Vaga } from '@/types';
+import { AIAnalysisResult, User, View, FeedbackResponse, RHAction, Vaga } from './types/types_index';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -63,7 +68,7 @@ const App: React.FC = () => {
   const [contextualClient, setContextualClient] = useState<string>('');
   const [contextualConsultant, setContextualConsultant] = useState<string>('');
 
-  // ✅ NOVO: Estado para modal de sugestões IA
+  // Estado para modal de sugestões IA
   const [vagaParaSugestao, setVagaParaSugestao] = useState<Vaga | null>(null);
 
   useEffect(() => {
@@ -73,9 +78,9 @@ const App: React.FC = () => {
   const { 
     clients, consultants, users, usuariosCliente, coordenadoresCliente,
     templates, campaigns, feedbackResponses, rhActions,
-    vagas, pessoas, candidaturas, // RAISA Data
+    vagas, pessoas, candidaturas,
     updateConsultantScore, processReportAnalysis, 
-    loadConsultantReports, // 🔥 Lazy loading de relatórios
+    loadConsultantReports,
     addClient, updateClient, batchAddClients,
     addConsultant, updateConsultant, batchAddConsultants,
     addUser, updateUser,
@@ -88,17 +93,14 @@ const App: React.FC = () => {
     addVaga, updateVaga, deleteVaga, 
     addPessoa, updatePessoa,
     addCandidatura, updateCandidaturaStatus,
-    reload: loadAllData  // ✅ Função para carregar dados
+    reload: loadAllData
   } = useSupabaseData();
 
-  // ✅ Memoizar loadConsultantReports para evitar loops infinitos
-  // ⚠️ Dependency array vazio: loadConsultantReports nunca muda, é sempre a mesma função
   const memoizedLoadConsultantReports = useCallback(loadConsultantReports, []);
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
     setCurrentView('dashboard');
-    // ✅ Carregar dados APÓS autenticação bem-sucedida
     loadAllData();
   };
   
@@ -117,20 +119,15 @@ const App: React.FC = () => {
       results.forEach(result => updateConsultantScore(result));
   };
 
-  // ============================================
-  // ✅ CORREÇÃO DO BUG: Agora recebe e passa extractedMonth e extractedYear
-  // ✅ v2.1: Salva texto original do relatório em 'content'
-  // ============================================
   const handleManualAnalysis = async (
     text: string, 
     gestorName?: string,
-    extractedMonth?: number,  // ✅ NOVO PARÂMETRO
-    extractedYear?: number    // ✅ NOVO PARÂMETRO
+    extractedMonth?: number,
+    extractedYear?: number
   ) => {
       try {
           console.log('📊 Iniciando análise de relatórios...');
           
-          // ✅ CORREÇÃO: Passa extractedMonth e extractedYear para processReportAnalysis
           if (extractedMonth) {
               console.log(`📅 Mês extraído recebido no App.tsx: ${extractedMonth}`);
           }
@@ -147,9 +144,8 @@ const App: React.FC = () => {
           
           console.log(`✅ ${results.length} relatório(s) analisado(s). Atualizando consultores...`);
           
-          // ✅ CORREÇÃO v2.1: Atualizar score de cada consultor passando o texto original
           for (const result of results) {
-              await updateConsultantScore(result, text); // ✅ Passa texto original
+              await updateConsultantScore(result, text);
           }
           
           alert(`✅ Análise concluída com sucesso!\n\n${results.length} consultor(es) atualizado(s).\n\nVerifique o Dashboard para ver os resultados.`);
@@ -169,14 +165,11 @@ const App: React.FC = () => {
       if (action) addRHAction(action);
   };
 
-  // ✅ NOVO: Handler para entrevista completa
   const handleEntrevistaCompleta = (candidaturaId: number, resultado: 'aprovado' | 'reprovado') => {
     console.log(`✅ Entrevista finalizada: Candidatura ${candidaturaId} - ${resultado}`);
-    // Atualizar status da candidatura no estado local
     updateCandidaturaStatus(String(candidaturaId), resultado === 'aprovado' ? 'aprovado_interno' : 'reprovado_interno');
   };
 
-  // ✅ NOVO: Handler para aplicar sugestões da IA na vaga
   const handleAplicarSugestoes = (vagaAtualizada: Partial<Vaga>) => {
     if (vagaParaSugestao) {
       updateVaga({ ...vagaParaSugestao, ...vagaAtualizada } as Vaga);
@@ -190,7 +183,9 @@ const App: React.FC = () => {
     }
 
     switch (currentView) {
+      // ============================================
       // RMS Views
+      // ============================================
       case 'users':
         return <ManageUsers users={users} addUser={addUser} updateUser={updateUser} currentUser={currentUser!} migrateYearlyData={migrateYearlyData} />;
       case 'clients':
@@ -204,11 +199,11 @@ const App: React.FC = () => {
       case 'analytics':
         return <Analytics consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
       
-      // ✅ NOVO: Movimentações de Consultores
+      // ✅ Movimentações de Consultores
       case 'movimentacoes':
         return <MovimentacoesConsultores />;
       
-      // ✅ NOVO: Posição Comercial
+      // ✅ Posição Comercial
       case 'posicao_comercial':
         return <PosicaoComercial />;
       
@@ -220,8 +215,6 @@ const App: React.FC = () => {
           return <TemplateLibrary templates={templates} currentUser={currentUser!} addTemplate={addTemplate} updateTemplate={updateTemplate} deleteTemplate={deleteTemplate} />;
       case 'campaigns':
           return <ComplianceCampaigns campaigns={campaigns} templates={templates} consultants={consultants} addCampaign={addCampaign} onSimulateLink={handleSimulateLink} />;
-      
-      // ✅ CORRIGIDO: Apenas um return com consultants como prop
       case 'compliance_dashboard':
           return <ComplianceDashboard 
               rhActions={rhActions} 
@@ -229,7 +222,9 @@ const App: React.FC = () => {
               consultants={consultants} 
           />;
       
+      // ============================================
       // Atividades Views
+      // ============================================
       case 'atividades_inserir':
           return <AtividadesInserir 
             clients={clients} 
@@ -248,10 +243,9 @@ const App: React.FC = () => {
           return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} users={users} loadConsultantReports={memoizedLoadConsultantReports} />;
       
       // ============================================
-      // RAISA Views - ✅ INTEGRADO COM SUPABASE
+      // RAISA Views
       // ============================================
       case 'vagas':
-          // ✅ v52.3: Adicionado clients e usuariosCliente para filtros de Cliente e Gestor
           return <Vagas 
             vagas={vagas} 
             clients={clients} 
@@ -268,12 +262,8 @@ const App: React.FC = () => {
           return <Pipeline candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} />;
       case 'talentos':
           return <BancoTalentos pessoas={pessoas} addPessoa={addPessoa} updatePessoa={updatePessoa} />;
-      
-      // ✅ ATUALIZADO: ControleEnvios com props corretas (integrado Supabase)
       case 'controle_envios':
           return <ControleEnvios currentUser={currentUser!} />;
-      
-      // ✅ ATUALIZADO: EntrevistaTecnica com props corretas (integrado Supabase)
       case 'entrevista_tecnica':
           return <EntrevistaTecnica 
             candidaturas={candidaturas}
@@ -282,7 +272,13 @@ const App: React.FC = () => {
             onEntrevistaCompleta={handleEntrevistaCompleta}
           />;
       
+      // ✅ NOVO: LinkedIn Import (Fase 7)
+      case 'linkedin_import':
+          return <LinkedInImportPanel />;
+      
+      // ============================================
       // RAISA Dashboard Views
+      // ============================================
       case 'dashboard_funil':
           return <DashboardFunilConversao />;
       case 'dashboard_aprovacao':
@@ -295,6 +291,18 @@ const App: React.FC = () => {
           return <DashboardPerformanceCliente />;
       case 'dashboard_tempo':
           return <DashboardAnaliseTempo />;
+      
+      // ✅ NOVO: Dashboard ML Learning (Fase 7)
+      case 'dashboard_ml':
+          return <DashboardMLLearning />;
+      
+      // ✅ NOVO: Dashboard Performance IA (Fase 6)
+      case 'dashboard_performance_ia':
+          return <DashboardPerformanceIA />;
+      
+      // ✅ NOVO: Dashboard RAISA Metrics (Fase 6)
+      case 'dashboard_raisa_metrics':
+          return <DashboardRaisaMetrics />;
 
       case 'dashboard':
       default:
@@ -310,9 +318,6 @@ const App: React.FC = () => {
       return renderContent();
   }
 
-  // ============================================
-  // ✅ ENVOLVA TODO O RETURN COM <PermissionsProvider>
-  // ============================================
   return (
     <PermissionsProvider>
       <div className="min-h-screen bg-gray-100 flex flex-col overflow-hidden">
@@ -328,7 +333,6 @@ const App: React.FC = () => {
           </main>
         </div>
 
-        {/* ✅ NOVO: Modal de Sugestões IA para Vagas */}
         {vagaParaSugestao && currentUser && (
           <VagaSugestoesIA
             vaga={vagaParaSugestao}
