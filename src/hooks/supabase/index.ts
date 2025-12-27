@@ -27,3 +27,6 @@ export { useRaisaCVSearch } from './useRaisaCVSearch';
 // Hooks CV (Sprint 1 - Integração 27/12/2024)
 export { useCVTemplates } from './useCVTemplates';
 export { useCVGenerator } from './useCVGenerator';
+
+// Hooks Recomendação de Candidatos (Sprint 2 - Integração 27/12/2024)
+export { useRecomendacaoCandidato } from './useRecomendacaoCandidato';
