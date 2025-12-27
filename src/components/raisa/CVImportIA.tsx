@@ -1,36 +1,35 @@
 /**
  * CVImportIA.tsx - Importação Inteligente de CVs com IA
  * 
- * Similar ao ImportModule de Relatórios - fluxo completo de importação:
- * 1. Upload de CV (PDF)
- * 2. Extração de texto
- * 3. Processamento com Gemini IA
- * 4. Preview dos dados extraídos
- * 5. Edição/Confirmação
- * 6. Salvamento no banco
+ * CORRIGIDO: Usa o mesmo padrão de API do geminiService.ts
+ * - Pacote: @google/genai
+ * - Variável: API_KEY
+ * - Modelo: AI_MODEL_NAME (gemini-2.5-flash)
  * 
- * Extrai automaticamente:
- * - Dados pessoais (nome, email, telefone, LinkedIn)
- * - Título profissional
- * - Senioridade detectada
- * - Skills e competências
- * - Experiências profissionais
- * - Formação acadêmica
- * - Idiomas
- * - Resumo/Objetivo
- * 
- * Versão: 1.0
+ * Versão: 1.1
  * Data: 27/12/2024
  */
 
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import { supabase } from '../../config/supabase';
+import { GoogleGenAI } from "@google/genai";
+import { AI_MODEL_NAME } from '../../constants';
 import { 
-  Upload, FileText, Sparkles, Check, X, AlertCircle, 
-  User, Mail, Phone, Linkedin, Briefcase, GraduationCap,
+  Upload, Sparkles, Check, X, AlertCircle, 
+  User, Briefcase, GraduationCap,
   Globe, Code, ChevronDown, ChevronUp, Save, RefreshCw,
-  Loader2, Eye, Edit3, Trash2
+  Loader2, Eye
 } from 'lucide-react';
+
+// ============================================
+// CONFIGURAÇÃO DA API GEMINI (mesmo padrão do geminiService)
+// ============================================
+
+const apiKey = (typeof process !== 'undefined' && process.env?.API_KEY) ||
+               (import.meta.env?.API_KEY as string) ||
+               "";
+
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 // ============================================
 // TIPOS
@@ -42,35 +41,22 @@ interface CVImportIAProps {
 }
 
 interface DadosExtraidos {
-  // Dados pessoais
   nome: string;
   email: string;
   telefone: string;
   linkedin_url: string;
   cidade: string;
   estado: string;
-  
-  // Dados profissionais
   titulo_profissional: string;
   senioridade: string;
   disponibilidade: string;
   modalidade_preferida: string;
   pretensao_salarial: number | null;
   resumo_profissional: string;
-  
-  // Skills
   skills: SkillExtraida[];
-  
-  // Experiências
   experiencias: ExperienciaExtraida[];
-  
-  // Formação
   formacao: FormacaoExtraida[];
-  
-  // Idiomas
   idiomas: IdiomaExtraido[];
-  
-  // Metadados
   cv_texto_original: string;
   cv_processado: boolean;
   cv_processado_em: string;
@@ -78,8 +64,8 @@ interface DadosExtraidos {
 
 interface SkillExtraida {
   nome: string;
-  categoria: 'frontend' | 'backend' | 'database' | 'devops' | 'mobile' | 'soft_skill' | 'tool' | 'other';
-  nivel: 'basico' | 'intermediario' | 'avancado' | 'especialista';
+  categoria: string;
+  nivel: string;
   anos_experiencia: number;
 }
 
@@ -94,7 +80,7 @@ interface ExperienciaExtraida {
 }
 
 interface FormacaoExtraida {
-  tipo: 'graduacao' | 'pos_graduacao' | 'mestrado' | 'doutorado' | 'tecnico' | 'curso' | 'certificacao';
+  tipo: string;
   curso: string;
   instituicao: string;
   ano_conclusao: number | null;
@@ -103,7 +89,7 @@ interface FormacaoExtraida {
 
 interface IdiomaExtraido {
   idioma: string;
-  nivel: 'basico' | 'intermediario' | 'avancado' | 'fluente' | 'nativo';
+  nivel: string;
 }
 
 // ============================================
@@ -117,7 +103,7 @@ const ETAPAS = [
   { id: 4, nome: 'Concluído', icone: Check }
 ];
 
-const CATEGORIAS_SKILL = {
+const CATEGORIAS_SKILL: Record<string, { label: string; cor: string }> = {
   frontend: { label: 'Frontend', cor: 'bg-blue-100 text-blue-800' },
   backend: { label: 'Backend', cor: 'bg-green-100 text-green-800' },
   database: { label: 'Banco de Dados', cor: 'bg-purple-100 text-purple-800' },
@@ -128,7 +114,7 @@ const CATEGORIAS_SKILL = {
   other: { label: 'Outro', cor: 'bg-slate-100 text-slate-800' }
 };
 
-const NIVEIS_SKILL = {
+const NIVEIS_SKILL: Record<string, { label: string; cor: string }> = {
   basico: { label: 'Básico', cor: 'bg-gray-200' },
   intermediario: { label: 'Intermediário', cor: 'bg-blue-200' },
   avancado: { label: 'Avançado', cor: 'bg-green-200' },
@@ -177,12 +163,6 @@ RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
       "categoria": "frontend",
       "nivel": "avancado",
       "anos_experiencia": 4
-    },
-    {
-      "nome": "Node.js",
-      "categoria": "backend",
-      "nivel": "avancado",
-      "anos_experiencia": 3
     }
   ],
   "experiencias": [
@@ -193,7 +173,7 @@ RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
       "data_fim": null,
       "atual": true,
       "descricao": "Descrição das atividades",
-      "tecnologias": ["React", "Node.js", "PostgreSQL"]
+      "tecnologias": ["React", "Node.js"]
     }
   ],
   "formacao": [
@@ -209,19 +189,12 @@ RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
     {
       "idioma": "Inglês",
       "nivel": "avancado"
-    },
-    {
-      "idioma": "Português",
-      "nivel": "nativo"
     }
   ]
 }
 
 REGRAS:
 - Se não encontrar um dado, use string vazia "" ou null
-- Para skills, tente identificar a categoria correta
-- Anos de experiência deve ser calculado baseado nas experiências
-- Senioridade: "junior" (<2 anos), "pleno" (2-5 anos), "senior" (5-10 anos), "especialista" (>10 anos)
 - Categorias de skill: frontend, backend, database, devops, mobile, soft_skill, tool, other
 - Níveis de skill: basico, intermediario, avancado, especialista
 - Níveis de idioma: basico, intermediario, avancado, fluente, nativo`;
@@ -232,7 +205,6 @@ REGRAS:
 // ============================================
 
 const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) => {
-  // Estados
   const [etapaAtual, setEtapaAtual] = useState<1 | 2 | 3 | 4>(1);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [textoCV, setTextoCV] = useState<string>('');
@@ -248,19 +220,16 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
   // HANDLERS
   // ============================================
 
-  // Upload de arquivo
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validar tipo
     const extensao = file.name.split('.').pop()?.toLowerCase();
     if (!['pdf', 'txt'].includes(extensao || '')) {
       setErro('Formato não suportado. Use PDF ou TXT.');
       return;
     }
 
-    // Validar tamanho (max 10MB)
     if (file.size > 10 * 1024 * 1024) {
       setErro('Arquivo muito grande. Máximo 10MB.');
       return;
@@ -272,20 +241,17 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     setProgresso(10);
 
     try {
-      // Extrair texto
       let texto = '';
       
       if (extensao === 'txt') {
         texto = await file.text();
       } else {
-        // Para PDF, usar Gemini Vision para extração
         texto = await extrairTextoPDF(file);
       }
 
       setTextoCV(texto);
       setProgresso(40);
 
-      // Processar com IA
       await processarComIA(texto);
 
     } catch (err: any) {
@@ -303,49 +269,34 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         try {
           const base64 = (reader.result as string).split(',')[1];
           
-          const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-          if (!apiKey) {
-            // Fallback: retornar placeholder
-            resolve(`[Conteúdo do PDF: ${file.name}]\n\nPara extração completa, configure a API do Gemini.`);
+          if (!ai) {
+            resolve(`[Conteúdo do PDF: ${file.name}]\n\nAPI_KEY não configurada.`);
             return;
           }
 
-          const response = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{
-                  parts: [
-                    {
-                      inline_data: {
-                        mime_type: 'application/pdf',
-                        data: base64
-                      }
-                    },
-                    {
-                      text: 'Extraia todo o texto deste currículo/CV em PDF. Mantenha a estrutura e formatação. Retorne apenas o texto extraído, sem comentários.'
-                    }
-                  ]
-                }],
-                generationConfig: {
-                  temperature: 0.1,
-                  maxOutputTokens: 8192
+          const result = await ai.models.generateContent({
+            model: AI_MODEL_NAME,
+            contents: [{
+              role: 'user',
+              parts: [
+                {
+                  inlineData: {
+                    mimeType: 'application/pdf',
+                    data: base64
+                  }
+                },
+                {
+                  text: 'Extraia todo o texto deste currículo/CV em PDF. Mantenha a estrutura e formatação. Retorne apenas o texto extraído, sem comentários.'
                 }
-              })
-            }
-          );
+              ]
+            }]
+          });
 
-          if (!response.ok) {
-            throw new Error('Erro na extração do PDF');
-          }
-
-          const data = await response.json();
-          const texto = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          const texto = result.text || '';
           resolve(texto);
 
         } catch (err) {
+          console.error('Erro ao extrair PDF:', err);
           reject(err);
         }
       };
@@ -354,15 +305,12 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     });
   };
 
-  // Processar texto com IA
+  // Processar texto com IA (usando o padrão geminiService)
   const processarComIA = async (texto: string) => {
     setProgresso(50);
 
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-    
-    if (!apiKey) {
-      // Fallback: dados simulados para demonstração
-      console.warn('⚠️ GEMINI_API_KEY não configurada. Usando extração básica.');
+    if (!ai) {
+      console.warn('⚠️ API_KEY não configurada. Usando extração básica.');
       const dadosBasicos = extrairDadosBasicos(texto);
       setDadosExtraidos(dadosBasicos);
       setProgresso(100);
@@ -373,29 +321,16 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     try {
       const prompt = buildPromptExtracaoCV(texto);
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.3,
-              maxOutputTokens: 4096
-            }
-          })
-        }
-      );
+      console.log('🤖 Processando CV com Gemini...');
+      
+      const result = await ai.models.generateContent({
+        model: AI_MODEL_NAME,
+        contents: prompt
+      });
 
       setProgresso(80);
 
-      if (!response.ok) {
-        throw new Error(`Erro na API Gemini: ${response.status}`);
-      }
-
-      const data = await response.json();
-      const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      const textResponse = result.text;
 
       if (!textResponse) {
         throw new Error('Resposta vazia da IA');
@@ -403,13 +338,13 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
       // Limpar e parsear JSON
       const jsonClean = textResponse
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
+        .replace(/^```json\n?/i, '')
+        .replace(/^```\n?/i, '')
+        .replace(/```$/i, '')
         .trim();
 
       const resultado = JSON.parse(jsonClean);
 
-      // Montar objeto completo
       const dadosCompletos: DadosExtraidos = {
         nome: resultado.dados_pessoais?.nome || '',
         email: resultado.dados_pessoais?.email || '',
@@ -432,13 +367,13 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         cv_processado_em: new Date().toISOString()
       };
 
+      console.log('✅ CV processado com sucesso:', dadosCompletos.nome);
       setDadosExtraidos(dadosCompletos);
       setProgresso(100);
       setEtapaAtual(3);
 
     } catch (err: any) {
       console.error('Erro ao processar com IA:', err);
-      // Fallback para extração básica
       const dadosBasicos = extrairDadosBasicos(texto);
       setDadosExtraidos(dadosBasicos);
       setProgresso(100);
@@ -448,14 +383,10 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
   // Extração básica (fallback sem IA)
   const extrairDadosBasicos = (texto: string): DadosExtraidos => {
-    // Regex para email
     const emailMatch = texto.match(/[\w.-]+@[\w.-]+\.\w+/);
-    // Regex para telefone
     const telefoneMatch = texto.match(/\(?\d{2}\)?\s*\d{4,5}[-.\s]?\d{4}/);
-    // Regex para LinkedIn
     const linkedinMatch = texto.match(/linkedin\.com\/in\/[\w-]+/i);
 
-    // Extrair skills comuns
     const skillsComuns = [
       'React', 'Angular', 'Vue', 'Node.js', 'Python', 'Java', 'C#', '.NET',
       'JavaScript', 'TypeScript', 'PHP', 'Laravel', 'Django', 'Spring',
@@ -468,8 +399,8 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       .filter(s => textoLower.includes(s.toLowerCase()))
       .map(s => ({
         nome: s,
-        categoria: 'other' as const,
-        nivel: 'intermediario' as const,
+        categoria: 'other',
+        nivel: 'intermediario',
         anos_experiencia: 1
       }));
 
@@ -496,13 +427,11 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     };
   };
 
-  // Atualizar campo
   const handleCampoChange = (campo: string, valor: any) => {
     if (!dadosExtraidos) return;
     setDadosExtraidos({ ...dadosExtraidos, [campo]: valor });
   };
 
-  // Remover skill
   const handleRemoveSkill = (index: number) => {
     if (!dadosExtraidos) return;
     const novasSkills = [...dadosExtraidos.skills];
@@ -510,16 +439,6 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     setDadosExtraidos({ ...dadosExtraidos, skills: novasSkills });
   };
 
-  // Adicionar skill
-  const handleAddSkill = (skill: SkillExtraida) => {
-    if (!dadosExtraidos) return;
-    setDadosExtraidos({ 
-      ...dadosExtraidos, 
-      skills: [...dadosExtraidos.skills, skill] 
-    });
-  };
-
-  // Salvar no banco
   const handleSalvar = async () => {
     if (!dadosExtraidos) return;
 
@@ -527,7 +446,6 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     setErro(null);
 
     try {
-      // 1. Criar pessoa
       const { data: pessoa, error: erroPessoa } = await supabase
         .from('pessoas')
         .insert({
@@ -554,7 +472,6 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
       const pessoaId = pessoa.id;
 
-      // 2. Salvar skills
       if (dadosExtraidos.skills.length > 0) {
         const skillsParaSalvar = dadosExtraidos.skills.map(s => ({
           pessoa_id: pessoaId,
@@ -563,11 +480,9 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           nivel: s.nivel,
           anos_experiencia: s.anos_experiencia
         }));
-
         await supabase.from('pessoa_skills').insert(skillsParaSalvar);
       }
 
-      // 3. Salvar experiências
       if (dadosExtraidos.experiencias.length > 0) {
         const experienciasParaSalvar = dadosExtraidos.experiencias.map(e => ({
           pessoa_id: pessoaId,
@@ -579,11 +494,9 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           descricao: e.descricao,
           tecnologias: e.tecnologias
         }));
-
         await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
       }
 
-      // 4. Salvar formação
       if (dadosExtraidos.formacao.length > 0) {
         const formacaoParaSalvar = dadosExtraidos.formacao.map(f => ({
           pessoa_id: pessoaId,
@@ -593,18 +506,15 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           ano_conclusao: f.ano_conclusao,
           em_andamento: f.em_andamento
         }));
-
         await supabase.from('pessoa_formacao').insert(formacaoParaSalvar);
       }
 
-      // 5. Salvar idiomas
       if (dadosExtraidos.idiomas.length > 0) {
         const idiomasParaSalvar = dadosExtraidos.idiomas.map(i => ({
           pessoa_id: pessoaId,
           idioma: i.idioma,
           nivel: i.nivel
         }));
-
         await supabase.from('pessoa_idiomas').insert(idiomasParaSalvar);
       }
 
@@ -619,7 +529,6 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     }
   };
 
-  // Reprocessar
   const handleReprocessar = () => {
     setEtapaAtual(1);
     setArquivo(null);
@@ -667,15 +576,9 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
               return (
                 <React.Fragment key={etapa.id}>
                   <div className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all ${
-                    isAtiva 
-                      ? 'bg-white text-blue-600' 
-                      : 'bg-white/20 text-white/60'
+                    isAtiva ? 'bg-white text-blue-600' : 'bg-white/20 text-white/60'
                   }`}>
-                    {isConcluida ? (
-                      <Check size={18} className="text-green-500" />
-                    ) : (
-                      <Icone size={18} />
-                    )}
+                    {isConcluida ? <Check size={18} className="text-green-500" /> : <Icone size={18} />}
                     <span className="font-medium text-sm">{etapa.nome}</span>
                   </div>
                   {index < ETAPAS.length - 1 && (
@@ -723,6 +626,17 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                   {erro}
                 </div>
               )}
+
+              {/* Info da API */}
+              <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-600">
+                  {ai ? (
+                    <span className="text-green-600">✅ API Gemini configurada ({AI_MODEL_NAME})</span>
+                  ) : (
+                    <span className="text-orange-600">⚠️ API_KEY não configurada - usando extração básica</span>
+                  )}
+                </p>
+              </div>
             </div>
           )}
 
@@ -730,15 +644,10 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           {etapaAtual === 2 && (
             <div className="text-center py-12">
               <div className="inline-block animate-spin rounded-full h-16 w-16 border-4 border-blue-200 border-t-blue-600 mb-6"></div>
-              
               <h3 className="text-xl font-bold text-gray-800 mb-2">
                 Processando CV com IA...
               </h3>
-              
-              <p className="text-gray-500 mb-6">
-                {arquivo?.name}
-              </p>
-
+              <p className="text-gray-500 mb-6">{arquivo?.name}</p>
               <div className="max-w-md mx-auto">
                 <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
                   <div 
@@ -747,19 +656,6 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                   />
                 </div>
                 <p className="text-sm text-gray-500">{progresso}% completo</p>
-              </div>
-
-              <div className="mt-8 text-left max-w-lg mx-auto bg-gray-50 rounded-lg p-4">
-                <p className="text-sm text-gray-600 mb-2">🔍 Extraindo texto do documento...</p>
-                {progresso >= 40 && (
-                  <p className="text-sm text-gray-600 mb-2">🤖 Analisando com Inteligência Artificial...</p>
-                )}
-                {progresso >= 60 && (
-                  <p className="text-sm text-gray-600 mb-2">📊 Identificando skills e experiências...</p>
-                )}
-                {progresso >= 80 && (
-                  <p className="text-sm text-gray-600">✨ Finalizando extração...</p>
-                )}
               </div>
             </div>
           )}
@@ -774,7 +670,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                 </div>
               )}
 
-              {/* Seção: Dados Pessoais */}
+              {/* Dados Pessoais */}
               <div className="border rounded-lg overflow-hidden">
                 <button
                   onClick={() => setSecaoExpandida(secaoExpandida === 'dados' ? '' : 'dados')}
@@ -790,65 +686,33 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                   <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <label className="text-sm font-medium text-gray-700">Nome *</label>
-                      <input
-                        className="w-full border p-2 rounded mt-1"
-                        value={dadosExtraidos.nome}
-                        onChange={e => handleCampoChange('nome', e.target.value)}
-                        placeholder="Nome completo"
-                      />
+                      <input className="w-full border p-2 rounded mt-1" value={dadosExtraidos.nome} onChange={e => handleCampoChange('nome', e.target.value)} />
                     </div>
                     <div>
                       <label className="text-sm font-medium text-gray-700">Email *</label>
-                      <input
-                        type="email"
-                        className="w-full border p-2 rounded mt-1"
-                        value={dadosExtraidos.email}
-                        onChange={e => handleCampoChange('email', e.target.value)}
-                        placeholder="email@exemplo.com"
-                      />
+                      <input type="email" className="w-full border p-2 rounded mt-1" value={dadosExtraidos.email} onChange={e => handleCampoChange('email', e.target.value)} />
                     </div>
                     <div>
                       <label className="text-sm font-medium text-gray-700">Telefone</label>
-                      <input
-                        className="w-full border p-2 rounded mt-1"
-                        value={dadosExtraidos.telefone}
-                        onChange={e => handleCampoChange('telefone', e.target.value)}
-                        placeholder="(11) 99999-9999"
-                      />
+                      <input className="w-full border p-2 rounded mt-1" value={dadosExtraidos.telefone} onChange={e => handleCampoChange('telefone', e.target.value)} />
                     </div>
                     <div>
                       <label className="text-sm font-medium text-gray-700">LinkedIn</label>
-                      <input
-                        className="w-full border p-2 rounded mt-1"
-                        value={dadosExtraidos.linkedin_url}
-                        onChange={e => handleCampoChange('linkedin_url', e.target.value)}
-                        placeholder="https://linkedin.com/in/perfil"
-                      />
+                      <input className="w-full border p-2 rounded mt-1" value={dadosExtraidos.linkedin_url} onChange={e => handleCampoChange('linkedin_url', e.target.value)} />
                     </div>
                     <div>
                       <label className="text-sm font-medium text-gray-700">Cidade</label>
-                      <input
-                        className="w-full border p-2 rounded mt-1"
-                        value={dadosExtraidos.cidade}
-                        onChange={e => handleCampoChange('cidade', e.target.value)}
-                        placeholder="São Paulo"
-                      />
+                      <input className="w-full border p-2 rounded mt-1" value={dadosExtraidos.cidade} onChange={e => handleCampoChange('cidade', e.target.value)} />
                     </div>
                     <div>
                       <label className="text-sm font-medium text-gray-700">Estado</label>
-                      <input
-                        className="w-full border p-2 rounded mt-1"
-                        maxLength={2}
-                        value={dadosExtraidos.estado}
-                        onChange={e => handleCampoChange('estado', e.target.value.toUpperCase())}
-                        placeholder="SP"
-                      />
+                      <input className="w-full border p-2 rounded mt-1" maxLength={2} value={dadosExtraidos.estado} onChange={e => handleCampoChange('estado', e.target.value.toUpperCase())} />
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Seção: Dados Profissionais */}
+              {/* Dados Profissionais */}
               <div className="border rounded-lg overflow-hidden">
                 <button
                   onClick={() => setSecaoExpandida(secaoExpandida === 'profissional' ? '' : 'profissional')}
@@ -865,20 +729,11 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <label className="text-sm font-medium text-gray-700">Título Profissional</label>
-                        <input
-                          className="w-full border p-2 rounded mt-1"
-                          value={dadosExtraidos.titulo_profissional}
-                          onChange={e => handleCampoChange('titulo_profissional', e.target.value)}
-                          placeholder="Ex: Desenvolvedor Full Stack"
-                        />
+                        <input className="w-full border p-2 rounded mt-1" value={dadosExtraidos.titulo_profissional} onChange={e => handleCampoChange('titulo_profissional', e.target.value)} />
                       </div>
                       <div>
                         <label className="text-sm font-medium text-gray-700">Senioridade</label>
-                        <select
-                          className="w-full border p-2 rounded mt-1"
-                          value={dadosExtraidos.senioridade}
-                          onChange={e => handleCampoChange('senioridade', e.target.value)}
-                        >
+                        <select className="w-full border p-2 rounded mt-1" value={dadosExtraidos.senioridade} onChange={e => handleCampoChange('senioridade', e.target.value)}>
                           <option value="junior">Junior</option>
                           <option value="pleno">Pleno</option>
                           <option value="senior">Senior</option>
@@ -887,11 +742,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                       </div>
                       <div>
                         <label className="text-sm font-medium text-gray-700">Disponibilidade</label>
-                        <select
-                          className="w-full border p-2 rounded mt-1"
-                          value={dadosExtraidos.disponibilidade}
-                          onChange={e => handleCampoChange('disponibilidade', e.target.value)}
-                        >
+                        <select className="w-full border p-2 rounded mt-1" value={dadosExtraidos.disponibilidade} onChange={e => handleCampoChange('disponibilidade', e.target.value)}>
                           <option value="imediata">Imediata</option>
                           <option value="15_dias">15 dias</option>
                           <option value="30_dias">30 dias</option>
@@ -900,11 +751,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                       </div>
                       <div>
                         <label className="text-sm font-medium text-gray-700">Modalidade</label>
-                        <select
-                          className="w-full border p-2 rounded mt-1"
-                          value={dadosExtraidos.modalidade_preferida}
-                          onChange={e => handleCampoChange('modalidade_preferida', e.target.value)}
-                        >
+                        <select className="w-full border p-2 rounded mt-1" value={dadosExtraidos.modalidade_preferida} onChange={e => handleCampoChange('modalidade_preferida', e.target.value)}>
                           <option value="remoto">Remoto</option>
                           <option value="hibrido">Híbrido</option>
                           <option value="presencial">Presencial</option>
@@ -913,18 +760,13 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                     </div>
                     <div>
                       <label className="text-sm font-medium text-gray-700">Resumo Profissional</label>
-                      <textarea
-                        className="w-full border p-2 rounded mt-1 h-24"
-                        value={dadosExtraidos.resumo_profissional}
-                        onChange={e => handleCampoChange('resumo_profissional', e.target.value)}
-                        placeholder="Breve resumo do perfil profissional..."
-                      />
+                      <textarea className="w-full border p-2 rounded mt-1 h-24" value={dadosExtraidos.resumo_profissional} onChange={e => handleCampoChange('resumo_profissional', e.target.value)} />
                     </div>
                   </div>
                 )}
               </div>
 
-              {/* Seção: Skills */}
+              {/* Skills */}
               <div className="border rounded-lg overflow-hidden">
                 <button
                   onClick={() => setSecaoExpandida(secaoExpandida === 'skills' ? '' : 'skills')}
@@ -932,10 +774,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                 >
                   <span className="font-bold text-gray-700 flex items-center gap-2">
                     <Code size={20} className="text-purple-600" />
-                    Skills Identificadas
-                    <span className="bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full text-sm">
-                      {dadosExtraidos.skills.length}
-                    </span>
+                    Skills ({dadosExtraidos.skills.length})
                   </span>
                   {secaoExpandida === 'skills' ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                 </button>
@@ -943,35 +782,21 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                   <div className="p-4">
                     <div className="flex flex-wrap gap-2">
                       {dadosExtraidos.skills.map((skill, index) => (
-                        <div
-                          key={index}
-                          className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${
-                            CATEGORIAS_SKILL[skill.categoria]?.cor || 'bg-gray-100 text-gray-700'
-                          }`}
-                        >
+                        <div key={index} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${CATEGORIAS_SKILL[skill.categoria]?.cor || 'bg-gray-100 text-gray-700'}`}>
                           <span className="font-medium">{skill.nome}</span>
-                          <span className="text-xs opacity-70">
-                            ({NIVEIS_SKILL[skill.nivel]?.label || skill.nivel})
-                          </span>
-                          <button
-                            onClick={() => handleRemoveSkill(index)}
-                            className="hover:text-red-600 ml-1"
-                          >
-                            <X size={14} />
-                          </button>
+                          <span className="text-xs opacity-70">({NIVEIS_SKILL[skill.nivel]?.label || skill.nivel})</span>
+                          <button onClick={() => handleRemoveSkill(index)} className="hover:text-red-600 ml-1"><X size={14} /></button>
                         </div>
                       ))}
                     </div>
                     {dadosExtraidos.skills.length === 0 && (
-                      <p className="text-gray-500 text-center py-4">
-                        Nenhuma skill identificada automaticamente.
-                      </p>
+                      <p className="text-gray-500 text-center py-4">Nenhuma skill identificada.</p>
                     )}
                   </div>
                 )}
               </div>
 
-              {/* Seção: Experiências */}
+              {/* Experiências */}
               <div className="border rounded-lg overflow-hidden">
                 <button
                   onClick={() => setSecaoExpandida(secaoExpandida === 'experiencias' ? '' : 'experiencias')}
@@ -979,10 +804,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                 >
                   <span className="font-bold text-gray-700 flex items-center gap-2">
                     <Briefcase size={20} className="text-orange-600" />
-                    Experiências
-                    <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-sm">
-                      {dadosExtraidos.experiencias.length}
-                    </span>
+                    Experiências ({dadosExtraidos.experiencias.length})
                   </span>
                   {secaoExpandida === 'experiencias' ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                 </button>
@@ -990,44 +812,26 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                   <div className="p-4 space-y-3">
                     {dadosExtraidos.experiencias.map((exp, index) => (
                       <div key={index} className="bg-gray-50 rounded-lg p-4">
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <h4 className="font-bold text-gray-800">{exp.cargo}</h4>
-                            <p className="text-gray-600">{exp.empresa}</p>
-                            <p className="text-sm text-gray-500">
-                              {exp.data_inicio} - {exp.atual ? 'Atual' : exp.data_fim}
-                            </p>
-                          </div>
-                          {exp.atual && (
-                            <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded">
-                              Atual
-                            </span>
-                          )}
-                        </div>
-                        {exp.descricao && (
-                          <p className="text-sm text-gray-600 mt-2">{exp.descricao}</p>
-                        )}
-                        {exp.tecnologias.length > 0 && (
+                        <h4 className="font-bold text-gray-800">{exp.cargo}</h4>
+                        <p className="text-gray-600">{exp.empresa}</p>
+                        <p className="text-sm text-gray-500">{exp.data_inicio} - {exp.atual ? 'Atual' : exp.data_fim}</p>
+                        {exp.tecnologias?.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2">
                             {exp.tecnologias.map((tech, i) => (
-                              <span key={i} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">
-                                {tech}
-                              </span>
+                              <span key={i} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">{tech}</span>
                             ))}
                           </div>
                         )}
                       </div>
                     ))}
                     {dadosExtraidos.experiencias.length === 0 && (
-                      <p className="text-gray-500 text-center py-4">
-                        Nenhuma experiência identificada.
-                      </p>
+                      <p className="text-gray-500 text-center py-4">Nenhuma experiência identificada.</p>
                     )}
                   </div>
                 )}
               </div>
 
-              {/* Seção: Formação */}
+              {/* Formação */}
               <div className="border rounded-lg overflow-hidden">
                 <button
                   onClick={() => setSecaoExpandida(secaoExpandida === 'formacao' ? '' : 'formacao')}
@@ -1035,10 +839,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                 >
                   <span className="font-bold text-gray-700 flex items-center gap-2">
                     <GraduationCap size={20} className="text-indigo-600" />
-                    Formação
-                    <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full text-sm">
-                      {dadosExtraidos.formacao.length}
-                    </span>
+                    Formação ({dadosExtraidos.formacao.length})
                   </span>
                   {secaoExpandida === 'formacao' ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                 </button>
@@ -1048,21 +849,17 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                       <div key={index} className="bg-gray-50 rounded-lg p-4">
                         <h4 className="font-bold text-gray-800">{form.curso}</h4>
                         <p className="text-gray-600">{form.instituicao}</p>
-                        <p className="text-sm text-gray-500">
-                          {form.em_andamento ? 'Em andamento' : `Concluído em ${form.ano_conclusao}`}
-                        </p>
+                        <p className="text-sm text-gray-500">{form.em_andamento ? 'Em andamento' : `Concluído em ${form.ano_conclusao}`}</p>
                       </div>
                     ))}
                     {dadosExtraidos.formacao.length === 0 && (
-                      <p className="text-gray-500 text-center py-4">
-                        Nenhuma formação identificada.
-                      </p>
+                      <p className="text-gray-500 text-center py-4">Nenhuma formação identificada.</p>
                     )}
                   </div>
                 )}
               </div>
 
-              {/* Seção: Idiomas */}
+              {/* Idiomas */}
               <div className="border rounded-lg overflow-hidden">
                 <button
                   onClick={() => setSecaoExpandida(secaoExpandida === 'idiomas' ? '' : 'idiomas')}
@@ -1070,10 +867,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                 >
                   <span className="font-bold text-gray-700 flex items-center gap-2">
                     <Globe size={20} className="text-teal-600" />
-                    Idiomas
-                    <span className="bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full text-sm">
-                      {dadosExtraidos.idiomas.length}
-                    </span>
+                    Idiomas ({dadosExtraidos.idiomas.length})
                   </span>
                   {secaoExpandida === 'idiomas' ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                 </button>
@@ -1081,19 +875,14 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                   <div className="p-4">
                     <div className="flex flex-wrap gap-2">
                       {dadosExtraidos.idiomas.map((idioma, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center gap-2 px-3 py-1.5 bg-teal-50 text-teal-700 rounded-full text-sm"
-                        >
+                        <div key={index} className="px-3 py-1.5 bg-teal-50 text-teal-700 rounded-full text-sm">
                           <span className="font-medium">{idioma.idioma}</span>
-                          <span className="text-xs opacity-70 capitalize">({idioma.nivel})</span>
+                          <span className="text-xs opacity-70 ml-1">({idioma.nivel})</span>
                         </div>
                       ))}
                     </div>
                     {dadosExtraidos.idiomas.length === 0 && (
-                      <p className="text-gray-500 text-center py-4">
-                        Nenhum idioma identificado.
-                      </p>
+                      <p className="text-gray-500 text-center py-4">Nenhum idioma identificado.</p>
                     )}
                   </div>
                 )}
@@ -1107,24 +896,14 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
               <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Check size={40} className="text-green-600" />
               </div>
-              <h3 className="text-2xl font-bold text-gray-800 mb-2">
-                CV Importado com Sucesso!
-              </h3>
-              <p className="text-gray-600 mb-6">
-                {dadosExtraidos?.nome} foi adicionado ao Banco de Talentos.
-              </p>
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">CV Importado com Sucesso!</h3>
+              <p className="text-gray-600 mb-6">{dadosExtraidos?.nome} foi adicionado ao Banco de Talentos.</p>
               <div className="flex justify-center gap-4">
-                <button
-                  onClick={handleReprocessar}
-                  className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2"
-                >
+                <button onClick={handleReprocessar} className="px-6 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 flex items-center gap-2">
                   <RefreshCw size={18} />
                   Importar Outro CV
                 </button>
-                <button
-                  onClick={onClose}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
+                <button onClick={onClose} className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
                   Concluir
                 </button>
               </div>
@@ -1135,18 +914,12 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         {/* Footer */}
         {etapaAtual === 3 && (
           <div className="border-t bg-gray-50 px-6 py-4 flex justify-between items-center">
-            <button
-              onClick={handleReprocessar}
-              className="flex items-center gap-2 text-gray-600 hover:text-gray-800"
-            >
+            <button onClick={handleReprocessar} className="flex items-center gap-2 text-gray-600 hover:text-gray-800">
               <RefreshCw size={18} />
               Reprocessar
             </button>
             <div className="flex gap-3">
-              <button
-                onClick={onClose}
-                className="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-100"
-              >
+              <button onClick={onClose} className="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-100">
                 Cancelar
               </button>
               <button
@@ -1154,11 +927,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                 disabled={salvando || !dadosExtraidos?.nome || !dadosExtraidos?.email}
                 className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
               >
-                {salvando ? (
-                  <Loader2 className="animate-spin" size={18} />
-                ) : (
-                  <Save size={18} />
-                )}
+                {salvando ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
                 {salvando ? 'Salvando...' : 'Salvar no Banco de Talentos'}
               </button>
             </div>
