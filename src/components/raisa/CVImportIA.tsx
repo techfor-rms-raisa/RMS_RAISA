@@ -404,6 +404,39 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     setErro(null);
 
     try {
+      // ✅ NOVO: Upload do PDF para Supabase Storage
+      let cvArquivoUrl: string | null = null;
+      
+      if (arquivo && arquivo.type === 'application/pdf') {
+        const timestamp = Date.now();
+        const nomeArquivoLimpo = dadosExtraidos.nome
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-zA-Z0-9]/g, '_')
+          .substring(0, 50);
+        const nomeArquivo = `cv_${nomeArquivoLimpo}_${timestamp}.pdf`;
+        
+        const { data: uploadData, error: uploadError } = await supabase.storage
+          .from('cvs')
+          .upload(nomeArquivo, arquivo, {
+            cacheControl: '3600',
+            upsert: false
+          });
+
+        if (uploadError) {
+          console.warn('⚠️ Erro ao fazer upload do PDF:', uploadError.message);
+          // Continua mesmo se falhar o upload (dados ainda serão salvos)
+        } else {
+          // Obter URL pública do arquivo
+          const { data: urlData } = supabase.storage
+            .from('cvs')
+            .getPublicUrl(nomeArquivo);
+          
+          cvArquivoUrl = urlData?.publicUrl || null;
+          console.log('✅ PDF salvo no Storage:', cvArquivoUrl);
+        }
+      }
+
       const { data: pessoa, error: erroPessoa } = await supabase
         .from('pessoas')
         .insert({
@@ -420,6 +453,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           pretensao_salarial: dadosExtraidos.pretensao_salarial,
           resumo_profissional: dadosExtraidos.resumo_profissional,
           cv_texto_original: dadosExtraidos.cv_texto_original,
+          cv_arquivo_url: cvArquivoUrl, // ✅ NOVO: URL do PDF no Storage
           cv_processado: true,
           cv_processado_em: new Date().toISOString()
         })
