@@ -19,7 +19,7 @@ import {
   ExclusaoConsultor,
   TotaisMovimentacao,
   MESES 
-} from '../hooks/Supabase/useMovimentacoes';
+} from '../hooks/supabase/useMovimentacoes';
 
 // ============================================
 // FORMATADORES
