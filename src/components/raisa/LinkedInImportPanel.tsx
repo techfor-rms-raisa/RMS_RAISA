@@ -12,7 +12,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { useLinkedInIntegration, LinkedInProfile, LinkedInMatch } from '@/hooks/Supabase/useLinkedInIntegration';
+import { useLinkedInIntegration, LinkedInProfile, LinkedInMatch } from '@/hooks/supabase/useLinkedInIntegration';
 
 interface LinkedInImportPanelProps {
   vagaId?: number;

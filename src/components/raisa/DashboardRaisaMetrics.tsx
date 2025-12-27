@@ -14,7 +14,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { useRaisaMetrics, VagaSombra, PerformanceAnalista, PerformanceCliente, EtapaFunil, Alerta } from '@/hooks/Supabase/useRaisaMetrics';
+import { useRaisaMetrics, VagaSombra, PerformanceAnalista, PerformanceCliente, EtapaFunil, Alerta } from '@/hooks/supabase/useRaisaMetrics';
 
 // ============================================
 // COMPONENTE PRINCIPAL

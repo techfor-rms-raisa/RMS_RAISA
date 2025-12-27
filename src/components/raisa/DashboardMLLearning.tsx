@@ -12,7 +12,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { useMLLearning, ModeloML, FeedbackML, PerformanceModelo } from '@/hooks/Supabase/useMLLearning';
+import { useMLLearning, ModeloML, FeedbackML, PerformanceModelo } from '@/hooks/supabase/useMLLearning';
 
 const DashboardMLLearning: React.FC = () => {
   const {
