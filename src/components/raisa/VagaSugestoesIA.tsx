@@ -8,7 +8,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Vaga } from '@/types';
+import { Vaga } from '../../types/types_index';
 import { useVagaAnaliseIA, VagaAnaliseIADB, SugestaoIA } from '../../hooks/supabase/useVagaAnaliseIA';
 
 interface VagaSugestoesIAProps {

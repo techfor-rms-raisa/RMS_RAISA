@@ -10,9 +10,10 @@
  */
 
 import React, { useState, useMemo } from 'react';
-import { Vaga, Client, UsuarioCliente } from '@/types';
+import { Vaga, Client, UsuarioCliente } from '../../types/types_index';
 import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 import CVMatchingPanel from './CVMatchingPanel';
+import VagaSugestoesIA from './VagaSugestoesIA';
 
 interface VagasProps {
     vagas: Vaga[];
@@ -59,6 +60,9 @@ const Vagas: React.FC<VagasProps> = ({
     
     // ✅ NOVO v53: Estado para Busca de CVs
     const [buscaCVVaga, setBuscaCVVaga] = useState<Vaga | null>(null);
+    
+    // ✅ NOVO v54: Estado para Sugestões IA
+    const [sugestoesIAVaga, setSugestoesIAVaga] = useState<Vaga | null>(null);
     
     // Estados dos filtros de header
     const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
@@ -350,6 +354,14 @@ const Vagas: React.FC<VagasProps> = ({
                                 <div className="flex justify-between items-center pt-4 border-t">
                                     <span className="text-sm font-medium text-gray-500">{vaga.senioridade}</span>
                                     <div className="flex flex-wrap gap-2">
+                                        {/* ✅ NOVO v54: Botão de Sugestões IA */}
+                                        <button 
+                                            onClick={() => setSugestoesIAVaga(vaga)} 
+                                            className="text-purple-600 hover:text-purple-800 hover:underline text-sm font-semibold"
+                                            title="Analisar e melhorar vaga com IA"
+                                        >
+                                            🤖 IA
+                                        </button>
                                         {/* ✅ NOVO v53: Botão de Buscar CVs */}
                                         <button 
                                             onClick={() => handleBuscarCVs(vaga)} 
@@ -535,6 +547,19 @@ const Vagas: React.FC<VagasProps> = ({
                     vaga={buscaCVVaga}
                     onClose={() => setBuscaCVVaga(null)}
                     onCandidaturaCriada={handleCandidaturaCriada}
+                    currentUserId={currentUserId}
+                />
+            )}
+
+            {/* ✅ NOVO v54: Modal de Sugestões IA */}
+            {sugestoesIAVaga && (
+                <VagaSugestoesIA
+                    vaga={sugestoesIAVaga}
+                    onClose={() => setSugestoesIAVaga(null)}
+                    onAplicarSugestoes={(vagaAtualizada) => {
+                        updateVaga({ ...sugestoesIAVaga, ...vagaAtualizada } as Vaga);
+                        setSugestoesIAVaga(null);
+                    }}
                     currentUserId={currentUserId}
                 />
             )}

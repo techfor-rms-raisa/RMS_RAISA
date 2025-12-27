@@ -1,421 +1,416 @@
 /**
  * useVagaAnaliseIA.ts - Hook para Análise de Vagas com IA
  * 
- * Gerencia:
- * - vaga_analise_ia: Sugestões de melhoria no anúncio
- * - Workflow de aprovação de vagas
+ * Funcionalidades:
+ * - Analisar qualidade do anúncio da vaga
+ * - Gerar sugestões de melhoria
+ * - Extrair keywords e stacks
+ * - Salvar histórico de análises
  * 
  * Versão: 1.0
- * Data: 25/12/2024
+ * Data: 27/12/2024
  */
 
 import { useState, useCallback } from 'react';
-import { supabase } from '../../Lib/supabase';
-import { Vaga } from '@/types';
+import { supabase } from '../../config/supabase';
+import { Vaga } from '../../types/types_models';
 
-// Tipo para sugestões da IA
+// ============================================
+// TIPOS
+// ============================================
+
 export interface SugestaoIA {
-  campo: string;
-  original: string;
+  original: string | null;
   sugerido: string;
   motivo: string;
   prioridade: 'alta' | 'media' | 'baixa';
 }
 
-// Tipo para análise completa
+export interface SugestoesVaga {
+  titulo?: SugestaoIA;
+  descricao?: SugestaoIA;
+  requisitos_obrigatorios?: SugestaoIA;
+  requisitos_desejaveis?: SugestaoIA;
+  beneficios?: SugestaoIA;
+  keywords?: string[];
+  stacks_identificadas?: string[];
+  melhorias_gerais?: string[];
+}
+
+export interface ConfidenceDetalhado {
+  clareza: number;
+  atratividade: number;
+  completude: number;
+  seo: number;
+}
+
 export interface VagaAnaliseIADB {
   id: number;
   vaga_id: number;
-  descricao_original: string;
-  fonte: string;
-  sugestoes: {
-    titulo?: SugestaoIA;
-    descricao?: SugestaoIA;
-    requisitos?: SugestaoIA;
-    beneficios?: SugestaoIA;
-    keywords?: string[];
-    tom_sugerido?: string;
-    melhorias_gerais?: string[];
-  };
   confidence_score: number;
-  confidence_detalhado: {
-    clareza: number;
-    atratividade: number;
-    completude: number;
-    seo: number;
-  };
-  ajustes: any;
-  total_ajustes: number;
-  campos_ajustados: string[];
-  qualidade_sugestao: number;
-  feedback_texto?: string;
-  analisado_em: string;
+  confidence_detalhado: ConfidenceDetalhado;
+  sugestoes: SugestoesVaga;
   analisado_por: string;
-  revisado_em?: string;
-  revisado_por?: number;
+  analisado_em: string;
   aprovado: boolean;
-  requer_revisao_manual: boolean;
-  metadados?: any;
+  aprovado_por?: number;
+  aprovado_em?: string;
+  rejeitado: boolean;
+  rejeitado_por?: number;
+  rejeitado_em?: string;
+  motivo_rejeicao?: string;
+  campos_aplicados?: string[];
 }
 
-// Tipo para workflow de aprovação (usando campos existentes em vagas)
-export interface VagaWorkflowStatus {
-  vaga_id: number;
-  status_atual: 'rascunho' | 'aguardando_aprovacao' | 'aprovado' | 'publicado' | 'rejeitado';
-  aprovado_comercial: boolean;
-  aprovado_rs: boolean;
-  data_submissao?: string;
-  data_aprovacao_comercial?: string;
-  data_aprovacao_rs?: string;
-  aprovador_comercial_id?: number;
-  aprovador_rs_id?: number;
-  comentarios_rejeicao?: string;
-}
+// ============================================
+// PROMPT PARA GEMINI
+// ============================================
+
+const buildAnalysisPrompt = (vaga: Vaga): string => {
+  return `Você é um especialista em recrutamento e seleção de TI. Analise esta vaga e forneça sugestões de melhoria.
+
+VAGA PARA ANÁLISE:
+==================
+Título: ${vaga.titulo || 'Não informado'}
+Senioridade: ${vaga.senioridade || 'Não informado'}
+Descrição: ${vaga.descricao || 'Não informado'}
+Requisitos Obrigatórios: ${vaga.requisitos_obrigatorios || 'Não informado'}
+Requisitos Desejáveis: ${vaga.requisitos_desejaveis || 'Não informado'}
+Benefícios: ${vaga.beneficios || 'Não informado'}
+Modalidade: ${vaga.modalidade || 'Não informado'}
+Regime: ${vaga.regime_contratacao || 'Não informado'}
+
+INSTRUÇÕES:
+===========
+1. Avalie a qualidade geral do anúncio (0-100)
+2. Identifique pontos de melhoria
+3. Sugira um título mais atrativo (se necessário)
+4. Sugira melhorias na descrição
+5. Extraia as tecnologias/stacks mencionadas
+6. Sugira keywords para SEO
+
+RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
+{
+  "confidence_score": <número 0-100>,
+  "confidence_detalhado": {
+    "clareza": <0-100>,
+    "atratividade": <0-100>,
+    "completude": <0-100>,
+    "seo": <0-100>
+  },
+  "sugestoes": {
+    "titulo": {
+      "original": "<título atual>",
+      "sugerido": "<título melhorado ou null se ok>",
+      "motivo": "<explicação>",
+      "prioridade": "alta|media|baixa"
+    },
+    "descricao": {
+      "original": "<resumo do atual>",
+      "sugerido": "<sugestão de melhoria ou null se ok>",
+      "motivo": "<explicação>",
+      "prioridade": "alta|media|baixa"
+    },
+    "requisitos_obrigatorios": {
+      "original": "<resumo>",
+      "sugerido": "<sugestão ou null>",
+      "motivo": "<explicação>",
+      "prioridade": "alta|media|baixa"
+    },
+    "keywords": ["keyword1", "keyword2", ...],
+    "stacks_identificadas": ["React", "Node.js", ...],
+    "melhorias_gerais": ["dica1", "dica2", ...]
+  }
+}`;
+};
+
+// ============================================
+// HOOK PRINCIPAL
+// ============================================
 
 export const useVagaAnaliseIA = () => {
-  const [analises, setAnalises] = useState<VagaAnaliseIADB[]>([]);
   const [analiseAtual, setAnaliseAtual] = useState<VagaAnaliseIADB | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // ============================================
-  // ANALISAR VAGA COM IA
+  // CARREGAR ANÁLISE EXISTENTE
   // ============================================
-
-  /**
-   * Analisa uma vaga e gera sugestões de melhoria
-   */
-  const analisarVaga = useCallback(async (vaga: Vaga): Promise<VagaAnaliseIADB | null> => {
-    try {
-      setLoading(true);
-      setError(null);
-      console.log(`🤖 Analisando vaga: ${vaga.titulo}...`);
-
-      // Verificar se já existe análise recente (últimas 24h)
-      const { data: analiseExistente } = await supabase
-        .from('vaga_analise_ia')
-        .select('*')
-        .eq('vaga_id', parseInt(vaga.id))
-        .gte('analisado_em', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-        .order('analisado_em', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (analiseExistente && !analiseExistente.aprovado) {
-        console.log('📋 Análise recente encontrada, retornando...');
-        setAnaliseAtual(analiseExistente);
-        return analiseExistente;
-      }
-
-      // Chamar API Gemini para análise (via endpoint Vercel)
-      const response = await fetch('/api/gemini-analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'analise_vaga',
-          payload: {
-            dados: {
-              titulo: vaga.titulo,
-              descricao: vaga.descricao,
-              senioridade: vaga.senioridade,
-              stack_tecnologica: vaga.stack_tecnologica,
-              requisitos_obrigatorios: vaga.requisitos_obrigatorios,
-              requisitos_desejaveis: vaga.requisitos_desejaveis,
-              regime_contratacao: vaga.regime_contratacao,
-              modalidade: vaga.modalidade,
-              beneficios: vaga.beneficios,
-              salario_min: vaga.salario_min,
-              salario_max: vaga.salario_max
-            }
-          }
-        })
-      });
-
-      if (!response.ok) {
-        // Fallback: gerar análise local simplificada
-        console.warn('⚠️ API indisponível, gerando análise local...');
-        return await gerarAnaliseLocal(vaga);
-      }
-
-      const apiResponse = await response.json();
-      const resultadoIA = apiResponse.data || apiResponse;
-
-      // Salvar análise no Supabase
-      const analiseData: Partial<VagaAnaliseIADB> = {
-        vaga_id: parseInt(vaga.id),
-        descricao_original: vaga.descricao || '',
-        fonte: 'Gemini',
-        sugestoes: resultadoIA.sugestoes || {},
-        confidence_score: resultadoIA.confidence_score || 75,
-        confidence_detalhado: resultadoIA.confidence_detalhado || {
-          clareza: 70,
-          atratividade: 70,
-          completude: 70,
-          seo: 70
-        },
-        ajustes: resultadoIA.ajustes || {},
-        total_ajustes: resultadoIA.total_ajustes || 0,
-        campos_ajustados: resultadoIA.campos_ajustados || [],
-        qualidade_sugestao: resultadoIA.qualidade_sugestao || 70,
-        analisado_em: new Date().toISOString(),
-        analisado_por: 'Gemini',
-        aprovado: false,
-        requer_revisao_manual: resultadoIA.requer_revisao_manual || false
-      };
-
-      const { data: analiseSalva, error: saveError } = await supabase
-        .from('vaga_analise_ia')
-        .insert(analiseData)
-        .select()
-        .single();
-
-      if (saveError) throw saveError;
-
-      setAnaliseAtual(analiseSalva);
-      setAnalises(prev => [...prev, analiseSalva]);
-      console.log(`✅ Análise concluída: ${analiseSalva.total_ajustes} sugestões`);
-      
-      return analiseSalva;
-    } catch (err: any) {
-      console.error('❌ Erro ao analisar vaga:', err);
-      setError(err.message);
-      // Tentar análise local como fallback
-      return await gerarAnaliseLocal(vaga);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  /**
-   * Gera análise local simplificada (fallback)
-   */
-  const gerarAnaliseLocal = async (vaga: Vaga): Promise<VagaAnaliseIADB | null> => {
-    try {
-      const sugestoes: VagaAnaliseIADB['sugestoes'] = {
-        melhorias_gerais: []
-      };
-
-      // Análise básica de completude
-      if (!vaga.descricao || vaga.descricao.length < 100) {
-        sugestoes.descricao = {
-          campo: 'descricao',
-          original: vaga.descricao || '',
-          sugerido: 'Adicione uma descrição mais detalhada (mínimo 100 caracteres)',
-          motivo: 'Descrições curtas reduzem a atratividade da vaga',
-          prioridade: 'alta'
-        };
-      }
-
-      if (!vaga.requisitos_obrigatorios || (vaga.requisitos_obrigatorios as any).length === 0) {
-        sugestoes.requisitos = {
-          campo: 'requisitos_obrigatorios',
-          original: '',
-          sugerido: 'Liste os requisitos obrigatórios para o cargo',
-          motivo: 'Candidatos precisam saber os pré-requisitos',
-          prioridade: 'alta'
-        };
-      }
-
-      if (!vaga.beneficios) {
-        sugestoes.beneficios = {
-          campo: 'beneficios',
-          original: '',
-          sugerido: 'Adicione os benefícios oferecidos',
-          motivo: 'Benefícios aumentam a atratividade da vaga',
-          prioridade: 'media'
-        };
-      }
-
-      // Keywords sugeridas baseadas na stack
-      if (vaga.stack_tecnologica && vaga.stack_tecnologica.length > 0) {
-        sugestoes.keywords = [
-          ...vaga.stack_tecnologica,
-          vaga.senioridade || '',
-          vaga.modalidade || 'Remoto'
-        ].filter(Boolean);
-      }
-
-      const totalAjustes = [
-        sugestoes.titulo,
-        sugestoes.descricao,
-        sugestoes.requisitos,
-        sugestoes.beneficios
-      ].filter(Boolean).length;
-
-      const analiseData: Partial<VagaAnaliseIADB> = {
-        vaga_id: parseInt(vaga.id),
-        descricao_original: vaga.descricao || '',
-        fonte: 'Local',
-        sugestoes,
-        confidence_score: 60,
-        confidence_detalhado: {
-          clareza: vaga.descricao && vaga.descricao.length > 100 ? 80 : 50,
-          atratividade: vaga.beneficios ? 70 : 40,
-          completude: totalAjustes === 0 ? 90 : 90 - (totalAjustes * 15),
-          seo: sugestoes.keywords ? 70 : 40
-        },
-        total_ajustes: totalAjustes,
-        campos_ajustados: Object.keys(sugestoes).filter(k => k !== 'keywords' && k !== 'melhorias_gerais'),
-        qualidade_sugestao: 60,
-        analisado_em: new Date().toISOString(),
-        analisado_por: 'Local',
-        aprovado: false,
-        requer_revisao_manual: totalAjustes > 2
-      };
-
-      const { data: analiseSalva, error } = await supabase
-        .from('vaga_analise_ia')
-        .insert(analiseData)
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      setAnaliseAtual(analiseSalva);
-      return analiseSalva;
-    } catch (err: any) {
-      console.error('❌ Erro na análise local:', err);
-      return null;
-    }
-  };
-
-  // ============================================
-  // CARREGAR ANÁLISES
-  // ============================================
-
-  /**
-   * Carrega análise de uma vaga específica
-   */
+  
   const loadAnaliseVaga = useCallback(async (vagaId: number): Promise<VagaAnaliseIADB | null> => {
     try {
       const { data, error } = await supabase
         .from('vaga_analise_ia')
         .select('*')
         .eq('vaga_id', vagaId)
+        .eq('rejeitado', false)
         .order('analisado_em', { ascending: false })
         .limit(1)
         .single();
 
-      if (error && error.code !== 'PGRST116') throw error;
+      if (error && error.code !== 'PGRST116') {
+        console.error('Erro ao carregar análise:', error);
+        return null;
+      }
 
       if (data) {
         setAnaliseAtual(data);
+        return data;
       }
-      return data || null;
-    } catch (err: any) {
-      console.error('❌ Erro ao carregar análise:', err);
+
+      return null;
+    } catch (err) {
+      console.error('Erro ao carregar análise:', err);
       return null;
     }
   }, []);
 
-  /**
-   * Carrega todas as análises pendentes de aprovação
-   */
-  const loadAnalisesPendentes = useCallback(async (): Promise<VagaAnaliseIADB[]> => {
+  // ============================================
+  // ANALISAR VAGA COM IA (GEMINI)
+  // ============================================
+
+  const analisarVaga = useCallback(async (vaga: Vaga): Promise<VagaAnaliseIADB | null> => {
+    setLoading(true);
+    setError(null);
+
     try {
-      setLoading(true);
+      // Buscar API key do Gemini
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       
-      const { data, error } = await supabase
-        .from('vaga_analise_ia')
-        .select(`
-          *,
-          vagas!vaga_id (
-            titulo,
-            status
-          )
-        `)
-        .eq('aprovado', false)
-        .order('analisado_em', { ascending: false });
+      if (!apiKey) {
+        // Fallback: análise local simulada
+        console.warn('⚠️ GEMINI_API_KEY não configurada. Usando análise simulada.');
+        return await analisarVagaLocal(vaga);
+      }
 
-      if (error) throw error;
+      const prompt = buildAnalysisPrompt(vaga);
 
-      setAnalises(data || []);
-      return data || [];
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 2048,
+            }
+          })
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Erro na API Gemini: ${response.status}`);
+      }
+
+      const result = await response.json();
+      const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!textResponse) {
+        throw new Error('Resposta vazia da IA');
+      }
+
+      // Limpar e parsear JSON
+      const jsonClean = textResponse
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+
+      const analise = JSON.parse(jsonClean);
+
+      // Salvar no banco
+      const analiseDB = await salvarAnalise(vaga.id, analise, 'Gemini 1.5 Flash');
+      
+      if (analiseDB) {
+        setAnaliseAtual(analiseDB);
+        return analiseDB;
+      }
+
+      return null;
+
     } catch (err: any) {
-      console.error('❌ Erro ao carregar análises pendentes:', err);
-      return [];
+      console.error('Erro na análise IA:', err);
+      setError(err.message || 'Erro ao analisar vaga');
+      
+      // Tentar análise local como fallback
+      try {
+        return await analisarVagaLocal(vaga);
+      } catch {
+        return null;
+      }
     } finally {
       setLoading(false);
     }
   }, []);
 
   // ============================================
-  // APROVAR/APLICAR SUGESTÕES
+  // ANÁLISE LOCAL (FALLBACK)
   // ============================================
 
-  /**
-   * Aplica sugestões da IA na vaga
-   */
+  const analisarVagaLocal = async (vaga: Vaga): Promise<VagaAnaliseIADB | null> => {
+    console.log('📊 Executando análise local...');
+
+    // Calcular scores baseado em heurísticas
+    const temTitulo = (vaga.titulo?.length || 0) > 10;
+    const temDescricao = (vaga.descricao?.length || 0) > 50;
+    const temRequisitos = (vaga.requisitos_obrigatorios?.length || 0) > 20;
+    const temBeneficios = (vaga.beneficios?.length || 0) > 10;
+    const temModalidade = !!vaga.modalidade;
+    const temSalario = !!vaga.salario_min || !!vaga.salario_max;
+
+    const clareza = temDescricao ? (temRequisitos ? 80 : 60) : 30;
+    const atratividade = temBeneficios ? (temSalario ? 85 : 65) : 40;
+    const completude = [temTitulo, temDescricao, temRequisitos, temBeneficios, temModalidade].filter(Boolean).length * 20;
+    const seo = temTitulo && (vaga.titulo?.length || 0) > 20 ? 70 : 50;
+
+    const confidence_score = Math.round((clareza + atratividade + completude + seo) / 4);
+
+    // Extrair stacks do texto
+    const textoCompleto = `${vaga.descricao || ''} ${vaga.requisitos_obrigatorios || ''} ${vaga.requisitos_desejaveis || ''}`.toLowerCase();
+    
+    const stacksComuns = [
+      'React', 'Angular', 'Vue', 'Node.js', 'Python', 'Java', 'C#', '.NET',
+      'JavaScript', 'TypeScript', 'PHP', 'Laravel', 'Django', 'Spring',
+      'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'AWS', 'Azure', 'GCP',
+      'Docker', 'Kubernetes', 'Git', 'CI/CD', 'Agile', 'Scrum',
+      'REST', 'API', 'GraphQL', 'SQL', 'Linux', 'DevOps'
+    ];
+
+    const stacks_identificadas = stacksComuns.filter(s => 
+      textoCompleto.includes(s.toLowerCase())
+    );
+
+    // Gerar sugestões
+    const sugestoes: SugestoesVaga = {
+      stacks_identificadas,
+      keywords: stacks_identificadas.slice(0, 5),
+      melhorias_gerais: []
+    };
+
+    if (!temDescricao || (vaga.descricao?.length || 0) < 100) {
+      sugestoes.descricao = {
+        original: vaga.descricao?.substring(0, 50) || null,
+        sugerido: 'Adicione uma descrição mais detalhada com responsabilidades, desafios e contexto do projeto.',
+        motivo: 'Descrições completas aumentam em 40% a taxa de candidaturas qualificadas.',
+        prioridade: 'alta'
+      };
+      sugestoes.melhorias_gerais?.push('Descrição precisa de mais detalhes');
+    }
+
+    if (!temBeneficios) {
+      sugestoes.beneficios = {
+        original: null,
+        sugerido: 'Liste benefícios como: flexibilidade de horário, plano de carreira, ambiente de trabalho, ferramentas modernas.',
+        motivo: 'Vagas com benefícios claros atraem 60% mais candidatos.',
+        prioridade: 'media'
+      };
+      sugestoes.melhorias_gerais?.push('Adicione benefícios para atrair candidatos');
+    }
+
+    if (!temSalario) {
+      sugestoes.melhorias_gerais?.push('Considere informar faixa salarial para filtrar candidatos');
+    }
+
+    const analise = {
+      confidence_score,
+      confidence_detalhado: { clareza, atratividade, completude, seo },
+      sugestoes
+    };
+
+    // Salvar no banco
+    return await salvarAnalise(vaga.id, analise, 'Análise Local');
+  };
+
+  // ============================================
+  // SALVAR ANÁLISE NO BANCO
+  // ============================================
+
+  const salvarAnalise = async (
+    vagaId: string | number, 
+    analise: any, 
+    analisadoPor: string
+  ): Promise<VagaAnaliseIADB | null> => {
+    try {
+      const { data, error } = await supabase
+        .from('vaga_analise_ia')
+        .insert({
+          vaga_id: typeof vagaId === 'string' ? parseInt(vagaId) : vagaId,
+          confidence_score: analise.confidence_score,
+          confidence_detalhado: analise.confidence_detalhado,
+          sugestoes: analise.sugestoes,
+          analisado_por: analisadoPor,
+          analisado_em: new Date().toISOString(),
+          aprovado: false,
+          rejeitado: false
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Erro ao salvar análise:', error);
+        // Se a tabela não existe, retornar objeto em memória
+        if (error.code === '42P01') {
+          console.warn('⚠️ Tabela vaga_analise_ia não existe. Retornando análise em memória.');
+          return {
+            id: Date.now(),
+            vaga_id: typeof vagaId === 'string' ? parseInt(vagaId) : vagaId,
+            confidence_score: analise.confidence_score,
+            confidence_detalhado: analise.confidence_detalhado,
+            sugestoes: analise.sugestoes,
+            analisado_por: analisadoPor,
+            analisado_em: new Date().toISOString(),
+            aprovado: false,
+            rejeitado: false
+          };
+        }
+        return null;
+      }
+
+      return data;
+    } catch (err) {
+      console.error('Erro ao salvar análise:', err);
+      return null;
+    }
+  };
+
+  // ============================================
+  // APLICAR SUGESTÕES
+  // ============================================
+
   const aplicarSugestoes = useCallback(async (
     analiseId: number,
     vagaId: number,
-    sugestoesAceitas: string[],
+    camposAplicados: string[],
     userId: number
   ): Promise<boolean> => {
     try {
-      setLoading(true);
-      console.log(`✅ Aplicando ${sugestoesAceitas.length} sugestões...`);
-
-      // Buscar análise
-      const { data: analise } = await supabase
-        .from('vaga_analise_ia')
-        .select('sugestoes')
-        .eq('id', analiseId)
-        .single();
-
-      if (!analise) throw new Error('Análise não encontrada');
-
-      // Preparar atualizações para a vaga
-      const updates: Partial<Vaga> = {};
-      const sugestoes = analise.sugestoes;
-
-      sugestoesAceitas.forEach(campo => {
-        const sugestao = sugestoes[campo as keyof typeof sugestoes];
-        if (sugestao && typeof sugestao === 'object' && 'sugerido' in sugestao) {
-          (updates as any)[campo] = sugestao.sugerido;
-        }
-      });
-
-      if (Object.keys(updates).length > 0) {
-        // Atualizar vaga
-        const { error: vagaError } = await supabase
-          .from('vagas')
-          .update({
-            ...updates,
-            atualizado_em: new Date().toISOString()
-          })
-          .eq('id', vagaId);
-
-        if (vagaError) throw vagaError;
-      }
-
-      // Marcar análise como aprovada
-      const { error: analiseError } = await supabase
+      const { error } = await supabase
         .from('vaga_analise_ia')
         .update({
           aprovado: true,
-          revisado_em: new Date().toISOString(),
-          revisado_por: userId,
-          feedback_texto: `Sugestões aceitas: ${sugestoesAceitas.join(', ')}`
+          aprovado_por: userId,
+          aprovado_em: new Date().toISOString(),
+          campos_aplicados: camposAplicados
         })
         .eq('id', analiseId);
 
-      if (analiseError) throw analiseError;
+      if (error) {
+        console.error('Erro ao aplicar sugestões:', error);
+        return false;
+      }
 
-      console.log('✅ Sugestões aplicadas com sucesso');
       return true;
-    } catch (err: any) {
-      console.error('❌ Erro ao aplicar sugestões:', err);
-      setError(err.message);
+    } catch (err) {
+      console.error('Erro ao aplicar sugestões:', err);
       return false;
-    } finally {
-      setLoading(false);
     }
   }, []);
 
-  /**
-   * Rejeita análise/sugestões
-   */
+  // ============================================
+  // REJEITAR ANÁLISE
+  // ============================================
+
   const rejeitarAnalise = useCallback(async (
     analiseId: number,
     motivo: string,
@@ -425,138 +420,45 @@ export const useVagaAnaliseIA = () => {
       const { error } = await supabase
         .from('vaga_analise_ia')
         .update({
-          aprovado: false,
-          revisado_em: new Date().toISOString(),
-          revisado_por: userId,
-          feedback_texto: `Rejeitado: ${motivo}`,
-          requer_revisao_manual: false
+          rejeitado: true,
+          rejeitado_por: userId,
+          rejeitado_em: new Date().toISOString(),
+          motivo_rejeicao: motivo
         })
         .eq('id', analiseId);
 
-      if (error) throw error;
-
-      console.log('✅ Análise rejeitada');
-      return true;
-    } catch (err: any) {
-      console.error('❌ Erro ao rejeitar análise:', err);
-      return false;
-    }
-  }, []);
-
-  // ============================================
-  // WORKFLOW DE APROVAÇÃO DE VAGA
-  // ============================================
-
-  /**
-   * Submete vaga para aprovação
-   */
-  const submeterParaAprovacao = useCallback(async (vagaId: number): Promise<boolean> => {
-    try {
-      // Primeiro, garantir que existe análise da IA
-      const analise = await loadAnaliseVaga(vagaId);
-      
-      if (!analise) {
-        // Se não tem análise, buscar a vaga e analisar
-        const { data: vaga } = await supabase
-          .from('vagas')
-          .select('*')
-          .eq('id', vagaId)
-          .single();
-        
-        if (vaga) {
-          await analisarVaga(vaga as unknown as Vaga);
-        }
+      if (error) {
+        console.error('Erro ao rejeitar análise:', error);
+        return false;
       }
 
-      // Atualizar status da vaga para aguardando aprovação
-      // Nota: Isso usa o campo status existente, você pode criar novos campos se preferir
-      const { error } = await supabase
-        .from('vagas')
-        .update({
-          status: 'pausada', // Usando status existente como "aguardando aprovação"
-          atualizado_em: new Date().toISOString()
-        })
-        .eq('id', vagaId);
-
-      if (error) throw error;
-
-      console.log('✅ Vaga submetida para aprovação');
+      setAnaliseAtual(null);
       return true;
-    } catch (err: any) {
-      console.error('❌ Erro ao submeter vaga:', err);
+    } catch (err) {
+      console.error('Erro ao rejeitar análise:', err);
       return false;
-    }
-  }, [loadAnaliseVaga, analisarVaga]);
-
-  /**
-   * Aprova vaga (por Comercial ou R&S)
-   */
-  const aprovarVaga = useCallback(async (
-    vagaId: number,
-    aprovadorId: number,
-    tipoAprovador: 'comercial' | 'rs'
-  ): Promise<boolean> => {
-    try {
-      setLoading(true);
-      console.log(`✅ Aprovando vaga por ${tipoAprovador}...`);
-
-      // Atualizar vaga
-      // Nota: Idealmente teríamos campos específicos para cada aprovação
-      // Por ora, vamos registrar no metadados ou criar uma nova tabela
-      
-      const { data: vagaAtual } = await supabase
-        .from('vagas')
-        .select('*')
-        .eq('id', vagaId)
-        .single();
-
-      if (!vagaAtual) throw new Error('Vaga não encontrada');
-
-      // Verificar se ambas aprovações estão completas
-      // Simplificação: se status atual é pausada e recebeu aprovação, muda para aberta
-      const { error } = await supabase
-        .from('vagas')
-        .update({
-          status: 'aberta',
-          atualizado_em: new Date().toISOString()
-        })
-        .eq('id', vagaId);
-
-      if (error) throw error;
-
-      console.log(`✅ Vaga aprovada por ${tipoAprovador}`);
-      return true;
-    } catch (err: any) {
-      console.error('❌ Erro ao aprovar vaga:', err);
-      setError(err.message);
-      return false;
-    } finally {
-      setLoading(false);
     }
   }, []);
 
   // ============================================
-  // RETURN
+  // LIMPAR ESTADO
   // ============================================
 
+  const limparAnalise = useCallback(() => {
+    setAnaliseAtual(null);
+    setError(null);
+  }, []);
+
   return {
-    // Estado
-    analises,
     analiseAtual,
     loading,
     error,
-
-    // Análise IA
     analisarVaga,
     loadAnaliseVaga,
-    loadAnalisesPendentes,
-
-    // Aplicar/Rejeitar
     aplicarSugestoes,
     rejeitarAnalise,
-
-    // Workflow
-    submeterParaAprovacao,
-    aprovarVaga
+    limparAnalise
   };
 };
+
+export default useVagaAnaliseIA;
