@@ -13,7 +13,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { supabase } from '@/config/supabase';
+import { supabase } from '../../config/supabase';
 
 // ============================================
 // TIPOS
@@ -479,3 +479,4 @@ export function useMovimentacoes() {
 }
 
 export default useMovimentacoes;
+
