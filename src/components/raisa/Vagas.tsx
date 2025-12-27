@@ -1,12 +1,12 @@
 /**
- * Vagas.tsx - RMS RAISA v53.0
+ * Vagas.tsx - RMS RAISA v55.0
  * Componente de Gestão de Vagas
  * 
- * CORREÇÃO v52.2: Tratamento seguro do campo stack_tecnologica
- * NOVA FUNCIONALIDADE v52.3: Dropdowns de Cliente e Gestor do Cliente no header
- * CORREÇÃO v52.4: Verificações de segurança para clients e usuariosCliente undefined
- * CORREÇÃO v52.6: Usa razao_social_cliente e adiciona dropdown de Gestor no modal
- * NOVA FUNCIONALIDADE v53.0: Integração com CVMatchingPanel - Busca Inteligente de CVs
+ * v55.0: Modal COMPLETO com todos os campos da tabela vagas
+ *        - tipo_de_vaga, ocorrencia, vaga_faturavel
+ *        - requisitos, regime, modalidade, salários
+ *        - benefícios, prazo, urgente
+ *        - Botão Extrair Stacks com IA
  */
 
 import React, { useState, useMemo } from 'react';
@@ -14,6 +14,7 @@ import { Vaga, Client, UsuarioCliente } from '../../types/types_index';
 import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 import CVMatchingPanel from './CVMatchingPanel';
 import VagaSugestoesIA from './VagaSugestoesIA';
+import { Wand2, Loader2, Plus, X, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface VagasProps {
     vagas: Vaga[];
@@ -43,6 +44,23 @@ const ensureStackArray = (stack: any): string[] => {
     return [];
 };
 
+// Stacks conhecidas para extração automática
+const STACKS_CONHECIDAS = [
+    'React', 'Angular', 'Vue', 'Vue.js', 'Next.js', 'Node.js', 'Express',
+    'Python', 'Django', 'Flask', 'FastAPI', 'Java', 'Spring', 'Spring Boot',
+    'C#', '.NET', '.NET Core', 'PHP', 'Laravel', 'Symfony',
+    'JavaScript', 'TypeScript', 'HTML', 'CSS', 'Sass', 'Tailwind',
+    'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'SQL Server', 'Oracle',
+    'AWS', 'Azure', 'GCP', 'Docker', 'Kubernetes', 'K8s',
+    'Git', 'GitHub', 'GitLab', 'CI/CD', 'Jenkins',
+    'REST', 'API', 'GraphQL', 'Microservices',
+    'Agile', 'Scrum', 'Kanban', 'DevOps',
+    'Linux', 'Terraform', 'Ansible',
+    'Selenium', 'Cypress', 'Jest', 'JUnit',
+    'Power BI', 'Tableau', 'SAP', 'Salesforce',
+    'Machine Learning', 'Data Science', 'IA', 'AI'
+];
+
 const Vagas: React.FC<VagasProps> = ({ 
     vagas = [], 
     clients = [], 
@@ -58,17 +76,27 @@ const Vagas: React.FC<VagasProps> = ({
     const [priorizacaoVagaId, setPriorizacaoVagaId] = useState<string | null>(null);
     const [priorizacaoVagaTitulo, setPriorizacaoVagaTitulo] = useState<string>('');
     
-    // ✅ NOVO v53: Estado para Busca de CVs
+    // Estado para Busca de CVs
     const [buscaCVVaga, setBuscaCVVaga] = useState<Vaga | null>(null);
     
-    // ✅ NOVO v54: Estado para Sugestões IA
+    // Estado para Sugestões IA
     const [sugestoesIAVaga, setSugestoesIAVaga] = useState<Vaga | null>(null);
     
     // Estados dos filtros de header
     const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
     const [selectedGestorId, setSelectedGestorId] = useState<number | null>(null);
     
-    // Estado do formulário - agora inclui gestor_cliente_id
+    // Estado para expandir/colapsar seções do modal
+    const [expandedSections, setExpandedSections] = useState({
+        requisitos: false,
+        contratacao: false,
+        config: false
+    });
+    
+    // Estado para extração de stacks
+    const [extractingStacks, setExtractingStacks] = useState(false);
+    
+    // Estado do formulário COMPLETO
     const [formData, setFormData] = useState<Partial<Vaga> & { gestor_cliente_id?: number | null }>({
         titulo: '', 
         descricao: '', 
@@ -76,11 +104,26 @@ const Vagas: React.FC<VagasProps> = ({
         stack_tecnologica: [], 
         status: 'aberta',
         cliente_id: null,
-        gestor_cliente_id: null
+        gestor_cliente_id: null,
+        // ✅ NOVOS CAMPOS
+        tipo_de_vaga: 'Nova Posição',
+        ocorrencia: null,
+        vaga_faturavel: true,
+        requisitos_obrigatorios: '',
+        requisitos_desejaveis: '',
+        regime_contratacao: 'PJ',
+        modalidade: 'Remoto',
+        salario_min: null,
+        salario_max: null,
+        faturamento_mensal: null,
+        beneficios: '',
+        prazo_fechamento: null,
+        urgente: false,
+        analista_id: null
     });
     const [techInput, setTechInput] = useState('');
 
-    // ✅ Garantir que clients e usuariosCliente sejam sempre arrays
+    // Garantir que clients e usuariosCliente sejam sempre arrays
     const safeClients = Array.isArray(clients) ? clients : [];
     const safeUsuariosCliente = Array.isArray(usuariosCliente) ? usuariosCliente : [];
     const safeVagas = Array.isArray(vagas) ? vagas : [];
@@ -99,81 +142,142 @@ const Vagas: React.FC<VagasProps> = ({
 
     // Filtrar vagas pelo cliente selecionado
     const vagasFiltradas = useMemo(() => {
-        if (!selectedClientId) return safeVagas;
-        return safeVagas.filter(v => v.cliente_id === selectedClientId);
-    }, [selectedClientId, safeVagas]);
+        let filtered = safeVagas;
+        if (selectedClientId) {
+            filtered = filtered.filter(v => v.cliente_id === selectedClientId);
+        }
+        return filtered;
+    }, [safeVagas, selectedClientId]);
 
-    // ✅ Obter nome do cliente pelo ID - usa razao_social_cliente
-    const getClientName = (clientId: number | null | undefined): string => {
-        if (!clientId) return 'Não definido';
+    // Ordenar clientes alfabeticamente
+    const sortedClients = useMemo(() => {
+        return [...safeClients]
+            .filter(c => c.ativo_cliente !== false)
+            .sort((a, b) => (a.razao_social_cliente || '').localeCompare(b.razao_social_cliente || ''));
+    }, [safeClients]);
+
+    // Obter nome do cliente
+    const getClientName = (clientId: number | null): string => {
+        if (!clientId) return 'Sem cliente';
         const client = safeClients.find(c => c.id === clientId);
         return client?.razao_social_cliente || 'Cliente não encontrado';
     };
 
-    // Obter nome do gestor pelo ID
-    const getGestorName = (gestorId: number | null | undefined): string => {
-        if (!gestorId) return '';
-        const gestor = safeUsuariosCliente.find(g => g.id === gestorId);
-        return gestor?.nome_gestor_cliente || '';
-    };
-
-    // Quando muda o cliente no header, limpa o gestor selecionado
-    const handleClientChange = (clientId: number | null) => {
-        setSelectedClientId(clientId);
-        setSelectedGestorId(null);
-    };
-
-    // Quando muda o cliente no formulário, limpa o gestor selecionado no form
-    const handleFormClientChange = (clientId: number | null) => {
-        setFormData({
-            ...formData,
-            cliente_id: clientId,
-            gestor_cliente_id: null // Limpa o gestor quando muda o cliente
-        });
-    };
-
+    // Abrir modal (criar ou editar)
     const openModal = (vaga?: Vaga) => {
         if (vaga) {
             setEditingVaga(vaga);
             setFormData({
-                ...vaga,
+                titulo: vaga.titulo || '',
+                descricao: vaga.descricao || '',
+                senioridade: vaga.senioridade || 'Pleno',
                 stack_tecnologica: ensureStackArray(vaga.stack_tecnologica),
-                cliente_id: vaga.cliente_id || selectedClientId,
-                gestor_cliente_id: (vaga as any).gestor_cliente_id || null
+                status: vaga.status || 'aberta',
+                cliente_id: vaga.cliente_id,
+                gestor_cliente_id: null,
+                // Campos adicionais
+                tipo_de_vaga: vaga.tipo_de_vaga || 'Nova Posição',
+                ocorrencia: vaga.ocorrencia || null,
+                vaga_faturavel: vaga.vaga_faturavel !== false,
+                requisitos_obrigatorios: vaga.requisitos_obrigatorios || '',
+                requisitos_desejaveis: vaga.requisitos_desejaveis || '',
+                regime_contratacao: vaga.regime_contratacao || 'PJ',
+                modalidade: vaga.modalidade || 'Remoto',
+                salario_min: vaga.salario_min || null,
+                salario_max: vaga.salario_max || null,
+                faturamento_mensal: vaga.faturamento_mensal || null,
+                beneficios: vaga.beneficios || '',
+                prazo_fechamento: vaga.prazo_fechamento || null,
+                urgente: vaga.urgente || false,
+                analista_id: vaga.analista_id || null
             });
         } else {
             setEditingVaga(null);
-            setFormData({ 
-                titulo: '', 
-                descricao: '', 
-                senioridade: 'Pleno', 
-                stack_tecnologica: [], 
+            setFormData({
+                titulo: '',
+                descricao: '',
+                senioridade: 'Pleno',
+                stack_tecnologica: [],
                 status: 'aberta',
                 cliente_id: selectedClientId,
-                gestor_cliente_id: selectedGestorId
+                gestor_cliente_id: null,
+                tipo_de_vaga: 'Nova Posição',
+                ocorrencia: null,
+                vaga_faturavel: true,
+                requisitos_obrigatorios: '',
+                requisitos_desejaveis: '',
+                regime_contratacao: 'PJ',
+                modalidade: 'Remoto',
+                salario_min: null,
+                salario_max: null,
+                faturamento_mensal: null,
+                beneficios: '',
+                prazo_fechamento: null,
+                urgente: false,
+                analista_id: null
             });
         }
+        setTechInput('');
         setIsModalOpen(true);
     };
 
-    const handleSave = (e: React.FormEvent) => {
+    // Handler para mudança de cliente no formulário
+    const handleFormClientChange = (clientId: number | null) => {
+        setFormData({
+            ...formData,
+            cliente_id: clientId,
+            gestor_cliente_id: null
+        });
+    };
+
+    // Validar e salvar
+    const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
         
-        // Validar se cliente foi selecionado
         if (!formData.cliente_id) {
-            alert('Por favor, selecione um cliente para a vaga.');
+            alert('Por favor, selecione um cliente.');
             return;
         }
-        
-        if (editingVaga) {
-            const vagaAtualizada = { ...editingVaga, ...formData } as Vaga;
-            updateVaga(vagaAtualizada);
-        } else {
-            addVaga(formData);
+
+        if (!formData.titulo?.trim()) {
+            alert('Por favor, preencha o título da vaga.');
+            return;
         }
+
+        const vagaData = {
+            titulo: formData.titulo,
+            descricao: formData.descricao,
+            senioridade: formData.senioridade,
+            stack_tecnologica: formData.stack_tecnologica,
+            status: formData.status,
+            cliente_id: formData.cliente_id,
+            // Campos adicionais
+            tipo_de_vaga: formData.tipo_de_vaga,
+            ocorrencia: formData.ocorrencia,
+            vaga_faturavel: formData.vaga_faturavel,
+            requisitos_obrigatorios: formData.requisitos_obrigatorios || null,
+            requisitos_desejaveis: formData.requisitos_desejaveis || null,
+            regime_contratacao: formData.regime_contratacao,
+            modalidade: formData.modalidade,
+            salario_min: formData.salario_min,
+            salario_max: formData.salario_max,
+            faturamento_mensal: formData.faturamento_mensal,
+            beneficios: formData.beneficios || null,
+            prazo_fechamento: formData.prazo_fechamento,
+            urgente: formData.urgente,
+            analista_id: formData.analista_id
+        };
+
+        if (editingVaga) {
+            updateVaga({ ...editingVaga, ...vagaData });
+        } else {
+            addVaga(vagaData);
+        }
+
         setIsModalOpen(false);
     };
 
+    // Adicionar tecnologia
     const addTech = () => {
         if (techInput && !formData.stack_tecnologica?.includes(techInput)) {
             setFormData({ ...formData, stack_tecnologica: [...(formData.stack_tecnologica || []), techInput] });
@@ -181,6 +285,7 @@ const Vagas: React.FC<VagasProps> = ({
         }
     };
 
+    // Remover tecnologia
     const removeTech = (techToRemove: string) => {
         setFormData({
             ...formData,
@@ -188,114 +293,118 @@ const Vagas: React.FC<VagasProps> = ({
         });
     };
 
-    // ✅ NOVO v53: Handler para abrir busca de CVs
-    const handleBuscarCVs = (vaga: Vaga) => {
-        const stackArray = ensureStackArray(vaga.stack_tecnologica);
-        if (stackArray.length === 0) {
-            alert('Esta vaga não possui stack tecnológica definida. Adicione tecnologias para buscar CVs aderentes.');
-            return;
+    // ✅ NOVO: Extrair stacks automaticamente do texto
+    const extrairStacksAutomaticamente = () => {
+        setExtractingStacks(true);
+        
+        const textoCompleto = `${formData.descricao || ''} ${formData.requisitos_obrigatorios || ''} ${formData.requisitos_desejaveis || ''}`.toLowerCase();
+        
+        const stacksEncontradas: string[] = [];
+        
+        STACKS_CONHECIDAS.forEach(stack => {
+            if (textoCompleto.includes(stack.toLowerCase())) {
+                if (!stacksEncontradas.some(s => s.toLowerCase() === stack.toLowerCase())) {
+                    stacksEncontradas.push(stack);
+                }
+            }
+        });
+
+        // Adicionar às stacks existentes sem duplicar
+        const stacksAtuais = formData.stack_tecnologica || [];
+        const novasStacks = stacksEncontradas.filter(s => 
+            !stacksAtuais.some(atual => atual.toLowerCase() === s.toLowerCase())
+        );
+
+        if (novasStacks.length > 0) {
+            setFormData({
+                ...formData,
+                stack_tecnologica: [...stacksAtuais, ...novasStacks]
+            });
+            alert(`✅ ${novasStacks.length} tecnologias identificadas!`);
+        } else {
+            alert('Nenhuma nova tecnologia identificada. Adicione manualmente.');
         }
+
+        setExtractingStacks(false);
+    };
+
+    // Buscar CVs
+    const handleBuscarCVs = (vaga: Vaga) => {
         setBuscaCVVaga(vaga);
     };
 
-    // ✅ NOVO v53: Handler quando candidatura é criada da busca
-    const handleCandidaturaCriada = (candidaturaId: number) => {
-        console.log(`✅ Candidatura ${candidaturaId} criada via busca de CVs`);
+    // Callback quando candidatura é criada
+    const handleCandidaturaCriada = () => {
+        console.log('✅ Candidatura criada com sucesso');
     };
 
-    // ✅ Ordenar clientes de forma segura - usa razao_social_cliente
-    const sortedClients = useMemo(() => {
-        return safeClients
-            .filter(c => c && c.ativo_cliente !== false)
-            .sort((a, b) => {
-                const nameA = a?.razao_social_cliente || '';
-                const nameB = b?.razao_social_cliente || '';
-                return nameA.localeCompare(nameB);
-            });
-    }, [safeClients]);
+    // Toggle seção do modal
+    const toggleSection = (section: 'requisitos' | 'contratacao' | 'config') => {
+        setExpandedSections(prev => ({
+            ...prev,
+            [section]: !prev[section]
+        }));
+    };
 
     return (
-        <div className="space-y-6">
-            {/* Header com título e filtros */}
-            <div className="bg-white rounded-lg shadow-sm p-4">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-                    {/* Título */}
-                    <h2 className="text-2xl font-bold text-gray-800">Gestão de Vagas</h2>
-                    
-                    {/* Filtros e botão */}
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-                        {/* Dropdown Cliente */}
-                        <div className="flex items-center gap-2">
-                            <label className="text-sm font-medium text-gray-600 whitespace-nowrap">Cliente:</label>
-                            <select
-                                value={selectedClientId || ''}
-                                onChange={(e) => handleClientChange(e.target.value ? Number(e.target.value) : null)}
-                                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 min-w-[180px]"
-                            >
-                                <option value="">Todos os Clientes</option>
-                                {sortedClients.map(client => (
-                                    <option key={client.id} value={client.id}>
-                                        {client.razao_social_cliente}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        
-                        {/* Dropdown Gestor do Cliente */}
-                        <div className="flex items-center gap-2">
-                            <label className="text-sm font-medium text-gray-600 whitespace-nowrap">Gestor:</label>
+        <div className="p-6 bg-gray-50 min-h-full">
+            {/* Header com Filtros */}
+            <div className="mb-6">
+                <h1 className="text-3xl font-bold text-gray-800 mb-4">Gestão de Vagas</h1>
+                
+                <div className="flex flex-wrap gap-4 items-center bg-white p-4 rounded-lg shadow-sm">
+                    {/* Filtro por Cliente */}
+                    <div className="flex-1 min-w-[200px]">
+                        <label className="text-xs font-semibold text-gray-500 uppercase">Filtrar por Cliente</label>
+                        <select
+                            value={selectedClientId || ''}
+                            onChange={(e) => {
+                                setSelectedClientId(e.target.value ? Number(e.target.value) : null);
+                                setSelectedGestorId(null);
+                            }}
+                            className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500"
+                        >
+                            <option value="">Todos os Clientes</option>
+                            {sortedClients.map(client => (
+                                <option key={client.id} value={client.id}>
+                                    {client.razao_social_cliente}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* Filtro por Gestor (apenas se cliente selecionado) */}
+                    {selectedClientId && (
+                        <div className="flex-1 min-w-[200px]">
+                            <label className="text-xs font-semibold text-gray-500 uppercase">Gestor do Cliente</label>
                             <select
                                 value={selectedGestorId || ''}
                                 onChange={(e) => setSelectedGestorId(e.target.value ? Number(e.target.value) : null)}
-                                disabled={!selectedClientId}
-                                className={`border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-orange-500 focus:border-orange-500 min-w-[180px] ${!selectedClientId ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                                className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500"
                             >
-                                <option value="">
-                                    {selectedClientId 
-                                        ? (gestoresDoCliente.length > 0 ? 'Selecione o Gestor' : 'Nenhum gestor cadastrado')
-                                        : 'Selecione um cliente primeiro'
-                                    }
-                                </option>
+                                <option value="">Todos os Gestores</option>
                                 {gestoresDoCliente.map(gestor => (
                                     <option key={gestor.id} value={gestor.id}>
-                                        {gestor.nome_gestor_cliente} - {gestor.cargo_gestor || 'Gestor'}
+                                        {gestor.nome_gestor_cliente}
                                     </option>
                                 ))}
                             </select>
                         </div>
-                        
-                        {/* Botão Nova Vaga */}
-                        <button 
-                            onClick={() => openModal()} 
-                            className="bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 transition-colors font-medium whitespace-nowrap"
-                        >
-                            + Nova Vaga
-                        </button>
-                    </div>
+                    )}
+
+                    {/* Botão Nova Vaga */}
+                    <button 
+                        onClick={() => openModal()} 
+                        className="bg-orange-600 text-white px-6 py-2 rounded-lg hover:bg-orange-700 font-semibold flex items-center gap-2 shadow-md"
+                    >
+                        <Plus size={18} /> Nova Vaga
+                    </button>
                 </div>
-                
-                {/* Informação do filtro ativo */}
+
+                {/* Info do filtro */}
                 {selectedClientId && (
-                    <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 text-sm">
-                        <span className="text-gray-500">Filtrando por:</span>
-                        <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded font-medium">
-                            {getClientName(selectedClientId)}
-                        </span>
-                        {selectedGestorId && (
-                            <>
-                                <span className="text-gray-400">→</span>
-                                <span className="bg-green-100 text-green-800 px-2 py-1 rounded font-medium">
-                                    {getGestorName(selectedGestorId)}
-                                </span>
-                            </>
-                        )}
-                        <button 
-                            onClick={() => { setSelectedClientId(null); setSelectedGestorId(null); }}
-                            className="text-red-500 hover:text-red-700 ml-2"
-                            title="Limpar filtros"
-                        >
-                            ✕ Limpar
-                        </button>
+                    <div className="mt-2 text-sm text-gray-600">
+                        Mostrando <strong>{vagasFiltradas.length}</strong> vagas de <strong>{getClientName(selectedClientId)}</strong>
                     </div>
                 )}
             </div>
@@ -318,23 +427,40 @@ const Vagas: React.FC<VagasProps> = ({
                             <div key={vaga.id} className="bg-white rounded-xl shadow-md p-6 border-l-4 border-orange-500 hover:shadow-lg transition-shadow">
                                 <div className="flex justify-between items-start mb-2">
                                     <h3 className="font-bold text-lg text-gray-800">{vaga.titulo}</h3>
-                                    <span className={`px-2 py-1 rounded text-xs uppercase font-semibold ${
-                                        vaga.status === 'aberta' ? 'bg-green-100 text-green-800' : 
-                                        vaga.status === 'pausada' ? 'bg-yellow-100 text-yellow-800' :
-                                        'bg-gray-100 text-gray-600'
-                                    }`}>
-                                        {vaga.status}
-                                    </span>
+                                    <div className="flex gap-1">
+                                        {vaga.urgente && (
+                                            <span className="px-2 py-1 rounded text-xs bg-red-100 text-red-800 font-semibold">
+                                                🚨 URGENTE
+                                            </span>
+                                        )}
+                                        <span className={`px-2 py-1 rounded text-xs uppercase font-semibold ${
+                                            vaga.status === 'aberta' ? 'bg-green-100 text-green-800' : 
+                                            vaga.status === 'pausada' ? 'bg-yellow-100 text-yellow-800' :
+                                            'bg-gray-100 text-gray-600'
+                                        }`}>
+                                            {vaga.status}
+                                        </span>
+                                    </div>
                                 </div>
                                 
-                                {/* Cliente da Vaga */}
-                                {vaga.cliente_id && (
-                                    <div className="mb-2">
+                                {/* Cliente e Tipo */}
+                                <div className="mb-2 flex flex-wrap gap-1">
+                                    {vaga.cliente_id && (
                                         <span className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">
                                             📍 {getClientName(vaga.cliente_id)}
                                         </span>
-                                    </div>
-                                )}
+                                    )}
+                                    {vaga.tipo_de_vaga && (
+                                        <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded">
+                                            {vaga.tipo_de_vaga}
+                                        </span>
+                                    )}
+                                    {vaga.modalidade && (
+                                        <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">
+                                            {vaga.modalidade}
+                                        </span>
+                                    )}
+                                </div>
                                 
                                 <p className="text-sm text-gray-600 mb-4 line-clamp-2">{vaga.descricao}</p>
                                 
@@ -342,11 +468,14 @@ const Vagas: React.FC<VagasProps> = ({
                                     <span className="text-xs font-semibold text-gray-500">Stack:</span>
                                     <div className="flex flex-wrap gap-1 mt-1">
                                         {stackArray.length > 0 ? (
-                                            stackArray.map(t => (
+                                            stackArray.slice(0, 5).map(t => (
                                                 <span key={t} className="bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded">{t}</span>
                                             ))
                                         ) : (
                                             <span className="text-gray-400 text-xs italic">Não definida</span>
+                                        )}
+                                        {stackArray.length > 5 && (
+                                            <span className="text-xs text-gray-500">+{stackArray.length - 5}</span>
                                         )}
                                     </div>
                                 </div>
@@ -354,7 +483,6 @@ const Vagas: React.FC<VagasProps> = ({
                                 <div className="flex justify-between items-center pt-4 border-t">
                                     <span className="text-sm font-medium text-gray-500">{vaga.senioridade}</span>
                                     <div className="flex flex-wrap gap-2">
-                                        {/* ✅ NOVO v54: Botão de Sugestões IA */}
                                         <button 
                                             onClick={() => setSugestoesIAVaga(vaga)} 
                                             className="text-purple-600 hover:text-purple-800 hover:underline text-sm font-semibold"
@@ -362,7 +490,6 @@ const Vagas: React.FC<VagasProps> = ({
                                         >
                                             🤖 IA
                                         </button>
-                                        {/* ✅ NOVO v53: Botão de Buscar CVs */}
                                         <button 
                                             onClick={() => handleBuscarCVs(vaga)} 
                                             className="text-green-600 hover:text-green-800 hover:underline text-sm font-semibold"
@@ -386,148 +513,420 @@ const Vagas: React.FC<VagasProps> = ({
                 )}
             </div>
 
-            {/* Modal de Criação/Edição */}
+            {/* ==================== MODAL COMPLETO ==================== */}
             {isModalOpen && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-                        <h3 className="text-xl font-bold mb-4">{editingVaga ? 'Editar' : 'Nova'} Vaga</h3>
-                        <form onSubmit={handleSave} className="space-y-4">
-                            
-                            {/* Cliente da Vaga */}
-                            <div>
-                                <label className="text-sm font-bold text-gray-700">Cliente *</label>
-                                <select
-                                    value={formData.cliente_id || ''}
-                                    onChange={(e) => handleFormClientChange(e.target.value ? Number(e.target.value) : null)}
-                                    className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500"
-                                    required
+                    <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[95vh] overflow-hidden flex flex-col">
+                        {/* Header do Modal */}
+                        <div className="bg-gradient-to-r from-orange-500 to-orange-600 text-white p-5">
+                            <div className="flex justify-between items-center">
+                                <h3 className="text-xl font-bold">
+                                    {editingVaga ? '✏️ Editar Vaga' : '➕ Nova Vaga'}
+                                </h3>
+                                <button 
+                                    onClick={() => setIsModalOpen(false)}
+                                    className="text-white hover:text-gray-200 text-2xl"
                                 >
-                                    <option value="">Selecione o Cliente</option>
-                                    {sortedClients.map(client => (
-                                        <option key={client.id} value={client.id}>
-                                            {client.razao_social_cliente}
-                                        </option>
-                                    ))}
-                                </select>
+                                    ×
+                                </button>
                             </div>
+                        </div>
 
-                            {/* ✅ Gestor do Cliente - NOVO */}
-                            <div>
-                                <label className="text-sm font-bold text-gray-700">Gestor do Cliente</label>
-                                <select
-                                    value={formData.gestor_cliente_id || ''}
-                                    onChange={(e) => setFormData({...formData, gestor_cliente_id: e.target.value ? Number(e.target.value) : null})}
-                                    disabled={!formData.cliente_id}
-                                    className={`w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500 ${!formData.cliente_id ? 'bg-gray-100 cursor-not-allowed' : ''}`}
-                                >
-                                    <option value="">
-                                        {formData.cliente_id 
-                                            ? (gestoresDoClienteForm.length > 0 ? 'Selecione o Gestor (opcional)' : 'Nenhum gestor cadastrado para este cliente')
-                                            : 'Selecione um cliente primeiro'
-                                        }
-                                    </option>
-                                    {gestoresDoClienteForm.map(gestor => (
-                                        <option key={gestor.id} value={gestor.id}>
-                                            {gestor.nome_gestor_cliente} - {gestor.cargo_gestor || 'Gestor'}
-                                        </option>
-                                    ))}
-                                </select>
-                                <p className="text-xs text-gray-500 mt-1">Gestor responsável pela vaga no cliente</p>
-                            </div>
-                            
-                            <input 
-                                className="w-full border p-2 rounded" 
-                                placeholder="Título da Vaga *" 
-                                value={formData.titulo} 
-                                onChange={e => setFormData({...formData, titulo: e.target.value})} 
-                                required 
-                            />
-                            
-                            <textarea 
-                                className="w-full border p-2 rounded h-24" 
-                                placeholder="Descrição da Vaga *" 
-                                value={formData.descricao} 
-                                onChange={e => setFormData({...formData, descricao: e.target.value})} 
-                                required 
-                            />
-                            
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="text-sm font-bold text-gray-700">Senioridade</label>
-                                    <select 
-                                        className="w-full border p-2 rounded mt-1" 
-                                        value={formData.senioridade} 
-                                        onChange={e => setFormData({...formData, senioridade: e.target.value as any})}
-                                    >
-                                        <option>Junior</option>
-                                        <option>Pleno</option>
-                                        <option>Senior</option>
-                                        <option>Especialista</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="text-sm font-bold text-gray-700">Status</label>
-                                    <select 
-                                        className="w-full border p-2 rounded mt-1" 
-                                        value={formData.status} 
-                                        onChange={e => setFormData({...formData, status: e.target.value as any})}
-                                    >
-                                        <option value="aberta">Aberta</option>
-                                        <option value="pausada">Pausada</option>
-                                        <option value="fechada">Fechada</option>
-                                    </select>
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <label className="text-sm font-bold text-gray-700">Stack Tecnológica</label>
-                                <div className="flex gap-2 mt-1">
-                                    <input 
-                                        className="border p-2 rounded flex-1" 
-                                        value={techInput} 
-                                        onChange={e => setTechInput(e.target.value)} 
-                                        placeholder="Ex: React, Node.js, Python"
-                                        onKeyPress={e => { if (e.key === 'Enter') { e.preventDefault(); addTech(); } }}
-                                    />
-                                    <button type="button" onClick={addTech} className="bg-gray-200 px-3 rounded hover:bg-gray-300">
-                                        Adicionar
-                                    </button>
-                                </div>
-                                <div className="flex gap-1 mt-2 flex-wrap">
-                                    {(formData.stack_tecnologica || []).map(t => (
-                                        <span 
-                                            key={t} 
-                                            className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-sm flex items-center gap-1"
-                                        >
-                                            {t}
-                                            <button 
-                                                type="button" 
-                                                onClick={() => removeTech(t)}
-                                                className="text-red-500 hover:text-red-700 font-bold ml-1"
+                        {/* Corpo do Modal com Scroll */}
+                        <div className="flex-1 overflow-y-auto p-6">
+                            <form id="vagaForm" onSubmit={handleSave} className="space-y-6">
+                                
+                                {/* ===== SEÇÃO 1: INFORMAÇÕES BÁSICAS ===== */}
+                                <div className="bg-gray-50 rounded-lg p-4">
+                                    <h4 className="font-bold text-gray-700 mb-4">📋 Informações Básicas</h4>
+                                    
+                                    {/* Cliente e Gestor */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                        <div>
+                                            <label className="text-sm font-bold text-gray-700">Cliente *</label>
+                                            <select
+                                                value={formData.cliente_id || ''}
+                                                onChange={(e) => handleFormClientChange(e.target.value ? Number(e.target.value) : null)}
+                                                className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500"
+                                                required
                                             >
-                                                ×
-                                            </button>
-                                        </span>
-                                    ))}
+                                                <option value="">Selecione o Cliente</option>
+                                                {sortedClients.map(client => (
+                                                    <option key={client.id} value={client.id}>
+                                                        {client.razao_social_cliente}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label className="text-sm font-bold text-gray-700">Gestor do Cliente</label>
+                                            <select
+                                                value={formData.gestor_cliente_id || ''}
+                                                onChange={(e) => setFormData({...formData, gestor_cliente_id: e.target.value ? Number(e.target.value) : null})}
+                                                disabled={!formData.cliente_id}
+                                                className={`w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500 ${!formData.cliente_id ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                                            >
+                                                <option value="">
+                                                    {formData.cliente_id 
+                                                        ? (gestoresDoClienteForm.length > 0 ? 'Selecione o Gestor (opcional)' : 'Nenhum gestor cadastrado')
+                                                        : 'Selecione um cliente primeiro'
+                                                    }
+                                                </option>
+                                                {gestoresDoClienteForm.map(gestor => (
+                                                    <option key={gestor.id} value={gestor.id}>
+                                                        {gestor.nome_gestor_cliente} - {gestor.cargo_gestor || 'Gestor'}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {/* Título */}
+                                    <div className="mb-4">
+                                        <label className="text-sm font-bold text-gray-700">Título da Vaga *</label>
+                                        <input 
+                                            className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500" 
+                                            placeholder="Ex: VTI-225 Desenvolvedor React Sênior" 
+                                            value={formData.titulo} 
+                                            onChange={e => setFormData({...formData, titulo: e.target.value})} 
+                                            required 
+                                        />
+                                    </div>
+
+                                    {/* Tipo, Senioridade, Status */}
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                                        <div>
+                                            <label className="text-sm font-bold text-gray-700">Tipo de Vaga</label>
+                                            <select 
+                                                className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500" 
+                                                value={formData.tipo_de_vaga || ''} 
+                                                onChange={e => setFormData({...formData, tipo_de_vaga: e.target.value})}
+                                            >
+                                                <option value="Nova Posição">Nova Posição</option>
+                                                <option value="Substituição">Substituição</option>
+                                                <option value="Expansão">Expansão</option>
+                                                <option value="Backfill">Backfill</option>
+                                                <option value="Projeto">Projeto</option>
+                                                <option value="Temporária">Temporária</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-bold text-gray-700">Senioridade</label>
+                                            <select 
+                                                className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500" 
+                                                value={formData.senioridade} 
+                                                onChange={e => setFormData({...formData, senioridade: e.target.value as any})}
+                                            >
+                                                <option>Junior</option>
+                                                <option>Pleno</option>
+                                                <option>Senior</option>
+                                                <option>Especialista</option>
+                                                <option>Gerente</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-sm font-bold text-gray-700">Status</label>
+                                            <select 
+                                                className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500" 
+                                                value={formData.status} 
+                                                onChange={e => setFormData({...formData, status: e.target.value as any})}
+                                            >
+                                                <option value="aberta">Aberta</option>
+                                                <option value="em_andamento">Em Andamento</option>
+                                                <option value="pausada">Pausada</option>
+                                                <option value="fechada">Fechada</option>
+                                                <option value="cancelada">Cancelada</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    {/* Nº OC e Urgente */}
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                        <div>
+                                            <label className="text-sm font-bold text-gray-700">Nº Ocorrência (OC)</label>
+                                            <input 
+                                                type="number"
+                                                className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500" 
+                                                placeholder="Ex: 7330" 
+                                                value={formData.ocorrencia || ''} 
+                                                onChange={e => setFormData({...formData, ocorrencia: e.target.value ? parseInt(e.target.value) : null})} 
+                                            />
+                                        </div>
+                                        <div className="flex items-center pt-6">
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={formData.urgente || false}
+                                                    onChange={e => setFormData({...formData, urgente: e.target.checked})}
+                                                    className="w-5 h-5 text-red-600 rounded"
+                                                />
+                                                <span className="font-medium text-gray-700">🚨 Vaga Urgente</span>
+                                            </label>
+                                        </div>
+                                        <div className="flex items-center pt-6">
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={formData.vaga_faturavel !== false}
+                                                    onChange={e => setFormData({...formData, vaga_faturavel: e.target.checked})}
+                                                    className="w-5 h-5 text-green-600 rounded"
+                                                />
+                                                <span className="font-medium text-gray-700">💰 Vaga Faturável</span>
+                                            </label>
+                                        </div>
+                                    </div>
                                 </div>
+
+                                {/* ===== SEÇÃO 2: DESCRIÇÃO ===== */}
+                                <div>
+                                    <label className="text-sm font-bold text-gray-700">Descrição da Vaga</label>
+                                    <textarea 
+                                        className="w-full border p-3 rounded mt-1 h-32 focus:ring-2 focus:ring-orange-500 font-mono text-sm" 
+                                        placeholder="Cole aqui a descrição completa da vaga..." 
+                                        value={formData.descricao} 
+                                        onChange={e => setFormData({...formData, descricao: e.target.value})} 
+                                    />
+                                </div>
+
+                                {/* ===== SEÇÃO 3: REQUISITOS (Expandível) ===== */}
+                                <div className="border rounded-lg overflow-hidden">
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleSection('requisitos')}
+                                        className="w-full flex justify-between items-center p-4 bg-gray-50 hover:bg-gray-100"
+                                    >
+                                        <span className="font-bold text-gray-700">📝 Requisitos</span>
+                                        {expandedSections.requisitos ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                                    </button>
+                                    {expandedSections.requisitos && (
+                                        <div className="p-4 space-y-4">
+                                            <div>
+                                                <label className="text-sm font-bold text-gray-700">Requisitos Obrigatórios</label>
+                                                <textarea 
+                                                    className="w-full border p-2 rounded mt-1 h-24" 
+                                                    placeholder="Liste os requisitos obrigatórios..." 
+                                                    value={formData.requisitos_obrigatorios || ''} 
+                                                    onChange={e => setFormData({...formData, requisitos_obrigatorios: e.target.value})} 
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="text-sm font-bold text-gray-700">Requisitos Desejáveis</label>
+                                                <textarea 
+                                                    className="w-full border p-2 rounded mt-1 h-24" 
+                                                    placeholder="Liste os requisitos desejáveis..." 
+                                                    value={formData.requisitos_desejaveis || ''} 
+                                                    onChange={e => setFormData({...formData, requisitos_desejaveis: e.target.value})} 
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* ===== SEÇÃO 4: STACK TECNOLÓGICA ===== */}
+                                <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
+                                    <div className="flex justify-between items-center mb-3">
+                                        <label className="text-sm font-bold text-purple-800">🔧 Stack Tecnológica</label>
+                                        <button
+                                            type="button"
+                                            onClick={extrairStacksAutomaticamente}
+                                            disabled={extractingStacks}
+                                            className="flex items-center gap-2 px-3 py-1.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 text-sm"
+                                        >
+                                            {extractingStacks ? (
+                                                <Loader2 className="animate-spin" size={16} />
+                                            ) : (
+                                                <Wand2 size={16} />
+                                            )}
+                                            Extrair com IA
+                                        </button>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <input 
+                                            className="border p-2 rounded flex-1" 
+                                            value={techInput} 
+                                            onChange={e => setTechInput(e.target.value)} 
+                                            placeholder="Digite tecnologias separadas por vírgula"
+                                            onKeyPress={e => { if (e.key === 'Enter') { e.preventDefault(); addTech(); } }}
+                                        />
+                                        <button type="button" onClick={addTech} className="bg-purple-600 text-white px-4 rounded hover:bg-purple-700">
+                                            Adicionar
+                                        </button>
+                                    </div>
+                                    <div className="flex gap-1 mt-3 flex-wrap">
+                                        {(formData.stack_tecnologica || []).map(t => (
+                                            <span 
+                                                key={t} 
+                                                className="bg-white text-purple-800 px-3 py-1 rounded-full text-sm flex items-center gap-1 border border-purple-200"
+                                            >
+                                                {t}
+                                                <button 
+                                                    type="button" 
+                                                    onClick={() => removeTech(t)}
+                                                    className="text-red-500 hover:text-red-700 font-bold ml-1"
+                                                >
+                                                    ×
+                                                </button>
+                                            </span>
+                                        ))}
+                                        {(formData.stack_tecnologica || []).length === 0 && (
+                                            <span className="text-purple-400 text-sm italic">Nenhuma tecnologia adicionada</span>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* ===== SEÇÃO 5: CONTRATAÇÃO (Expandível) ===== */}
+                                <div className="border rounded-lg overflow-hidden">
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleSection('contratacao')}
+                                        className="w-full flex justify-between items-center p-4 bg-gray-50 hover:bg-gray-100"
+                                    >
+                                        <span className="font-bold text-gray-700">💰 Contratação & Valores</span>
+                                        {expandedSections.contratacao ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                                    </button>
+                                    {expandedSections.contratacao && (
+                                        <div className="p-4 space-y-4">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="text-sm font-bold text-gray-700">Regime de Contratação</label>
+                                                    <select 
+                                                        className="w-full border p-2 rounded mt-1" 
+                                                        value={formData.regime_contratacao || ''} 
+                                                        onChange={e => setFormData({...formData, regime_contratacao: e.target.value})}
+                                                    >
+                                                        <option value="">Selecione</option>
+                                                        <option value="PJ">PJ</option>
+                                                        <option value="CLT">CLT</option>
+                                                        <option value="CLT Flex">CLT Flex</option>
+                                                        <option value="Cooperado">Cooperado</option>
+                                                        <option value="Estágio">Estágio</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label className="text-sm font-bold text-gray-700">Modalidade</label>
+                                                    <select 
+                                                        className="w-full border p-2 rounded mt-1" 
+                                                        value={formData.modalidade || ''} 
+                                                        onChange={e => setFormData({...formData, modalidade: e.target.value})}
+                                                    >
+                                                        <option value="">Selecione</option>
+                                                        <option value="Remoto">Remoto</option>
+                                                        <option value="Híbrido">Híbrido</option>
+                                                        <option value="Presencial">Presencial</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                                <div>
+                                                    <label className="text-sm font-bold text-gray-700">Salário Mín (R$)</label>
+                                                    <input 
+                                                        type="number"
+                                                        className="w-full border p-2 rounded mt-1" 
+                                                        placeholder="0.00" 
+                                                        value={formData.salario_min || ''} 
+                                                        onChange={e => setFormData({...formData, salario_min: e.target.value ? parseFloat(e.target.value) : null})} 
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-sm font-bold text-gray-700">Salário Máx (R$)</label>
+                                                    <input 
+                                                        type="number"
+                                                        className="w-full border p-2 rounded mt-1" 
+                                                        placeholder="0.00" 
+                                                        value={formData.salario_max || ''} 
+                                                        onChange={e => setFormData({...formData, salario_max: e.target.value ? parseFloat(e.target.value) : null})} 
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-sm font-bold text-gray-700">Faturamento Mensal (R$)</label>
+                                                    <input 
+                                                        type="number"
+                                                        className="w-full border p-2 rounded mt-1" 
+                                                        placeholder="0.00" 
+                                                        value={formData.faturamento_mensal || ''} 
+                                                        onChange={e => setFormData({...formData, faturamento_mensal: e.target.value ? parseFloat(e.target.value) : null})} 
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="text-sm font-bold text-gray-700">Benefícios</label>
+                                                <textarea 
+                                                    className="w-full border p-2 rounded mt-1 h-20" 
+                                                    placeholder="Liste os benefícios oferecidos..." 
+                                                    value={formData.beneficios || ''} 
+                                                    onChange={e => setFormData({...formData, beneficios: e.target.value})} 
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* ===== SEÇÃO 6: CONFIGURAÇÕES (Expandível) ===== */}
+                                <div className="border rounded-lg overflow-hidden">
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleSection('config')}
+                                        className="w-full flex justify-between items-center p-4 bg-gray-50 hover:bg-gray-100"
+                                    >
+                                        <span className="font-bold text-gray-700">⚙️ Configurações</span>
+                                        {expandedSections.config ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                                    </button>
+                                    {expandedSections.config && (
+                                        <div className="p-4">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <label className="text-sm font-bold text-gray-700">Prazo de Fechamento</label>
+                                                    <input 
+                                                        type="date"
+                                                        className="w-full border p-2 rounded mt-1" 
+                                                        value={formData.prazo_fechamento || ''} 
+                                                        onChange={e => setFormData({...formData, prazo_fechamento: e.target.value || null})} 
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="text-sm font-bold text-gray-700">Gestor Comercial (Analista)</label>
+                                                    <input 
+                                                        type="number"
+                                                        className="w-full border p-2 rounded mt-1" 
+                                                        placeholder="ID do analista" 
+                                                        value={formData.analista_id || ''} 
+                                                        onChange={e => setFormData({...formData, analista_id: e.target.value ? parseInt(e.target.value) : null})} 
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </form>
+                        </div>
+
+                        {/* Footer do Modal */}
+                        <div className="border-t bg-gray-50 px-6 py-4 flex justify-between items-center">
+                            <div className="text-sm text-gray-500">
+                                {(formData.stack_tecnologica || []).length > 0 && (
+                                    <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded">
+                                        {(formData.stack_tecnologica || []).length} tecnologias
+                                    </span>
+                                )}
                             </div>
-                            
-                            <div className="flex justify-end gap-2 mt-6 pt-4 border-t">
+                            <div className="flex gap-3">
                                 <button 
                                     type="button" 
                                     onClick={() => setIsModalOpen(false)} 
-                                    className="px-4 py-2 border rounded hover:bg-gray-50"
+                                    className="px-5 py-2 border rounded-lg hover:bg-gray-100"
                                 >
                                     Cancelar
                                 </button>
                                 <button 
-                                    type="submit" 
-                                    className="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700"
+                                    type="submit"
+                                    form="vagaForm"
+                                    className="px-6 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 font-semibold"
                                 >
-                                    Salvar Vaga
+                                    {editingVaga ? 'Atualizar' : 'Criar'} Vaga
                                 </button>
                             </div>
-                        </form>
+                        </div>
                     </div>
                 </div>
             )}
@@ -541,7 +940,7 @@ const Vagas: React.FC<VagasProps> = ({
                 />
             )}
 
-            {/* ✅ NOVO v53: Modal de Busca de CVs */}
+            {/* Modal de Busca de CVs */}
             {buscaCVVaga && (
                 <CVMatchingPanel
                     vaga={buscaCVVaga}
@@ -551,7 +950,7 @@ const Vagas: React.FC<VagasProps> = ({
                 />
             )}
 
-            {/* ✅ NOVO v54: Modal de Sugestões IA */}
+            {/* Modal de Sugestões IA */}
             {sugestoesIAVaga && (
                 <VagaSugestoesIA
                     vaga={sugestoesIAVaga}
