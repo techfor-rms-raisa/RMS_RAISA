@@ -40,6 +40,11 @@ import DashboardPerformanceAnalista from './components/raisa/DashboardPerformanc
 import DashboardPerformanceGeral from './components/raisa/DashboardPerformanceGeral';
 import DashboardPerformanceCliente from './components/raisa/DashboardPerformanceCliente';
 import DashboardAnaliseTempo from './components/raisa/DashboardAnaliseTempo';
+// ✅ NOVO: Imports dos componentes faltantes (28/12/2024)
+import LinkedInImportPanel from './components/raisa/LinkedInImportPanel';
+import DashboardMLLearning from './components/raisa/DashboardMLLearning';
+import DashboardPerformanceIA from './components/raisa/DashboardPerformanceIA';
+import DashboardRaisaMetrics from './components/raisa/DashboardRaisaMetrics';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -50,6 +55,11 @@ import AtividadesExportar from './components/atividades/AtividadesExportar';
 // ✅ IMPORT DO PERMISSIONS PROVIDER
 // ============================================
 import { PermissionsProvider } from './hooks/usePermissions';
+
+// ============================================
+// ✅ IMPORT DO AUTH PROVIDER (28/12/2024)
+// ============================================
+import { AuthProvider } from './contexts/AuthContext';
 
 import { useSupabaseData } from './hooks/useSupabaseData';
 import { AIAnalysisResult, User, View, FeedbackResponse, RHAction, Vaga } from '@/types';
@@ -295,6 +305,16 @@ const App: React.FC = () => {
           return <DashboardPerformanceCliente />;
       case 'dashboard_tempo':
           return <DashboardAnaliseTempo />;
+      
+      // ✅ NOVO (28/12/2024): Rotas que faltavam
+      case 'linkedin_import':
+          return <LinkedInImportPanel userId={currentUser?.id || 1} />;
+      case 'dashboard_ml':
+          return <DashboardMLLearning />;
+      case 'dashboard_performance_ia':
+          return <DashboardPerformanceIA />;
+      case 'dashboard_raisa_metrics':
+          return <DashboardRaisaMetrics />;
 
       case 'dashboard':
       default:
@@ -312,33 +332,36 @@ const App: React.FC = () => {
 
   // ============================================
   // ✅ ENVOLVA TODO O RETURN COM <PermissionsProvider>
+  // ✅ NOVO (28/12/2024): Adicionado AuthProvider
   // ============================================
   return (
-    <PermissionsProvider>
-      <div className="min-h-screen bg-gray-100 flex flex-col overflow-hidden">
-        <Header currentUser={currentUser!} onLogout={handleLogout} />
-        <div className="flex flex-1 overflow-hidden">
-          <Sidebar 
-              currentUser={currentUser!}
-              currentView={currentView}
-              onNavigate={setCurrentView}
-          />
-          <main className="flex-1 p-4 md:p-8 overflow-auto bg-gray-100 relative">
-              {renderContent()}
-          </main>
-        </div>
+    <AuthProvider initialUser={currentUser}>
+      <PermissionsProvider>
+        <div className="min-h-screen bg-gray-100 flex flex-col overflow-hidden">
+          <Header currentUser={currentUser!} onLogout={handleLogout} />
+          <div className="flex flex-1 overflow-hidden">
+            <Sidebar 
+                currentUser={currentUser!}
+                currentView={currentView}
+                onNavigate={setCurrentView}
+            />
+            <main className="flex-1 p-4 md:p-8 overflow-auto bg-gray-100 relative">
+                {renderContent()}
+            </main>
+          </div>
 
-        {/* ✅ NOVO: Modal de Sugestões IA para Vagas */}
-        {vagaParaSugestao && currentUser && (
-          <VagaSugestoesIA
-            vaga={vagaParaSugestao}
-            onClose={() => setVagaParaSugestao(null)}
-            onAplicarSugestoes={handleAplicarSugestoes}
-            currentUserId={currentUser.id}
-          />
-        )}
-      </div>
-    </PermissionsProvider>
+          {/* ✅ NOVO: Modal de Sugestões IA para Vagas */}
+          {vagaParaSugestao && currentUser && (
+            <VagaSugestoesIA
+              vaga={vagaParaSugestao}
+              onClose={() => setVagaParaSugestao(null)}
+              onAplicarSugestoes={handleAplicarSugestoes}
+              currentUserId={currentUser.id}
+            />
+          )}
+        </div>
+      </PermissionsProvider>
+    </AuthProvider>
   );
 };
 

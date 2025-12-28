@@ -29,6 +29,7 @@ export const useUsers = () => {
       const mappedUsers: User[] = (data || []).map((user: any) => ({
         id: user.id,
         nome_usuario: user.nome_usuario,
+        nome: user.nome_usuario, // ✅ Alias para compatibilidade
         email_usuario: user.email_usuario,
         senha_usuario: user.senha_usuario,
         ativo_usuario: user.ativo_usuario,
@@ -79,6 +80,7 @@ export const useUsers = () => {
       const createdUser: User = {
         id: data.id,
         nome_usuario: data.nome_usuario,
+        nome: data.nome_usuario, // ✅ Alias para compatibilidade
         email_usuario: data.email_usuario,
         senha_usuario: data.senha_usuario,
         ativo_usuario: data.ativo_usuario,
@@ -129,6 +131,7 @@ export const useUsers = () => {
       const updatedUser: User = {
         id: data.id,
         nome_usuario: data.nome_usuario,
+        nome: data.nome_usuario, // ✅ Alias para compatibilidade
         email_usuario: data.email_usuario,
         senha_usuario: data.senha_usuario,
         ativo_usuario: data.ativo_usuario,

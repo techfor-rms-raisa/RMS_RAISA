@@ -33,6 +33,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
         const user: User = {
           id: data.id,
           nome_usuario: data.nome,
+          nome: data.nome, // ✅ Alias para compatibilidade com componentes que usam user.nome
           email_usuario: data.email,
           senha_usuario: data.senha,
           ativo_usuario: data.ativo,
