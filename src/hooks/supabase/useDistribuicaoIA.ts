@@ -265,9 +265,45 @@ export function useDistribuicaoIA() {
       scoreTaxaAprovacao = Math.min(15, Math.round(mediaTaxa * 0.15));
     }
 
-    // 5. Score Velocidade (max 10) - Placeholder
-    // TODO: Calcular baseado em histórico real
-    scoreVelocidade = 5;
+    // 5. Score Velocidade (max 10) - Baseado em tempo médio de processamento
+    // ✅ Calcula baseado em histórico real de candidaturas processadas
+    try {
+      const trintaDiasAtras = new Date();
+      trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
+      
+      const { data: candidaturasProcessadas } = await supabase
+        .from('candidaturas')
+        .select('enviado_em, decidido_em')
+        .eq('analista_id', analistaId)
+        .not('decidido_em', 'is', null)
+        .gte('decidido_em', trintaDiasAtras.toISOString())
+        .limit(50);
+
+      if (candidaturasProcessadas && candidaturasProcessadas.length >= 5) {
+        // Calcular tempo médio de processamento em dias
+        const temposProcessamento = candidaturasProcessadas.map(c => {
+          const inicio = new Date(c.enviado_em).getTime();
+          const fim = new Date(c.decidido_em).getTime();
+          return (fim - inicio) / (1000 * 60 * 60 * 24); // dias
+        });
+        
+        const mediaTempoProcessamento = temposProcessamento.reduce((a, b) => a + b, 0) / temposProcessamento.length;
+        
+        // Quanto menor o tempo, maior o score (invertido)
+        // < 2 dias = 10 pontos, > 10 dias = 2 pontos
+        if (mediaTempoProcessamento <= 2) scoreVelocidade = 10;
+        else if (mediaTempoProcessamento <= 4) scoreVelocidade = 8;
+        else if (mediaTempoProcessamento <= 6) scoreVelocidade = 6;
+        else if (mediaTempoProcessamento <= 8) scoreVelocidade = 4;
+        else scoreVelocidade = 2;
+      } else {
+        // Sem histórico suficiente, usar score neutro
+        scoreVelocidade = 5;
+      }
+    } catch (e) {
+      console.warn('⚠️ Usando fallback para score velocidade');
+      scoreVelocidade = 5;
+    }
 
     const scoreTotal = scoreEspecializacao + scoreCliente + scoreCarga + scoreTaxaAprovacao + scoreVelocidade;
 

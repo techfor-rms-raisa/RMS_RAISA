@@ -82,8 +82,32 @@ class CronJobsService {
             .eq('vaga_id', vaga.id)
             .in('status', ['triagem', 'entrevista', 'cliente']);
           
-          // Buscar média de mercado (simulado)
-          const mediaMercadoDias = 30; // TODO: Calcular de verdade
+          // ✅ Calcular média real de dias para fechar vagas (últimos 6 meses)
+          let mediaMercadoDias = 30; // Fallback
+          try {
+            const seisAnesMesesAtras = new Date();
+            seisAnesMesesAtras.setMonth(seisAnesMesesAtras.getMonth() - 6);
+            
+            const { data: vagasFechadas } = await supabase
+              .from('vagas')
+              .select('criado_em, fechado_em')
+              .eq('status', 'fechada')
+              .not('fechado_em', 'is', null)
+              .gte('fechado_em', seisAnesMesesAtras.toISOString());
+            
+            if (vagasFechadas && vagasFechadas.length > 0) {
+              const diasParaFechar = vagasFechadas.map(v => {
+                const inicio = new Date(v.criado_em).getTime();
+                const fim = new Date(v.fechado_em).getTime();
+                return Math.ceil((fim - inicio) / (1000 * 60 * 60 * 24));
+              });
+              mediaMercadoDias = Math.round(
+                diasParaFechar.reduce((a, b) => a + b, 0) / diasParaFechar.length
+              );
+            }
+          } catch (e) {
+            console.warn('⚠️ Usando fallback para média de mercado');
+          }
           
           // Solicitar análise da IA
           const sugestao = await suggestReprioritization({
