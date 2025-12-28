@@ -13,6 +13,7 @@ import {
     buscarHistoricoAjustes,
     AjusteAnalista
 } from '../services/ajustesPerformanceService';
+import { useAuth } from '../contexts/AuthContext';
 
 interface Props {
     analistaId: number;
@@ -20,6 +21,8 @@ interface Props {
 }
 
 export function AjustesDistribuicaoAnalista({ analistaId, analistaNome }: Props) {
+    const { user } = useAuth();
+    
     const [ajustes, setAjustes] = useState<AjusteAnalista | null>(null);
     const [metricas, setMetricas] = useState<any[]>([]);
     const [historico, setHistorico] = useState<any[]>([]);
@@ -59,7 +62,8 @@ export function AjustesDistribuicaoAnalista({ analistaId, analistaNome }: Props)
 
         try {
             setSalvando(true);
-            const sucesso = await atualizarAjustesAnalista(ajustes, 1, motivo); // TODO: pegar usuarioId do contexto
+            const usuarioId = user?.id || 1;
+            const sucesso = await atualizarAjustesAnalista(ajustes, usuarioId, motivo);
 
             if (sucesso) {
                 setMensagem({ tipo: 'sucesso', texto: 'Ajustes salvos com sucesso!' });
@@ -80,7 +84,8 @@ export function AjustesDistribuicaoAnalista({ analistaId, analistaNome }: Props)
 
         try {
             setSalvando(true);
-            const sucesso = await resetarAjustesAnalista(analistaId, 1); // TODO: pegar usuarioId
+            const usuarioId = user?.id || 1;
+            const sucesso = await resetarAjustesAnalista(analistaId, usuarioId);
 
             if (sucesso) {
                 setMensagem({ tipo: 'sucesso', texto: 'Ajustes resetados!' });

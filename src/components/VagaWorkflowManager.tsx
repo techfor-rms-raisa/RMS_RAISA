@@ -12,12 +12,14 @@ import {
   ArrowRight,
   Sparkles,
   User,
-  RefreshCw
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import { vagaWorkflowService, VagaWorkflow } from '../services/vagaWorkflowService';
 import { DescricaoAprovacaoModal } from './DescricaoAprovacaoModal';
 import { PriorizacaoAprovacaoModal } from './PriorizacaoAprovacaoModal';
 import { RedistribuicaoModal } from './RedistribuicaoModal';
+import { supabase } from '../config/supabase';
 
 interface VagaWorkflowManagerProps {
   vagaId: number;
@@ -40,6 +42,7 @@ const WORKFLOW_STEPS = [
 export function VagaWorkflowManager({ vagaId, onWorkflowUpdate }: VagaWorkflowManagerProps) {
   const [vaga, setVaga] = useState<VagaWorkflow | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingVaga, setLoadingVaga] = useState(true);
   const [showDescricaoModal, setShowDescricaoModal] = useState(false);
   const [showPriorizacaoModal, setShowPriorizacaoModal] = useState(false);
   const [showRedistribuicaoModal, setShowRedistribuicaoModal] = useState(false);
@@ -49,9 +52,46 @@ export function VagaWorkflowManager({ vagaId, onWorkflowUpdate }: VagaWorkflowMa
   }, [vagaId]);
 
   const carregarVaga = async () => {
-    // TODO: Implementar busca de vaga específica
-    // Por enquanto, vamos simular
-    console.log('Carregar vaga:', vagaId);
+    setLoadingVaga(true);
+    try {
+      // ✅ Buscar vaga do Supabase
+      const { data, error } = await supabase
+        .from('vagas')
+        .select(`
+          id,
+          titulo,
+          descricao,
+          status,
+          status_workflow,
+          urgente,
+          prazo_fechamento,
+          analista_responsavel_id,
+          cliente_id
+        `)
+        .eq('id', vagaId)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setVaga({
+          id: data.id,
+          titulo: data.titulo,
+          descricao: data.descricao,
+          status: data.status,
+          status_workflow: data.status_workflow || 'rascunho',
+          urgente: data.urgente,
+          prazo_fechamento: data.prazo_fechamento,
+          analista_responsavel_id: data.analista_responsavel_id,
+          cliente_id: data.cliente_id
+        } as VagaWorkflow);
+        console.log('✅ Vaga carregada:', data.titulo, '- Status:', data.status_workflow);
+      }
+    } catch (error) {
+      console.error('❌ Erro ao carregar vaga:', error);
+    } finally {
+      setLoadingVaga(false);
+    }
   };
 
   const handleMelhorarDescricao = async () => {
@@ -86,6 +126,18 @@ export function VagaWorkflowManager({ vagaId, onWorkflowUpdate }: VagaWorkflowMa
   };
 
   const currentStepIndex = getCurrentStepIndex();
+
+  // Loading state
+  if (loadingVaga) {
+    return (
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <div className="flex items-center justify-center py-8">
+          <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
+          <span className="ml-2 text-gray-600">Carregando workflow...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
