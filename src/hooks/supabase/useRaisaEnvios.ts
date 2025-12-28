@@ -10,7 +10,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { supabase } from '../../Lib/supabase';
+import { supabase } from '../../config/supabase';
 
 // Tipos específicos para o banco de dados
 export interface CandidaturaEnvioDB {

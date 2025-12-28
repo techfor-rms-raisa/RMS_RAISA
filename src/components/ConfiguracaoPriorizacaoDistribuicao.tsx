@@ -17,8 +17,11 @@ import {
     ConfigPriorizacao,
     ConfigDistribuicao
 } from '../services/configuracaoService';
+import { useAuth } from '../contexts/AuthContext';
 
 export function ConfiguracaoPriorizacaoDistribuicao() {
+    const { user } = useAuth();
+    
     const [abaSelecionada, setAbaSelecionada] = useState<'priorizacao' | 'distribuicao'>('priorizacao');
     const [mostrarHistorico, setMostrarHistorico] = useState(false);
     
@@ -75,7 +78,7 @@ export function ConfiguracaoPriorizacaoDistribuicao() {
             }
 
             // Salvar
-            const usuarioId = 1; // TODO: Pegar do contexto
+            const usuarioId = user?.id || 1;
             await atualizarConfigPriorizacao(configPriorizacao, usuarioId);
             
             setMensagem({ tipo: 'sucesso', texto: 'Configuração salva com sucesso!' });
@@ -101,7 +104,7 @@ export function ConfiguracaoPriorizacaoDistribuicao() {
             }
 
             // Salvar
-            const usuarioId = 1; // TODO: Pegar do contexto
+            const usuarioId = user?.id || 1;
             await atualizarConfigDistribuicao(configDistribuicao, usuarioId);
             
             setMensagem({ tipo: 'sucesso', texto: 'Configuração salva com sucesso!' });

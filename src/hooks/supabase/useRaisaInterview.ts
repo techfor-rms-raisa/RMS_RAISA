@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { supabase } from '../../Lib/supabase';
+import { supabase } from '../../config/supabase';
 import { Vaga, PerguntaTecnica, AvaliacaoIA } from '@/types';
 import { perguntasTecnicasService } from '../../services/perguntasTecnicasService';
 

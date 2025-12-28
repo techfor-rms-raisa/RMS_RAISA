@@ -29,9 +29,14 @@ export type View =
   // RAISA Views
   | 'vagas' | 'candidaturas' | 'analise_risco' | 'pipeline' | 'talentos' 
   | 'controle_envios' | 'entrevista_tecnica'
+  // RAISA Importação e Distribuição
+  | 'linkedin_import' | 'distribuicao_ia' | 'configuracao_priorizacao'
   // RAISA Dashboard Views
   | 'dashboard_funil' | 'dashboard_aprovacao' | 'dashboard_analistas' 
-  | 'dashboard_geral' | 'dashboard_clientes' | 'dashboard_tempo';
+  | 'dashboard_geral' | 'dashboard_clientes' | 'dashboard_tempo'
+  | 'dashboard_ml' | 'dashboard_performance_ia' | 'dashboard_raisa_metrics'
+  // Movimentações e Posição
+  | 'movimentacoes' | 'posicao_comercial' | 'profiles';
 
 // ============================================
 // VAGAS (RAISA)

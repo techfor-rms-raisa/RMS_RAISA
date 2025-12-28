@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, User } from '../types';
+import { View, User } from '@/types';
 import SidebarSection from './SidebarSection';
 import SidebarToggle from './SidebarToggle';
 import { APP_TITLE } from '../../constants';
@@ -52,19 +52,19 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
         { view: 'analise_risco', label: 'Análise de Risco', icon: 'fa-solid fa-magnifying-glass', roles: ['Administrador', 'Analista de R&S'] },
         { view: 'pipeline', label: 'Pipeline', icon: 'fa-solid fa-filter', roles: ['Administrador', 'Gestão de Pessoas', 'Analista de R&S'] },
         { view: 'talentos', label: 'Banco de Talentos', icon: 'fa-solid fa-user-graduate', roles: ['Administrador', 'Analista de R&S'] },
-        // ✅ NOVO: LinkedIn Import
+        // ✅ Importação e Distribuição
         { view: 'linkedin_import', label: 'Importar LinkedIn', icon: 'fa-brands fa-linkedin', roles: ['Administrador', 'Analista de R&S'] },
+        { view: 'distribuicao_ia', label: 'Distribuição IA', icon: 'fa-solid fa-wand-magic-sparkles', roles: ['Administrador', 'Gestão de Pessoas'] },
+        { view: 'configuracao_priorizacao', label: 'Config. Priorização', icon: 'fa-solid fa-sliders', roles: ['Administrador'] },
+        // ✅ Dashboards
         { view: 'dashboard_funil', label: 'Funil de Conversão', icon: 'fa-solid fa-chart-simple', roles: ['Administrador', 'Gestão de Pessoas', 'Analista de R&S'] },
         { view: 'dashboard_aprovacao', label: 'Aprovação/Reprovação', icon: 'fa-solid fa-check-double', roles: ['Administrador', 'Gestão de Pessoas', 'Analista de R&S'] },
         { view: 'dashboard_analistas', label: 'Performance Analistas', icon: 'fa-solid fa-ranking-star', roles: ['Administrador', 'Gestão de Pessoas'] },
         { view: 'dashboard_geral', label: 'Performance Geral', icon: 'fa-solid fa-chart-pie', roles: ['Administrador', 'Gestão de Pessoas', 'Analista de R&S'] },
         { view: 'dashboard_clientes', label: 'Performance Clientes', icon: 'fa-solid fa-building-user', roles: ['Administrador', 'Gestão de Pessoas', 'Gestão Comercial'] },
         { view: 'dashboard_tempo', label: 'Análise de Tempo', icon: 'fa-solid fa-clock', roles: ['Administrador', 'Gestão de Pessoas', 'Analista de R&S'] },
-        // ✅ NOVO: Dashboard ML Learning
         { view: 'dashboard_ml', label: 'Aprendizado IA', icon: 'fa-solid fa-brain', roles: ['Administrador', 'Gestão de Pessoas'] },
-        // ✅ NOVO: Dashboard Performance IA
         { view: 'dashboard_performance_ia', label: 'Performance IA', icon: 'fa-solid fa-robot', roles: ['Administrador', 'Gestão de Pessoas'] },
-        // ✅ NOVO: Dashboard RAISA Metrics
         { view: 'dashboard_raisa_metrics', label: 'Métricas RAISA', icon: 'fa-solid fa-chart-area', roles: ['Administrador', 'Gestão de Pessoas'] },
     ] as any;
 

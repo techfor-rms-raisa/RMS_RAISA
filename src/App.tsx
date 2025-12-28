@@ -45,6 +45,9 @@ import LinkedInImportPanel from './components/raisa/LinkedInImportPanel';
 import DashboardMLLearning from './components/raisa/DashboardMLLearning';
 import DashboardPerformanceIA from './components/raisa/DashboardPerformanceIA';
 import DashboardRaisaMetrics from './components/raisa/DashboardRaisaMetrics';
+// ✅ NOVO: Imports de Configuração e Distribuição (28/12/2024)
+import { ConfiguracaoPriorizacaoDistribuicao } from './components/ConfiguracaoPriorizacaoDistribuicao';
+import DistribuicaoIAPanel from './components/raisa/DistribuicaoIAPanel';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -315,6 +318,12 @@ const App: React.FC = () => {
           return <DashboardPerformanceIA />;
       case 'dashboard_raisa_metrics':
           return <DashboardRaisaMetrics />;
+      
+      // ✅ NOVO: Rotas de Configuração e Distribuição (28/12/2024)
+      case 'configuracao_priorizacao':
+          return <ConfiguracaoPriorizacaoDistribuicao />;
+      case 'distribuicao_ia':
+          return <DistribuicaoIAPanel />;
 
       case 'dashboard':
       default:
