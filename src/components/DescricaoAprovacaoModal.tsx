@@ -4,14 +4,22 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle, Edit3, XCircle, Sparkles } from 'lucide-react';
+import { X, CheckCircle, Edit3, XCircle, Sparkles, Loader2 } from 'lucide-react';
 import { vagaWorkflowService } from '../services/vagaWorkflowService';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../config/supabase';
 
 interface DescricaoAprovacaoModalProps {
   vagaId: number;
   onClose: () => void;
   onAprovado: () => void;
+}
+
+interface MudancaSugerida {
+  tipo: string;
+  motivo: string;
+  antes: string;
+  depois: string;
 }
 
 export function DescricaoAprovacaoModal({ 
@@ -26,18 +34,74 @@ export function DescricaoAprovacaoModal({
   const [descricaoEditada, setDescricaoEditada] = useState('');
   const [modoEdicao, setModoEdicao] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [mudancas, setMudancas] = useState<any[]>([]);
+  const [loadingDados, setLoadingDados] = useState(true);
+  const [mudancas, setMudancas] = useState<MudancaSugerida[]>([]);
 
   useEffect(() => {
     carregarDescricoes();
   }, [vagaId]);
 
   const carregarDescricoes = async () => {
-    // TODO: Buscar descrições da vaga
-    // Por enquanto, simulação
-    setDescricaoOriginal('Descrição original da vaga...');
-    setDescricaoMelhorada('Descrição melhorada pela IA...');
-    setDescricaoEditada('Descrição melhorada pela IA...');
+    setLoadingDados(true);
+    try {
+      // ✅ Buscar análise da IA para esta vaga
+      const { data: analiseData, error: analiseError } = await supabase
+        .from('vaga_analise_ia')
+        .select('descricao_original, sugestoes, ajustes, campos_ajustados')
+        .eq('vaga_id', vagaId)
+        .order('analisado_em', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (analiseError && analiseError.code !== 'PGRST116') {
+        throw analiseError;
+      }
+
+      if (analiseData) {
+        setDescricaoOriginal(analiseData.descricao_original || '');
+        
+        // Extrair descrição melhorada das sugestões
+        const sugestoes = analiseData.sugestoes || {};
+        const descricaoSugerida = sugestoes.descricao_melhorada || 
+                                  sugestoes.descricao || 
+                                  analiseData.descricao_original || '';
+        setDescricaoMelhorada(descricaoSugerida);
+        setDescricaoEditada(descricaoSugerida);
+
+        // Extrair mudanças sugeridas
+        const ajustes = analiseData.ajustes || [];
+        if (Array.isArray(ajustes) && ajustes.length > 0) {
+          setMudancas(ajustes.map((a: any) => ({
+            tipo: a.campo || a.tipo || 'Ajuste',
+            motivo: a.justificativa || a.motivo || '',
+            antes: a.valor_original || a.antes || '',
+            depois: a.valor_sugerido || a.depois || ''
+          })));
+        }
+        
+        console.log('✅ Descrições carregadas da análise IA');
+      } else {
+        // Fallback: buscar descrição direto da vaga
+        const { data: vagaData } = await supabase
+          .from('vagas')
+          .select('descricao')
+          .eq('id', vagaId)
+          .single();
+
+        if (vagaData) {
+          setDescricaoOriginal(vagaData.descricao || '');
+          setDescricaoMelhorada(vagaData.descricao || '');
+          setDescricaoEditada(vagaData.descricao || '');
+        }
+        console.log('⚠️ Sem análise IA - usando descrição original da vaga');
+      }
+    } catch (error) {
+      console.error('❌ Erro ao carregar descrições:', error);
+      setDescricaoOriginal('Erro ao carregar descrição original.');
+      setDescricaoMelhorada('Erro ao carregar descrição melhorada.');
+    } finally {
+      setLoadingDados(false);
+    }
   };
 
   const handleAprovar = async () => {
@@ -128,6 +192,13 @@ export function DescricaoAprovacaoModal({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
+          {loadingDados ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
+              <span className="ml-3 text-gray-600">Carregando descrições...</span>
+            </div>
+          ) : (
+          <>
           <div className="grid grid-cols-2 gap-6">
             {/* Descrição Original */}
             <div>
@@ -202,6 +273,8 @@ export function DescricaoAprovacaoModal({
                 ))}
               </div>
             </div>
+          )}
+          </>
           )}
         </div>
 

@@ -4,14 +4,22 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, RefreshCw, User, AlertCircle } from 'lucide-react';
+import { X, RefreshCw, User, AlertCircle, Loader2 } from 'lucide-react';
 import { vagaWorkflowService } from '../services/vagaWorkflowService';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../config/supabase';
 
 interface RedistribuicaoModalProps {
   vagaId: number;
   onClose: () => void;
   onRedistribuido: () => void;
+}
+
+interface AnalistaDisponivel {
+  id: number;
+  nome: string;
+  vagas_ativas: number;
+  taxa_aprovacao: number;
 }
 
 export function RedistribuicaoModal({ 
@@ -21,23 +29,59 @@ export function RedistribuicaoModal({
 }: RedistribuicaoModalProps) {
   const { user } = useAuth();
   
-  const [analistas, setAnalistas] = useState<any[]>([]);
+  const [analistas, setAnalistas] = useState<AnalistaDisponivel[]>([]);
   const [analistaSelecionado, setAnalistaSelecionado] = useState<number | null>(null);
   const [motivo, setMotivo] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadingAnalistas, setLoadingAnalistas] = useState(true);
 
   useEffect(() => {
     carregarAnalistas();
   }, []);
 
   const carregarAnalistas = async () => {
-    // TODO: Buscar analistas disponíveis
-    // Por enquanto, simulação
-    setAnalistas([
-      { id: 1, nome: 'Ana Silva', vagas_ativas: 3, taxa_aprovacao: 85 },
-      { id: 2, nome: 'Carlos Santos', vagas_ativas: 5, taxa_aprovacao: 78 },
-      { id: 3, nome: 'Maria Oliveira', vagas_ativas: 2, taxa_aprovacao: 92 }
-    ]);
+    setLoadingAnalistas(true);
+    try {
+      // ✅ Buscar analistas da view vw_performance_analista
+      const { data, error } = await supabase
+        .from('vw_performance_analista')
+        .select('analista_id, analista_nome, vagas_ativas, taxa_aprovacao')
+        .order('taxa_aprovacao', { ascending: false });
+
+      if (error) throw error;
+
+      const analistasFormatados: AnalistaDisponivel[] = (data || []).map(a => ({
+        id: a.analista_id,
+        nome: a.analista_nome || 'Analista',
+        vagas_ativas: a.vagas_ativas || 0,
+        taxa_aprovacao: Math.round(a.taxa_aprovacao || 0)
+      }));
+
+      setAnalistas(analistasFormatados);
+      console.log(`✅ ${analistasFormatados.length} analistas carregados para redistribuição`);
+    } catch (error) {
+      console.error('❌ Erro ao carregar analistas:', error);
+      // Fallback: buscar da tabela app_users
+      try {
+        const { data: usersData } = await supabase
+          .from('app_users')
+          .select('id, nome_usuario')
+          .eq('tipo_usuario', 'Analista de R&S')
+          .eq('ativo_usuario', true);
+        
+        setAnalistas((usersData || []).map(u => ({
+          id: u.id,
+          nome: u.nome_usuario,
+          vagas_ativas: 0,
+          taxa_aprovacao: 0
+        })));
+      } catch (fallbackError) {
+        console.error('❌ Fallback também falhou:', fallbackError);
+        setAnalistas([]);
+      }
+    } finally {
+      setLoadingAnalistas(false);
+    }
   };
 
   const handleRedistribuir = async () => {
@@ -107,6 +151,16 @@ export function RedistribuicaoModal({
             <label className="block text-sm font-semibold text-gray-700 mb-3">
               Selecione o Novo Analista
             </label>
+            {loadingAnalistas ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
+                <span className="ml-2 text-gray-600">Carregando analistas...</span>
+              </div>
+            ) : analistas.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                Nenhum analista disponível encontrado.
+              </div>
+            ) : (
             <div className="space-y-2">
               {analistas.map((analista) => (
                 <div
@@ -151,6 +205,7 @@ export function RedistribuicaoModal({
                 </div>
               ))}
             </div>
+            )}
           </div>
 
           {/* Motivo */}

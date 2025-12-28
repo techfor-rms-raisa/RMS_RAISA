@@ -4,14 +4,29 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { X, CheckCircle, Target, TrendingUp, Clock, DollarSign } from 'lucide-react';
+import { X, CheckCircle, Target, TrendingUp, Clock, DollarSign, Loader2 } from 'lucide-react';
 import { vagaWorkflowService } from '../services/vagaWorkflowService';
 import { useAuth } from '../contexts/AuthContext';
+import { supabase } from '../config/supabase';
 
 interface PriorizacaoAprovacaoModalProps {
   vagaId: number;
   onClose: () => void;
   onAprovado: () => void;
+}
+
+interface PriorizacaoData {
+  score_prioridade: number;
+  nivel_prioridade: string;
+  sla_dias: number;
+  justificativa: string;
+  fatores_considerados: {
+    urgencia_prazo: number;
+    valor_faturamento: number;
+    cliente_vip: boolean;
+    tempo_vaga_aberta: number;
+    complexidade_stack: number;
+  };
 }
 
 export function PriorizacaoAprovacaoModal({ 
@@ -21,29 +36,116 @@ export function PriorizacaoAprovacaoModal({
 }: PriorizacaoAprovacaoModalProps) {
   const { user } = useAuth();
   
-  const [priorizacao, setPriorizacao] = useState<any>(null);
+  const [priorizacao, setPriorizacao] = useState<PriorizacaoData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingDados, setLoadingDados] = useState(true);
 
   useEffect(() => {
     carregarPriorizacao();
   }, [vagaId]);
 
   const carregarPriorizacao = async () => {
-    // TODO: Buscar priorização da vaga
-    // Por enquanto, simulação
-    setPriorizacao({
-      score_prioridade: 85,
-      nivel_prioridade: 'Alta',
-      sla_dias: 15,
-      justificativa: 'Vaga de alta prioridade devido ao cliente VIP e prazo apertado.',
-      fatores_considerados: {
-        urgencia_prazo: 90,
-        valor_faturamento: 85,
-        cliente_vip: true,
-        tempo_vaga_aberta: 5,
-        complexidade_stack: 70
+    setLoadingDados(true);
+    try {
+      // ✅ Buscar priorização da view vw_ranking_priorizacao ou tabela vaga_priorizacao
+      const { data, error } = await supabase
+        .from('vaga_priorizacao')
+        .select(`
+          score_prioridade,
+          nivel_prioridade,
+          sla_dias,
+          justificativa,
+          score_urgencia,
+          score_faturamento,
+          score_velocidade,
+          score_tempo_aberto,
+          score_cliente_vip,
+          dias_restantes
+        `)
+        .eq('vaga_id', vagaId)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+
+      if (data) {
+        setPriorizacao({
+          score_prioridade: data.score_prioridade || 50,
+          nivel_prioridade: data.nivel_prioridade || 'Média',
+          sla_dias: data.sla_dias || 15,
+          justificativa: data.justificativa || 'Priorização calculada automaticamente.',
+          fatores_considerados: {
+            urgencia_prazo: data.score_urgencia || 50,
+            valor_faturamento: data.score_faturamento || 50,
+            cliente_vip: (data.score_cliente_vip || 0) > 0,
+            tempo_vaga_aberta: data.dias_restantes || 0,
+            complexidade_stack: data.score_velocidade || 50
+          }
+        });
+        console.log('✅ Priorização carregada do Supabase');
+      } else {
+        // Fallback: buscar dados da vaga para calcular priorização básica
+        const { data: vagaData } = await supabase
+          .from('vagas')
+          .select('urgente, prazo_fechamento, faturamento_mensal, cliente_id, criado_em')
+          .eq('id', vagaId)
+          .single();
+
+        // Buscar se cliente é VIP
+        let clienteVip = false;
+        if (vagaData?.cliente_id) {
+          const { data: clienteData } = await supabase
+            .from('clients')
+            .select('vip')
+            .eq('id', vagaData.cliente_id)
+            .single();
+          clienteVip = clienteData?.vip || false;
+        }
+
+        // Calcular dias em aberto
+        const diasAberto = vagaData?.criado_em 
+          ? Math.floor((Date.now() - new Date(vagaData.criado_em).getTime()) / (1000 * 60 * 60 * 24))
+          : 0;
+
+        // Calcular score básico
+        let scoreBase = 50;
+        if (vagaData?.urgente) scoreBase += 30;
+        if (clienteVip) scoreBase += 20;
+        if (diasAberto > 15) scoreBase += 10;
+
+        setPriorizacao({
+          score_prioridade: Math.min(scoreBase, 100),
+          nivel_prioridade: scoreBase >= 80 ? 'Alta' : scoreBase >= 50 ? 'Média' : 'Baixa',
+          sla_dias: vagaData?.urgente ? 7 : 15,
+          justificativa: 'Priorização calculada com base nos dados da vaga.',
+          fatores_considerados: {
+            urgencia_prazo: vagaData?.urgente ? 90 : 50,
+            valor_faturamento: vagaData?.faturamento_mensal ? 80 : 50,
+            cliente_vip: clienteVip,
+            tempo_vaga_aberta: diasAberto,
+            complexidade_stack: 50
+          }
+        });
+        console.log('⚠️ Priorização calculada localmente (sem dados na tabela)');
       }
-    });
+    } catch (error) {
+      console.error('❌ Erro ao carregar priorização:', error);
+      // Fallback mínimo
+      setPriorizacao({
+        score_prioridade: 50,
+        nivel_prioridade: 'Média',
+        sla_dias: 15,
+        justificativa: 'Não foi possível carregar a priorização.',
+        fatores_considerados: {
+          urgencia_prazo: 50,
+          valor_faturamento: 50,
+          cliente_vip: false,
+          tempo_vaga_aberta: 0,
+          complexidade_stack: 50
+        }
+      });
+    } finally {
+      setLoadingDados(false);
+    }
   };
 
   const handleAprovar = async () => {
@@ -80,8 +182,15 @@ export function PriorizacaoAprovacaoModal({
     return 'text-green-600';
   };
 
-  if (!priorizacao) {
-    return null;
+  if (loadingDados || !priorizacao) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-lg shadow-xl p-8 flex items-center gap-3">
+          <Loader2 className="w-6 h-6 text-blue-600 animate-spin" />
+          <span className="text-gray-600">Carregando priorização...</span>
+        </div>
+      </div>
+    );
   }
 
   return (
