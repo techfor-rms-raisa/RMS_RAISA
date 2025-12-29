@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import { Client, UsuarioCliente, CoordenadorCliente } from '@/types';
+import { Client, UsuarioCliente, CoordenadorCliente, User } from '@/types';
 
 // Robustly resolve the pdfjs library object (reusing logic from FileUpload)
 const getPdfJs = () => {
@@ -15,14 +15,18 @@ if (pdfjs.GlobalWorkerOptions) {
     console.warn("PDF.js GlobalWorkerOptions not found. PDF parsing might fail.");
 }
 
+// ✅ Tipos de modalidade de contrato
+type ModalidadeContrato = 'PJ' | 'CLT' | 'Temporário' | 'Outros';
+
 interface InclusionImportProps {
     clients: Client[];
     managers: UsuarioCliente[];
     coordinators: CoordenadorCliente[];
+    users: User[]; // ✅ NOVO: Para buscar analista_rs_id por nome
     onImport: (consultantData: any) => void;
 }
 
-const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, coordinators, onImport }) => {
+const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, coordinators, users, onImport }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [message, setMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
 
@@ -49,6 +53,36 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
         return fullText;
     };
 
+    /**
+     * Busca usuário por nome (para analista_rs_id)
+     */
+    const findUserByName = (name: string): User | null => {
+        if (!name || name === 'XXX' || name === 'xxx') return null;
+        
+        const normalizedName = normalize(name);
+        
+        // Busca exata
+        let user = users.find(u => normalize(u.nome_usuario) === normalizedName);
+        if (user) return user;
+        
+        // Busca parcial (primeiro nome)
+        const firstName = normalizedName.split(' ')[0];
+        user = users.find(u => normalize(u.nome_usuario).startsWith(firstName));
+        if (user) {
+            console.log(`⚠️ Usuário encontrado por aproximação: "${user.nome_usuario}" para "${name}"`);
+            return user;
+        }
+        
+        // Busca contém
+        user = users.find(u => normalize(u.nome_usuario).includes(normalizedName) || normalizedName.includes(normalize(u.nome_usuario)));
+        if (user) {
+            console.log(`⚠️ Usuário encontrado por busca parcial: "${user.nome_usuario}" para "${name}"`);
+            return user;
+        }
+        
+        return null;
+    };
+
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -63,15 +97,17 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
 
             const text = await extractTextFromPDF(file);
             
+            console.log('📄 Texto extraído do PDF:', text);
+            
             // --- 1. PARSE FIELDS (REGEX STRATEGY) ---
             
-            // Helper to find value in the whole text (when label and value are on same line or close)
+            // Helper to find value in the whole text
             const findValue = (regex: RegExp, content: string) => {
                 const match = content.match(regex);
                 return match ? match[1].trim() : '';
             };
 
-            // Fields Mapping based on Prompt text labels
+            // Fields Mapping based on PDF structure
             const clientName = findValue(/CLIENTE:\s*(.*)/i, text);
             const managerName = findValue(/NOME SOLICITANTE:\s*(.*)/i, text);
             const coordName = findValue(/RESPONSÁVEL APROVADOR DE HORAS:\s*(.*)/i, text);
@@ -86,125 +122,232 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let celularStr = '';
             let cpfStr = '';
             let valorPagamentoStr = '';
-            let emailStr = ''; // ✅ NOVO: Email do consultor
-            let cnpjStr = ''; // ✅ NOVO: CNPJ (para PJ)
-            let empresaStr = ''; // ✅ NOVO: Empresa (para PJ)
-            let dtAniversarioStr = ''; // ✅ NOVO: Data de aniversário
-            let especialidadeStr = ''; // ✅ NOVO: Especialidade
+            let emailStr = '';
+            let cnpjStr = '';
+            let empresaStr = '';
+            let dtAniversarioStr = '';
+            let especialidadeStr = '';
+            
+            // ✅ NOVOS CAMPOS
+            let substituicao = false;
+            let nomeSubstituidoStr = '';
+            let modalidadeContratoStr = '';
+            let faturavel = true; // Default: faturável
+            let observacoesStr = '';
+            let recursosHumanosStr = ''; // Analista R&S
 
             for (let i = 0; i < lines.length; i++) {
                 const cleanLine = lines[i];
+                const nextLine = lines[i + 1] || '';
                 
-                // Strict start matching to avoid confusion
-                if (cleanLine.match(/^NOME:/i)) {
+                // ===== DADOS BÁSICOS =====
+                
+                // Nome do consultor
+                if (cleanLine.match(/^NOME:/i) && !cleanLine.match(/SOLICITANTE|BANCO|EMERGÊNCIA/i)) {
                     consultantName = cleanLine.replace(/^NOME:/i, '').trim();
                 }
+                
+                // Função/Cargo
                 if (cleanLine.match(/^FUNÇÃO:/i)) {
                     role = cleanLine.replace(/^FUNÇÃO:/i, '').trim();
-                }
-                if (cleanLine.match(/^DATA DE INÍCIO:/i)) {
-                    startDateStr = cleanLine.replace(/^DATA DE INÍCIO:/i, '').trim();
-                }
-                
-                // ✅ NOVO: Extrair Email
-                if (cleanLine.match(/^E-?MAIL:/i) || cleanLine.match(/^EMAIL:/i)) {
-                    emailStr = cleanLine.replace(/^E-?MAIL:/i, '').replace(/^EMAIL:/i, '').trim();
+                    // Remove indicadores SR/PL/JR se houver
+                    role = role.replace(/\s*SR\s*\(\s*X?\s*\)|\s*PL\s*\(\s*X?\s*\)|\s*JR\s*\(\s*X?\s*\)/gi, '').trim();
                 }
                 
-                // Telefone Celular (melhorado)
-                if (cleanLine.match(/TELEFONE CELULAR|CELULAR/i)) {
-                    const match = cleanLine.match(/(?:TELEFONE CELULAR|CELULAR)\s*:?\s*([\d\s\-\(\)]+)/i);
+                // Data de Início
+                if (cleanLine.match(/^DATA DE INÍCIO/i) || cleanLine.match(/^DATA INÍCIO/i)) {
+                    // Pode estar na mesma linha ou na próxima
+                    let match = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
+                    if (!match && nextLine) {
+                        match = nextLine.match(/(\d{2}\/\d{2}\/\d{4})/);
+                    }
                     if (match) {
-                        celularStr = match[1].trim().replace(/\s+/g, '');
-                    }
-                    // Strategy 2: Look at next line if current doesn't have number
-                    if (!celularStr && i + 1 < lines.length) {
-                        const nextLine = lines[i+1];
-                        const phoneMatch = nextLine.match(/^[\d\s\-\(\)]+$/);
-                        if (phoneMatch) {
-                            celularStr = phoneMatch[0].trim().replace(/\s+/g, '');
-                        }
+                        startDateStr = match[1];
                     }
                 }
                 
-                // CPF do Profissional
+                // Celular
+                if (cleanLine.match(/TELEFONE CELULAR\s*:/i)) {
+                    const match = cleanLine.match(/TELEFONE CELULAR\s*:\s*([\d\-]+)/i);
+                    if (match) celularStr = match[1];
+                }
+                
+                // CPF
                 if (cleanLine.match(/^CPF:/i)) {
                     cpfStr = cleanLine.replace(/^CPF:/i, '').trim();
                 }
                 
-                // ✅ NOVO: CNPJ (para PJ)
+                // Email
+                if (cleanLine.match(/^E-?MAIL\s*:/i) && !cleanLine.match(/SOLICITANTE|fastshop/i)) {
+                    const match = cleanLine.match(/E-?MAIL\s*:\s*([^\s]+@[^\s]+)/i);
+                    if (match) emailStr = match[1];
+                }
+                
+                // CNPJ
                 if (cleanLine.match(/^CNPJ:/i)) {
                     cnpjStr = cleanLine.replace(/^CNPJ:/i, '').trim();
                 }
                 
-                // ✅ NOVO: Empresa/Razão Social PJ
-                if (cleanLine.match(/^EMPRESA:|^RAZÃO SOCIAL:/i)) {
-                    empresaStr = cleanLine.replace(/^EMPRESA:|^RAZÃO SOCIAL:/i, '').trim();
+                // Empresa
+                if (cleanLine.match(/^EMPRESA:/i)) {
+                    empresaStr = cleanLine.replace(/^EMPRESA:/i, '').trim();
                 }
                 
-                // ✅ NOVO: Data de Aniversário/Nascimento
-                // Formatos: "DT NASCIMENTO:", "DT. NASCIMENTO:", "DATA DE NASCIMENTO:", "ANIVERSÁRIO:"
-                if (cleanLine.match(/^DATA DE NASCIMENTO:|^ANIVERSÁRIO:|^DT\.?\s*NASCIMENTO:/i)) {
-                    dtAniversarioStr = cleanLine.replace(/^DATA DE NASCIMENTO:|^ANIVERSÁRIO:|^DT\.?\s*NASCIMENTO:/i, '').trim();
+                // Data de Nascimento
+                if (cleanLine.match(/^DT NASCIMENTO:/i)) {
+                    const match = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
+                    if (match) dtAniversarioStr = match[1];
                 }
                 
-                // ✅ NOVO: Especialidade/Tecnologia
-                // Formatos: "ESPECIALIDADE:", "ÁREA:", "TECNOLOGIA:"
-                if (cleanLine.match(/^ESPECIALIDADE:|^ÁREA:|^TECNOLOGIA:/i)) {
-                    especialidadeStr = cleanLine.replace(/^ESPECIALIDADE:|^ÁREA:|^TECNOLOGIA:/i, '').trim();
+                // Tecnologia/Especialidade
+                if (cleanLine.match(/^TECNOLOGIA:/i)) {
+                    especialidadeStr = cleanLine.replace(/^TECNOLOGIA:/i, '').trim();
                 }
                 
-                // LOGIC: Find "FATURAMENTO MENSAL" and capture value (either same line or next line)
+                // ===== VALORES FINANCEIROS =====
+                
+                // Faturamento Mensal
                 if (cleanLine.match(/FATURAMENTO MENSAL/i)) {
-                     // Strategy 1: Look on the same line
-                     let match = cleanLine.match(/FATURAMENTO MENSAL.*?R?\$?\s*([\d.,]+)/i);
-                     
-                     // Strategy 2: If not found, Look at the immediate next line (common in PDF table extraction)
-                     if (!match && i + 1 < lines.length) {
-                         const nextLine = lines[i+1];
-                         // Look for a currency-like value or just a number on the next line
-                         // e.g. "R$ 144,10" or "144,10"
-                         match = nextLine.match(/R?\$?\s*([\d.,]+)/);
-                     }
-
-                     if (match) {
-                         hourlyRateStr = match[1];
-                     }
+                    let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
+                    if (!match && nextLine) {
+                        match = nextLine.match(/R?\$?\s*([\d.,]+)/);
+                    }
+                    if (match) {
+                        hourlyRateStr = match[1];
+                    }
                 }
                 
-                // Valor do bloco "DADOS DE PAGAMENTO"
-                // Procurar por "VALOR" seguido de valor monetário
-                // Formatos: "VALOR: R$ 67,00/h" ou "VALOR" na linha e valor na próxima
-                if (cleanLine.match(/^VALOR\s*$/i) || cleanLine.match(/^VALOR:/i) || cleanLine.match(/VALOR.*R\$/i)) {
-                    // Strategy 1: Look on the same line
-                    // Captura valor mesmo com /h no final: R$ 67,00/h -> 67,00
-                    let match = cleanLine.match(/R?\$?\s*([\d.,]+)(?:\/h)?/i);
-                    
-                    // Strategy 2: If not found, look at the next line
-                    if (!match && i + 1 < lines.length) {
-                        const nextLine = lines[i+1];
-                        match = nextLine.match(/R?\$?\s*([\d.,]+)(?:\/h)?/);
+                // Valor Pagamento (na seção DADOS PAGAMENTO -> VALOR)
+                if (cleanLine.match(/^VALOR$/i) || cleanLine.match(/^VALOR\s*R\$/i)) {
+                    let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
+                    if (!match && nextLine) {
+                        match = nextLine.match(/R?\$?\s*([\d.,]+)/);
                     }
-                    
                     if (match && !valorPagamentoStr) {
-                        // Só captura se ainda não tiver valor (evita sobrescrever)
                         valorPagamentoStr = match[1];
                     }
                 }
+                
+                // ===== NOVOS CAMPOS =====
+                
+                // ✅ FATURÁVEL (checkbox)
+                if (cleanLine.match(/FATURÁVEL/i) && !cleanLine.match(/NÃO FATURÁVEL/i)) {
+                    // Se encontrou "FATURÁVEL" sem "NÃO", é faturável
+                    faturavel = true;
+                }
+                if (cleanLine.match(/NÃO FATURÁVEL/i)) {
+                    // Se a linha contém "NÃO FATURÁVEL" e há indicação de marcação
+                    // Precisamos verificar o contexto - se "FATURÁVEL" está marcado ou "NÃO FATURÁVEL"
+                    // No PDF, se "✓ FATURÁVEL" aparece, é faturável
+                }
+                
+                // ✅ FORMA DE CONTRATAÇÃO (PJ, CLT, etc.)
+                if (cleanLine.match(/FORMA DE CONTRATAÇÃO/i)) {
+                    // Pode estar na mesma linha ou na coluna NOVO
+                    if (cleanLine.includes('PJ')) {
+                        modalidadeContratoStr = 'PJ';
+                    } else if (cleanLine.includes('CLT')) {
+                        modalidadeContratoStr = 'CLT';
+                    } else if (nextLine) {
+                        if (nextLine.includes('PJ')) modalidadeContratoStr = 'PJ';
+                        else if (nextLine.includes('CLT')) modalidadeContratoStr = 'CLT';
+                        else if (nextLine.match(/Temporário/i)) modalidadeContratoStr = 'Temporário';
+                    }
+                }
+                
+                // ✅ INCLUSÃO REF.SUBSTITUIÇÃO (checkbox para substituição)
+                if (cleanLine.match(/INCLUSÃO REF\.?\s*SUBSTITUIÇÃO/i)) {
+                    // Se esta linha aparece marcada, é substituição
+                    substituicao = true;
+                }
+                
+                // ✅ NOME DO PROFISSIONAL SUBSTITUÍDO
+                if (cleanLine.match(/NOME DO PROFISSIONAL SUBSTITUÍDO/i)) {
+                    let valor = cleanLine.replace(/NOME DO PROFISSIONAL SUBSTITUÍDO\s*:?/i, '').trim();
+                    if (valor && valor !== 'XXX' && valor !== 'xxx') {
+                        nomeSubstituidoStr = valor;
+                        substituicao = true; // Se tem nome, é substituição
+                    }
+                }
+                
+                // ✅ OBSERVAÇÕES
+                if (cleanLine.match(/^OBSERVAÇÕES\s*:/i)) {
+                    // Captura o texto das observações
+                    let obs = cleanLine.replace(/^OBSERVAÇÕES\s*:/i, '').trim();
+                    // Pode continuar nas próximas linhas até encontrar outro campo
+                    let j = i + 1;
+                    while (j < lines.length && !lines[j].match(/^(NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS HUMANOS)/i)) {
+                        obs += ' ' + lines[j];
+                        j++;
+                    }
+                    observacoesStr = obs.trim();
+                    
+                    // Verifica se nas observações menciona substituição
+                    if (observacoesStr.match(/substitui|substituição|substituindo/i)) {
+                        substituicao = true;
+                        // Tenta extrair nome do substituído das observações
+                        const subMatch = observacoesStr.match(/substitui(?:ção|ndo)?\s+(?:de\s+)?(?:o\s+|a\s+)?([A-Za-zÀ-ÿ\s]+?)(?:\.|,|$)/i);
+                        if (subMatch && !nomeSubstituidoStr) {
+                            nomeSubstituidoStr = subMatch[1].trim();
+                        }
+                    }
+                }
+                
+                // ✅ RECURSOS HUMANOS (Analista R&S)
+                if (cleanLine.match(/RECURSOS HUMANOS/i)) {
+                    // No PDF, aparece na linha de DATA EMISSÃO como coluna
+                    // Formato: DATA EMISSÃO | RECURSOS HUMANOS | GERENTE COMERCIAL | DIRETORIA | GESTÃO DE PESSOAS
+                    // Valores: 24/10/2025 | LUIZA LONGO | MESSIAS OLIVEIRA | MESSIAS OLIVEIRA | PRISCILA DO ESPÍRITO SANTO
+                    
+                    // Busca a próxima linha que contém a data (valores)
+                    if (i + 1 < lines.length) {
+                        // Procura a linha com a data de emissão
+                        for (let k = i + 1; k < Math.min(i + 5, lines.length); k++) {
+                            if (lines[k].match(/\d{2}\/\d{2}\/\d{4}/)) {
+                                // Linha de valores encontrada
+                                // Os valores estão separados por espaços/tabs
+                                // Precisamos pegar o segundo valor (após a data)
+                                const valuesLine = lines[k];
+                                // Remove a data e pega o próximo nome
+                                const afterDate = valuesLine.replace(/\d{2}\/\d{2}\/\d{4}/, '').trim();
+                                // O primeiro nome após a data é o RECURSOS HUMANOS
+                                const nameParts = afterDate.split(/\s{2,}|\t/);
+                                if (nameParts[0]) {
+                                    recursosHumanosStr = nameParts[0].trim();
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
             }
             
-            // Fallback for Name if strict line match failed (due to PDF flow)
+            // Fallback for Name
             if (!consultantName) {
-                 const match = text.match(/NOME:\s*(?!SOLICITANTE)(.*)/i);
-                 if (match) consultantName = match[1].trim();
+                const match = text.match(/NOME:\s*(?!SOLICITANTE|BANCO)(.*)/i);
+                if (match) consultantName = match[1].trim();
             }
             
-            // ✅ NOVO: Fallback para email (busca no texto completo)
+            // Fallback para email
             if (!emailStr) {
                 const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-                if (emailMatch) {
+                if (emailMatch && !emailMatch[0].includes('fastshop')) {
                     emailStr = emailMatch[0];
                 }
+            }
+            
+            // Fallback para RECURSOS HUMANOS - busca específica
+            if (!recursosHumanosStr) {
+                // Tenta encontrar no padrão específico da ficha
+                const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+/);
+                if (rhMatch && rhMatch[2]) {
+                    recursosHumanosStr = rhMatch[2].trim();
+                }
+            }
+            
+            // Fallback para modalidade - se tem CNPJ, é PJ
+            if (!modalidadeContratoStr) {
+                modalidadeContratoStr = cnpjStr ? 'PJ' : 'PJ'; // Default PJ
             }
 
             // Parse Values
@@ -217,7 +360,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ NOVO: Parse Data de Aniversário
+            // Parse Data de Aniversário
             let dtAniversario: string | null = null;
             if (dtAniversarioStr) {
                 const parts = dtAniversarioStr.split('/');
@@ -226,31 +369,34 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
 
-            // 2. Parse Valor Faturamento (valor HORA do faturamento)
-            // O banco armazena o valor HORA, não o valor mensal
+            // 2. Parse Valor Faturamento
             let billingValue = 0;
             if (hourlyRateStr) {
-                // Normalize currency: remove dots (thousands), replace comma with dot
-                // Ex: "1.200,50" -> "1200.50"
                 const normalizedString = hourlyRateStr.replace(/\./g, '').replace(',', '.');
                 const normalizedValue = parseFloat(normalizedString);
-                
                 if (!isNaN(normalizedValue)) {
-                    billingValue = normalizedValue; // Valor hora (sem multiplicar por 168)
+                    billingValue = normalizedValue;
                 }
             }
             
-            // 3. Parse Valor Pagamento (valor HORA que o consultor recebe)
-            // O banco armazena o valor HORA, não o valor mensal
+            // 3. Parse Valor Pagamento
             let valorPagamento = 0;
             if (valorPagamentoStr) {
-                // Normalize currency: remove dots (thousands), replace comma with dot
                 const normalizedString = valorPagamentoStr.replace(/\./g, '').replace(',', '.');
                 const normalizedValue = parseFloat(normalizedString);
-                
                 if (!isNaN(normalizedValue)) {
-                    valorPagamento = normalizedValue; // Valor hora
+                    valorPagamento = normalizedValue;
                 }
+            }
+
+            // Parse modalidade de contrato
+            let modalidadeContrato: ModalidadeContrato = 'PJ';
+            if (modalidadeContratoStr) {
+                const normalized = modalidadeContratoStr.toLowerCase();
+                if (normalized.includes('clt')) modalidadeContrato = 'CLT';
+                else if (normalized.includes('temp')) modalidadeContrato = 'Temporário';
+                else if (normalized.includes('pj')) modalidadeContrato = 'PJ';
+                else modalidadeContrato = 'Outros';
             }
 
             // --- 2. MATCH IDS ---
@@ -263,7 +409,6 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
 
             // Manager Match
             let targetManagerId = 0;
-            // Clean manager name (sometimes PDF extracts 'Nome: Value' inside the capture group if regex is loose)
             const cleanManagerName = managerName.replace(/_/g, '').trim();
 
             const manager = managers.find(m => m.id_cliente === client.id && normalize(m.nome_gestor_cliente) === normalize(cleanManagerName));
@@ -271,44 +416,53 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             if (manager) {
                 targetManagerId = manager.id;
             } else {
-                 // Fuzzy/Loose Match
-                 const firstPart = cleanManagerName.split(' ')[0];
-                 const looseMgr = managers.find(m => m.id_cliente === client.id && normalize(m.nome_gestor_cliente).includes(normalize(firstPart)));
-                 
-                 if (looseMgr) {
-                     targetManagerId = looseMgr.id;
-                     console.warn(`⚠️ Gestor encontrado por busca aproximada: "${looseMgr.nome_gestor_cliente}" para "${cleanManagerName}"`);
-                 } else {
-                     // Fallback to first manager of client if exists (with warning)
-                     const clientManagers = managers.filter(m => m.id_cliente === client.id && m.ativo);
-                     if (clientManagers.length > 0) {
-                         targetManagerId = clientManagers[0].id;
-                         console.warn(`⚠️ Gestor não encontrado. Usando primeiro gestor ativo do cliente: "${clientManagers[0].nome_gestor_cliente}"`);
-                     } else {
-                         throw new Error(`Nenhum gestor ativo encontrado para o cliente "${clientName}".`);
-                     }
-                 }
+                const firstPart = cleanManagerName.split(' ')[0];
+                const looseMgr = managers.find(m => m.id_cliente === client.id && normalize(m.nome_gestor_cliente).includes(normalize(firstPart)));
+                
+                if (looseMgr) {
+                    targetManagerId = looseMgr.id;
+                    console.warn(`⚠️ Gestor encontrado por busca aproximada: "${looseMgr.nome_gestor_cliente}" para "${cleanManagerName}"`);
+                } else {
+                    const clientManagers = managers.filter(m => m.id_cliente === client.id && m.ativo);
+                    if (clientManagers.length > 0) {
+                        targetManagerId = clientManagers[0].id;
+                        console.warn(`⚠️ Gestor não encontrado. Usando primeiro gestor ativo do cliente: "${clientManagers[0].nome_gestor_cliente}"`);
+                    } else {
+                        throw new Error(`Nenhum gestor ativo encontrado para o cliente "${clientName}".`);
+                    }
+                }
             }
 
             // Coordinator Match
             let targetCoordId: number | null = null;
             if (coordName && targetManagerId) {
-                 const cleanCoordName = coordName.replace(/_/g, '').trim();
-                 const coord = coordinators.find(c => c.id_gestor_cliente === targetManagerId && normalize(c.nome_coordenador_cliente) === normalize(cleanCoordName));
-                 if (coord) {
-                     targetCoordId = coord.id;
-                 } else {
-                     // ✅ NOVO: Busca aproximada para coordenador
-                     const firstPartCoord = cleanCoordName.split(' ')[0];
-                     const looseCoord = coordinators.find(c => c.id_gestor_cliente === targetManagerId && normalize(c.nome_coordenador_cliente).includes(normalize(firstPartCoord)));
-                     if (looseCoord) {
-                         targetCoordId = looseCoord.id;
-                         console.warn(`⚠️ Coordenador encontrado por busca aproximada: "${looseCoord.nome_coordenador_cliente}" para "${cleanCoordName}"`);
-                     }
-                 }
+                const cleanCoordName = coordName.replace(/_/g, '').trim();
+                const coord = coordinators.find(c => c.id_gestor_cliente === targetManagerId && normalize(c.nome_coordenador_cliente) === normalize(cleanCoordName));
+                if (coord) {
+                    targetCoordId = coord.id;
+                } else {
+                    const firstPartCoord = cleanCoordName.split(' ')[0];
+                    const looseCoord = coordinators.find(c => c.id_gestor_cliente === targetManagerId && normalize(c.nome_coordenador_cliente).includes(normalize(firstPartCoord)));
+                    if (looseCoord) {
+                        targetCoordId = looseCoord.id;
+                        console.warn(`⚠️ Coordenador encontrado por busca aproximada: "${looseCoord.nome_coordenador_cliente}" para "${cleanCoordName}"`);
+                    }
+                }
             }
             
-            // ✅ NOVO: Calcular ano_vigencia baseado na data de inclusão
+            // ✅ NOVO: Buscar Analista R&S por nome (RECURSOS HUMANOS)
+            let analistaRsId: number | null = client.id_gestor_rs || null;
+            if (recursosHumanosStr && users && users.length > 0) {
+                const analistaUser = findUserByName(recursosHumanosStr);
+                if (analistaUser) {
+                    analistaRsId = analistaUser.id;
+                    console.log(`✅ Analista R&S encontrado: "${analistaUser.nome_usuario}" (ID: ${analistaUser.id})`);
+                } else {
+                    console.warn(`⚠️ Analista R&S "${recursosHumanosStr}" não encontrado. Usando padrão do cliente.`);
+                }
+            }
+            
+            // Calcular ano_vigencia baseado na data de inclusão
             const startDateObj = new Date(startDate);
             const anoVigencia = startDateObj.getFullYear();
 
@@ -320,20 +474,18 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 cargo_consultores: role || 'Consultor',
                 data_inclusao_consultores: startDate,
                 status: 'Ativo' as const,
-                
-                // ✅ NOVO: Flag ativo separado do status
                 ativo_consultor: true,
                 
                 // Dados de contato
                 celular: celularStr || '',
-                email_consultor: emailStr || '', // ✅ NOVO
+                email_consultor: emailStr || '',
                 cpf: cpfStr || '',
                 
-                // ✅ NOVO: Dados PJ
+                // Dados PJ
                 cnpj_consultor: cnpjStr || null,
                 empresa_consultor: empresaStr || null,
                 
-                // ✅ NOVO: Dados adicionais
+                // Dados adicionais
                 dt_aniversario: dtAniversario,
                 especialidade: especialidadeStr || null,
                 
@@ -342,18 +494,30 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 coordenador_id: targetCoordId,
                 
                 // Valores financeiros
-                valor_faturamento: billingValue || 0, // Valor HORA do faturamento
-                valor_pagamento: valorPagamento || 0, // Valor HORA que o consultor recebe
+                valor_faturamento: billingValue || 0,
+                valor_pagamento: valorPagamento || 0,
                 
-                // Herdar do Cliente
-                analista_rs_id: client.id_gestor_rs || null,
+                // Herdar do Cliente (com override se encontrou no PDF)
+                analista_rs_id: analistaRsId,
                 id_gestao_de_pessoas: client.id_gestao_de_pessoas || null,
+                
+                // ✅ CORREÇÃO: Adicionar cliente_id
+                cliente_id: client.id,
+                
+                // ✅ NOVOS CAMPOS
+                modalidade_contrato: modalidadeContrato,
+                substituicao: substituicao,
+                nome_substituido: nomeSubstituidoStr || null,
+                faturavel: faturavel,
+                observacoes: observacoesStr || null,
             };
 
             // Log para debug
             console.log('📋 Dados extraídos do PDF:', {
                 cliente: clientName,
+                clienteId: client.id,
                 consultor: consultantName,
+                cargo: role,
                 gestor: managerName,
                 coordenador: coordName,
                 email: emailStr,
@@ -364,11 +528,17 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 dataInicio: startDate,
                 dtAniversario: dtAniversarioStr,
                 especialidade: especialidadeStr,
-                valorHoraFaturamento: hourlyRateStr,
                 valorFaturamento: billingValue,
-                valorHoraPagamento: valorPagamentoStr,
                 valorPagamento: valorPagamento,
-                anoVigencia: anoVigencia
+                anoVigencia: anoVigencia,
+                // Novos campos
+                modalidadeContrato: modalidadeContrato,
+                substituicao: substituicao,
+                nomeSubstituido: nomeSubstituidoStr,
+                faturavel: faturavel,
+                recursosHumanos: recursosHumanosStr,
+                analistaRsId: analistaRsId,
+                observacoes: observacoesStr
             });
             
             console.log('💾 Dados para inserção:', newConsultantData);
@@ -378,40 +548,50 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
 
         } catch (error) {
             console.error(error);
-            setMessage({ text: `Erro na importação: ${error instanceof Error ? error.message : String(error)}`, type: 'error' });
+            setMessage({ text: error instanceof Error ? error.message : 'Erro ao processar arquivo.', type: 'error' });
         } finally {
             setIsLoading(false);
-            // Reset file input
             e.target.value = '';
         }
     };
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-blue-600">
-            <h2 className="text-xl font-bold text-[#4D5253] mb-4">Importação Ficha de Inclusão</h2>
-            <div className="flex flex-col sm:flex-row items-center gap-4">
-                <label className={`cursor-pointer bg-blue-600 text-white px-6 py-2 rounded-md hover:bg-blue-700 transition-colors duration-300 shadow-sm flex items-center ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    <span className="mr-2 text-lg">📄</span>
-                    {isLoading ? 'Lendo PDF...' : 'Selecionar Ficha (PDF)'}
+        <div className="bg-white p-6 rounded-lg shadow-md mb-8 border-t-4 border-indigo-600">
+            <h2 className="text-xl font-bold text-[#4D5253] mb-4">
+                📄 Importar Ficha de Inclusão (PDF)
+            </h2>
+
+            <p className="text-sm text-gray-600 mb-4">
+                Importe automaticamente os dados de uma Ficha de Inclusão em PDF.
+            </p>
+
+            <div className="flex items-center gap-4">
+                <label className={`cursor-pointer bg-indigo-600 text-white px-6 py-2 rounded-md hover:bg-indigo-700 transition-colors duration-300 shadow-sm flex items-center ${isLoading ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    <span className="mr-2 text-lg">📁</span>
+                    {isLoading ? 'Processando...' : 'Selecionar PDF'}
                     <input 
                         type="file" 
                         className="hidden" 
                         onChange={handleFileUpload} 
                         accept=".pdf" 
-                        disabled={isLoading} 
+                        disabled={isLoading}
                     />
                 </label>
-                <p className="text-xs text-gray-500 italic">
-                    Formatos aceitos: .pdf (Layout Padronizado RMS)
-                </p>
             </div>
             
             {message && (
-                <div className={`mt-4 p-3 rounded-md text-sm font-medium flex items-center ${message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                    <span className="text-lg mr-2">{message.type === 'success' ? '✅' : '❌'}</span>
-                    {message.text}
+                <div className={`mt-4 p-3 rounded-md ${message.type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    {message.type === 'success' ? '✅' : '❌'} {message.text}
                 </div>
             )}
+            
+            <div className="mt-4 text-xs text-gray-500">
+                <p className="font-medium mb-1">Campos extraídos automaticamente:</p>
+                <p>CLIENTE, NOME SOLICITANTE, NOME (Consultor), FUNÇÃO, DATA DE INÍCIO, CELULAR, CPF, E-MAIL, CNPJ, EMPRESA, FATURAMENTO MENSAL, VALOR (Pagamento)</p>
+                <p className="text-indigo-600 font-semibold mt-1">
+                    + FORMA DE CONTRATAÇÃO, FATURÁVEL, SUBSTITUIÇÃO, NOME SUBSTITUÍDO, RECURSOS HUMANOS (Analista R&S), OBSERVAÇÕES
+                </p>
+            </div>
         </div>
     );
 };

@@ -22,6 +22,9 @@ interface ParsedConsultant {
     warnings: string[];
 }
 
+// ✅ NOVO: Tipos de modalidade de contrato
+type ModalidadeContrato = 'PJ' | 'CLT' | 'Temporário' | 'Outros';
+
 const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({ 
     clients, 
     managers, 
@@ -258,6 +261,21 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
         return 'Outros';
     };
 
+    /**
+     * ✅ NOVO: Valida e normaliza modalidade de contrato
+     */
+    const parseModalidadeContrato = (value: any): ModalidadeContrato => {
+        if (!value || value === 'null' || value === '') return 'PJ'; // Default: PJ
+        
+        const normalized = cleanText(value).toLowerCase();
+        
+        if (normalized === 'clt' || normalized.includes('clt')) return 'CLT';
+        if (normalized === 'pj' || normalized.includes('pj') || normalized.includes('pessoa jurídica') || normalized.includes('pessoa juridica')) return 'PJ';
+        if (normalized.includes('temporário') || normalized.includes('temporario') || normalized.includes('temp')) return 'Temporário';
+        
+        return 'Outros';
+    };
+
     // ===== FUNÇÕES DE BUSCA DE RELACIONAMENTOS =====
 
     /**
@@ -358,44 +376,33 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
             const nextChar = content[i + 1];
             
             if (insideQuotes) {
-                // Dentro de aspas
                 if (char === '"') {
                     if (nextChar === '"') {
-                        // Aspas escapadas ("") - adiciona uma aspa
+                        // Aspas escapadas
                         currentCell += '"';
-                        i++; // Pula a próxima aspa
+                        i++;
                     } else {
                         // Fim do campo entre aspas
                         insideQuotes = false;
                     }
                 } else {
-                    // Qualquer outro caractere (incluindo \n) é parte do campo
                     currentCell += char;
                 }
             } else {
-                // Fora de aspas
                 if (char === '"') {
-                    // Início de campo entre aspas
                     insideQuotes = true;
                 } else if (char === ';') {
-                    // Fim do campo (separador)
                     currentRow.push(currentCell.trim());
                     currentCell = '';
                 } else if (char === '\n' || (char === '\r' && nextChar === '\n')) {
-                    // Fim da linha
-                    if (char === '\r') i++; // Pula o \n do \r\n
-                    
                     currentRow.push(currentCell.trim());
-                    
-                    // Só adiciona linhas não vazias
                     if (currentRow.some(cell => cell !== '')) {
                         result.push(currentRow);
                     }
-                    
                     currentRow = [];
                     currentCell = '';
+                    if (char === '\r') i++;
                 } else if (char !== '\r') {
-                    // Caractere normal
                     currentCell += char;
                 }
             }
@@ -500,6 +507,34 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
         // Consistência: se status é Perdido/Encerrado, ativo deve ser false
         const finalAtivo = status === 'Ativo' ? ativoConsultor : false;
 
+        // ✅ CORREÇÃO: Processar data_saida e motivo_desligamento quando ativo = false
+        let dataSaida = excelSerialToDate(rowData['data_saida']);
+        let motivoDesligamento = parseTerminationReason(rowData['motivo_desligamento']);
+        
+        // Se não está ativo mas não tem data_saida, usa data atual
+        if (!finalAtivo && !dataSaida) {
+            dataSaida = new Date().toISOString().split('T')[0];
+            warnings.push(`Consultor inativo sem data_saida. Usando data atual.`);
+        }
+        
+        // Se não está ativo mas não tem motivo, marca como 'Outros'
+        if (!finalAtivo && !motivoDesligamento) {
+            motivoDesligamento = 'Outros';
+            warnings.push(`Consultor inativo sem motivo_desligamento. Usando "Outros".`);
+        }
+
+        // ✅ NOVO: Processar campos de substituição
+        const substituicao = parseBoolean(rowData['substituicao']);
+        const nomeSubstituido = cleanText(rowData['nome_substituido']) || null;
+        
+        // Validação: se é substituição, nome_substituido é obrigatório
+        if (substituicao && !nomeSubstituido) {
+            warnings.push(`Substituição marcada mas nome_substituido não informado.`);
+        }
+
+        // ✅ NOVO: Processar modalidade de contrato
+        const modalidadeContrato = parseModalidadeContrato(rowData['modalidade_contrato']);
+
         const consultantData = {
             nome_consultores: nomeConsultor,
             email_consultor: cleanText(rowData['email_consultor']) || null,
@@ -508,9 +543,7 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
             ano_vigencia: parseInt(rowData['ano_vigencia']) || new Date().getFullYear(),
             data_inclusao_consultores: dateBRToISO(rowData['data_inclusao_consultores']) || new Date().toISOString().split('T')[0],
             data_ultima_alteracao: dateBRToISO(rowData['data_ultima_alteracao']) || null,
-            data_saida: excelSerialToDate(rowData['data_saida']),
             status: status,
-            motivo_desligamento: parseTerminationReason(rowData['motivo_desligamento']),
             ativo_consultor: finalAtivo,
             gestor_imediato_id: manager.id,
             coordenador_id: coordId,
@@ -522,6 +555,20 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
             dt_aniversario: dateBRToISO(rowData['dt_aniversario']),
             cnpj_consultor: cleanCNPJ(rowData['cnpj_consultor']),
             empresa_consultor: cleanText(rowData['empresa_consultor']) || null,
+            
+            // ✅ CORREÇÃO: Adicionar cliente_id
+            cliente_id: client.id,
+            
+            // ✅ CORREÇÃO: Garantir data_saida e motivo_desligamento
+            data_saida: dataSaida,
+            motivo_desligamento: motivoDesligamento,
+            
+            // ✅ NOVO: Campos de substituição
+            substituicao: substituicao,
+            nome_substituido: nomeSubstituido,
+            
+            // ✅ NOVO: Modalidade de contrato
+            modalidade_contrato: modalidadeContrato,
         };
 
         return { rowNumber, data: consultantData, errors, warnings };
@@ -553,14 +600,10 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
             console.log('📄 Arquivo lido como Windows-1252');
             return win1252Content;
         } catch (e) {
-            console.log('📄 Fallback para ISO-8859-1');
-            // Fallback para ISO-8859-1 (Latin-1)
-            const latin1Decoder = new TextDecoder('iso-8859-1');
-            return latin1Decoder.decode(arrayBuffer);
+            console.warn('⚠️ Falha ao decodificar como Windows-1252, usando UTF-8');
+            return utf8Content;
         }
     };
-
-    // ===== HANDLERS =====
 
     const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -569,48 +612,36 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
         setIsLoading(true);
         setResult(null);
         setPreviewData([]);
+        setShowPreview(false);
 
         try {
-            // Verificar extensão
-            if (!file.name.endsWith('.csv')) {
-                throw new Error('Formato inválido. Por favor selecione um arquivo CSV.');
-            }
-
-            // Ler arquivo com detecção de encoding
             const content = await readFileWithEncoding(file);
             const rows = parseCSV(content);
 
             if (rows.length < 2) {
-                throw new Error('Arquivo vazio ou sem dados.');
+                throw new Error('CSV deve ter pelo menos cabeçalho + 1 linha de dados');
             }
 
-            // Primeira linha = headers
-            const headers = rows[0].map(h => h.trim());
-            console.log('📋 Headers encontrados:', headers);
+            // Primeira linha = cabeçalhos (normalizar)
+            const headers = rows[0].map(h => h.toLowerCase().trim());
+            console.log('📋 Cabeçalhos encontrados:', headers);
 
-            // Processar linhas de dados
-            const parsedRows: ParsedConsultant[] = [];
+            // Processar linhas
+            const parsedData: ParsedConsultant[] = [];
             for (let i = 1; i < rows.length; i++) {
-                const row = rows[i];
-                
-                // Pular linhas vazias
-                if (row.every(cell => !cell.trim())) continue;
-                
-                const parsed = processRow(row, headers, i + 1);
-                parsedRows.push(parsed);
+                const parsed = processRow(rows[i], headers, i + 1);
+                parsedData.push(parsed);
             }
 
-            setPreviewData(parsedRows);
+            setPreviewData(parsedData);
             setShowPreview(true);
 
-            // Calcular resumo
-            const successCount = parsedRows.filter(r => r.data !== null).length;
-            const errorCount = parsedRows.filter(r => r.errors.length > 0).length;
-            const allWarnings = parsedRows.flatMap(r => r.warnings.map(w => `Linha ${r.rowNumber}: ${w}`));
-            const allErrors = parsedRows.flatMap(r => r.errors.map(e => `Linha ${r.rowNumber}: ${e}`));
+            // Contabilizar
+            const allErrors = parsedData.flatMap(p => p.errors.map(e => `Linha ${p.rowNumber}: ${e}`));
+            const allWarnings = parsedData.flatMap(p => p.warnings.map(w => `Linha ${p.rowNumber}: ${w}`));
 
             setResult({
-                success: successCount,
+                success: parsedData.filter(p => p.data !== null).length,
                 errors: allErrors,
                 warnings: allWarnings
             });
@@ -677,7 +708,7 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
                 
                 <div className="text-xs text-gray-500">
                     <p className="font-medium mb-1">Colunas esperadas:</p>
-                    <p className="italic">razao_social_cliente; nome_consultores; email_consultor; cpf; cargo_consultores; ano_vigencia; data_inclusao_consultores; status; ativo_consultor; gestor_imediato_id; coordenador_id; analista_rs_id; id_gestao_de_pessoas; valor_faturamento; valor_pagamento; celular; dt_aniversario; cnpj_consultor; empresa_consultor</p>
+                    <p className="italic">razao_social_cliente; nome_consultores; email_consultor; cpf; cargo_consultores; ano_vigencia; data_inclusao_consultores; status; ativo_consultor; gestor_imediato_id; coordenador_id; analista_rs_id; id_gestao_de_pessoas; valor_faturamento; valor_pagamento; celular; dt_aniversario; cnpj_consultor; empresa_consultor; <span className="text-green-600 font-semibold">data_saida; motivo_desligamento; modalidade_contrato; substituicao; nome_substituido</span></p>
                 </div>
             </div>
 
@@ -742,6 +773,7 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
                                         <th className="border p-2 text-left">Nome</th>
                                         <th className="border p-2 text-left">Cliente</th>
                                         <th className="border p-2 text-left">Gestor</th>
+                                        <th className="border p-2 text-left">Modalidade</th>
                                         <th className="border p-2 text-left">Observações</th>
                                     </tr>
                                 </thead>
@@ -753,8 +785,9 @@ const ConsultantCSVImport: React.FC<ConsultantCSVImportProps> = ({
                                                 {row.errors.length > 0 ? '❌' : row.warnings.length > 0 ? '⚠️' : '✅'}
                                             </td>
                                             <td className="border p-2">{row.data?.nome_consultores || '-'}</td>
-                                            <td className="border p-2">{row.data ? clients.find(c => managers.find(m => m.id === row.data.gestor_imediato_id)?.id_cliente === c.id)?.razao_social_cliente : '-'}</td>
+                                            <td className="border p-2">{row.data ? clients.find(c => c.id === row.data.cliente_id)?.razao_social_cliente : '-'}</td>
                                             <td className="border p-2">{row.data ? managers.find(m => m.id === row.data.gestor_imediato_id)?.nome_gestor_cliente : '-'}</td>
+                                            <td className="border p-2">{row.data?.modalidade_contrato || '-'}</td>
                                             <td className="border p-2 text-xs">
                                                 {row.errors.length > 0 && <span className="text-red-600">{row.errors.join('; ')}</span>}
                                                 {row.warnings.length > 0 && <span className="text-yellow-600">{row.warnings.join('; ')}</span>}

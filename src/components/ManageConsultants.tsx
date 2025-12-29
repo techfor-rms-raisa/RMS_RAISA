@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason } from '@/types';
-import { Mail, Phone, Search, Building2, Calendar, CreditCard, User as UserIcon, Briefcase, DollarSign, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Mail, Phone, Search, Building2, Calendar, CreditCard, User as UserIcon, Briefcase, DollarSign, AlertTriangle, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import InclusionImport from './InclusionImport';
 
 interface ManageConsultantsProps {
@@ -15,6 +15,9 @@ interface ManageConsultantsProps {
     onNavigateToAtividades: () => void;
 }
 
+// ✅ NOVO: Tipos de modalidade de contrato
+type ModalidadeContrato = 'PJ' | 'CLT' | 'Temporário' | 'Outros';
+
 const TERMINATION_REASONS: { value: TerminationReason; description: string }[] = [
     { value: 'Baixa Performance Técnica', description: 'Consultor não apresentou a qualidade técnica esperada' },
     { value: 'Problemas Comportamentais', description: 'Questões comportamentais no ambiente de trabalho' },
@@ -27,6 +30,14 @@ const TERMINATION_REASONS: { value: TerminationReason; description: string }[] =
     { value: 'Oportunidade Financeira', description: 'Proposta financeira melhor' },
     { value: 'Oportunidade de Carreira', description: 'Desenvolvimento de carreira' },
     { value: 'Outros', description: 'Outros motivos' }
+];
+
+// ✅ NOVO: Opções de modalidade de contrato
+const MODALIDADE_OPTIONS: { value: ModalidadeContrato; label: string }[] = [
+    { value: 'PJ', label: 'PJ - Pessoa Jurídica' },
+    { value: 'CLT', label: 'CLT - Carteira Assinada' },
+    { value: 'Temporário', label: 'Temporário' },
+    { value: 'Outros', label: 'Outros' }
 ];
 
 // ===== COMPONENTE DE SCORE BADGE =====
@@ -83,6 +94,12 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
         valor_pagamento: '',
         cnpj_consultor: '',
         empresa_consultor: '',
+        // ✅ NOVOS CAMPOS
+        modalidade_contrato: 'PJ' as ModalidadeContrato,
+        substituicao: false,
+        nome_substituido: '',
+        faturavel: true,
+        observacoes: '',
     });
 
     const isReadOnly = currentUser.tipo_usuario === 'Consulta';
@@ -98,42 +115,57 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             return newSet;
         });
     };
-    
+
     useEffect(() => {
         if (editingConsultant) {
             const gestor = usuariosCliente.find(u => u.id === editingConsultant.gestor_imediato_id);
+            const clientId = gestor ? String(gestor.id_cliente) : '';
+            
             setFormData({
-                ano_vigencia: editingConsultant.ano_vigencia,
-                nome_consultores: editingConsultant.nome_consultores,
+                ano_vigencia: editingConsultant.ano_vigencia || new Date().getFullYear(),
+                nome_consultores: editingConsultant.nome_consultores || '',
                 email_consultor: editingConsultant.email_consultor || '',
                 celular: editingConsultant.celular || '',
                 cpf: editingConsultant.cpf || '',
-                cargo_consultores: editingConsultant.cargo_consultores,
-                especialidade: editingConsultant.especialidade || '',
-                data_inclusao_consultores: editingConsultant.data_inclusao_consultores ? editingConsultant.data_inclusao_consultores.split('T')[0] : '',
-                data_saida: editingConsultant.data_saida ? editingConsultant.data_saida.split('T')[0] : '',
-                dt_aniversario: editingConsultant.dt_aniversario ? editingConsultant.dt_aniversario.split('T')[0] : '',
-                id_cliente: gestor ? String(gestor.id_cliente) : '',
-                gestor_imediato_id: String(editingConsultant.gestor_imediato_id),
+                cargo_consultores: editingConsultant.cargo_consultores || '',
+                especialidade: (editingConsultant as any).especialidade || '',
+                data_inclusao_consultores: editingConsultant.data_inclusao_consultores || '',
+                data_saida: editingConsultant.data_saida || '',
+                dt_aniversario: editingConsultant.dt_aniversario || '',
+                id_cliente: clientId,
+                gestor_imediato_id: String(editingConsultant.gestor_imediato_id || ''),
                 coordenador_id: editingConsultant.coordenador_id ? String(editingConsultant.coordenador_id) : '',
-                status: editingConsultant.status,
+                status: editingConsultant.status || 'Ativo',
                 motivo_desligamento: editingConsultant.motivo_desligamento || '',
-                ativo_consultor: editingConsultant.ativo_consultor !== false,
-                analista_rs_id: editingConsultant.analista_rs_id ? String(editingConsultant.analista_rs_id) : '',
-                id_gestao_de_pessoas: editingConsultant.id_gestao_de_pessoas ? String(editingConsultant.id_gestao_de_pessoas) : '',
-                valor_faturamento: editingConsultant.valor_faturamento ? String(editingConsultant.valor_faturamento) : '',
-                valor_pagamento: editingConsultant.valor_pagamento ? String(editingConsultant.valor_pagamento) : '',
+                ativo_consultor: editingConsultant.ativo_consultor ?? true,
+                analista_rs_id: editingConsultant.analista_rs_id || '',
+                id_gestao_de_pessoas: editingConsultant.id_gestao_de_pessoas || '',
+                valor_faturamento: editingConsultant.valor_faturamento?.toString() || '',
+                valor_pagamento: editingConsultant.valor_pagamento?.toString() || '',
                 cnpj_consultor: editingConsultant.cnpj_consultor || '',
                 empresa_consultor: editingConsultant.empresa_consultor || '',
+                // ✅ NOVOS CAMPOS
+                modalidade_contrato: (editingConsultant as any).modalidade_contrato || 'PJ',
+                substituicao: (editingConsultant as any).substituicao || false,
+                nome_substituido: (editingConsultant as any).nome_substituido || '',
+                faturavel: (editingConsultant as any).faturavel ?? true,
+                observacoes: (editingConsultant as any).observacoes || '',
             });
-            setIsFormOpen(true);
         }
     }, [editingConsultant]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        
+        // Validação: se status é Perdido/Encerrado, motivo é obrigatório
         if ((formData.status === 'Perdido' || formData.status === 'Encerrado') && !formData.motivo_desligamento) {
             alert("Selecione um Motivo de Desligamento.");
+            return;
+        }
+        
+        // ✅ NOVO: Validação - se substituição, nome_substituido é obrigatório
+        if (formData.substituicao && !formData.nome_substituido.trim()) {
+            alert("Informe o nome do consultor que está sendo substituído.");
             return;
         }
 
@@ -144,9 +176,14 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             return isNaN(num) ? null : num;
         };
 
+        // Buscar cliente_id baseado no gestor selecionado
+        const selectedGestor = usuariosCliente.find(u => u.id === parseInt(formData.gestor_imediato_id));
+        const clienteId = selectedGestor?.id_cliente || null;
+
         const dataToSave = {
             ...formData,
-            id_cliente: undefined,
+            id_cliente: undefined, // Remover do spread
+            cliente_id: clienteId, // ✅ CORREÇÃO: Adicionar cliente_id
             gestor_imediato_id: parseInt(formData.gestor_imediato_id),
             coordenador_id: formData.coordenador_id ? parseInt(formData.coordenador_id) : null,
             analista_rs_id: formData.analista_rs_id ? parseInt(String(formData.analista_rs_id)) : null,
@@ -158,6 +195,12 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             cnpj_consultor: formData.cnpj_consultor || null,
             empresa_consultor: formData.empresa_consultor || null,
             especialidade: formData.especialidade || null,
+            // ✅ NOVOS CAMPOS
+            modalidade_contrato: formData.modalidade_contrato,
+            substituicao: formData.substituicao,
+            nome_substituido: formData.substituicao ? formData.nome_substituido : null,
+            faturavel: formData.faturavel,
+            observacoes: formData.observacoes || null,
         };
 
         if (editingConsultant) {
@@ -179,6 +222,12 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             coordenador_id: '', status: 'Ativo', motivo_desligamento: '',
             ativo_consultor: true, analista_rs_id: '', id_gestao_de_pessoas: '',
             valor_faturamento: '', valor_pagamento: '', cnpj_consultor: '', empresa_consultor: '',
+            // ✅ NOVOS CAMPOS
+            modalidade_contrato: 'PJ',
+            substituicao: false,
+            nome_substituido: '',
+            faturavel: true,
+            observacoes: '',
         });
     };
 
@@ -211,363 +260,627 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
         return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     };
 
+    // Filtros
+    const filteredConsultants = consultants.filter(c => {
+        const clientName = getClientName(c);
+        const matchesClient = selectedClientFilter === 'all' || clientName === selectedClientFilter;
+        const matchesConsultant = selectedConsultantFilter === 'all' || c.nome_consultores === selectedConsultantFilter;
+        const matchesSearch = !searchQuery || 
+            c.nome_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            c.cargo_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            clientName?.toLowerCase().includes(searchQuery.toLowerCase());
+        return matchesClient && matchesConsultant && matchesSearch;
+    });
+
+    const uniqueClients = [...new Set(consultants.map(c => getClientName(c)))].filter(Boolean).sort();
+
     return (
         <div className="bg-white rounded-lg shadow-sm p-6">
-            {!isReadOnly && <InclusionImport clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} onImport={addConsultant} />}
+            {!isReadOnly && <InclusionImport clients={clients} managers={usuariosCliente} coordinators={coordenadoresCliente} users={users} onImport={addConsultant} />}
 
             <div className="flex justify-between items-center mb-8">
                 <h2 className="text-3xl font-bold text-gray-900">Gerenciar Consultores</h2>
                 {!isReadOnly && (
-                    <button onClick={() => { setEditingConsultant(null); resetForm(); setIsFormOpen(true); }}
-                        className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-semibold shadow-md">
-                        + Novo Consultor
+                    <button
+                        onClick={() => { setEditingConsultant(null); setIsFormOpen(true); }}
+                        className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2"
+                    >
+                        <UserIcon className="w-5 h-5" />
+                        Novo Consultor
                     </button>
                 )}
             </div>
 
-            {/* MODAL DO FORMULÁRIO */}
+            {/* Filtros */}
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                    <input
+                        type="text"
+                        placeholder="Buscar consultores..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                </div>
+                <select
+                    value={selectedClientFilter}
+                    onChange={(e) => setSelectedClientFilter(e.target.value)}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                    <option value="all">Todos os Clientes</option>
+                    {uniqueClients.map(client => (
+                        <option key={client} value={client}>{client}</option>
+                    ))}
+                </select>
+                <div className="text-right text-sm text-gray-500 self-center">
+                    {filteredConsultants.length} consultor(es) encontrado(s)
+                </div>
+            </div>
+
+            {/* Formulário Modal */}
             {isFormOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-                    <div className="relative bg-white rounded-2xl shadow-2xl w-[95vw] max-w-5xl max-h-[90vh] overflow-hidden">
-                        <div className="sticky top-0 z-10 bg-gradient-to-r from-blue-600 to-blue-700 px-8 py-5 flex justify-between items-center">
-                            <div className="flex items-center gap-3">
-                                <span className="text-2xl">➕</span>
-                                <div>
-                                    <h3 className="text-xl font-bold text-white">{editingConsultant ? 'Editar Consultor' : 'Novo Consultor'}</h3>
-                                    <p className="text-blue-100 text-sm">Preencha os dados abaixo para registrar o consultor</p>
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                        <div className="sticky top-0 bg-gradient-to-r from-indigo-600 to-indigo-700 p-6 rounded-t-xl">
+                            <h3 className="text-2xl font-bold text-white">
+                                {editingConsultant ? 'Editar Consultor' : 'Novo Consultor'}
+                            </h3>
+                        </div>
+                        
+                        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+                            {/* Seção: Dados Básicos */}
+                            <div className="border-b pb-6">
+                                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                                    <UserIcon className="w-5 h-5 text-indigo-600" />
+                                    Dados Básicos
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Nome Completo *</label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={formData.nome_consultores}
+                                            onChange={(e) => setFormData({...formData, nome_consultores: e.target.value})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">CPF</label>
+                                        <input
+                                            type="text"
+                                            value={formData.cpf}
+                                            onChange={(e) => setFormData({...formData, cpf: e.target.value})}
+                                            placeholder="000.000.000-00"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">E-mail</label>
+                                        <input
+                                            type="email"
+                                            value={formData.email_consultor}
+                                            onChange={(e) => setFormData({...formData, email_consultor: e.target.value})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Celular</label>
+                                        <input
+                                            type="text"
+                                            value={formData.celular}
+                                            onChange={(e) => setFormData({...formData, celular: e.target.value})}
+                                            placeholder="(00) 00000-0000"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Data de Nascimento</label>
+                                        <input
+                                            type="date"
+                                            value={formData.dt_aniversario}
+                                            onChange={(e) => setFormData({...formData, dt_aniversario: e.target.value})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Cargo *</label>
+                                        <input
+                                            type="text"
+                                            required
+                                            value={formData.cargo_consultores}
+                                            onChange={(e) => setFormData({...formData, cargo_consultores: e.target.value})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
                                 </div>
                             </div>
-                            <button onClick={resetForm} className="text-white/80 hover:text-white hover:bg-white/20 rounded-full p-2 transition-all">✕</button>
-                        </div>
 
-                        <div className="p-8 overflow-y-auto max-h-[calc(90vh-120px)]">
-                            <form onSubmit={handleSubmit} className="space-y-8">
-                                {/* SEÇÃO 1: DADOS PESSOAIS */}
-                                <div>
-                                    <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-blue-200 flex items-center gap-2">
-                                        <UserIcon className="w-5 h-5 text-blue-600" /> Dados Pessoais
-                                    </h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Nome <span className="text-red-500">*</span></label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Nome completo" value={formData.nome_consultores} onChange={e => setFormData({...formData, nome_consultores: e.target.value})} required />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Email</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="email@exemplo.com" type="email" value={formData.email_consultor} onChange={e => setFormData({...formData, email_consultor: e.target.value})} />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">📱 Celular</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="(XX) XXXXX-XXXX" value={formData.celular} onChange={e => setFormData({...formData, celular: e.target.value})} />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">🆔 C.P.F.</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="000.000.000-00" value={formData.cpf} onChange={e => setFormData({...formData, cpf: e.target.value})} />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">🎂 Data de Nascimento</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" type="date" value={formData.dt_aniversario} onChange={e => setFormData({...formData, dt_aniversario: e.target.value})} />
+                            {/* ✅ NOVA Seção: Contrato */}
+                            <div className="border-b pb-6">
+                                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                                    <Briefcase className="w-5 h-5 text-indigo-600" />
+                                    Contrato
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Modalidade de Contrato *</label>
+                                        <select
+                                            required
+                                            value={formData.modalidade_contrato}
+                                            onChange={(e) => setFormData({...formData, modalidade_contrato: e.target.value as ModalidadeContrato})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            {MODALIDADE_OPTIONS.map(opt => (
+                                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Faturável?</label>
+                                        <div className="flex items-center gap-4 mt-2">
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    name="faturavel"
+                                                    checked={formData.faturavel === true}
+                                                    onChange={() => setFormData({...formData, faturavel: true})}
+                                                    className="w-4 h-4 text-indigo-600"
+                                                />
+                                                <span className="text-sm">Sim</span>
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    name="faturavel"
+                                                    checked={formData.faturavel === false}
+                                                    onChange={() => setFormData({...formData, faturavel: false})}
+                                                    className="w-4 h-4 text-indigo-600"
+                                                />
+                                                <span className="text-sm">Não</span>
+                                            </label>
                                         </div>
                                     </div>
-                                </div>
-
-                                {/* SEÇÃO 2: DADOS PJ */}
-                                <div>
-                                    <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-purple-200 flex items-center gap-2">
-                                        <Building2 className="w-5 h-5 text-purple-600" /> Dados PJ (Pessoa Jurídica)
-                                    </h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">CNPJ</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="00.000.000/0001-00" value={formData.cnpj_consultor} onChange={e => setFormData({...formData, cnpj_consultor: e.target.value})} />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Razão Social / Empresa</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500" placeholder="Nome da empresa PJ" value={formData.empresa_consultor} onChange={e => setFormData({...formData, empresa_consultor: e.target.value})} />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* SEÇÃO 3: DADOS PROFISSIONAIS */}
-                                <div>
-                                    <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-green-200 flex items-center gap-2">
-                                        <Briefcase className="w-5 h-5 text-green-600" /> Dados Profissionais
-                                    </h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Cargo <span className="text-red-500">*</span></label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500" placeholder="Ex: Desenvolvedor, Analista..." value={formData.cargo_consultores} onChange={e => setFormData({...formData, cargo_consultores: e.target.value})} required />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Especialidade</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500" placeholder="Ex: React, Node.js, SAP..." value={formData.especialidade} onChange={e => setFormData({...formData, especialidade: e.target.value})} />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">📅 Data de Inclusão <span className="text-red-500">*</span></label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500" type="date" value={formData.data_inclusao_consultores} onChange={e => setFormData({...formData, data_inclusao_consultores: e.target.value})} required />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Ano Vigência</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500" type="number" min="2020" max="2030" value={formData.ano_vigencia} onChange={e => setFormData({...formData, ano_vigencia: parseInt(e.target.value)})} />
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">É Substituição?</label>
+                                        <div className="flex items-center gap-4 mt-2">
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    name="substituicao"
+                                                    checked={formData.substituicao === false}
+                                                    onChange={() => setFormData({...formData, substituicao: false, nome_substituido: ''})}
+                                                    className="w-4 h-4 text-indigo-600"
+                                                />
+                                                <span className="text-sm">Não</span>
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    name="substituicao"
+                                                    checked={formData.substituicao === true}
+                                                    onChange={() => setFormData({...formData, substituicao: true})}
+                                                    className="w-4 h-4 text-indigo-600"
+                                                />
+                                                <span className="text-sm">Sim</span>
+                                            </label>
                                         </div>
                                     </div>
-                                </div>
-
-                                {/* SEÇÃO 4: VALORES FINANCEIROS */}
-                                <div>
-                                    <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-yellow-200 flex items-center gap-2">
-                                        <DollarSign className="w-5 h-5 text-yellow-600" /> Valores Financeiros
-                                    </h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">💰 Valor Faturamento (R$)</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500" placeholder="Ex: 15000.00" value={formData.valor_faturamento} onChange={e => setFormData({...formData, valor_faturamento: e.target.value})} />
+                                    {formData.substituicao && (
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                Nome do Substituído *
+                                                <RefreshCw className="w-3 h-3 inline ml-1 text-orange-500" />
+                                            </label>
+                                            <input
+                                                type="text"
+                                                required={formData.substituicao}
+                                                value={formData.nome_substituido}
+                                                onChange={(e) => setFormData({...formData, nome_substituido: e.target.value})}
+                                                placeholder="Nome do consultor que está saindo"
+                                                className="w-full px-4 py-2 border border-orange-300 rounded-lg focus:ring-2 focus:ring-orange-500 bg-orange-50"
+                                            />
                                         </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">💵 Valor Pagamento (R$)</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-yellow-500" placeholder="Ex: 11694.48" value={formData.valor_pagamento} onChange={e => setFormData({...formData, valor_pagamento: e.target.value})} />
+                                    )}
+                                </div>
+                                
+                                {/* Dados PJ - Exibe se modalidade for PJ */}
+                                {formData.modalidade_contrato === 'PJ' && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 p-4 bg-blue-50 rounded-lg">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">CNPJ</label>
+                                            <input
+                                                type="text"
+                                                value={formData.cnpj_consultor}
+                                                onChange={(e) => setFormData({...formData, cnpj_consultor: e.target.value})}
+                                                placeholder="00.000.000/0000-00"
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Empresa (Razão Social PJ)</label>
+                                            <input
+                                                type="text"
+                                                value={formData.empresa_consultor}
+                                                onChange={(e) => setFormData({...formData, empresa_consultor: e.target.value})}
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                            />
                                         </div>
                                     </div>
+                                )}
+                                
+                                {/* Campo de Observações */}
+                                <div className="col-span-full mt-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Observações</label>
+                                    <textarea
+                                        value={formData.observacoes}
+                                        onChange={(e) => setFormData({...formData, observacoes: e.target.value})}
+                                        rows={3}
+                                        placeholder="Observações gerais sobre o consultor..."
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                    />
                                 </div>
+                            </div>
 
-                                {/* SEÇÃO 5: CLIENTE E GESTÃO */}
-                                <div>
-                                    <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-indigo-200 flex items-center gap-2">
-                                        <Building2 className="w-5 h-5 text-indigo-600" /> Cliente e Gestão
-                                    </h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Cliente <span className="text-red-500">*</span></label>
-                                            <select className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" value={formData.id_cliente} onChange={e => {
-                                                const selectedClient = clients.find(c => String(c.id) === e.target.value);
-                                                setFormData({...formData, id_cliente: e.target.value, gestor_imediato_id: '', coordenador_id: '',
-                                                    analista_rs_id: selectedClient?.id_gestor_rs ? String(selectedClient.id_gestor_rs) : '',
-                                                    id_gestao_de_pessoas: selectedClient?.id_gestao_de_pessoas ? String(selectedClient.id_gestao_de_pessoas) : '',
+                            {/* Seção: Alocação */}
+                            <div className="border-b pb-6">
+                                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                                    <Building2 className="w-5 h-5 text-indigo-600" />
+                                    Alocação
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Cliente *</label>
+                                        <select
+                                            required
+                                            value={formData.id_cliente}
+                                            onChange={(e) => setFormData({...formData, id_cliente: e.target.value, gestor_imediato_id: '', coordenador_id: ''})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="">Selecione...</option>
+                                            {clients.map(c => (
+                                                <option key={c.id} value={c.id}>{c.razao_social_cliente}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Gestor *</label>
+                                        <select
+                                            required
+                                            value={formData.gestor_imediato_id}
+                                            onChange={(e) => setFormData({...formData, gestor_imediato_id: e.target.value, coordenador_id: ''})}
+                                            disabled={!formData.id_cliente}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100"
+                                        >
+                                            <option value="">Selecione o cliente primeiro...</option>
+                                            {filteredGestores.map(g => (
+                                                <option key={g.id} value={g.id}>{g.nome_gestor_cliente}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Coordenador</label>
+                                        <select
+                                            value={formData.coordenador_id}
+                                            onChange={(e) => setFormData({...formData, coordenador_id: e.target.value})}
+                                            disabled={!formData.gestor_imediato_id}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-100"
+                                        >
+                                            <option value="">Selecione o gestor primeiro...</option>
+                                            {filteredCoordenadores.map(c => (
+                                                <option key={c.id} value={c.id}>{c.nome_coordenador_cliente}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Seção: Datas e Status */}
+                            <div className="border-b pb-6">
+                                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                                    <Calendar className="w-5 h-5 text-indigo-600" />
+                                    Datas e Status
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Data de Inclusão *</label>
+                                        <input
+                                            type="date"
+                                            required
+                                            value={formData.data_inclusao_consultores}
+                                            onChange={(e) => setFormData({...formData, data_inclusao_consultores: e.target.value})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Ano Vigência</label>
+                                        <input
+                                            type="number"
+                                            value={formData.ano_vigencia}
+                                            onChange={(e) => setFormData({...formData, ano_vigencia: parseInt(e.target.value)})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
+                                        <select
+                                            value={formData.status}
+                                            onChange={(e) => {
+                                                const newStatus = e.target.value as ConsultantStatus;
+                                                setFormData({
+                                                    ...formData, 
+                                                    status: newStatus,
+                                                    ativo_consultor: newStatus === 'Ativo'
                                                 });
-                                            }} required>
-                                                <option value="">Selecione o Cliente...</option>
-                                                {clients.filter(c => c.ativo_cliente).sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente)).map(client => (
-                                                    <option key={client.id} value={String(client.id)}>{client.razao_social_cliente}</option>
+                                            }}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="Ativo">Ativo</option>
+                                            <option value="Perdido">Perdido</option>
+                                            <option value="Encerrado">Encerrado</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Ativo?</label>
+                                        <select
+                                            value={formData.ativo_consultor ? 'true' : 'false'}
+                                            onChange={(e) => setFormData({...formData, ativo_consultor: e.target.value === 'true'})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="true">Sim</option>
+                                            <option value="false">Não</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                
+                                {/* Campos de Desligamento - Exibe se não ativo */}
+                                {(formData.status !== 'Ativo' || !formData.ativo_consultor) && (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 p-4 bg-red-50 rounded-lg border border-red-200">
+                                        <div>
+                                            <label className="block text-sm font-medium text-red-700 mb-1">
+                                                <AlertTriangle className="w-4 h-4 inline mr-1" />
+                                                Data de Saída
+                                            </label>
+                                            <input
+                                                type="date"
+                                                value={formData.data_saida}
+                                                onChange={(e) => setFormData({...formData, data_saida: e.target.value})}
+                                                className="w-full px-4 py-2 border border-red-300 rounded-lg focus:ring-2 focus:ring-red-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-red-700 mb-1">
+                                                <AlertTriangle className="w-4 h-4 inline mr-1" />
+                                                Motivo do Desligamento *
+                                            </label>
+                                            <select
+                                                required={formData.status !== 'Ativo'}
+                                                value={formData.motivo_desligamento}
+                                                onChange={(e) => setFormData({...formData, motivo_desligamento: e.target.value as TerminationReason})}
+                                                className="w-full px-4 py-2 border border-red-300 rounded-lg focus:ring-2 focus:ring-red-500"
+                                            >
+                                                <option value="">Selecione o motivo...</option>
+                                                {TERMINATION_REASONS.map(r => (
+                                                    <option key={r.value} value={r.value}>{r.value}</option>
                                                 ))}
                                             </select>
                                         </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Gestor Imediato <span className="text-red-500">*</span></label>
-                                            <select className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white disabled:bg-gray-100" value={formData.gestor_imediato_id} onChange={e => setFormData({...formData, gestor_imediato_id: e.target.value, coordenador_id: ''})} required disabled={!formData.id_cliente}>
-                                                <option value="">Selecione o Gestor...</option>
-                                                {filteredGestores.map(gestor => (<option key={gestor.id} value={String(gestor.id)}>{gestor.nome_gestor_cliente}</option>))}
-                                            </select>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Coordenador</label>
-                                            <select className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white disabled:bg-gray-100" value={formData.coordenador_id} onChange={e => setFormData({...formData, coordenador_id: e.target.value})} disabled={!formData.gestor_imediato_id}>
-                                                <option value="">Nenhum / Não aplicável</option>
-                                                {filteredCoordenadores.map(coord => (<option key={coord.id} value={String(coord.id)}>{coord.nome_coordenador_cliente}</option>))}
-                                            </select>
-                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Seção: Financeiro */}
+                            <div className="border-b pb-6">
+                                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                                    <DollarSign className="w-5 h-5 text-indigo-600" />
+                                    Valores Financeiros
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Valor Faturamento (R$/hora)</label>
+                                        <input
+                                            type="text"
+                                            value={formData.valor_faturamento}
+                                            onChange={(e) => setFormData({...formData, valor_faturamento: e.target.value})}
+                                            placeholder="0,00"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Valor Pagamento (R$/hora)</label>
+                                        <input
+                                            type="text"
+                                            value={formData.valor_pagamento}
+                                            onChange={(e) => setFormData({...formData, valor_pagamento: e.target.value})}
+                                            placeholder="0,00"
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
                                     </div>
                                 </div>
+                            </div>
 
-                                {/* SEÇÃO 6: STATUS E DESLIGAMENTO */}
-                                <div>
-                                    <h4 className="text-lg font-semibold text-gray-800 mb-4 pb-2 border-b-2 border-red-200 flex items-center gap-2">
-                                        <AlertTriangle className="w-5 h-5 text-red-600" /> Status e Desligamento
-                                    </h4>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Status</label>
-                                            <select className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 bg-white" value={formData.status} onChange={e => setFormData({...formData, status: e.target.value as ConsultantStatus})}>
-                                                <option value="Ativo">Ativo</option>
-                                                <option value="Perdido">Perdido</option>
-                                                <option value="Encerrado">Encerrado</option>
-                                            </select>
-                                        </div>
-                                        <div className="flex flex-col justify-center">
-                                            <label className="flex items-center gap-2 cursor-pointer">
-                                                <input type="checkbox" checked={formData.ativo_consultor} onChange={e => setFormData({...formData, ativo_consultor: e.target.checked})} className="w-5 h-5 text-green-600 rounded focus:ring-green-500" />
-                                                <span className="text-sm font-medium text-gray-700">Consultor Ativo</span>
-                                            </label>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Data de Saída</label>
-                                            <input className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500" type="date" value={formData.data_saida} onChange={e => setFormData({...formData, data_saida: e.target.value})} />
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <label className="text-sm font-semibold text-gray-700 mb-2">Motivo Desligamento {(formData.status === 'Perdido' || formData.status === 'Encerrado') && <span className="text-red-500">*</span>}</label>
-                                            <select className="px-4 py-2.5 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 bg-white" value={formData.motivo_desligamento} onChange={e => setFormData({...formData, motivo_desligamento: e.target.value as TerminationReason})}>
-                                                <option value="">Selecione...</option>
-                                                {TERMINATION_REASONS.map(reason => (<option key={reason.value} value={reason.value}>{reason.value}</option>))}
-                                            </select>
-                                        </div>
+                            {/* Seção: Responsáveis Internos */}
+                            <div>
+                                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                                    <UserIcon className="w-5 h-5 text-indigo-600" />
+                                    Responsáveis Internos
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Analista R&S</label>
+                                        <select
+                                            value={formData.analista_rs_id}
+                                            onChange={(e) => setFormData({...formData, analista_rs_id: e.target.value})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="">Selecione...</option>
+                                            {users.filter(u => u.ativo_usuario).map(u => (
+                                                <option key={u.id} value={u.id}>{u.nome_usuario}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Gestão de Pessoas</label>
+                                        <select
+                                            value={formData.id_gestao_de_pessoas}
+                                            onChange={(e) => setFormData({...formData, id_gestao_de_pessoas: e.target.value})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        >
+                                            <option value="">Selecione...</option>
+                                            {users.filter(u => u.ativo_usuario).map(u => (
+                                                <option key={u.id} value={u.id}>{u.nome_usuario}</option>
+                                            ))}
+                                        </select>
                                     </div>
                                 </div>
+                            </div>
 
-                                <div className="flex justify-end gap-4 pt-6 border-t border-gray-200">
-                                    <button type="button" onClick={resetForm} className="px-6 py-2.5 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 font-medium">Cancelar</button>
-                                    <button type="submit" className="px-8 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold shadow-md">
-                                        {editingConsultant ? 'Salvar Alterações' : 'Cadastrar Consultor'}
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
+                            {/* Botões */}
+                            <div className="flex justify-end gap-4 pt-6 border-t">
+                                <button
+                                    type="button"
+                                    onClick={resetForm}
+                                    className="px-6 py-2.5 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                                >
+                                    {editingConsultant ? 'Salvar Alterações' : 'Cadastrar Consultor'}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             )}
 
-            {/* FILTROS */}
-            <div className="mb-6 p-4 bg-gray-50 rounded-lg border">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Filtrar Cliente:</label>
-                        <select value={selectedClientFilter} onChange={e => { setSelectedClientFilter(e.target.value); setSelectedConsultantFilter('all'); }} className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
-                            <option value="all">Todos os Clientes</option>
-                            {clients.filter(c => c.ativo_cliente).sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente)).map(client => (
-                                <option key={client.id} value={String(client.id)}>{client.razao_social_cliente}</option>
-                            ))}
-                        </select>
+            {/* Lista de Consultores */}
+            <div className="space-y-4">
+                {filteredConsultants.length === 0 ? (
+                    <div className="text-center py-12 bg-gray-50 rounded-lg">
+                        <UserIcon className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                        <p className="text-gray-500">Nenhum consultor encontrado.</p>
                     </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Filtrar por Consultor:</label>
-                        <select value={selectedConsultantFilter} onChange={e => setSelectedConsultantFilter(e.target.value)} className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500">
-                            <option value="all">Todos os Consultores</option>
-                            {consultants.filter(c => c.status === 'Ativo').filter(c => {
-                                if (selectedClientFilter !== 'all') {
-                                    const gestor = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
-                                    return gestor && String(gestor.id_cliente) === selectedClientFilter;
-                                }
-                                return true;
-                            }).sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores)).map((consultant, idx) => (
-                                <option key={idx} value={consultant.nome_consultores}>{consultant.nome_consultores}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Pesquisar:</label>
-                        <div className="relative">
-                            <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Digite o nome do consultor..." className="w-full border border-gray-300 rounded-lg px-3 py-2 pl-10 focus:ring-2 focus:ring-blue-500" />
-                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* LISTA DE CONSULTORES - CARDS */}
-            <div className="mt-8 space-y-4">
-                {consultants.filter(consultant => {
-                    if (selectedClientFilter !== 'all') {
-                        const gestor = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
-                        if (!gestor || String(gestor.id_cliente) !== selectedClientFilter) return false;
-                    }
-                    if (selectedConsultantFilter !== 'all') { if (consultant.nome_consultores !== selectedConsultantFilter) return false; }
-                    if (searchQuery.trim() !== '') { return consultant.nome_consultores.toLowerCase().includes(searchQuery.toLowerCase()); }
-                    return true;
-                }).map((consultant) => {
-                    const isExpanded = expandedCards.has(consultant.id);
-                    const coordName = getCoordinatorName(consultant);
-                    
-                    return (
-                        <div key={consultant.id} className="border rounded-xl overflow-hidden bg-white shadow-sm hover:shadow-md transition-shadow">
-                            <div className="p-4 cursor-pointer flex justify-between items-start bg-gradient-to-r from-gray-50 to-white" onClick={() => toggleCardExpanded(consultant.id)}>
+                ) : (
+                    filteredConsultants.map(consultant => (
+                        <div 
+                            key={consultant.id} 
+                            className={`border rounded-lg p-4 hover:shadow-md transition-shadow ${!consultant.ativo_consultor ? 'bg-gray-50 border-gray-300' : 'bg-white'}`}
+                        >
+                            <div className="flex justify-between items-start">
                                 <div className="flex-1">
                                     <div className="flex items-center gap-3 mb-2">
-                                        <h3 className="text-xl font-bold text-gray-800">{consultant.nome_consultores}</h3>
-                                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${consultant.status === 'Ativo' ? 'bg-green-100 text-green-800' : consultant.status === 'Perdido' ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'}`}>{consultant.status}</span>
-                                        {consultant.ativo_consultor === false && (<span className="px-2 py-1 rounded-full text-xs font-semibold bg-gray-200 text-gray-600">Inativo</span>)}
+                                        <h3 className="text-lg font-semibold text-gray-900">{consultant.nome_consultores}</h3>
+                                        <span className={`px-2 py-0.5 text-xs rounded-full ${
+                                            consultant.ativo_consultor 
+                                                ? 'bg-green-100 text-green-700' 
+                                                : 'bg-red-100 text-red-700'
+                                        }`}>
+                                            {consultant.ativo_consultor ? 'Ativo' : 'Inativo'}
+                                        </span>
+                                        {/* ✅ NOVO: Badge de modalidade */}
+                                        <span className={`px-2 py-0.5 text-xs rounded-full ${
+                                            (consultant as any).modalidade_contrato === 'CLT' 
+                                                ? 'bg-blue-100 text-blue-700' 
+                                                : (consultant as any).modalidade_contrato === 'Temporário'
+                                                    ? 'bg-yellow-100 text-yellow-700'
+                                                    : 'bg-purple-100 text-purple-700'
+                                        }`}>
+                                            {(consultant as any).modalidade_contrato || 'PJ'}
+                                        </span>
+                                        {/* ✅ NOVO: Badge de Faturável */}
+                                        {(consultant as any).faturavel === false && (
+                                            <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700">
+                                                Não Faturável
+                                            </span>
+                                        )}
+                                        {/* ✅ NOVO: Badge de substituição */}
+                                        {(consultant as any).substituicao && (
+                                            <span className="px-2 py-0.5 text-xs rounded-full bg-orange-100 text-orange-700 flex items-center gap-1">
+                                                <RefreshCw className="w-3 h-3" />
+                                                Substituição
+                                            </span>
+                                        )}
                                     </div>
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1 text-sm text-gray-600">
-                                        <p><span className="font-medium">Cargo:</span> {consultant.cargo_consultores}</p>
-                                        <p><span className="font-medium">Cliente:</span> {getClientName(consultant)}</p>
-                                        <p><span className="font-medium">Gestor:</span> {getManagerName(consultant)}</p>
-                                        {coordName && <p><span className="font-medium">Coord:</span> {coordName}</p>}
+                                    <p className="text-sm text-gray-600">{consultant.cargo_consultores}</p>
+                                    <div className="flex flex-wrap gap-4 mt-2 text-sm text-gray-500">
+                                        <span className="flex items-center gap-1">
+                                            <Building2 className="w-4 h-4" />
+                                            {getClientName(consultant)}
+                                        </span>
+                                        <span className="flex items-center gap-1">
+                                            <UserIcon className="w-4 h-4" />
+                                            {getManagerName(consultant)}
+                                        </span>
+                                        {consultant.email_consultor && (
+                                            <span className="flex items-center gap-1">
+                                                <Mail className="w-4 h-4" />
+                                                {consultant.email_consultor}
+                                            </span>
+                                        )}
                                     </div>
-                                    <div className="flex flex-wrap gap-4 mt-3 text-sm">
-                                        {consultant.email_consultor && (<a href={`mailto:${consultant.email_consultor}`} onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-blue-600 hover:text-blue-800"><Mail className="w-4 h-4" /><span>{consultant.email_consultor}</span></a>)}
-                                        {consultant.celular && (<a href={`https://wa.me/55${consultant.celular.replace(/[^0-9]/g, '')}`} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()} className="flex items-center gap-1 text-green-600 hover:text-green-800"><Phone className="w-4 h-4" /><span>{consultant.celular}</span></a>)}
-                                    </div>
+                                    {/* ✅ NOVO: Info de substituição */}
+                                    {(consultant as any).nome_substituido && (
+                                        <p className="text-xs text-orange-600 mt-1 flex items-center gap-1">
+                                            <RefreshCw className="w-3 h-3" />
+                                            Substituindo: {(consultant as any).nome_substituido}
+                                        </p>
+                                    )}
                                 </div>
-                                <div className="flex items-center gap-2 ml-4">
-                                    {!isReadOnly && (<button onClick={(e) => { e.stopPropagation(); setEditingConsultant(consultant); }} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm">Editar</button>)}
-                                    <button className="p-2 text-gray-500 hover:text-gray-700">{isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}</button>
+                                
+                                <div className="flex items-center gap-2">
+                                    {!isReadOnly && (
+                                        <button
+                                            onClick={() => { setEditingConsultant(consultant); setIsFormOpen(true); }}
+                                            className="px-3 py-1.5 text-sm bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors"
+                                        >
+                                            Editar
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => toggleCardExpanded(consultant.id)}
+                                        className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-colors"
+                                    >
+                                        {expandedCards.has(consultant.id) ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                                    </button>
                                 </div>
                             </div>
-
-                            {isExpanded && (
-                                <div className="border-t bg-gray-50 p-4">
-                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                        <div className="space-y-4">
-                                            <div className="bg-white p-4 rounded-lg border">
-                                                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><UserIcon className="w-4 h-4 text-blue-600" /> Dados Pessoais</h4>
-                                                <div className="grid grid-cols-2 gap-3 text-sm">
-                                                    <div><span className="text-gray-500">CPF:</span> <span className="font-medium">{consultant.cpf || '-'}</span></div>
-                                                    <div><span className="text-gray-500">Aniversário:</span> <span className="font-medium">{formatDate(consultant.dt_aniversario)}</span></div>
-                                                    <div><span className="text-gray-500">Email:</span> <span className="font-medium">{consultant.email_consultor || '-'}</span></div>
-                                                    <div><span className="text-gray-500">Celular:</span> <span className="font-medium">{consultant.celular || '-'}</span></div>
-                                                </div>
-                                            </div>
-                                            {(consultant.cnpj_consultor || consultant.empresa_consultor) && (
-                                                <div className="bg-white p-4 rounded-lg border">
-                                                    <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><Building2 className="w-4 h-4 text-purple-600" /> Dados PJ</h4>
-                                                    <div className="grid grid-cols-1 gap-3 text-sm">
-                                                        <div><span className="text-gray-500">CNPJ:</span> <span className="font-medium">{consultant.cnpj_consultor || '-'}</span></div>
-                                                        <div><span className="text-gray-500">Empresa:</span> <span className="font-medium">{consultant.empresa_consultor || '-'}</span></div>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            <div className="bg-white p-4 rounded-lg border">
-                                                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><Briefcase className="w-4 h-4 text-green-600" /> Dados Profissionais</h4>
-                                                <div className="grid grid-cols-2 gap-3 text-sm">
-                                                    <div><span className="text-gray-500">Cargo:</span> <span className="font-medium">{consultant.cargo_consultores}</span></div>
-                                                    <div><span className="text-gray-500">Especialidade:</span> <span className="font-medium">{consultant.especialidade || '-'}</span></div>
-                                                    <div><span className="text-gray-500">Data Inclusão:</span> <span className="font-medium">{formatDate(consultant.data_inclusao_consultores)}</span></div>
-                                                    <div><span className="text-gray-500">Ano Vigência:</span> <span className="font-medium">{consultant.ano_vigencia}</span></div>
-                                                    {consultant.data_saida && (<div><span className="text-gray-500">Data Saída:</span> <span className="font-medium text-red-600">{formatDate(consultant.data_saida)}</span></div>)}
-                                                    {consultant.motivo_desligamento && (<div className="col-span-2"><span className="text-gray-500">Motivo:</span> <span className="font-medium text-red-600">{consultant.motivo_desligamento}</span></div>)}
-                                                </div>
-                                            </div>
-                                            <div className="bg-white p-4 rounded-lg border">
-                                                <h4 className="font-semibold text-gray-700 mb-3 flex items-center gap-2"><DollarSign className="w-4 h-4 text-yellow-600" /> Valores Financeiros</h4>
-                                                <div className="grid grid-cols-2 gap-3 text-sm">
-                                                    <div><span className="text-gray-500">Faturamento:</span> <span className="font-medium text-green-600">{formatCurrency(consultant.valor_faturamento)}</span></div>
-                                                    <div><span className="text-gray-500">Pagamento:</span> <span className="font-medium text-blue-600">{formatCurrency(consultant.valor_pagamento)}</span></div>
-                                                </div>
-                                            </div>
+                            
+                            {/* Detalhes Expandidos */}
+                            {expandedCards.has(consultant.id) && (
+                                <div className="mt-4 pt-4 border-t grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                    <div>
+                                        <p className="text-gray-500">Data Inclusão</p>
+                                        <p className="font-medium">{formatDate(consultant.data_inclusao_consultores)}</p>
+                                    </div>
+                                    {!consultant.ativo_consultor && consultant.data_saida && (
+                                        <div>
+                                            <p className="text-gray-500">Data Saída</p>
+                                            <p className="font-medium text-red-600">{formatDate(consultant.data_saida)}</p>
                                         </div>
-
-                                        <div className="bg-white p-4 rounded-lg border">
-                                            <h4 className="font-semibold text-gray-700 mb-4 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-orange-600" /> Score de Risco - Pareceres Mensais</h4>
-                                            <div className="flex flex-wrap gap-2 justify-center mb-4">
-                                                <ScoreBadge score={consultant.parecer_1_consultor} label="P1" />
-                                                <ScoreBadge score={consultant.parecer_2_consultor} label="P2" />
-                                                <ScoreBadge score={consultant.parecer_3_consultor} label="P3" />
-                                                <ScoreBadge score={consultant.parecer_4_consultor} label="P4" />
-                                                <ScoreBadge score={consultant.parecer_5_consultor} label="P5" />
-                                                <ScoreBadge score={consultant.parecer_6_consultor} label="P6" />
-                                                <ScoreBadge score={consultant.parecer_7_consultor} label="P7" />
-                                                <ScoreBadge score={consultant.parecer_8_consultor} label="P8" />
-                                                <ScoreBadge score={consultant.parecer_9_consultor} label="P9" />
-                                                <ScoreBadge score={consultant.parecer_10_consultor} label="P10" />
-                                                <ScoreBadge score={consultant.parecer_11_consultor} label="P11" />
-                                                <ScoreBadge score={consultant.parecer_12_consultor} label="P12" />
-                                            </div>
-                                            <div className="flex justify-center">
-                                                <div className={`px-6 py-3 rounded-xl border-2 ${consultant.parecer_final_consultor === null || consultant.parecer_final_consultor === undefined ? 'bg-gray-100 border-gray-300 text-gray-500' : consultant.parecer_final_consultor >= 8 ? 'bg-green-100 border-green-400 text-green-700' : consultant.parecer_final_consultor >= 6 ? 'bg-yellow-100 border-yellow-400 text-yellow-700' : consultant.parecer_final_consultor >= 4 ? 'bg-orange-100 border-orange-400 text-orange-700' : 'bg-red-100 border-red-400 text-red-700'}`}>
-                                                    <div className="text-xs font-medium opacity-70 text-center">SCORE FINAL</div>
-                                                    <div className="text-3xl font-bold text-center">{consultant.parecer_final_consultor ?? '-'}</div>
-                                                </div>
-                                            </div>
-                                            <div className="mt-4 flex justify-center gap-4 text-xs">
-                                                <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-green-500"></div><span>8-10 Ótimo</span></div>
-                                                <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-yellow-500"></div><span>6-7 Bom</span></div>
-                                                <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-orange-500"></div><span>4-5 Atenção</span></div>
-                                                <div className="flex items-center gap-1"><div className="w-3 h-3 rounded bg-red-500"></div><span>0-3 Crítico</span></div>
-                                            </div>
+                                    )}
+                                    {!consultant.ativo_consultor && consultant.motivo_desligamento && (
+                                        <div>
+                                            <p className="text-gray-500">Motivo Desligamento</p>
+                                            <p className="font-medium text-red-600">{consultant.motivo_desligamento}</p>
                                         </div>
+                                    )}
+                                    <div>
+                                        <p className="text-gray-500">Faturamento/h</p>
+                                        <p className="font-medium">{formatCurrency(consultant.valor_faturamento)}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-500">Pagamento/h</p>
+                                        <p className="font-medium">{formatCurrency(consultant.valor_pagamento)}</p>
                                     </div>
                                 </div>
                             )}
                         </div>
-                    );
-                })}
+                    ))
+                )}
             </div>
         </div>
     );
