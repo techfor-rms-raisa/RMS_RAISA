@@ -2,10 +2,10 @@
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para análise de riscos de consultores
  * 
- * v52 - CORRIGIDO: 
- * - Modelo alterado para gemini-2.0-flash-exp (compatível com @google/genai)
- * - Agora usa extractedMonth e extractedYear do frontend
- * - Timeout aumentado para requisições longas
+ * v53 - CORRIGIDO: 
+ * - IA agora extrai o TRECHO ORIGINAL do relatório de cada consultor
+ * - Campo 'trechoOriginal' retornado para cada consultor
+ * - Resolve problema de salvar relatório inteiro para todos
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -30,7 +30,7 @@ const ai = new GoogleGenAI({ apiKey });
 const AI_MODEL = 'gemini-2.0-flash-exp';
 
 // Versão da API
-const API_VERSION = 'v52';
+const API_VERSION = 'v53';
 
 // ========================================
 // CONFIGURAÇÃO DE TIMEOUT PARA VERCEL PRO
@@ -124,7 +124,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       negativePattern: result.padraoNegativoIdentificado || result.negativePattern || 'Nenhum',
       predictiveAlert: result.alertaPreditivo || result.predictiveAlert || 'Nenhum',
       recommendations: result.recomendacoes || result.recommendations || [],
-      details: result.resumoSituacao || result.summary || ''
+      details: result.resumoSituacao || result.summary || '',
+      // ✅ NOVO v53: Trecho original do relatório específico deste consultor
+      trechoOriginal: result.trechoOriginal || result.originalText || ''
     }));
 
     console.log(`✅ [RESPONSE] ${results.length} consultores analisados`);
@@ -228,6 +230,7 @@ ${reportText.substring(0, 8000)}
     "padraoNegativoIdentificado": "Descreva o padrão negativo ou 'Nenhum'",
     "alertaPreditivo": "Risco futuro identificado ou 'Nenhum'",
     "justificativaScore": "Explique por que atribuiu este score",
+    "trechoOriginal": "COPIE EXATAMENTE o trecho do relatório original que se refere a este consultor (desde o nome até o próximo consultor ou fim do texto). Isso é OBRIGATÓRIO.",
     "recomendacoes": [
       {
         "tipo": "AcaoImediata | QuestaoSondagem | RecomendacaoEstrategica",
@@ -239,10 +242,12 @@ ${reportText.substring(0, 8000)}
 ]
 \`\`\`
 
-IMPORTANTE: Analise cuidadosamente o texto. Se houver menção a conflitos, assédio, descontentamento ou situações graves, o score DEVE ser 4 ou 5.
+IMPORTANTE: 
+1. Analise cuidadosamente o texto. Se houver menção a conflitos, assédio, descontentamento ou situações graves, o score DEVE ser 4 ou 5.
+2. O campo "trechoOriginal" deve conter EXATAMENTE o texto original do relatório que se refere àquele consultor específico. NÃO resuma, COPIE o texto original.
 `;
 
-  console.log('📄 Chamando API Gemini com prompt aprimorado v52...');
+  console.log('📄 Chamando API Gemini com prompt aprimorado v53...');
   
   // Chamada à API
   const result = await ai.models.generateContent({ 

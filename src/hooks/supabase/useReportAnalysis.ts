@@ -3,10 +3,9 @@
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui integração com Gemini AI e notificações de risco crítico
  * 
- * ✅ VERSÃO 2.0 - COMPLIANCE INTEGRATION
- * - Salva feedback automaticamente após análise da IA
- * - Deriva sentiment e risk_level do score
- * - Suporta análise temporal (month/year)
+ * ✅ VERSÃO 2.1 - FIX TRECHO ORIGINAL
+ * - Usa trechoOriginal retornado pela IA (não o relatório completo)
+ * - Salva apenas a parte do relatório que compete ao consultor
  */
 
 import { supabase } from '../../config/supabase';
@@ -192,7 +191,9 @@ export const useReportAnalysis = () => {
             }
             return rec;
           }),
-          details: analysis.details || analysis.summary
+          details: analysis.details || analysis.summary,
+          // ✅ NOVO v2.1: Trecho original do relatório específico do consultor
+          trechoOriginal: analysis.trechoOriginal || null
         };
       });
       
@@ -214,8 +215,7 @@ export const useReportAnalysis = () => {
    * Atualiza o score de risco de um consultor e salva relatório
    * Dispara notificações de risco crítico quando necessário
    * 
-   * ✅ v2.0: Salva feedback automaticamente para análise de compliance
-   * ✅ v2.1: Salva texto original do relatório em 'content'
+   * ✅ v2.1: Usa trechoOriginal da IA (não o relatório completo)
    */
   const updateConsultantScore = async (
     result: AIAnalysisResult,
@@ -224,7 +224,7 @@ export const useReportAnalysis = () => {
     users: User[],
     usuariosCliente: UsuarioCliente[],
     clients: Client[],
-    originalContent?: string // ✅ NOVO: Texto original do relatório
+    _originalContent?: string // ✅ DEPRECATED: Não usar mais - manter para compatibilidade
   ) => {
     try {
       console.log(`📊 Atualizando score do consultor: ${result.consultantName}`);
@@ -246,7 +246,12 @@ export const useReportAnalysis = () => {
       // ✅ CORREÇÃO: Usa o ano do resultado se disponível
       const reportYear = (result as any).reportYear || new Date().getFullYear();
       
-      // ✅ CORREÇÃO v2.1: Salvar texto ORIGINAL em content, resumo da IA em summary
+      // ✅ CORREÇÃO v2.1: Usar trechoOriginal da IA, NÃO o relatório completo
+      // Prioridade: 1) trechoOriginal da IA, 2) details, 3) summary
+      const conteudoOriginal = (result as any).trechoOriginal || result.details || result.summary;
+      
+      console.log(`📝 Conteúdo a salvar (${conteudoOriginal?.length || 0} chars): ${conteudoOriginal?.substring(0, 100)}...`);
+      
       // Criar objeto de relatório
       const newReport: ConsultantReport = {
         id: `${consultant.id}_${result.reportMonth}_${Date.now()}`,
@@ -257,7 +262,7 @@ export const useReportAnalysis = () => {
         negativePattern: result.negativePattern,
         predictiveAlert: result.predictiveAlert,
         recommendations: result.recommendations,
-        content: originalContent || result.details || result.summary, // ✅ Prioriza texto original
+        content: conteudoOriginal, // ✅ CORREÇÃO: Trecho original do consultor (não relatório inteiro)
         createdAt: new Date().toISOString(),
         generatedBy: 'manual',
         aiJustification: 'Análise baseada em relatório de atividades manual'
@@ -290,7 +295,7 @@ export const useReportAnalysis = () => {
           negative_pattern: newReport.negativePattern,
           predictive_alert: newReport.predictiveAlert,
           recommendations: JSON.stringify(newReport.recommendations),
-          content: newReport.content,
+          content: newReport.content, // ✅ CORREÇÃO: Trecho original do consultor
           generated_by: newReport.generatedBy,
           ai_justification: newReport.aiJustification
         }]);
@@ -300,7 +305,7 @@ export const useReportAnalysis = () => {
         throw reportError;
       }
       
-      console.log(`✅ Relatório salvo (acumulativo): ${consultant.nome_consultores} - Mês ${newReport.month}/${newReport.year}`);
+      console.log(`✅ Relatório salvo (trecho específico): ${consultant.nome_consultores} - Mês ${newReport.month}/${newReport.year}`);
       
       // ✅ NOVO v2.0: Salvar feedback para análise de compliance
       await saveFeedbackFromAnalysis(

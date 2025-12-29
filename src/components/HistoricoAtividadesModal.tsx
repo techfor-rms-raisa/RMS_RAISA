@@ -1,5 +1,8 @@
+// src/components/HistoricoAtividadesModal.tsx
+// ✅ VERSÃO CORRIGIDA - Exibe conteúdo original do relatório (não apenas resumo)
+
 import React, { useMemo } from 'react';
-import { X, Calendar, FileText, AlertCircle, TrendingUp } from 'lucide-react';
+import { X, Calendar, FileText, AlertCircle, TrendingUp, Bot } from 'lucide-react';
 import { Consultant, ConsultantReport } from '@/types';
 
 interface HistoricoAtividadesModalProps {
@@ -161,68 +164,85 @@ const HistoricoAtividadesModal: React.FC<HistoricoAtividadesModalProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
-              {reportsLast90Days.map((report, index) => (
-                <div 
-                  key={report.id || index}
-                  className="bg-white border-2 border-gray-100 rounded-xl p-5 hover:border-purple-200 hover:shadow-lg transition-all duration-200"
-                >
-                  {/* Report Header - Linha Única */}
-                  <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
-                    <div className="flex items-center gap-3">
-                      <div className="bg-gray-100 p-2 rounded-lg">
-                        <Calendar className="w-4 h-4 text-gray-600" />
-                      </div>
-                      <div>
-                        <span className="text-sm font-bold text-gray-800">
-                          {monthNames[report.month - 1]} {report.year}
-                        </span>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          {formatDate(report.createdAt)}
-                        </p>
-                      </div>
-                    </div>
-                    <div 
-                      className="px-4 py-1.5 rounded-full text-white text-xs font-bold shadow-md"
-                      style={{ backgroundColor: getScoreColor(report.riskScore) }}
-                    >
-                      {getScoreLabel(report.riskScore)} • {report.riskScore}
-                    </div>
-                  </div>
-
-                  {/* Report Content - Melhor Formatação */}
-                  <div className="space-y-3">
-                    <div>
-                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-2">
-                        <FileText className="w-3.5 h-3.5" />
-                        Relatório de Atividade
-                      </h4>
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 leading-relaxed">
-                        {report.content || report.summary || 'Conteúdo não disponível'}
-                      </div>
-                    </div>
-
-                    {/* Recommendations - Mais Compactas */}
-                    {report.recommendations && Array.isArray(report.recommendations) && report.recommendations.length > 0 && (
-                      <div>
-                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                          Recomendações
-                        </h4>
-                        <div className="space-y-2">
-                          {report.recommendations.map((rec, idx) => (
-                            <div 
-                              key={idx} 
-                              className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg"
-                            >
-                              <span className="font-bold text-blue-900 text-xs uppercase">{rec.tipo}</span>
-                              <p className="text-gray-700 text-sm mt-1">{rec.descricao}</p>
-                            </div>
-                          ))}
+              {reportsLast90Days.map((report, index) => {
+                // ✅ CORREÇÃO: Priorizar content (original) sobre summary (resumo)
+                const conteudoExibir = report.content || report.summary || 'Conteúdo não disponível';
+                const temResumoSeparado = report.summary && report.content && report.summary !== report.content;
+                
+                return (
+                  <div 
+                    key={report.id || index}
+                    className="bg-white border-2 border-gray-100 rounded-xl p-5 hover:border-purple-200 hover:shadow-lg transition-all duration-200"
+                  >
+                    {/* Report Header - Linha Única */}
+                    <div className="flex items-center justify-between mb-4 pb-3 border-b border-gray-100">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-gray-100 p-2 rounded-lg">
+                          <Calendar className="w-4 h-4 text-gray-600" />
+                        </div>
+                        <div>
+                          <span className="text-sm font-bold text-gray-800">
+                            {monthNames[report.month - 1]} {report.year}
+                          </span>
+                          <p className="text-xs text-gray-500 mt-0.5">
+                            {formatDate(report.createdAt)}
+                          </p>
                         </div>
                       </div>
-                    )}
+                      <div 
+                        className="px-4 py-1.5 rounded-full text-white text-xs font-bold shadow-md"
+                        style={{ backgroundColor: getScoreColor(report.riskScore) }}
+                      >
+                        {getScoreLabel(report.riskScore)} • {report.riskScore}
+                      </div>
+                    </div>
+
+                    {/* Report Content - ✅ CORREÇÃO: Exibe conteúdo original */}
+                    <div className="space-y-3">
+                      <div>
+                        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-2">
+                          <FileText className="w-3.5 h-3.5" />
+                          Relatório de Atividade
+                        </h4>
+                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                          {conteudoExibir}
+                        </div>
+                      </div>
+
+                      {/* ✅ NOVO: Mostrar resumo da IA separadamente se diferente do conteúdo */}
+                      {temResumoSeparado && (
+                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                          <h4 className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-1 flex items-center gap-1">
+                            <Bot className="w-3.5 h-3.5" />
+                            Resumo da IA
+                          </h4>
+                          <p className="text-sm text-blue-800">{report.summary}</p>
+                        </div>
+                      )}
+
+                      {/* Recommendations - Mais Compactas */}
+                      {report.recommendations && Array.isArray(report.recommendations) && report.recommendations.length > 0 && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                            Recomendações
+                          </h4>
+                          <div className="space-y-2">
+                            {report.recommendations.map((rec, idx) => (
+                              <div 
+                                key={idx} 
+                                className="bg-blue-50 border-l-4 border-blue-500 p-3 rounded-r-lg"
+                              >
+                                <span className="font-bold text-blue-900 text-xs uppercase">{rec.tipo}</span>
+                                <p className="text-gray-700 text-sm mt-1">{rec.descricao}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

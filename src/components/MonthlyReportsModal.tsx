@@ -1,3 +1,6 @@
+// src/components/MonthlyReportsModal.tsx
+// ✅ VERSÃO CORRIGIDA - Exibe conteúdo original do relatório (não apenas resumo)
+
 import React from 'react';
 import { Consultant, ConsultantReport } from '@/types';
 
@@ -73,6 +76,9 @@ const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ consultant, m
                                 const createdDate = formatCreatedDate(report.created_at);
                                 const riskScore = report.risk_score;
                                 
+                                // ✅ CORREÇÃO: Priorizar content (original) sobre summary (resumo)
+                                const conteudoExibir = report.content || report.summary || 'Nenhum conteúdo disponível.';
+                                
                                 return (
                                     <div key={report.id} className="border border-gray-200 rounded-lg p-4">
                                         {/* ✅ CORREÇÃO: Exibir período de referência e data de registro */}
@@ -112,11 +118,21 @@ const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ consultant, m
                                             </div>
                                         )}
                                         
+                                        {/* ✅ CORREÇÃO: Exibir conteúdo original do relatório */}
                                         <h3 className="font-bold text-gray-800 mb-2">Relatório de Atividade</h3>
-                                        <div 
-                                            className="prose prose-sm max-w-none text-gray-700"
-                                            dangerouslySetInnerHTML={{ __html: report.summary || report.content || '<p>Nenhum conteúdo disponível.</p>' }}
-                                        ></div>
+                                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                            {conteudoExibir}
+                                        </div>
+                                        
+                                        {/* ✅ NOVO: Mostrar resumo da IA separadamente se diferente do conteúdo */}
+                                        {report.summary && report.content && report.summary !== report.content && (
+                                            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                                <h4 className="text-xs font-semibold text-blue-700 uppercase mb-1">
+                                                    🤖 Resumo da IA
+                                                </h4>
+                                                <p className="text-sm text-blue-800">{report.summary}</p>
+                                            </div>
+                                        )}
                                         
                                         {/* Padrão Negativo */}
                                         {report.negative_pattern && report.negative_pattern !== 'Nenhum' && (
