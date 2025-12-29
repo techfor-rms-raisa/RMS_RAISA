@@ -3,7 +3,7 @@
  * Gerencia análise de candidatos e recomendações de IA
  */
 
-import { recomendarDecisaoCandidato, registrarEnvioCVAoCliente, registrarDivergenciaAnalista, registrarFeedbackCliente, buscarRecomendacaoIA, analisarAcuraciaRecomendacoes, buscarDivergencias } from '../src/services/recomendacaoAnalistaService';
+import { recomendarDecisaoCandidato, registrarDivergenciaAnalista, buscarRecomendacaoIA } from '../src/services/recomendacaoAnalistaService';
 
 export default async function handler(req: any, res: any) {
   const { method } = req;
@@ -11,7 +11,7 @@ export default async function handler(req: any, res: any) {
   try {
     // POST /api/recomendacao-analista/analisar
     if (method === 'POST' && req.url?.includes('/analisar')) {
-      const { candidaturaId, analistaId, parecerAnalista } = req.body;
+      const { candidaturaId, analistaId } = req.body;
 
       if (!candidaturaId || !analistaId) {
         return res.status(400).json({

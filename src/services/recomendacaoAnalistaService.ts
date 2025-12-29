@@ -64,7 +64,7 @@ export async function recomendarDecisaoCandidato(
         if (errorResp) throw errorResp;
 
         // 3. Buscar resumo da entrevista
-        const { data: entrevista, error: errorEntr } = await supabase
+        const { data: entrevista } = await supabase
             .from('entrevistas')
             .select('*')
             .eq('candidatura_id', candidaturaId)
@@ -73,7 +73,7 @@ export async function recomendarDecisaoCandidato(
             .single();
 
         // 4. Buscar padrões de reprovação
-        const { data: padroesReprov, error: errorPadroes } = await supabase
+        const { data: padroesReprov } = await supabase
             .from('candidaturas')
             .select('feedback_cliente, feedback_cliente_categoria')
             .eq('status', 'rejeitado')
