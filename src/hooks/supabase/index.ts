@@ -4,6 +4,7 @@
  * 
  * Atualizado v2.0: Adicionados hooks RAISA (26/12/2024)
  * Atualizado v2.1: Adicionados hooks de Distribuição e ML (28/12/2024)
+ * Atualizado v2.2: Adicionado useAnaliseCandidato (30/12/2025)
  */
 
 // Hooks base
@@ -57,3 +58,10 @@ export { usePosicaoComercial } from './usePosicaoComercial';
 
 // Hooks de Áudio
 export { useAudioEntrevista } from './useAudioEntrevista';
+
+// ============================================
+// HOOKS ADICIONADOS EM 30/12/2025
+// ============================================
+
+// Hook de Análise de Candidatos (Nova Candidatura)
+export { useAnaliseCandidato } from './useAnaliseCandidato';

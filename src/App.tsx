@@ -273,8 +273,14 @@ const App: React.FC = () => {
             updateVaga={updateVaga} 
             deleteVaga={deleteVaga} 
           />;
-      case 'candidaturas':
-          return <Candidaturas candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} updateStatus={updateCandidaturaStatus} />;
+          return <Candidaturas 
+            candidaturas={candidaturas} 
+            vagas={vagas} 
+            pessoas={pessoas} 
+            updateStatus={updateCandidaturaStatus}
+            onReload={loadAllData}
+            currentUserId={currentUser?.id || 1}
+          />;
       case 'analise_risco':
           return <AnaliseRisco />;
       case 'pipeline':
