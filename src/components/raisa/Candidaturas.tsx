@@ -1,12 +1,19 @@
 /**
- * Candidaturas.tsx - RMS RAISA v53.0
+ * Candidaturas.tsx - RMS RAISA v54.0
  * Componente de Gestão de Candidaturas (ATUALIZADO)
  * 
- * NOVIDADES v53.0:
- * - Botão "+ Nova Candidatura" com modal integrado
- * - Resumo visual de status no header
- * - Integração com NovaCandidaturaModal
- * - Salvamento automático no Banco de Talentos
+ * FLUXO DE STATUS (Processos Internos):
+ * Triagem → Entrevista → Aprovado/Reprovado
+ * Aprovado → Envio Cliente → Aguardando → Entrevista Cliente
+ * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
+ * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
+ * 
+ * NOVIDADES v54.0:
+ * - Modal de Detalhes da Candidatura ao clicar na linha
+ * - Histórico de mudanças de status
+ * - Ações rápidas para mudar status
+ * - Motivo obrigatório para reprovação
+ * - Fluxo ajustado conforme processos internos
  * 
  * Data: 30/12/2025
  */
@@ -15,10 +22,11 @@ import React, { useState, useMemo } from 'react';
 import { 
   Plus, Filter, Search, RefreshCw, 
   User, Mail, Calendar, ChevronDown,
-  FileText, Briefcase
+  FileText, Briefcase, Eye
 } from 'lucide-react';
 import { Candidatura, Vaga, Pessoa } from '@/types';
 import NovaCandidaturaModal from './NovaCandidaturaModal';
+import DetalhesCandidaturaModal from './DetalhesCandidaturaModal';
 
 // ============================================
 // TIPOS
@@ -31,6 +39,7 @@ interface CandidaturasProps {
     updateStatus: (id: string, status: any) => void;
     onReload?: () => void;
     currentUserId?: number;
+    currentUserName?: string;
 }
 
 // ============================================
@@ -43,13 +52,18 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     pessoas = [], 
     updateStatus,
     onReload,
-    currentUserId = 1
+    currentUserId = 1,
+    currentUserName = 'Usuário'
 }) => {
     // Estados
     const [filterVaga, setFilterVaga] = useState<string>('all');
     const [filterStatus, setFilterStatus] = useState<string>('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
+    
+    // Estado para modal de detalhes
+    const [candidaturaSelecionada, setCandidaturaSelecionada] = useState<Candidatura | null>(null);
+    const [isDetalhesModalOpen, setIsDetalhesModalOpen] = useState(false);
 
     // ✅ Garantir arrays seguros
     const safeCandidaturas = Array.isArray(candidaturas) ? candidaturas : [];
@@ -64,17 +78,14 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         return {
             triagem: safeCandidaturas.filter(c => c.status === 'triagem').length,
             entrevista: safeCandidaturas.filter(c => c.status === 'entrevista').length,
-            teste_tecnico: safeCandidaturas.filter(c => c.status === 'teste_tecnico').length,
+            aprovado: safeCandidaturas.filter(c => c.status === 'aprovado').length,
             enviado_cliente: safeCandidaturas.filter(c => c.status === 'enviado_cliente').length,
             aguardando_cliente: safeCandidaturas.filter(c => c.status === 'aguardando_cliente').length,
-            aprovado: safeCandidaturas.filter(c => 
-                c.status === 'aprovado' || 
-                c.status === 'aprovado_interno' || 
-                c.status === 'aprovado_cliente'
-            ).length,
+            entrevista_cliente: safeCandidaturas.filter(c => c.status === 'entrevista_cliente').length,
+            aprovado_cliente: safeCandidaturas.filter(c => c.status === 'aprovado_cliente').length,
+            contratado: safeCandidaturas.filter(c => c.status === 'contratado').length,
             reprovado: safeCandidaturas.filter(c => 
                 c.status === 'reprovado' || 
-                c.status === 'reprovado_interno' || 
                 c.status === 'reprovado_cliente'
             ).length,
             total: safeCandidaturas.length
@@ -95,7 +106,14 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         
         // Filtro por status
         if (filterStatus !== 'all') {
-            filtered = filtered.filter(c => c.status === filterStatus);
+            if (filterStatus === 'reprovado') {
+                filtered = filtered.filter(c => 
+                    c.status === 'reprovado' || 
+                    c.status === 'reprovado_cliente'
+                );
+            } else {
+                filtered = filtered.filter(c => c.status === filterStatus);
+            }
         }
         
         // Filtro por busca
@@ -121,13 +139,24 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         return vaga?.titulo || `Vaga #${vagaId}`;
     };
 
+    const getVagaById = (vagaId: string | number | undefined): Vaga | undefined => {
+        if (!vagaId) return undefined;
+        const vagaIdStr = String(vagaId);
+        return safeVagas.find(v => String(v.id) === vagaIdStr);
+    };
+
+    const getPessoaById = (pessoaId: string | number | undefined): Pessoa | undefined => {
+        if (!pessoaId) return undefined;
+        const pessoaIdStr = String(pessoaId);
+        return safePessoas.find(p => String(p.id) === pessoaIdStr);
+    };
+
     const getCandidatoName = (candidatura: Candidatura): string => {
         if (candidatura.candidato_nome) {
             return candidatura.candidato_nome;
         }
         if (candidatura.pessoa_id) {
-            const pessoaIdStr = String(candidatura.pessoa_id);
-            const pessoa = safePessoas.find(p => String(p.id) === pessoaIdStr);
+            const pessoa = getPessoaById(candidatura.pessoa_id);
             if (pessoa?.nome) return pessoa.nome;
         }
         return 'Candidato não identificado';
@@ -142,39 +171,64 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         }
     };
 
-    // Cores dos status
+    // Cores dos status - FLUXO ATUALIZADO
     const statusColors: Record<string, string> = {
         'triagem': 'bg-gray-100 text-gray-800',
         'entrevista': 'bg-blue-100 text-blue-800',
-        'teste_tecnico': 'bg-yellow-100 text-yellow-800',
         'aprovado': 'bg-green-100 text-green-800',
-        'aprovado_interno': 'bg-green-100 text-green-800',
-        'aprovado_cliente': 'bg-emerald-100 text-emerald-800',
         'reprovado': 'bg-red-100 text-red-800',
-        'reprovado_interno': 'bg-red-100 text-red-800',
-        'reprovado_cliente': 'bg-rose-100 text-rose-800',
         'enviado_cliente': 'bg-purple-100 text-purple-800',
-        'aguardando_cliente': 'bg-orange-100 text-orange-800'
+        'aguardando_cliente': 'bg-orange-100 text-orange-800',
+        'entrevista_cliente': 'bg-indigo-100 text-indigo-800',
+        'aprovado_cliente': 'bg-emerald-100 text-emerald-800',
+        'reprovado_cliente': 'bg-rose-100 text-rose-800',
+        'contratado': 'bg-teal-100 text-teal-800'
     };
 
-    // Labels amigáveis para status
+    // Labels amigáveis para status - FLUXO ATUALIZADO
     const statusLabels: Record<string, string> = {
         'triagem': 'Triagem',
         'entrevista': 'Entrevista',
-        'teste_tecnico': 'Teste Técnico',
         'aprovado': 'Aprovado',
-        'aprovado_interno': 'Aprovado Interno',
-        'aprovado_cliente': 'Aprovado Cliente',
         'reprovado': 'Reprovado',
-        'reprovado_interno': 'Reprovado Interno',
-        'reprovado_cliente': 'Reprovado Cliente',
         'enviado_cliente': 'Enviado ao Cliente',
-        'aguardando_cliente': 'Aguardando Cliente'
+        'aguardando_cliente': 'Aguardando Cliente',
+        'entrevista_cliente': 'Entrevista Cliente',
+        'aprovado_cliente': 'Aprovado pelo Cliente',
+        'reprovado_cliente': 'Reprovado pelo Cliente',
+        'contratado': 'Contratado'
     };
 
-    // Handler para candidatura criada
+    // ============================================
+    // HANDLERS
+    // ============================================
+
     const handleCandidaturaCriada = (candidaturaId: number) => {
         console.log('✅ Nova candidatura criada:', candidaturaId);
+        if (onReload) {
+            onReload();
+        }
+    };
+
+    const handleAbrirDetalhes = (candidatura: Candidatura) => {
+        setCandidaturaSelecionada(candidatura);
+        setIsDetalhesModalOpen(true);
+    };
+
+    const handleStatusChange = (novoStatus: string, motivo?: string) => {
+        if (candidaturaSelecionada) {
+            updateStatus(candidaturaSelecionada.id, novoStatus);
+            // Atualizar candidatura selecionada localmente
+            setCandidaturaSelecionada({
+                ...candidaturaSelecionada,
+                status: novoStatus as any
+            });
+        }
+    };
+
+    const handleFecharDetalhes = () => {
+        setIsDetalhesModalOpen(false);
+        setCandidaturaSelecionada(null);
         if (onReload) {
             onReload();
         }
@@ -211,56 +265,70 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
             </div>
 
             {/* ============================================ */}
-            {/* RESUMO DE STATUS */}
+            {/* RESUMO DE STATUS - FLUXO ATUALIZADO */}
             {/* ============================================ */}
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-2">
                 <div 
-                    onClick={() => setFilterStatus('triagem')}
-                    className={`bg-white rounded-xl p-4 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'triagem' ? 'border-gray-500' : 'border-gray-100'}`}
+                    onClick={() => setFilterStatus(filterStatus === 'triagem' ? 'all' : 'triagem')}
+                    className={`bg-white rounded-xl p-3 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'triagem' ? 'border-gray-500 shadow-md' : 'border-gray-100'}`}
                 >
-                    <p className="text-2xl font-bold text-gray-700">{contadores.triagem}</p>
+                    <p className="text-xl font-bold text-gray-700">{contadores.triagem}</p>
                     <p className="text-xs text-gray-500">Triagem</p>
                 </div>
                 <div 
-                    onClick={() => setFilterStatus('entrevista')}
-                    className={`bg-white rounded-xl p-4 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'entrevista' ? 'border-blue-500' : 'border-gray-100'}`}
+                    onClick={() => setFilterStatus(filterStatus === 'entrevista' ? 'all' : 'entrevista')}
+                    className={`bg-white rounded-xl p-3 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'entrevista' ? 'border-blue-500 shadow-md' : 'border-gray-100'}`}
                 >
-                    <p className="text-2xl font-bold text-blue-600">{contadores.entrevista}</p>
+                    <p className="text-xl font-bold text-blue-600">{contadores.entrevista}</p>
                     <p className="text-xs text-gray-500">Entrevista</p>
                 </div>
                 <div 
-                    onClick={() => setFilterStatus('teste_tecnico')}
-                    className={`bg-white rounded-xl p-4 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'teste_tecnico' ? 'border-yellow-500' : 'border-gray-100'}`}
+                    onClick={() => setFilterStatus(filterStatus === 'aprovado' ? 'all' : 'aprovado')}
+                    className={`bg-white rounded-xl p-3 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'aprovado' ? 'border-green-500 shadow-md' : 'border-gray-100'}`}
                 >
-                    <p className="text-2xl font-bold text-yellow-600">{contadores.teste_tecnico}</p>
-                    <p className="text-xs text-gray-500">Teste Téc.</p>
+                    <p className="text-xl font-bold text-green-600">{contadores.aprovado}</p>
+                    <p className="text-xs text-gray-500">Aprovado</p>
                 </div>
                 <div 
-                    onClick={() => setFilterStatus('enviado_cliente')}
-                    className={`bg-white rounded-xl p-4 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'enviado_cliente' ? 'border-purple-500' : 'border-gray-100'}`}
+                    onClick={() => setFilterStatus(filterStatus === 'enviado_cliente' ? 'all' : 'enviado_cliente')}
+                    className={`bg-white rounded-xl p-3 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'enviado_cliente' ? 'border-purple-500 shadow-md' : 'border-gray-100'}`}
                 >
-                    <p className="text-2xl font-bold text-purple-600">{contadores.enviado_cliente}</p>
+                    <p className="text-xl font-bold text-purple-600">{contadores.enviado_cliente}</p>
                     <p className="text-xs text-gray-500">Env. Cliente</p>
                 </div>
                 <div 
-                    onClick={() => setFilterStatus('aguardando_cliente')}
-                    className={`bg-white rounded-xl p-4 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'aguardando_cliente' ? 'border-orange-500' : 'border-gray-100'}`}
+                    onClick={() => setFilterStatus(filterStatus === 'aguardando_cliente' ? 'all' : 'aguardando_cliente')}
+                    className={`bg-white rounded-xl p-3 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'aguardando_cliente' ? 'border-orange-500 shadow-md' : 'border-gray-100'}`}
                 >
-                    <p className="text-2xl font-bold text-orange-600">{contadores.aguardando_cliente}</p>
+                    <p className="text-xl font-bold text-orange-600">{contadores.aguardando_cliente}</p>
                     <p className="text-xs text-gray-500">Aguard.</p>
                 </div>
                 <div 
-                    onClick={() => setFilterStatus('aprovado')}
-                    className={`bg-white rounded-xl p-4 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'aprovado' ? 'border-green-500' : 'border-gray-100'}`}
+                    onClick={() => setFilterStatus(filterStatus === 'entrevista_cliente' ? 'all' : 'entrevista_cliente')}
+                    className={`bg-white rounded-xl p-3 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'entrevista_cliente' ? 'border-indigo-500 shadow-md' : 'border-gray-100'}`}
                 >
-                    <p className="text-2xl font-bold text-green-600">{contadores.aprovado}</p>
-                    <p className="text-xs text-gray-500">Aprovados</p>
+                    <p className="text-xl font-bold text-indigo-600">{contadores.entrevista_cliente}</p>
+                    <p className="text-xs text-gray-500">Ent. Cliente</p>
                 </div>
                 <div 
-                    onClick={() => setFilterStatus('reprovado')}
-                    className={`bg-white rounded-xl p-4 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'reprovado' ? 'border-red-500' : 'border-gray-100'}`}
+                    onClick={() => setFilterStatus(filterStatus === 'aprovado_cliente' ? 'all' : 'aprovado_cliente')}
+                    className={`bg-white rounded-xl p-3 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'aprovado_cliente' ? 'border-emerald-500 shadow-md' : 'border-gray-100'}`}
                 >
-                    <p className="text-2xl font-bold text-red-600">{contadores.reprovado}</p>
+                    <p className="text-xl font-bold text-emerald-600">{contadores.aprovado_cliente}</p>
+                    <p className="text-xs text-gray-500">Aprov. Cli.</p>
+                </div>
+                <div 
+                    onClick={() => setFilterStatus(filterStatus === 'contratado' ? 'all' : 'contratado')}
+                    className={`bg-white rounded-xl p-3 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'contratado' ? 'border-teal-500 shadow-md' : 'border-gray-100'}`}
+                >
+                    <p className="text-xl font-bold text-teal-600">{contadores.contratado}</p>
+                    <p className="text-xs text-gray-500">Contratado</p>
+                </div>
+                <div 
+                    onClick={() => setFilterStatus(filterStatus === 'reprovado' ? 'all' : 'reprovado')}
+                    className={`bg-white rounded-xl p-3 border-2 cursor-pointer transition-all hover:shadow-md ${filterStatus === 'reprovado' ? 'border-red-500 shadow-md' : 'border-gray-100'}`}
+                >
+                    <p className="text-xl font-bold text-red-600">{contadores.reprovado}</p>
                     <p className="text-xs text-gray-500">Reprovados</p>
                 </div>
             </div>
@@ -296,20 +364,22 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                         ))}
                     </select>
                     
-                    {/* Filtro por Status */}
+                    {/* Filtro por Status - FLUXO ATUALIZADO */}
                     <select 
-                        className="border border-gray-200 p-2 rounded-lg focus:ring-2 focus:ring-orange-500 min-w-[150px]" 
+                        className="border border-gray-200 p-2 rounded-lg focus:ring-2 focus:ring-orange-500 min-w-[180px]" 
                         value={filterStatus} 
                         onChange={e => setFilterStatus(e.target.value)}
                     >
                         <option value="all">Todos os Status</option>
                         <option value="triagem">Triagem</option>
                         <option value="entrevista">Entrevista</option>
-                        <option value="teste_tecnico">Teste Técnico</option>
-                        <option value="enviado_cliente">Enviado Cliente</option>
-                        <option value="aguardando_cliente">Aguardando Cliente</option>
                         <option value="aprovado">Aprovado</option>
-                        <option value="reprovado">Reprovado</option>
+                        <option value="enviado_cliente">Enviado ao Cliente</option>
+                        <option value="aguardando_cliente">Aguardando Cliente</option>
+                        <option value="entrevista_cliente">Entrevista Cliente</option>
+                        <option value="aprovado_cliente">Aprovado pelo Cliente</option>
+                        <option value="contratado">Contratado</option>
+                        <option value="reprovado">Reprovados (todos)</option>
                     </select>
                     
                     {/* Botão Limpar */}
@@ -372,14 +442,18 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                                     <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
                                         Status
                                     </th>
-                                    <th className="px-6 py-4 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                    <th className="px-6 py-4 text-center text-xs font-bold text-gray-500 uppercase tracking-wider">
                                         Ações
                                     </th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {candidaturasFiltradas.map(c => (
-                                    <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                                    <tr 
+                                        key={c.id} 
+                                        className="hover:bg-orange-50 transition-colors cursor-pointer"
+                                        onClick={() => handleAbrirDetalhes(c)}
+                                    >
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center gap-3">
                                                 <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
@@ -412,24 +486,17 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                                                 {statusLabels[c.status] || c.status?.replace(/_/g, ' ') || 'Indefinido'}
                                             </span>
                                         </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-right">
-                                            <select 
-                                                value={c.status || 'triagem'} 
-                                                onChange={(e) => updateStatus(c.id, e.target.value)}
-                                                className="border border-gray-200 rounded-lg text-sm p-2 focus:ring-2 focus:ring-orange-500 bg-white"
+                                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleAbrirDetalhes(c);
+                                                }}
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition text-sm font-medium"
                                             >
-                                                <option value="triagem">Triagem</option>
-                                                <option value="entrevista">Entrevista</option>
-                                                <option value="teste_tecnico">Teste Técnico</option>
-                                                <option value="enviado_cliente">Enviado Cliente</option>
-                                                <option value="aguardando_cliente">Aguard. Cliente</option>
-                                                <option value="aprovado_interno">Aprovado Int.</option>
-                                                <option value="aprovado_cliente">Aprovado Cliente</option>
-                                                <option value="aprovado">Aprovado</option>
-                                                <option value="reprovado_interno">Reprovado Int.</option>
-                                                <option value="reprovado_cliente">Reprovado Cliente</option>
-                                                <option value="reprovado">Reprovado</option>
-                                            </select>
+                                                <Eye className="w-4 h-4" />
+                                                Detalhes
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}
@@ -468,6 +535,23 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                 onCandidaturaCriada={handleCandidaturaCriada}
                 currentUserId={currentUserId}
             />
+
+            {/* ============================================ */}
+            {/* MODAL DETALHES DA CANDIDATURA */}
+            {/* ============================================ */}
+            {candidaturaSelecionada && (
+                <DetalhesCandidaturaModal
+                    isOpen={isDetalhesModalOpen}
+                    onClose={handleFecharDetalhes}
+                    candidatura={candidaturaSelecionada}
+                    vaga={getVagaById(candidaturaSelecionada.vaga_id)}
+                    pessoa={getPessoaById(candidaturaSelecionada.pessoa_id)}
+                    onStatusChange={handleStatusChange}
+                    onReload={onReload}
+                    currentUserId={currentUserId}
+                    currentUserName={currentUserName}
+                />
+            )}
         </div>
     );
 };
