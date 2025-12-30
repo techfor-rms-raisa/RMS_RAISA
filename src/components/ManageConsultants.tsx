@@ -179,6 +179,12 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
         // Buscar cliente_id baseado no gestor selecionado
         const selectedGestor = usuariosCliente.find(u => u.id === parseInt(formData.gestor_imediato_id));
         const clienteId = selectedGestor?.id_cliente || null;
+        
+        // ✅ CORREÇÃO: Buscar id_gestao_de_pessoas do Cliente (não do formulário)
+        const clienteSelecionadoParaSave = clienteId 
+            ? clients.find(c => c.id === clienteId) 
+            : null;
+        const gestaoPessoasCorreta = clienteSelecionadoParaSave?.id_gestao_de_pessoas || null;
 
         const dataToSave = {
             ...formData,
@@ -187,7 +193,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             gestor_imediato_id: parseInt(formData.gestor_imediato_id),
             coordenador_id: formData.coordenador_id ? parseInt(formData.coordenador_id) : null,
             analista_rs_id: formData.analista_rs_id ? parseInt(String(formData.analista_rs_id)) : null,
-            id_gestao_de_pessoas: formData.id_gestao_de_pessoas ? parseInt(String(formData.id_gestao_de_pessoas)) : null,
+            id_gestao_de_pessoas: gestaoPessoasCorreta, // ✅ CORREÇÃO: Usar valor do Cliente, não do formulário
             valor_faturamento: parseMoneyBR(formData.valor_faturamento),
             valor_pagamento: parseMoneyBR(formData.valor_pagamento),
             data_saida: formData.data_saida || null,
@@ -235,6 +241,12 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
         ? usuariosCliente.filter(u => String(u.id_cliente) === formData.id_cliente && u.ativo !== false) : [];
     const filteredCoordenadores = formData.gestor_imediato_id 
         ? coordenadoresCliente.filter(c => String(c.id_gestor_cliente) === formData.gestor_imediato_id && c.ativo !== false) : [];
+    
+    // ✅ CORREÇÃO: Buscar Gestão de Pessoas do Cliente selecionado
+    const clienteSelecionado = formData.id_cliente 
+        ? clients.find(c => String(c.id) === formData.id_cliente) 
+        : null;
+    const gestaoPessoasDoCliente = clienteSelecionado?.id_gestao_de_pessoas || null;
 
     const getClientName = (consultant: Consultant) => {
         const gestor = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
@@ -722,16 +734,25 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                     </div>
                                     <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Gestão de Pessoas</label>
-                                        <select
-                                            value={formData.id_gestao_de_pessoas}
-                                            onChange={(e) => setFormData({...formData, id_gestao_de_pessoas: e.target.value})}
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                                        >
-                                            <option value="">Selecione...</option>
-                                            {users.filter(u => u.ativo_usuario).map(u => (
-                                                <option key={u.id} value={u.id}>{u.nome_usuario}</option>
-                                            ))}
-                                        </select>
+                                        {/* ✅ CORREÇÃO: Mostrar Gestão de Pessoas do Cliente (read-only) */}
+                                        <div className="relative">
+                                            <select
+                                                value={gestaoPessoasDoCliente || ''}
+                                                disabled={true}
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700 cursor-not-allowed"
+                                                title="Definido automaticamente pelo Cliente"
+                                            >
+                                                <option value="">Selecione um cliente primeiro...</option>
+                                                {users.filter(u => u.ativo_usuario).map(u => (
+                                                    <option key={u.id} value={u.id}>{u.nome_usuario}</option>
+                                                ))}
+                                            </select>
+                                            {gestaoPessoasDoCliente && (
+                                                <p className="text-xs text-gray-500 mt-1">
+                                                    ℹ️ Definido automaticamente pelo cadastro do Cliente
+                                                </p>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
