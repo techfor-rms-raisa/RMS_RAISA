@@ -172,6 +172,7 @@ export function useMovimentacoes() {
     gestorComercialId?: number | null
   ): Promise<InclusaoConsultor[]> => {
     try {
+      // 1. Buscar consultants
       let query = supabase
         .from('consultants')
         .select(`
@@ -180,20 +181,35 @@ export function useMovimentacoes() {
           cargo_consultores,
           status,
           data_inclusao_consultores,
+          valor_faturamento,
           valor_pagamento,
-          cliente_id,
-          candidatura_id
+          gestor_imediato_id,
+          substituicao
         `)
         .eq('status', 'Ativo')
         .not('data_inclusao_consultores', 'is', null);
 
-      const { data, error } = await query;
+      const { data: consultantsData, error } = await query;
 
       if (error) throw error;
 
-      // Filtrar por mês/ano no JavaScript
+      // 2. Buscar usuarios_cliente para mapear gestor -> cliente
+      const { data: gestoresData } = await supabase
+        .from('usuarios_cliente')
+        .select('id, id_cliente, nome_gestor_cliente');
+      
+      const gestoresMap = new Map((gestoresData || []).map(g => [g.id, g]));
+
+      // 3. Buscar clients para pegar razão social e id_gestao_comercial
+      const { data: clientsData } = await supabase
+        .from('clients')
+        .select('id, razao_social_cliente, id_gestao_comercial');
+      
+      const clientsMap = new Map((clientsData || []).map(c => [c.id, c]));
+
+      // 4. Filtrar por mês/ano no JavaScript
       const anoAtual = ano || new Date().getFullYear();
-      let resultado = (data || []).filter(c => {
+      let resultado = (consultantsData || []).filter(c => {
         if (!c.data_inclusao_consultores) return false;
         const dataInc = new Date(c.data_inclusao_consultores);
         const mesMatch = mes ? dataInc.getMonth() + 1 === mes : true;
@@ -201,18 +217,34 @@ export function useMovimentacoes() {
         return mesMatch && anoMatch;
       });
 
-      return resultado.map(c => ({
-        consultor_id: c.id,
-        nome_consultores: c.nome_consultores || '',
-        cargo_consultores: c.cargo_consultores || '',
-        razao_social_cliente: 'N/A',
-        tipo_de_vaga: 'Nova Posição',
-        regime_contratacao: 'CLT',
-        valor_mensal: c.valor_pagamento || 0,
-        valor_anual: (c.valor_pagamento || 0) * 12,
-        data_inclusao: c.data_inclusao_consultores,
-        gestor_comercial_nome: ''
-      }));
+      // 5. Filtrar por gestor comercial se especificado
+      if (gestorComercialId) {
+        resultado = resultado.filter(c => {
+          const gestor = gestoresMap.get(c.gestor_imediato_id);
+          if (!gestor) return false;
+          const cliente = clientsMap.get(gestor.id_cliente);
+          return cliente?.id_gestao_comercial === gestorComercialId;
+        });
+      }
+
+      return resultado.map(c => {
+        // Identificar cliente via cadeia: consultor -> gestor -> cliente
+        const gestor = gestoresMap.get(c.gestor_imediato_id);
+        const cliente = gestor ? clientsMap.get(gestor.id_cliente) : null;
+        
+        return {
+          consultor_id: c.id,
+          nome_consultores: c.nome_consultores || '',
+          cargo_consultores: c.cargo_consultores || '',
+          razao_social_cliente: cliente?.razao_social_cliente || 'Cliente não identificado',
+          tipo_de_vaga: c.substituicao ? 'Reposição' : 'Nova Posição',
+          regime_contratacao: 'PJ',
+          valor_mensal: c.valor_faturamento || c.valor_pagamento || 0,
+          valor_anual: (c.valor_faturamento || c.valor_pagamento || 0) * 12,
+          data_inclusao: c.data_inclusao_consultores,
+          gestor_comercial_nome: ''
+        };
+      });
 
     } catch (err) {
       console.error('Fallback error:', err);
@@ -287,6 +319,7 @@ export function useMovimentacoes() {
     gestorComercialId?: number | null
   ): Promise<ExclusaoConsultor[]> => {
     try {
+      // 1. Buscar consultants
       let query = supabase
         .from('consultants')
         .select(`
@@ -297,17 +330,34 @@ export function useMovimentacoes() {
           data_saida,
           motivo_desligamento,
           substituicao,
-          valor_pagamento
+          valor_faturamento,
+          valor_pagamento,
+          gestor_imediato_id
         `)
         .in('status', ['Perdido', 'Encerrado'])
         .not('data_saida', 'is', null);
 
-      const { data, error } = await query;
+      const { data: consultantsData, error } = await query;
 
       if (error) throw error;
 
+      // 2. Buscar usuarios_cliente para mapear gestor -> cliente
+      const { data: gestoresData } = await supabase
+        .from('usuarios_cliente')
+        .select('id, id_cliente, nome_gestor_cliente');
+      
+      const gestoresMap = new Map((gestoresData || []).map(g => [g.id, g]));
+
+      // 3. Buscar clients para pegar razão social e id_gestao_comercial
+      const { data: clientsData } = await supabase
+        .from('clients')
+        .select('id, razao_social_cliente, id_gestao_comercial');
+      
+      const clientsMap = new Map((clientsData || []).map(c => [c.id, c]));
+
+      // 4. Filtrar por mês/ano no JavaScript
       const anoAtual = ano || new Date().getFullYear();
-      let resultado = (data || []).filter(c => {
+      let resultado = (consultantsData || []).filter(c => {
         if (!c.data_saida) return false;
         const dataSaida = new Date(c.data_saida);
         const mesMatch = mes ? dataSaida.getMonth() + 1 === mes : true;
@@ -315,19 +365,35 @@ export function useMovimentacoes() {
         return mesMatch && anoMatch;
       });
 
-      return resultado.map(c => ({
-        consultor_id: c.id,
-        nome_consultores: c.nome_consultores || '',
-        cargo_consultores: c.cargo_consultores || '',
-        razao_social_cliente: 'N/A',
-        label_substituicao: c.substituicao ? 'Reposição' : 'Sem Reposição',
-        regime_contratacao: 'CLT',
-        valor_mensal: c.valor_pagamento || 0,
-        valor_anual: (c.valor_pagamento || 0) * 12,
-        data_saida: c.data_saida,
-        motivo_desligamento: c.motivo_desligamento || '',
-        gestor_comercial_nome: ''
-      }));
+      // 5. Filtrar por gestor comercial se especificado
+      if (gestorComercialId) {
+        resultado = resultado.filter(c => {
+          const gestor = gestoresMap.get(c.gestor_imediato_id);
+          if (!gestor) return false;
+          const cliente = clientsMap.get(gestor.id_cliente);
+          return cliente?.id_gestao_comercial === gestorComercialId;
+        });
+      }
+
+      return resultado.map(c => {
+        // Identificar cliente via cadeia: consultor -> gestor -> cliente
+        const gestor = gestoresMap.get(c.gestor_imediato_id);
+        const cliente = gestor ? clientsMap.get(gestor.id_cliente) : null;
+        
+        return {
+          consultor_id: c.id,
+          nome_consultores: c.nome_consultores || '',
+          cargo_consultores: c.cargo_consultores || '',
+          razao_social_cliente: cliente?.razao_social_cliente || 'Cliente não identificado',
+          label_substituicao: c.substituicao ? 'Reposição' : 'Sem Reposição',
+          regime_contratacao: 'PJ',
+          valor_mensal: c.valor_faturamento || c.valor_pagamento || 0,
+          valor_anual: (c.valor_faturamento || c.valor_pagamento || 0) * 12,
+          data_saida: c.data_saida,
+          motivo_desligamento: c.motivo_desligamento || '',
+          gestor_comercial_nome: ''
+        };
+      });
 
     } catch (err) {
       console.error('Fallback error:', err);
@@ -384,14 +450,36 @@ export function useMovimentacoes() {
         .order('nome_usuario');
 
       if (error) {
-        // Fallback: buscar de app_users
+        // Fallback: buscar IDs únicos de id_gestao_comercial da tabela clients
+        console.warn('View vw_gestores_comerciais não encontrada, usando fallback...');
+        
+        // 1. Buscar IDs únicos de gestores comerciais nos clientes ativos
+        const { data: clientsData } = await supabase
+          .from('clients')
+          .select('id_gestao_comercial')
+          .eq('ativo_cliente', true)
+          .not('id_gestao_comercial', 'is', null);
+        
+        if (!clientsData || clientsData.length === 0) {
+          console.warn('Nenhum gestor comercial encontrado nos clientes');
+          setGestoresComerciais([]);
+          return [];
+        }
+        
+        // 2. Extrair IDs únicos
+        const idsUnicos = [...new Set(clientsData.map(c => c.id_gestao_comercial))];
+        console.log('IDs de gestores comerciais encontrados:', idsUnicos);
+        
+        // 3. Buscar dados dos usuários correspondentes
         const { data: users } = await supabase
           .from('app_users')
           .select('id, nome_usuario')
+          .in('id', idsUnicos)
           .eq('ativo_usuario', true)
           .order('nome_usuario');
 
         const gestores = users || [];
+        console.log('Gestores comerciais carregados:', gestores.map(g => g.nome_usuario));
         setGestoresComerciais(gestores);
         return gestores;
       }
