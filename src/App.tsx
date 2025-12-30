@@ -273,6 +273,8 @@ const App: React.FC = () => {
             updateVaga={updateVaga} 
             deleteVaga={deleteVaga} 
           />;
+      case 'candidaturas':
+          // ✅ v53.0: Modal Nova Candidatura com análise de CV
           return <Candidaturas 
             candidaturas={candidaturas} 
             vagas={vagas} 
