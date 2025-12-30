@@ -8,8 +8,14 @@
  * - Buscar gestores comerciais
  * - Calcular totais
  * 
- * Versão: 1.0
- * Data: 26/12/2024
+ * ============================================
+ * CORREÇÃO v1.1 - 30/12/2025
+ * - Adicionado filtro por ANO nas queries
+ * - Corrigido bug que mostrava dados de todos os anos
+ * ============================================
+ * 
+ * Versão: 1.1
+ * Data: 30/12/2025
  */
 
 import { useState, useCallback } from 'react';
@@ -117,12 +123,15 @@ export function useMovimentacoes() {
     setError(null);
 
     try {
-      // Usar a função SQL se disponível, senão usar a view diretamente
       const anoAtual = ano || new Date().getFullYear();
       
+      // ============================================
+      // CORREÇÃO: Adicionado filtro por ano
+      // ============================================
       let query = supabase
         .from('vw_movimentacoes_inclusoes')
-        .select('*');
+        .select('*')
+        .eq('ano_inclusao', anoAtual);  // ← FILTRO POR ANO ADICIONADO
 
       if (mes) {
         query = query.eq('mes_inclusao', mes);
@@ -267,9 +276,13 @@ export function useMovimentacoes() {
     try {
       const anoAtual = ano || new Date().getFullYear();
       
+      // ============================================
+      // CORREÇÃO: Adicionado filtro por ano
+      // ============================================
       let query = supabase
         .from('vw_movimentacoes_exclusoes')
-        .select('*');
+        .select('*')
+        .eq('ano_exclusao', anoAtual);  // ← FILTRO POR ANO ADICIONADO
 
       if (mes) {
         query = query.eq('mes_exclusao', mes);
@@ -282,6 +295,7 @@ export function useMovimentacoes() {
       const { data, error: queryError } = await query.order('data_saida', { ascending: false });
 
       if (queryError) {
+        // Fallback: buscar direto da tabela consultants
         console.warn('View não encontrada, usando fallback');
         return await buscarExclusoesFallback(mes, anoAtual, gestorComercialId);
       }
@@ -567,4 +581,3 @@ export function useMovimentacoes() {
 }
 
 export default useMovimentacoes;
-
