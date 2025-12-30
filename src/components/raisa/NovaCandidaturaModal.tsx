@@ -2,22 +2,22 @@
  * NovaCandidaturaModal.tsx - Modal de Nova Candidatura
  * 
  * Modal completo para:
- * - Importar CV (upload ou colar texto)
+ * - Importar CV (upload PDF/DOCX/TXT ou colar texto)
  * - Selecionar Vaga
  * - Análise automática via IA
  * - Exibição de Score e GAPs
  * - Salvamento automático no Banco de Talentos
  * - Criação de Candidatura
  * 
- * Versão: 1.0
+ * Versão: 1.1 - INTEGRADO COM UPLOAD DE ARQUIVOS
  * Data: 30/12/2025
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   X, Upload, FileText, Search, Sparkles, 
   CheckCircle, XCircle, AlertTriangle, Loader2,
-  User, Mail, Phone, Briefcase, MapPin
+  User, Mail, Phone, Briefcase, MapPin, File
 } from 'lucide-react';
 import { Vaga } from '@/types';
 import { useAnaliseCandidato, EtapaAnalise } from '@/hooks/supabase/useAnaliseCandidato';
@@ -54,11 +54,18 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
 }) => {
   // Estados do Modal
   const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('importar');
-  const [modoInput, setModoInput] = useState<ModoInput>('texto');
+  const [modoInput, setModoInput] = useState<ModoInput>('upload');
   const [textoCV, setTextoCV] = useState('');
   const [vagaSelecionadaId, setVagaSelecionadaId] = useState<string>('');
   const [observacoes, setObservacoes] = useState('');
   const [etapaModal, setEtapaModal] = useState<'input' | 'analise' | 'resultado'>('input');
+  
+  // Estados de Upload de Arquivo
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [extraindoTexto, setExtraindoTexto] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Hook de análise
   const {
@@ -76,6 +83,9 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   // Vaga selecionada
   const vagaSelecionada = vagas.find(v => v.id === vagaSelecionadaId);
 
+  // Tipos de arquivo aceitos
+  const tiposAceitos = '.pdf,.docx,.doc,.txt';
+
   // Pré-selecionar vaga se fornecida
   useEffect(() => {
     if (vagaPreSelecionada) {
@@ -89,12 +99,129 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       setEtapaModal('input');
       setTextoCV('');
       setObservacoes('');
+      setArquivo(null);
+      setUploadError(null);
+      setUploadProgress(0);
       resetar();
     }
   }, [isOpen, resetar]);
 
   // ============================================
-  // HANDLERS
+  // HANDLERS DE UPLOAD
+  // ============================================
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadError(null);
+    setArquivo(file);
+
+    // Verificar tipo de arquivo
+    const extensao = file.name.split('.').pop()?.toLowerCase();
+    if (!['pdf', 'docx', 'doc', 'txt'].includes(extensao || '')) {
+      setUploadError('Tipo de arquivo não suportado. Use PDF, DOCX ou TXT.');
+      setArquivo(null);
+      return;
+    }
+
+    // Verificar tamanho (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError('Arquivo muito grande. Máximo 10MB.');
+      setArquivo(null);
+      return;
+    }
+
+    // Extrair texto do arquivo
+    await extrairTextoDoArquivo(file);
+  };
+
+  const extrairTextoDoArquivo = async (file: File) => {
+    const extensao = file.name.split('.').pop()?.toLowerCase();
+
+    try {
+      setExtraindoTexto(true);
+      setUploadProgress(10);
+
+      // Para TXT, extrair texto diretamente
+      if (extensao === 'txt') {
+        const texto = await file.text();
+        setTextoCV(texto);
+        setUploadProgress(100);
+        setExtraindoTexto(false);
+        return;
+      }
+
+      // Para PDF e DOCX, enviar para API Gemini
+      setUploadProgress(30);
+      
+      const base64 = await fileToBase64(file);
+      
+      setUploadProgress(50);
+
+      const response = await fetch('/api/gemini-cv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'extrair_texto',
+          arquivo_base64: base64,
+          arquivo_nome: file.name,
+          arquivo_tipo: file.type
+        })
+      });
+
+      setUploadProgress(80);
+
+      if (!response.ok) {
+        throw new Error('Erro ao extrair texto do arquivo');
+      }
+
+      const data = await response.json();
+      setTextoCV(data.texto || '');
+      setUploadProgress(100);
+
+    } catch (err: any) {
+      console.error('Erro na extração:', err);
+      setUploadError('Erro ao extrair texto do arquivo. Tente colar o texto manualmente.');
+    } finally {
+      setExtraindoTexto(false);
+    }
+  };
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(file);
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = error => reject(error);
+    });
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      // Simular o evento de change
+      const fakeEvent = {
+        target: { files: [file] }
+      } as unknown as React.ChangeEvent<HTMLInputElement>;
+      await handleFileChange(fakeEvent);
+    }
+  };
+
+  // ============================================
+  // HANDLERS PRINCIPAIS
   // ============================================
 
   const handleFechar = () => {
@@ -104,7 +231,7 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
 
   const handleAnalisarCV = async () => {
     if (!textoCV.trim()) {
-      alert('Por favor, cole o texto do currículo');
+      alert('Por favor, faça upload de um CV ou cole o texto');
       return;
     }
 
@@ -146,6 +273,8 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   const handleNovaAnalise = () => {
     setEtapaModal('input');
     setTextoCV('');
+    setArquivo(null);
+    setUploadProgress(0);
     resetar();
   };
 
@@ -188,16 +317,18 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
         {/* ============================================ */}
         {/* BARRA DE PROGRESSO */}
         {/* ============================================ */}
-        {loading && (
+        {(loading || extraindoTexto) && (
           <div className="bg-orange-50 border-b border-orange-200 px-6 py-3">
             <div className="flex items-center gap-3">
               <Loader2 className="w-5 h-5 text-orange-600 animate-spin" />
-              <span className="text-orange-800 font-medium">{estado.mensagem}</span>
+              <span className="text-orange-800 font-medium">
+                {extraindoTexto ? 'Extraindo texto do arquivo...' : estado.mensagem}
+              </span>
             </div>
             <div className="mt-2 h-2 bg-orange-200 rounded-full overflow-hidden">
               <div 
                 className="h-full bg-orange-500 transition-all duration-500"
-                style={{ width: `${estado.progresso}%` }}
+                style={{ width: `${extraindoTexto ? uploadProgress : estado.progresso}%` }}
               />
             </div>
           </div>
@@ -275,6 +406,16 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                   {/* Toggle Upload/Texto */}
                   <div className="flex gap-2 mb-4">
                     <button
+                      onClick={() => setModoInput('upload')}
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                        modoInput === 'upload' 
+                          ? 'bg-orange-100 text-orange-700' 
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      📤 Upload Arquivo
+                    </button>
+                    <button
                       onClick={() => setModoInput('texto')}
                       className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
                         modoInput === 'texto' 
@@ -284,17 +425,81 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                     >
                       📝 Colar Texto
                     </button>
-                    <button
-                      onClick={() => setModoInput('upload')}
-                      className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
-                        modoInput === 'upload' 
-                          ? 'bg-orange-100 text-orange-700' 
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      }`}
-                    >
-                      📤 Upload PDF (em breve)
-                    </button>
                   </div>
+
+                  {/* Área de Upload */}
+                  {modoInput === 'upload' && (
+                    <div>
+                      <div
+                        onClick={() => fileInputRef.current?.click()}
+                        onDragOver={handleDragOver}
+                        onDrop={handleDrop}
+                        className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+                          arquivo 
+                            ? 'border-green-400 bg-green-50' 
+                            : 'border-gray-300 hover:border-orange-400 bg-gray-50 hover:bg-orange-50'
+                        }`}
+                      >
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept={tiposAceitos}
+                          onChange={handleFileChange}
+                          className="hidden"
+                        />
+                        
+                        {arquivo ? (
+                          <div>
+                            <File className="w-12 h-12 text-green-500 mx-auto mb-3" />
+                            <p className="text-green-700 font-medium">{arquivo.name}</p>
+                            <p className="text-sm text-green-600 mt-1">
+                              {(arquivo.size / 1024).toFixed(1)} KB
+                            </p>
+                            {uploadProgress === 100 && (
+                              <p className="text-green-600 text-sm mt-2 flex items-center justify-center gap-1">
+                                <CheckCircle className="w-4 h-4" /> Texto extraído com sucesso!
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <div>
+                            <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                            <p className="text-gray-600 font-medium mb-1">
+                              Arraste o CV aqui ou clique para selecionar
+                            </p>
+                            <p className="text-gray-400 text-sm">
+                              PDF, DOCX, TXT (máx. 10MB)
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      {uploadError && (
+                        <div className="mt-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center gap-2">
+                          <XCircle className="w-5 h-5" />
+                          {uploadError}
+                        </div>
+                      )}
+
+                      {/* Preview do texto extraído */}
+                      {textoCV && modoInput === 'upload' && (
+                        <div className="mt-4">
+                          <label className="block text-sm font-semibold text-gray-700 mb-2">
+                            📄 Texto extraído ({textoCV.length} caracteres):
+                          </label>
+                          <div className="border rounded-lg p-4 bg-gray-50 max-h-48 overflow-y-auto">
+                            <pre className="whitespace-pre-wrap text-sm text-gray-700 font-mono">
+                              {textoCV.substring(0, 1500)}
+                              {textoCV.length > 1500 && '...'}
+                            </pre>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-2">
+                            Você pode editar o texto antes de analisar
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Área de Texto */}
                   {modoInput === 'texto' && (
@@ -329,20 +534,11 @@ HABILIDADES
                     </div>
                   )}
 
-                  {/* Upload (desabilitado por enquanto) */}
-                  {modoInput === 'upload' && (
-                    <div className="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center bg-gray-50">
-                      <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                      <p className="text-gray-500">Upload de PDF em desenvolvimento...</p>
-                      <p className="text-sm text-gray-400 mt-2">Por enquanto, copie e cole o texto do currículo</p>
-                    </div>
-                  )}
-
                   {/* Botão Analisar */}
                   <div className="mt-6 text-center">
                     <button
                       onClick={handleAnalisarCV}
-                      disabled={loading || textoCV.length < 100}
+                      disabled={loading || extraindoTexto || textoCV.length < 100}
                       className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-8 py-3 rounded-xl font-semibold hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 mx-auto"
                     >
                       {loading ? (
