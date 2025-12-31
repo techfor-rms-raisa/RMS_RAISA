@@ -53,6 +53,12 @@ const ComplianceDashboard: React.FC<CompDashProps> = ({
   const [taskFilter, setTaskFilter] = useState<'pendente' | 'concluido' | 'todas'>('pendente');
   const [updatingActionId, setUpdatingActionId] = useState<string | null>(null);
   
+  // ✅ v3.3: Helper para verificar status do consultor (apenas ATIVOS aparecem)
+  const isConsultantActive = (consultantId: number): boolean => {
+    const consultant = consultants.find(c => c.id === consultantId);
+    return consultant?.status === 'Ativo';
+  };
+  
   // ✅ v3.2: Estados para modal de justificativa
   const [showJustificativaModal, setShowJustificativaModal] = useState(false);
   const [actionToFinish, setActionToFinish] = useState<RHAction | null>(null);
@@ -422,25 +428,29 @@ const ComplianceDashboard: React.FC<CompDashProps> = ({
             🔥 Tarefas Críticas
           </h3>
           
-          {/* Filtro de Status */}
+          {/* Filtro de Status da Tarefa */}
           <div className="flex items-center gap-2">
             <select
               value={taskFilter}
               onChange={(e) => setTaskFilter(e.target.value as 'pendente' | 'concluido' | 'todas')}
               className="text-xs border border-gray-300 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-red-500 focus:border-red-500"
             >
-              <option value="pendente">⏳ Pendentes ({rhActions.filter(a => a.status === 'pendente').length})</option>
-              <option value="concluido">✅ Concluídas ({rhActions.filter(a => a.status === 'concluido').length})</option>
-              <option value="todas">📋 Todas ({rhActions.length})</option>
+              <option value="pendente">⏳ Pendentes ({rhActions.filter(a => a.status === 'pendente' && isConsultantActive(a.consultantId)).length})</option>
+              <option value="concluido">✅ Concluídas ({rhActions.filter(a => a.status === 'concluido' && isConsultantActive(a.consultantId)).length})</option>
+              <option value="todas">📋 Todas ({rhActions.filter(a => isConsultantActive(a.consultantId)).length})</option>
             </select>
           </div>
         </div>
         
         <div className="overflow-x-auto max-h-96">
           {(() => {
-            const filteredActions = rhActions.filter(a => 
-              taskFilter === 'todas' ? true : a.status === taskFilter
-            );
+            // ✅ v3.3: Filtrar apenas consultores ATIVOS + status da tarefa
+            const filteredActions = rhActions.filter(a => {
+              const isActive = isConsultantActive(a.consultantId);
+              if (!isActive) return false; // Ignora consultores inativos/desligados
+              
+              return taskFilter === 'todas' ? true : a.status === taskFilter;
+            });
             
             if (filteredActions.length === 0) {
               return (
@@ -456,7 +466,7 @@ const ComplianceDashboard: React.FC<CompDashProps> = ({
                       : 'Nenhuma tarefa registrada'}
                   </p>
                   <p className="text-gray-400 text-sm mt-1">
-                    {taskFilter === 'pendente' && 'Excelente! Todas as ações foram concluídas.'}
+                    {taskFilter === 'pendente' && 'Excelente! Todas as ações de consultores ativos foram concluídas.'}
                   </p>
                 </div>
               );
