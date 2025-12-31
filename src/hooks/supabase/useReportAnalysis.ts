@@ -57,7 +57,7 @@ const convertRiskToFeedbackScore = (riskScore: number): number => {
     5: 1    // Crítico
   };
   return mapping[riskScore] || 5;
-}};
+};
 
 export const useReportAnalysis = () => {
 
