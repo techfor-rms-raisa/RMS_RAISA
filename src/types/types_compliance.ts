@@ -61,8 +61,11 @@ export interface RHAction {
   description: string;
   status: 'pendente' | 'concluido';
   priority: 'alta' | 'media' | 'baixa';
-  origin: 'ai_feedback' | 'ai_quarantine' | 'manual';
+  origin: 'ai_feedback' | 'ai_quarantine' | 'ai_analysis' | 'manual';
   createdAt: string;
+  // ✅ v3.2: Campos de justificativa de conclusão
+  justificativaConclusao?: string | null;
+  concluidoEm?: string | null;
 }
 
 // ============================================

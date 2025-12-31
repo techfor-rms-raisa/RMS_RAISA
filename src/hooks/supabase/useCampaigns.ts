@@ -187,7 +187,10 @@ export const useCampaigns = () => {
         status: action.status || 'pendente',
         priority: action.priority || 'media',
         origin: action.origin || 'manual',
-        createdAt: action.created_at
+        createdAt: action.created_at,
+        // ✅ v3.2: Campos de justificativa
+        justificativaConclusao: action.justificativa_conclusao,
+        concluidoEm: action.concluido_em
       }));
 
       setRhActions(mappedActions);
@@ -482,20 +485,76 @@ export const useCampaigns = () => {
     }
   };
 
-  const updateRHActionStatus = async (id: string, status: 'pendente' | 'concluido') => {
+  /**
+   * ✅ v3.2: Atualiza status da ação com justificativa opcional
+   */
+  const updateRHActionStatus = async (
+    id: string, 
+    status: 'pendente' | 'concluido',
+    justificativa?: string
+  ) => {
     try {
+      const updateData: any = { status };
+      
+      // Se estiver concluindo, adiciona justificativa e data de conclusão
+      if (status === 'concluido') {
+        updateData.justificativa_conclusao = justificativa || null;
+        updateData.concluido_em = new Date().toISOString();
+      } else {
+        // Se reabrir, limpa os campos de conclusão
+        updateData.justificativa_conclusao = null;
+        updateData.concluido_em = null;
+      }
+
       const { error } = await supabase
         .from('rh_actions')
-        .update({ status })
+        .update(updateData)
         .eq('id', id);
 
       if (error) throw error;
 
-      setRhActions(prev => prev.map(a => a.id === id ? { ...a, status } : a));
+      setRhActions(prev => prev.map(a => a.id === id ? { 
+        ...a, 
+        status,
+        justificativaConclusao: updateData.justificativa_conclusao,
+        concluidoEm: updateData.concluido_em
+      } : a));
+      
       console.log('✅ Status da ação atualizado');
     } catch (err: any) {
       console.error('❌ Erro ao atualizar status:', err);
       throw err;
+    }
+  };
+
+  /**
+   * ✅ v3.2: Busca ações de RH por consultant_id
+   * Usado pelo botão "Resoluções" no Dashboard
+   */
+  const getRHActionsByConsultant = async (consultantId: number): Promise<RHAction[]> => {
+    try {
+      const { data, error } = await supabase
+        .from('rh_actions')
+        .select('*')
+        .eq('consultant_id', consultantId)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      return (data || []).map((action: any) => ({
+        id: action.id,
+        consultantId: action.consultant_id,
+        description: action.descricao || action.description,
+        status: action.status || 'pendente',
+        priority: action.priority || 'media',
+        origin: action.origin || 'manual',
+        createdAt: action.created_at,
+        justificativaConclusao: action.justificativa_conclusao,
+        concluidoEm: action.concluido_em
+      }));
+    } catch (err: any) {
+      console.error('❌ Erro ao buscar ações do consultor:', err);
+      return [];
     }
   };
 
@@ -525,6 +584,7 @@ export const useCampaigns = () => {
     addFeedbackResponse,
     addRHAction,
     updateRHActionStatus,
+    getRHActionsByConsultant,  // ✅ v3.2: Buscar ações por consultor
     
     // ✅ NOVO: Análise Temporal
     getSentimentByMonth,

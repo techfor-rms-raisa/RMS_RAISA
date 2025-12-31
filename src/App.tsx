@@ -97,7 +97,7 @@ const App: React.FC = () => {
     migrateYearlyData,
     addTemplate, updateTemplate, deleteTemplate,
     addCampaign, updateCampaign,
-    addFeedbackResponse, addRHAction,
+    addFeedbackResponse, addRHAction, updateRHActionStatus, getRHActionsByConsultant,
     addVaga, updateVaga, deleteVaga, 
     addPessoa, updatePessoa,
     addCandidatura, updateCandidaturaStatus,
@@ -239,7 +239,8 @@ const App: React.FC = () => {
           return <ComplianceDashboard 
               rhActions={rhActions} 
               feedbackResponses={feedbackResponses} 
-              consultants={consultants} 
+              consultants={consultants}
+              onUpdateRHActionStatus={updateRHActionStatus}
           />;
       
       // Atividades Views
@@ -335,7 +336,17 @@ const App: React.FC = () => {
 
       case 'dashboard':
       default:
-        return <Dashboard consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} currentUser={currentUser!} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} />;
+        return <Dashboard 
+          consultants={consultants} 
+          clients={clients} 
+          usuariosCliente={usuariosCliente} 
+          coordenadoresCliente={coordenadoresCliente} 
+          users={users} 
+          currentUser={currentUser!} 
+          loadConsultantReports={loadConsultantReports} 
+          onNavigateToAtividades={handleNavigateToAtividades}
+          getRHActionsByConsultant={getRHActionsByConsultant}
+        />;
     }
   };
 

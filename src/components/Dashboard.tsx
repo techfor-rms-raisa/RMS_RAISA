@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore } from '@/types';
+import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport, RiskScore, RHAction } from '@/types';
 import StatusCircle from './StatusCircle';
 import ReportDetailsModal from './ReportDetailsModal';
 import MonthlyReportsModal from './MonthlyReportsModal';
@@ -14,6 +14,7 @@ interface DashboardProps {
   users: User[];
   loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
   onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
+  getRHActionsByConsultant?: (consultantId: number) => Promise<RHAction[]>;  // ✅ v3.2
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -24,7 +25,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   currentUser, 
   users,
   loadConsultantReports,
-  onNavigateToAtividades
+  onNavigateToAtividades,
+  getRHActionsByConsultant  // ✅ v3.2
 }) => {
   
   const [selectedClient, setSelectedClient] = useState<string>('all');
@@ -43,6 +45,30 @@ const Dashboard: React.FC<DashboardProps> = ({
     month: number;
     reports: ConsultantReport[];
   } | null>(null);
+  
+  // ✅ v3.2: Estados para modal de Resoluções
+  const [showResolucoesModal, setShowResolucoesModal] = useState<boolean>(false);
+  const [resolucoesConsultor, setResolucoesConsultor] = useState<{
+    consultant: Consultant;
+    actions: RHAction[];
+  } | null>(null);
+  const [loadingResolucoes, setLoadingResolucoes] = useState<boolean>(false);
+  
+  // ✅ v3.2: Handler para abrir modal de resoluções
+  const handleOpenResolucoes = async (consultant: Consultant) => {
+    if (!getRHActionsByConsultant) return;
+    
+    setLoadingResolucoes(true);
+    try {
+      const actions = await getRHActionsByConsultant(consultant.id);
+      setResolucoesConsultor({ consultant, actions });
+      setShowResolucoesModal(true);
+    } catch (error) {
+      console.error('Erro ao carregar resoluções:', error);
+    } finally {
+      setLoadingResolucoes(false);
+    }
+  };
 
   // ============================================================================
   // ✅ CORREÇÃO: Buscar anos REAIS do Supabase (consultores + relatórios)
@@ -482,16 +508,32 @@ const Dashboard: React.FC<DashboardProps> = ({
                             <td className="px-4 py-2 whitespace-nowrap text-sm font-medium">
                               <div className="flex items-center justify-between gap-2">
                                 <span>{consultant.nome_consultores}</span>
-                                <button
-                                  onClick={() => onNavigateToAtividades(client.razao_social_cliente, consultant.nome_consultores)}
-                                  className="px-2 py-1 text-xs bg-white text-blue-600 border border-blue-600 rounded hover:bg-blue-50 transition whitespace-nowrap flex items-center gap-1"
-                                  title="Registrar nova atividade para este consultor"
-                                >
-                                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                  </svg>
-                                  Atividade
-                                </button>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    onClick={() => onNavigateToAtividades(client.razao_social_cliente, consultant.nome_consultores)}
+                                    className="px-2 py-1 text-xs bg-white text-blue-600 border border-blue-600 rounded hover:bg-blue-50 transition whitespace-nowrap flex items-center gap-1"
+                                    title="Registrar nova atividade para este consultor"
+                                  >
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                    </svg>
+                                    Atividade
+                                  </button>
+                                  {/* ✅ v3.2: Botão Resoluções */}
+                                  {getRHActionsByConsultant && (
+                                    <button
+                                      onClick={() => handleOpenResolucoes(consultant)}
+                                      disabled={loadingResolucoes}
+                                      className="px-2 py-1 text-xs bg-white text-red-500 border border-red-500 rounded hover:bg-red-50 transition whitespace-nowrap flex items-center gap-1"
+                                      title="Ver resoluções e ações de RH deste consultor"
+                                    >
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                                      </svg>
+                                      Resoluções
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                             </td>
                             {[...Array(12)].map((_, i) => {
@@ -557,6 +599,121 @@ const Dashboard: React.FC<DashboardProps> = ({
             setSelectedMonthReports(null);
           }}
         />
+      )}
+      
+      {/* ============================================================================ */}
+      {/* MODAL: Resoluções do Consultor */}
+      {/* ============================================================================ */}
+      {showResolucoesModal && resolucoesConsultor && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden">
+            {/* Header */}
+            <div className="bg-red-500 text-white px-6 py-4">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                📋 Resoluções - {resolucoesConsultor.consultant.nome_consultores}
+              </h3>
+              <p className="text-red-100 text-sm mt-1">
+                Histórico de ações e resoluções registradas
+              </p>
+            </div>
+            
+            {/* Content */}
+            <div className="p-6 max-h-[60vh] overflow-y-auto">
+              {resolucoesConsultor.actions.length === 0 ? (
+                <div className="text-center py-8">
+                  <span className="text-4xl mb-3 block">📭</span>
+                  <p className="text-gray-500 font-medium">Nenhuma resolução registrada</p>
+                  <p className="text-gray-400 text-sm mt-1">
+                    Este consultor não possui ações de RH no histórico.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {resolucoesConsultor.actions.map((action) => (
+                    <div 
+                      key={action.id} 
+                      className={`border rounded-lg p-4 ${
+                        action.status === 'concluido' 
+                          ? 'bg-green-50 border-green-200' 
+                          : 'bg-yellow-50 border-yellow-200'
+                      }`}
+                    >
+                      {/* Status e Prioridade */}
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                          action.status === 'concluido' 
+                            ? 'bg-green-100 text-green-700' 
+                            : 'bg-yellow-100 text-yellow-700'
+                        }`}>
+                          {action.status === 'concluido' ? '✅ Concluído' : '⏳ Pendente'}
+                        </span>
+                        <span className={`px-2 py-0.5 rounded text-xs font-semibold uppercase ${
+                          action.priority === 'alta' 
+                            ? 'bg-red-100 text-red-700' 
+                            : action.priority === 'media'
+                            ? 'bg-yellow-100 text-yellow-700'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {action.priority || 'media'}
+                        </span>
+                        <span className={`text-xs px-2 py-0.5 rounded ${
+                          action.origin === 'ai_analysis' 
+                            ? 'bg-purple-100 text-purple-700'
+                            : 'bg-gray-100 text-gray-600'
+                        }`}>
+                          {action.origin === 'ai_analysis' ? '🤖 IA' : '✏️ Manual'}
+                        </span>
+                      </div>
+                      
+                      {/* Descrição */}
+                      <p className="text-sm text-gray-700 mb-2">{action.description}</p>
+                      
+                      {/* Justificativa de Conclusão */}
+                      {action.justificativaConclusao && (
+                        <div className="bg-white rounded p-3 border border-green-300 mt-2">
+                          <p className="text-xs text-green-600 uppercase font-semibold mb-1">
+                            ✓ Resolução:
+                          </p>
+                          <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                            {action.justificativaConclusao}
+                          </p>
+                        </div>
+                      )}
+                      
+                      {/* Datas */}
+                      <div className="flex gap-4 mt-3 text-xs text-gray-500">
+                        <span>
+                          Criado: {new Date(action.createdAt).toLocaleDateString('pt-BR')}
+                        </span>
+                        {action.concluidoEm && (
+                          <span className="text-green-600">
+                            Concluído: {new Date(action.concluidoEm).toLocaleDateString('pt-BR')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            
+            {/* Footer */}
+            <div className="bg-gray-50 px-6 py-4 flex justify-between items-center">
+              <span className="text-xs text-gray-500">
+                {resolucoesConsultor.actions.filter(a => a.status === 'concluido').length} concluída(s) / {resolucoesConsultor.actions.length} total
+              </span>
+              <button
+                onClick={() => {
+                  setShowResolucoesModal(false);
+                  setResolucoesConsultor(null);
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

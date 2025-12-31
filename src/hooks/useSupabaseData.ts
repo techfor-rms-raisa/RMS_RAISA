@@ -231,6 +231,7 @@ export const useSupabaseData = () => {
     addRHAction: campaignsHook.addRHAction,
     loadRHActions: campaignsHook.loadRHActions,
     updateRHActionStatus: campaignsHook.updateRHActionStatus,
+    getRHActionsByConsultant: campaignsHook.getRHActionsByConsultant,  // ✅ v3.2: Buscar ações por consultor
     // ✅ NOVO v3.0: Funções de análise temporal
     getSentimentByMonth: campaignsHook.getSentimentByMonth,
     getYearComparison: campaignsHook.getYearComparison,
