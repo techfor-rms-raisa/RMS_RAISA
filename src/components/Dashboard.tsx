@@ -31,6 +31,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [selectedManager, setSelectedManager] = useState<string>('all');
   const [selectedConsultant, setSelectedConsultant] = useState<string>('all');
   const [selectedScore, setSelectedScore] = useState<string>('all');
+  const [selectedStatus, setSelectedStatus] = useState<string>('ativo'); // ✅ NOVO: Filtro de status (ativo/inativo/todos)
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [yearInitialized, setYearInitialized] = useState<boolean>(false);
@@ -159,7 +160,19 @@ const Dashboard: React.FC<DashboardProps> = ({
       }
       
       const managers = clientManagers.map(manager => {
-        let managerConsultants = consultants.filter(c => c.gestor_imediato_id === manager.id && c.status === 'Ativo');
+        // ✅ CORREÇÃO v2.3: Filtrar por status conforme seleção do usuário
+        let managerConsultants = consultants.filter(c => {
+          if (c.gestor_imediato_id !== manager.id) return false;
+          
+          // Filtro de status
+          if (selectedStatus === 'ativo') {
+            return c.status === 'Ativo';
+          } else if (selectedStatus === 'inativo') {
+            return c.status === 'Perdido' || c.status === 'Encerrado';
+          }
+          // selectedStatus === 'todos' - retorna todos
+          return true;
+        });
         
         // ✅ CORREÇÃO: Filtrar por ano - consultores sem ano_vigencia aparecem em todos os anos
         managerConsultants = managerConsultants.filter(c => {
@@ -191,7 +204,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       return { ...client, managers };
     }).sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente));
-  }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedManager, selectedConsultant, selectedYear, selectedScore]);
+  }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedManager, selectedConsultant, selectedYear, selectedScore, selectedStatus]);
 
   // ============================================================================
   // CÁLCULO DE ESTATÍSTICAS (NOVO)
@@ -321,7 +334,7 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
       
       {/* Filtros */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
         <div>
           <label className="block text-sm font-bold text-gray-700 mb-1">Ano:</label>
           <select 
@@ -363,6 +376,20 @@ const Dashboard: React.FC<DashboardProps> = ({
           </select>
         </div>
 
+        {/* ✅ NOVO: Filtro de Status */}
+        <div>
+          <label className="block text-sm font-bold text-gray-700 mb-1">Status:</label>
+          <select 
+            value={selectedStatus} 
+            onChange={e => setSelectedStatus(e.target.value)} 
+            className="w-full p-2 border border-gray-300 rounded-lg"
+          >
+            <option value="ativo">✅ Ativos</option>
+            <option value="inativo">❌ Inativos</option>
+            <option value="todos">📋 Todos</option>
+          </select>
+        </div>
+
         {/* Filtro de Score */}
         <div>
           <label className="block text-sm font-bold text-gray-700 mb-1">Score:</label>
@@ -390,7 +417,13 @@ const Dashboard: React.FC<DashboardProps> = ({
             <option value="all">Todos os Consultores</option>
             {selectedManager !== 'all' && (
               consultants
-                .filter(c => c.gestor_imediato_id === parseInt(selectedManager) && c.status === 'Ativo')
+                .filter(c => {
+                  if (c.gestor_imediato_id !== parseInt(selectedManager)) return false;
+                  // Aplicar filtro de status também aqui
+                  if (selectedStatus === 'ativo') return c.status === 'Ativo';
+                  if (selectedStatus === 'inativo') return c.status === 'Perdido' || c.status === 'Encerrado';
+                  return true;
+                })
                 .map(c => <option key={c.id} value={c.nome_consultores}>{c.nome_consultores}</option>)
             )}
           </select>
