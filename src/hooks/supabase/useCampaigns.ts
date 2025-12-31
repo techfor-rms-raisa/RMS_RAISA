@@ -183,10 +183,10 @@ export const useCampaigns = () => {
       const mappedActions: RHAction[] = (data || []).map((action: any) => ({
         id: action.id,
         consultantId: action.consultant_id,
-        description: action.description,
+        description: action.descricao || action.description,  // ✅ Suporta ambos os nomes
         status: action.status || 'pendente',
         priority: action.priority || 'media',
-        origin: action.origin,
+        origin: action.origin || 'manual',
         createdAt: action.created_at
       }));
 
@@ -453,7 +453,7 @@ export const useCampaigns = () => {
         .from('rh_actions')
         .insert([{
           consultant_id: action.consultantId,
-          description: action.description,
+          descricao: action.description,  // ✅ Nome real da coluna
           status: action.status || 'pendente',
           priority: action.priority || 'media',
           origin: action.origin
@@ -466,7 +466,7 @@ export const useCampaigns = () => {
       const createdAction: RHAction = {
         id: data.id,
         consultantId: data.consultant_id,
-        description: data.description,
+        description: data.descricao || data.description,  // ✅ Suporta ambos
         status: data.status,
         priority: data.priority,
         origin: data.origin,

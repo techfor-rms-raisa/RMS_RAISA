@@ -3,12 +3,12 @@
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui integração com Gemini AI e notificações de risco crítico
  * 
- * ✅ VERSÃO 2.2 - FIX UPDATE PARECER (31/12/2024)
- * - CORREÇÃO CRÍTICA: UPDATE em consultants agora valida resultado
+ * ✅ VERSÃO 2.3 - INTEGRAÇÃO COMPLIANCE (31/12/2024)
+ * - NOVO: Criação automática de rh_actions para scores 4 e 5
+ * - NOVO: Ações aparecem em "Tarefas Críticas" no Compliance Dashboard
+ * - Salvamento de feedback para gráfico de sentimento
+ * - UPDATE em consultants valida resultado
  * - Logs detalhados para diagnóstico
- * - Busca fallback no Supabase se consultor não encontrado no estado
- * - Validação de campos antes do UPDATE
- * - Verificação explícita se UPDATE afetou alguma linha
  */
 
 import { supabase } from '../../config/supabase';
@@ -57,9 +57,56 @@ const convertRiskToFeedbackScore = (riskScore: number): number => {
     5: 1    // Crítico
   };
   return mapping[riskScore] || 5;
-};
+}};
 
 export const useReportAnalysis = () => {
+
+  /**
+   * ✅ NOVO v2.3: Salva ação de RH para scores críticos (4 e 5)
+   * Alimenta a seção "Tarefas Críticas" do Compliance Dashboard
+   */
+  const saveRHActionFromAnalysis = async (
+    consultantId: number,
+    consultantName: string,
+    riskScore: number,
+    summary: string
+  ): Promise<void> => {
+    // Só cria ação para scores 4 (Alto) e 5 (Crítico)
+    if (riskScore < 4) {
+      console.log(`ℹ️ Score ${riskScore} não requer ação de RH`);
+      return;
+    }
+
+    try {
+      const priority = riskScore === 5 ? 'alta' : 'media';
+      const description = riskScore === 5 
+        ? `🚨 CRÍTICO: ${consultantName} - ${summary.substring(0, 200)}...`
+        : `⚠️ ATENÇÃO: ${consultantName} - ${summary.substring(0, 200)}...`;
+
+      console.log(`📋 Criando ação de RH: ${consultantName} - Prioridade: ${priority}`);
+
+      const { error } = await supabase
+        .from('rh_actions')
+        .insert([{
+          consultant_id: consultantId,
+          descricao: description,  // ✅ Nome real da coluna no Supabase
+          status: 'pendente',
+          priority: priority,
+          origin: 'ai_analysis'
+        }]);
+
+      if (error) {
+        console.error('❌ Erro ao criar ação de RH:', error);
+        // Não interrompe o fluxo principal
+        return;
+      }
+
+      console.log(`✅ Ação de RH criada: ${consultantName} - ${priority.toUpperCase()}`);
+    } catch (err: any) {
+      console.error('❌ Erro ao salvar ação de RH:', err);
+      // Não interrompe o fluxo principal
+    }
+  };
 
   /**
    * ✅ NOVO: Salva feedback no Supabase após análise da IA
@@ -445,6 +492,18 @@ export const useReportAnalysis = () => {
     );
     
     // ============================================================================
+    // PASSO 3.1: Criar ação de RH se score for crítico (4 ou 5)
+    // ============================================================================
+    console.log('🔄 PASSO 3.1: Verificando necessidade de ação de RH...');
+    
+    await saveRHActionFromAnalysis(
+      consultantId,
+      result.consultantName,
+      result.riskScore,
+      result.summary || 'Situação identificada na análise de relatório'
+    );
+    
+    // ============================================================================
     // PASSO 4: Atualizar estado local React
     // ============================================================================
     console.log('🔄 PASSO 4: Atualizando estado local...');
@@ -526,6 +585,7 @@ export const useReportAnalysis = () => {
     // ✅ Exportar helpers para uso externo se necessário
     deriveSentiment,
     deriveRiskLevel,
-    saveFeedbackFromAnalysis
+    saveFeedbackFromAnalysis,
+    saveRHActionFromAnalysis  // ✅ v2.3: Criar ações de RH para scores críticos
   };
 };
