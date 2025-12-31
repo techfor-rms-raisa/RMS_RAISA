@@ -3,9 +3,12 @@
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui integração com Gemini AI e notificações de risco crítico
  * 
- * ✅ VERSÃO 2.1 - FIX TRECHO ORIGINAL
- * - Usa trechoOriginal retornado pela IA (não o relatório completo)
- * - Salva apenas a parte do relatório que compete ao consultor
+ * ✅ VERSÃO 2.2 - FIX UPDATE PARECER (31/12/2024)
+ * - CORREÇÃO CRÍTICA: UPDATE em consultants agora valida resultado
+ * - Logs detalhados para diagnóstico
+ * - Busca fallback no Supabase se consultor não encontrado no estado
+ * - Validação de campos antes do UPDATE
+ * - Verificação explícita se UPDATE afetou alguma linha
  */
 
 import { supabase } from '../../config/supabase';
@@ -215,7 +218,7 @@ export const useReportAnalysis = () => {
    * Atualiza o score de risco de um consultor e salva relatório
    * Dispara notificações de risco crítico quando necessário
    * 
-   * ✅ v2.1: Usa trechoOriginal da IA (não o relatório completo)
+   * ✅ v2.2: UPDATE com validação robusta e logs detalhados
    */
   const updateConsultantScore = async (
     result: AIAnalysisResult,
@@ -227,115 +230,262 @@ export const useReportAnalysis = () => {
     _originalContent?: string // ✅ DEPRECATED: Não usar mais - manter para compatibilidade
   ) => {
     try {
-      console.log(`📊 Atualizando score do consultor: ${result.consultantName}`);
-      console.log(`📅 Mês do relatório: ${result.reportMonth}, Ano: ${(result as any).reportYear || new Date().getFullYear()}`);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log(`📊 INICIANDO UPDATE: ${result.consultantName}`);
+      console.log('═══════════════════════════════════════════════════════');
+      console.log(`📅 Mês: ${result.reportMonth}, Ano: ${(result as any).reportYear || new Date().getFullYear()}`);
+      console.log(`📊 Score de Risco: ${result.riskScore}`);
       
-      // Buscar consultor pelo nome (case insensitive e trim)
-      const consultant = consultants.find(c => 
-        c.nome_consultores.toLowerCase().trim() === result.consultantName.toLowerCase().trim()
-      );
-      
-      if (!consultant) {
-        console.warn(`⚠️ Consultor não encontrado: ${result.consultantName}`);
+      // ✅ v2.2: Validar parâmetros antes de continuar
+      if (!result.consultantName || typeof result.consultantName !== 'string') {
+        console.error('❌ Nome do consultor inválido:', result.consultantName);
         return;
       }
       
-      // Preparar campo do mês (parecer_1_consultor, parecer_2_consultor, etc)
-      const monthField = `parecer_${result.reportMonth}_consultor` as keyof Consultant;
-      
-      // ✅ CORREÇÃO: Usa o ano do resultado se disponível
-      const reportYear = (result as any).reportYear || new Date().getFullYear();
-      
-      // ✅ CORREÇÃO v2.1: Usar trechoOriginal da IA, NÃO o relatório completo
-      // Prioridade: 1) trechoOriginal da IA, 2) details, 3) summary
-      const conteudoOriginal = (result as any).trechoOriginal || result.details || result.summary;
-      
-      console.log(`📝 Conteúdo a salvar (${conteudoOriginal?.length || 0} chars): ${conteudoOriginal?.substring(0, 100)}...`);
-      
-      // Criar objeto de relatório
-      const newReport: ConsultantReport = {
-        id: `${consultant.id}_${result.reportMonth}_${Date.now()}`,
-        month: result.reportMonth,
-        year: reportYear,
-        riskScore: result.riskScore,
-        summary: result.summary, // Resumo gerado pela IA
-        negativePattern: result.negativePattern,
-        predictiveAlert: result.predictiveAlert,
-        recommendations: result.recommendations,
-        content: conteudoOriginal, // ✅ CORREÇÃO: Trecho original do consultor (não relatório inteiro)
-        createdAt: new Date().toISOString(),
-        generatedBy: 'manual',
-        aiJustification: 'Análise baseada em relatório de atividades manual'
-      };
-      
-      // Atualizar consultor no Supabase
-      const updates: any = {
-        [monthField]: result.riskScore,
-        parecer_final_consultor: result.riskScore
-      };
-      
-      const { data, error } = await supabase
-        .from('consultants')
-        .update(updates)
-        .eq('id', consultant.id)
-        .select()
-        .single();
-      
-      if (error) throw error;
-      
-      // ✅ Salvar relatório integral na tabela consultant_reports (ACUMULATIVO)
-      const { error: reportError } = await supabase
-        .from('consultant_reports')
-        .insert([{
-          consultant_id: consultant.id,
-          month: newReport.month,
-          year: newReport.year,
-          risk_score: newReport.riskScore,
-          summary: newReport.summary,
-          negative_pattern: newReport.negativePattern,
-          predictive_alert: newReport.predictiveAlert,
-          recommendations: JSON.stringify(newReport.recommendations),
-          content: newReport.content, // ✅ CORREÇÃO: Trecho original do consultor
-          generated_by: newReport.generatedBy,
-          ai_justification: newReport.aiJustification
-        }]);
-      
-      if (reportError) {
-        console.error('❌ Erro ao salvar relatório:', reportError);
-        throw reportError;
+      if (!result.reportMonth || result.reportMonth < 1 || result.reportMonth > 12) {
+        console.error('❌ Mês do relatório inválido:', result.reportMonth);
+        return;
       }
       
-      console.log(`✅ Relatório salvo (trecho específico): ${consultant.nome_consultores} - Mês ${newReport.month}/${newReport.year}`);
+      if (!result.riskScore || result.riskScore < 1 || result.riskScore > 5) {
+        console.error('❌ Score de risco inválido:', result.riskScore);
+        return;
+      }
       
-      // ✅ NOVO v2.0: Salvar feedback para análise de compliance
-      await saveFeedbackFromAnalysis(
-        consultant.id,
-        result.riskScore,
-        result.summary || 'Análise de relatório de atividades',
-        result.reportMonth,
-        reportYear
+      // Buscar consultor pelo nome (case insensitive e trim)
+      const consultantSearchName = result.consultantName.toLowerCase().trim();
+      console.log(`🔍 Buscando consultor: "${consultantSearchName}"`);
+      console.log(`📋 Total de consultores no estado: ${consultants.length}`);
+      
+      const consultant = consultants.find(c => 
+        c.nome_consultores.toLowerCase().trim() === consultantSearchName
       );
       
-      // Atualizar estado local
-      const updatedConsultant: Consultant = {
-        ...consultant,
-        ...updates,
-        reports: [...(consultant.reports || []), newReport]
-      };
-      
-      setConsultants(prev => prev.map(c => 
-        c.id === consultant.id ? updatedConsultant : c
-      ));
-      
-      console.log(`✅ Score atualizado: ${result.consultantName} - Mês ${result.reportMonth}/${reportYear} - Risco ${result.riskScore}`);
-      
-      // 🚨 Verificar se é Risco Crítico (Score 5) e disparar notificações via Resend
-      if (isCriticalRisk(result.riskScore)) {
-        console.log(`🚨 RISCO CRÍTICO DETECTADO: ${result.consultantName} - Disparando notificações...`);
+      if (!consultant) {
+        console.warn(`⚠️ Consultor não encontrado no estado local: "${result.consultantName}"`);
         
-        try {
+        // ✅ v2.2: Tentar buscar diretamente no Supabase como fallback
+        console.log('🔄 Tentando buscar diretamente no Supabase...');
+        const { data: dbConsultants, error: searchError } = await supabase
+          .from('consultants')
+          .select('id, nome_consultores')
+          .ilike('nome_consultores', `%${result.consultantName.split(' ')[0]}%`)
+          .limit(5);
+        
+        if (searchError || !dbConsultants || dbConsultants.length === 0) {
+          console.error(`❌ Consultor "${result.consultantName}" não encontrado nem no Supabase`);
+          return;
+        }
+        
+        // Tentar match exato
+        const exactMatch = dbConsultants.find(c => 
+          c.nome_consultores.toLowerCase().trim() === consultantSearchName
+        );
+        
+        if (!exactMatch) {
+          console.error(`❌ Nenhum match exato encontrado. Candidatos:`);
+          dbConsultants.forEach(c => console.log(`   - ${c.nome_consultores} (ID: ${c.id})`));
+          return;
+        }
+        
+        console.log(`✅ Consultor encontrado no Supabase: ${exactMatch.nome_consultores} (ID: ${exactMatch.id})`);
+        // Continuar com o ID do banco
+        await performUpdate(exactMatch.id, result, users, usuariosCliente, clients, setConsultants);
+        return;
+      }
+      
+      console.log(`✅ Consultor encontrado no estado: ${consultant.nome_consultores} (ID: ${consultant.id})`);
+      
+      await performUpdate(consultant.id, result, users, usuariosCliente, clients, setConsultants, consultant);
+      
+    } catch (err: any) {
+      console.error('═══════════════════════════════════════════════════════');
+      console.error('❌ ERRO CRÍTICO ao atualizar score:', err);
+      console.error('═══════════════════════════════════════════════════════');
+      alert(`Erro ao atualizar score do consultor: ${err.message}`);
+    }
+  };
+
+  /**
+   * ✅ v2.2: Função auxiliar para fazer o UPDATE no banco
+   * Separada para permitir reuso com ID do estado local ou ID buscado do Supabase
+   */
+  const performUpdate = async (
+    consultantId: number,
+    result: AIAnalysisResult,
+    users: User[],
+    usuariosCliente: UsuarioCliente[],
+    clients: Client[],
+    setConsultants: React.Dispatch<React.SetStateAction<Consultant[]>>,
+    localConsultant?: Consultant
+  ) => {
+    // Preparar campo do mês (parecer_1_consultor, parecer_2_consultor, etc)
+    const monthField = `parecer_${result.reportMonth}_consultor`;
+    const reportYear = (result as any).reportYear || new Date().getFullYear();
+    
+    console.log(`📝 Campo a atualizar: ${monthField} = ${result.riskScore}`);
+    
+    // ✅ v2.2: Validar que monthField é um campo válido
+    const validFields = [
+      'parecer_1_consultor', 'parecer_2_consultor', 'parecer_3_consultor',
+      'parecer_4_consultor', 'parecer_5_consultor', 'parecer_6_consultor',
+      'parecer_7_consultor', 'parecer_8_consultor', 'parecer_9_consultor',
+      'parecer_10_consultor', 'parecer_11_consultor', 'parecer_12_consultor'
+    ];
+    
+    if (!validFields.includes(monthField)) {
+      console.error(`❌ Campo inválido: ${monthField}`);
+      return;
+    }
+    
+    // ✅ v2.2: Usar trechoOriginal da IA
+    const conteudoOriginal = (result as any).trechoOriginal || result.details || result.summary;
+    
+    // ============================================================================
+    // PASSO 1: Atualizar parecer no consultor
+    // ============================================================================
+    console.log('🔄 PASSO 1: Atualizando parecer na tabela consultants...');
+    
+    const updates: Record<string, any> = {
+      [monthField]: result.riskScore,
+      parecer_final_consultor: result.riskScore
+    };
+    
+    console.log('📤 Dados do UPDATE:', JSON.stringify(updates));
+    
+    // ✅ v2.2: UPDATE SEM .single() para evitar erro se nenhuma linha for atualizada
+    const { data: updateData, error: updateError } = await supabase
+      .from('consultants')
+      .update(updates)
+      .eq('id', consultantId)
+      .select('id, nome_consultores, ' + monthField + ', parecer_final_consultor');
+    
+    if (updateError) {
+      console.error('❌ Erro no UPDATE:', updateError);
+      throw updateError;
+    }
+    
+    // ✅ v2.2: Verificar se o UPDATE realmente afetou alguma linha
+    if (!updateData || updateData.length === 0) {
+      console.error(`❌ UPDATE não afetou nenhuma linha! ID: ${consultantId}`);
+      
+      // Verificar se o consultor existe
+      const { data: checkData } = await supabase
+        .from('consultants')
+        .select('id, nome_consultores')
+        .eq('id', consultantId);
+      
+      if (!checkData || checkData.length === 0) {
+        console.error(`❌ Consultor com ID ${consultantId} NÃO EXISTE na tabela!`);
+      } else {
+        console.error(`⚠️ Consultor existe mas UPDATE falhou. Possível problema de RLS/permissão.`);
+      }
+      throw new Error(`UPDATE falhou para consultor ID ${consultantId}`);
+    }
+    
+    console.log('✅ UPDATE executado com sucesso!');
+    console.log('📊 Dados retornados:', JSON.stringify(updateData[0]));
+    
+    // ============================================================================
+    // PASSO 2: Salvar relatório na tabela consultant_reports
+    // ============================================================================
+    console.log('🔄 PASSO 2: Salvando relatório na tabela consultant_reports...');
+    
+    // Criar objeto de relatório
+    const newReport: ConsultantReport = {
+      id: `${consultantId}_${result.reportMonth}_${Date.now()}`,
+      month: result.reportMonth,
+      year: reportYear,
+      riskScore: result.riskScore,
+      summary: result.summary,
+      negativePattern: result.negativePattern,
+      predictiveAlert: result.predictiveAlert,
+      recommendations: result.recommendations,
+      content: conteudoOriginal,
+      createdAt: new Date().toISOString(),
+      generatedBy: 'manual',
+      aiJustification: 'Análise baseada em relatório de atividades manual'
+    };
+    
+    const { data: reportData, error: reportError } = await supabase
+      .from('consultant_reports')
+      .insert([{
+        consultant_id: consultantId,
+        month: newReport.month,
+        year: newReport.year,
+        risk_score: newReport.riskScore,
+        summary: newReport.summary,
+        negative_pattern: newReport.negativePattern,
+        predictive_alert: newReport.predictiveAlert,
+        recommendations: JSON.stringify(newReport.recommendations),
+        content: newReport.content,
+        generated_by: newReport.generatedBy,
+        ai_justification: newReport.aiJustification
+      }])
+      .select('id');
+    
+    if (reportError) {
+      console.error('❌ Erro ao salvar relatório:', reportError);
+      throw reportError;
+    }
+    
+    console.log(`✅ Relatório salvo! ID: ${reportData?.[0]?.id}`);
+    
+    // ============================================================================
+    // PASSO 3: Salvar feedback para compliance
+    // ============================================================================
+    console.log('🔄 PASSO 3: Salvando feedback para compliance...');
+    
+    await saveFeedbackFromAnalysis(
+      consultantId,
+      result.riskScore,
+      result.summary || 'Análise de relatório de atividades',
+      result.reportMonth,
+      reportYear
+    );
+    
+    // ============================================================================
+    // PASSO 4: Atualizar estado local React
+    // ============================================================================
+    console.log('🔄 PASSO 4: Atualizando estado local...');
+    
+    // Atualizar estado local
+    const updatedConsultant: Partial<Consultant> = {
+      [monthField]: result.riskScore,
+      parecer_final_consultor: result.riskScore
+    };
+    
+    setConsultants(prev => prev.map(c => {
+      if (c.id === consultantId) {
+        return {
+          ...c,
+          ...updatedConsultant,
+          reports: [...(c.reports || []), newReport],
+          consultant_reports: [...(c.consultant_reports || []), newReport]
+        };
+      }
+      return c;
+    }));
+    
+    console.log('✅ Estado local atualizado');
+    
+    // ============================================================================
+    // PASSO 5: Notificações de risco crítico
+    // ============================================================================
+    if (isCriticalRisk(result.riskScore)) {
+      console.log('🚨 RISCO CRÍTICO DETECTADO! Enviando notificações...');
+      
+      try {
+        // Buscar dados completos do consultor para notificação
+        const { data: consultantData } = await supabase
+          .from('consultants')
+          .select('*')
+          .eq('id', consultantId)
+          .single();
+        
+        if (consultantData) {
           const notificationResult = await sendCriticalRiskNotifications(
-            consultant,
+            consultantData as Consultant,
             users,
             usuariosCliente,
             clients,
@@ -343,25 +493,23 @@ export const useReportAnalysis = () => {
           );
           
           if (notificationResult.success) {
-            console.log(`✅ Notificações enviadas: ${notificationResult.emailsSent} email(s) para: ${notificationResult.recipients.join(', ')}`);
-          } else {
-            console.warn(`⚠️ Falha ao enviar notificações: ${notificationResult.errors.join(', ')}`);
+            console.log(`✅ Notificações enviadas: ${notificationResult.emailsSent} email(s)`);
           }
-        } catch (emailError: any) {
-          console.error('❌ Erro ao enviar notificações de risco crítico:', emailError);
-          // Não interrompe o fluxo principal - apenas loga o erro
         }
+      } catch (emailError: any) {
+        console.error('❌ Erro ao enviar notificações:', emailError);
       }
-      
-      // Verificar se deve ir para quarentena
-      if (result.riskScore === 4 || result.riskScore === 5) {
-        console.log(`⚠️ Consultor em QUARENTENA: ${result.consultantName}`);
-      }
-      
-    } catch (err: any) {
-      console.error('❌ Erro ao atualizar score:', err);
-      alert(`Erro ao atualizar score do consultor: ${err.message}`);
     }
+    
+    // Verificar se deve ir para quarentena
+    if (result.riskScore === 4 || result.riskScore === 5) {
+      console.log(`⚠️ Consultor em QUARENTENA: Score ${result.riskScore}`);
+    }
+    
+    console.log('═══════════════════════════════════════════════════════');
+    console.log(`✅ PROCESSAMENTO COMPLETO - Consultor ID: ${consultantId}`);
+    console.log(`   Mês: ${result.reportMonth}/${reportYear} | Score: ${result.riskScore}`);
+    console.log('═══════════════════════════════════════════════════════');
   };
 
   /**
