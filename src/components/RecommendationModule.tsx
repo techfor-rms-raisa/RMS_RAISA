@@ -65,6 +65,13 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
         return [...uniqueYears].sort((a, b) => b - a);
     }, [consultants]);
 
+    // ✅ v2.4: Inicializar com o ano mais recente DISPONÍVEL nos dados
+    useEffect(() => {
+        if (availableYears.length > 0 && !availableYears.includes(selectedYear)) {
+            setSelectedYear(availableYears[0]); // Primeiro da lista = mais recente
+        }
+    }, [availableYears, selectedYear]);
+
     // ✅ NOVO: Funções auxiliares (copiadas do Quarentena)
     const getDaysSinceHiring = (hireDate: string | null | undefined): number | null => {
         if (!hireDate) return null;

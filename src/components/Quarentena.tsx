@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Mail, Phone } from 'lucide-react';
 import { FocalRSIcon } from './icons/FocalRSIcon';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '@/types';
@@ -66,6 +66,13 @@ const Quarentena: React.FC<QuarentenaProps> = ({
     if (uniqueYears.size === 0) uniqueYears.add(currentYear);
     return [...uniqueYears].sort((a, b) => b - a);
   }, [consultants]);
+
+  // ✅ v2.4: Inicializar com o ano mais recente DISPONÍVEL nos dados
+  useEffect(() => {
+    if (availableYears.length > 0 && !availableYears.includes(selectedYear)) {
+      setSelectedYear(availableYears[0]); // Primeiro da lista = mais recente
+    }
+  }, [availableYears, selectedYear]);
 
   // ============================================================================
   // FUNÇÕES AUXILIARES
