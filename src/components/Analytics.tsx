@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, RiskScore } from '@/types';
 import { 
     BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, 
@@ -31,6 +31,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
         if (uniqueYears.size === 0) uniqueYears.add(currentYear);
         return [...uniqueYears].sort((a, b) => b - a);
     }, [consultants, currentYear]);
+
+    // ✅ v2.4: Inicializar com o ano mais recente DISPONÍVEL nos dados
+    useEffect(() => {
+        if (availableYears.length > 0 && !availableYears.includes(selectedYear)) {
+            setSelectedYear(availableYears[0]); // Primeiro da lista = mais recente
+        }
+    }, [availableYears, selectedYear]);
 
     // ============================================================================
     // FILTRO: Apenas consultores ativos DO ANO SELECIONADO (tratando NULL)
