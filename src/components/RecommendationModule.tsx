@@ -41,6 +41,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     const [selectedClient, setSelectedClient] = useState<string>('all');
     const [selectedScore, setSelectedScore] = useState<string>('all');
     const [selectedManager, setSelectedManager] = useState<string>('all');
+    const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear()); // ✅ v2.4: Filtro de ano
     
     const [currentPage, setCurrentPage] = useState<number>(1);
     const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
@@ -52,6 +53,17 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     const [showRecommendationsModal, setShowRecommendationsModal] = useState<boolean>(false);
     const [selectedConsultantForRecommendations, setSelectedConsultantForRecommendations] = useState<Consultant | null>(null);
     const [selectedRecommendations, setSelectedRecommendations] = useState<any>(null);
+
+    // ✅ v2.4: Anos disponíveis
+    const availableYears = useMemo(() => {
+        const currentYear = new Date().getFullYear();
+        const uniqueYears = new Set<number>();
+        consultants.forEach(c => {
+            if (c.ano_vigencia) uniqueYears.add(c.ano_vigencia);
+        });
+        if (uniqueYears.size === 0) uniqueYears.add(currentYear);
+        return [...uniqueYears].sort((a, b) => b - a);
+    }, [consultants]);
 
     // ✅ NOVO: Funções auxiliares (copiadas do Quarentena)
     const getDaysSinceHiring = (hireDate: string | null | undefined): number | null => {
@@ -89,6 +101,9 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
     const filteredList = useMemo(() => {
         let list = consultants.filter(c => {
             if (c.status !== 'Ativo') return false;
+            
+            // ✅ v2.4: Filtrar por ano_vigencia
+            if (c.ano_vigencia !== selectedYear) return false;
 
             // Verificar parecer_final_consultor (1-5)
             const finalScore = getValidFinalScore(c);
@@ -144,7 +159,7 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
             const scoreB = getValidFinalScore(b) || 0;
             return scoreB - scoreA; // Decrescente (5=Crítico primeiro)
         });
-    }, [consultants, selectedClient, selectedScore, selectedManager, clients, usuariosCliente, users]);
+    }, [consultants, selectedClient, selectedScore, selectedManager, selectedYear, clients, usuariosCliente, users]);
 
     // ✅ CORRIGIDO: Calcular consultor da página atual (1 a 1)
     const paginatedList = useMemo(() => {
@@ -303,6 +318,20 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                                         <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
                                     ))
                                 }
+                            </select>
+                        </div>
+
+                        {/* ✅ v2.4: Filtro por Ano */}
+                        <div className="flex flex-col gap-2">
+                            <label className="text-sm font-semibold text-gray-700">Ano:</label>
+                            <select
+                                value={selectedYear}
+                                onChange={e => setSelectedYear(parseInt(e.target.value))}
+                                className="px-3 py-2 border border-gray-300 rounded-lg hover:border-gray-400 transition"
+                            >
+                                {availableYears.map(year => (
+                                    <option key={year} value={year}>{year}</option>
+                                ))}
                             </select>
                         </div>
                     </div>

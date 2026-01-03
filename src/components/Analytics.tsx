@@ -22,12 +22,22 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
     const currentYear = new Date().getFullYear();
     const [selectedYear, setSelectedYear] = useState(currentYear);
 
+    // ✅ v2.4: Anos disponíveis para o seletor
+    const availableYears = useMemo(() => {
+        const uniqueYears = new Set<number>();
+        consultants.forEach(c => {
+            if (c.ano_vigencia) uniqueYears.add(c.ano_vigencia);
+        });
+        if (uniqueYears.size === 0) uniqueYears.add(currentYear);
+        return [...uniqueYears].sort((a, b) => b - a);
+    }, [consultants, currentYear]);
+
     // ============================================================================
-    // FILTRO: Apenas consultores ativos
+    // FILTRO: Apenas consultores ativos DO ANO SELECIONADO
     // ============================================================================
     const activeConsultants = useMemo(() => {
-        return consultants.filter(c => c.status === 'Ativo');
-    }, [consultants]);
+        return consultants.filter(c => c.status === 'Ativo' && c.ano_vigencia === selectedYear);
+    }, [consultants, selectedYear]);
 
     // ============================================================================
     // CÁLCULOS DE KPIs - ESCALA: 1=Excelente, 5=Crítico
@@ -64,11 +74,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
             'Excelente (1)': activeConsultants.filter(c => c.parecer_final_consultor === 1).length,
         };
 
-        // Status de consultores (para aba Overview)
+        // Status de consultores (para aba Overview) - ✅ v2.4: Filtrar por ano
         const statusDistribution = {
-            active: consultants.filter(c => c.status === 'Ativo').length,
-            lost: consultants.filter(c => c.status === 'Perdido').length,
-            terminated: consultants.filter(c => c.status === 'Encerrado').length,
+            active: consultants.filter(c => c.status === 'Ativo' && c.ano_vigencia === selectedYear).length,
+            lost: consultants.filter(c => c.status === 'Perdido' && c.ano_vigencia === selectedYear).length,
+            terminated: consultants.filter(c => c.status === 'Encerrado' && c.ano_vigencia === selectedYear).length,
         };
 
         const totalClients = clients.filter(c => c.ativo_cliente).length;
@@ -315,7 +325,7 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
                         onChange={(e) => setSelectedYear(parseInt(e.target.value))}
                         className="border border-gray-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
                     >
-                        {[currentYear, currentYear - 1, currentYear - 2].map(year => (
+                        {availableYears.map(year => (
                             <option key={year} value={year}>{year}</option>
                         ))}
                     </select>

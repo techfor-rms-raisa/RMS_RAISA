@@ -69,7 +69,14 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
     
     const [selectedClientFilter, setSelectedClientFilter] = useState<string>('all');
     const [selectedConsultantFilter, setSelectedConsultantFilter] = useState<string>('all');
+    const [selectedYearFilter, setSelectedYearFilter] = useState<number>(new Date().getFullYear()); // ✅ v2.4: Filtro de ano
     const [searchQuery, setSearchQuery] = useState<string>('');
+
+    // ✅ v2.4: Anos disponíveis
+    const availableYears = Array.from(
+        new Set(consultants.map(c => c.ano_vigencia).filter(Boolean))
+    ).sort((a, b) => (b || 0) - (a || 0));
+    if (availableYears.length === 0) availableYears.push(new Date().getFullYear());
 
     const [formData, setFormData] = useState({
         ano_vigencia: new Date().getFullYear(),
@@ -272,16 +279,17 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
         return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     };
 
-    // Filtros
+    // Filtros - ✅ v2.4: Incluído filtro por ano_vigencia
     const filteredConsultants = consultants.filter(c => {
         const clientName = getClientName(c);
         const matchesClient = selectedClientFilter === 'all' || clientName === selectedClientFilter;
         const matchesConsultant = selectedConsultantFilter === 'all' || c.nome_consultores === selectedConsultantFilter;
+        const matchesYear = c.ano_vigencia === selectedYearFilter; // ✅ v2.4: Filtro de ano
         const matchesSearch = !searchQuery || 
             c.nome_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             c.cargo_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             clientName?.toLowerCase().includes(searchQuery.toLowerCase());
-        return matchesClient && matchesConsultant && matchesSearch;
+        return matchesClient && matchesConsultant && matchesYear && matchesSearch;
     });
 
     const uniqueClients = [...new Set(consultants.map(c => getClientName(c)))].filter(Boolean).sort();
@@ -304,7 +312,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             </div>
 
             {/* Filtros */}
-            <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                     <input
@@ -323,6 +331,16 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                     <option value="all">Todos os Clientes</option>
                     {uniqueClients.map(client => (
                         <option key={client} value={client}>{client}</option>
+                    ))}
+                </select>
+                {/* ✅ v2.4: Seletor de Ano */}
+                <select
+                    value={selectedYearFilter}
+                    onChange={(e) => setSelectedYearFilter(parseInt(e.target.value))}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                    {availableYears.map(year => (
+                        <option key={year} value={year}>{year}</option>
                     ))}
                 </select>
                 <div className="text-right text-sm text-gray-500 self-center">

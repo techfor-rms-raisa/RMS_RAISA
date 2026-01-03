@@ -42,6 +42,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedScore, setSelectedScore] = useState<string>('all');
   const [selectedManager, setSelectedManager] = useState<string>('all'); // ✅ CORRIGIDO: Filtro por ID do Gestor de Pessoas
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear()); // ✅ v2.4: Filtro de ano
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
   const [selectedConsultantForHistory, setSelectedConsultantForHistory] = useState<Consultant | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState<boolean>(false);
@@ -54,6 +55,17 @@ const Quarentena: React.FC<QuarentenaProps> = ({
   const [selectedConsultantForRecommendations, setSelectedConsultantForRecommendations] = useState<Consultant | null>(null);
   const [selectedRecommendations, setSelectedRecommendations] = useState<IntelligentAnalysis | null>(null);
   const [loadingRecommendations, setLoadingRecommendations] = useState<boolean>(false);
+
+  // ✅ v2.4: Anos disponíveis
+  const availableYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    const uniqueYears = new Set<number>();
+    consultants.forEach(c => {
+      if (c.ano_vigencia) uniqueYears.add(c.ano_vigencia);
+    });
+    if (uniqueYears.size === 0) uniqueYears.add(currentYear);
+    return [...uniqueYears].sort((a, b) => b - a);
+  }, [consultants]);
 
   // ============================================================================
   // FUNÇÕES AUXILIARES
@@ -301,7 +313,12 @@ const Quarentena: React.FC<QuarentenaProps> = ({
       let clientManagers = usuariosCliente.filter(uc => uc.id_cliente === client.id);
       
       const managers = clientManagers.map(manager => {
-        let managerConsultants = consultants.filter(c => c.gestor_imediato_id === manager.id && c.status === 'Ativo');
+        // ✅ v2.4: Filtrar por gestor_imediato_id, status E ano_vigencia
+        let managerConsultants = consultants.filter(c => 
+          c.gestor_imediato_id === manager.id && 
+          c.status === 'Ativo' &&
+          c.ano_vigencia === selectedYear
+        );
         
         // Filtrar apenas consultores em quarentena
         managerConsultants = managerConsultants.filter(c => isInQuarantine(c));
@@ -327,7 +344,7 @@ const Quarentena: React.FC<QuarentenaProps> = ({
 
       return { ...client, managers };
     }).sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente));
-  }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedScore, selectedManager]);
+  }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedScore, selectedManager, selectedYear]);
 
   const getReportForMonth = (c: Consultant, m: number) => {
     if (!c.reports) return undefined;
@@ -399,6 +416,20 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                 <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
               ))
             }
+          </select>
+        </div>
+
+        {/* ✅ v2.4: Filtro por Ano */}
+        <div className="filter-group">
+          <label className="filter-label">Ano:</label>
+          <select 
+            value={selectedYear} 
+            onChange={e => setSelectedYear(parseInt(e.target.value))} 
+            className="filter-select"
+          >
+            {availableYears.map(year => (
+              <option key={year} value={year}>{year}</option>
+            ))}
           </select>
         </div>
       </div>
