@@ -168,6 +168,32 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
         });
     }, [consultants, selectedClient, selectedScore, selectedManager, selectedYear, clients, usuariosCliente, users]);
 
+    // ============================================================================
+    // ✅ v2.5: CÁLCULO DE ESTATÍSTICAS PARA CARDS TOTALIZADORES
+    // ============================================================================
+    const statistics = useMemo(() => {
+        const stats = { total: 0, medium: 0, high: 0, critical: 0, newConsultants: 0 };
+        
+        stats.total = filteredList.length;
+
+        filteredList.forEach(consultant => {
+            const score = getValidFinalScore(consultant);
+            if (score !== null) {
+                switch (score) {
+                    case 3: stats.medium++; break;
+                    case 4: stats.high++; break;
+                    case 5: stats.critical++; break;
+                }
+            }
+            // Contar novos consultores (< 45 dias)
+            if (isNewConsultant(consultant)) {
+                stats.newConsultants++;
+            }
+        });
+
+        return stats;
+    }, [filteredList]);
+
     // ✅ CORRIGIDO: Calcular consultor da página atual (1 a 1)
     const paginatedList = useMemo(() => {
         const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
@@ -341,6 +367,30 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
                                 ))}
                             </select>
                         </div>
+                    </div>
+                </div>
+
+                {/* ✅ v2.5: PAINEL DE ESTATÍSTICAS */}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                    <div className="bg-gray-100 p-4 rounded-lg text-center shadow">
+                        <p className="text-2xl font-bold text-gray-800">{statistics.total}</p>
+                        <p className="text-sm text-gray-600">Pendentes</p>
+                    </div>
+                    <div className="bg-yellow-100 p-4 rounded-lg text-center shadow">
+                        <p className="text-2xl font-bold text-yellow-700">{statistics.medium}</p>
+                        <p className="text-sm text-yellow-700">Médio (3)</p>
+                    </div>
+                    <div className="bg-orange-100 p-4 rounded-lg text-center shadow">
+                        <p className="text-2xl font-bold text-orange-700">{statistics.high}</p>
+                        <p className="text-sm text-orange-700">Alto (4)</p>
+                    </div>
+                    <div className="bg-red-100 p-4 rounded-lg text-center shadow">
+                        <p className="text-2xl font-bold text-red-700">{statistics.critical}</p>
+                        <p className="text-sm text-red-700">Crítico (5)</p>
+                    </div>
+                    <div className="bg-purple-100 p-4 rounded-lg text-center shadow">
+                        <p className="text-2xl font-bold text-purple-700">{statistics.newConsultants}</p>
+                        <p className="text-sm text-purple-700">Novos (&lt;45d)</p>
                     </div>
                 </div>
 
