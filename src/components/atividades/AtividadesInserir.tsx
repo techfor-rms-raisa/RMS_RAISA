@@ -177,6 +177,9 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     }, [preSelectedConsultant, preSelectedClient]);
 
     // Filtrar consultores pelo cliente selecionado
+    // ✅ v2.4: Adiciona constante do ano atual para filtros
+    const currentYear = new Date().getFullYear();
+
     const filteredConsultants = useMemo(() => {
         if (!selectedClient) return [];
         const client = clients.find(c => c.razao_social_cliente === selectedClient);
@@ -186,15 +189,20 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
         return consultants.filter(c => 
             c.status === 'Ativo' && 
             c.gestor_imediato_id && 
-            managerIds.includes(c.gestor_imediato_id)
+            managerIds.includes(c.gestor_imediato_id) &&
+            c.ano_vigencia === currentYear // ✅ v2.4: Filtrar pelo ano atual
         ).sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores));
-    }, [selectedClient, clients, consultants, usuariosCliente]);
+    }, [selectedClient, clients, consultants, usuariosCliente, currentYear]);
 
-    // Obter dados do consultor selecionado
+    // Obter dados do consultor selecionado (também considera ano)
     const selectedConsultantData = useMemo(() => {
         if (!selectedConsultant) return null;
-        return consultants.find(c => c.nome_consultores === selectedConsultant) || null;
-    }, [selectedConsultant, consultants]);
+        // ✅ v2.4: Prioriza consultor do ano atual
+        return consultants.find(c => 
+            c.nome_consultores === selectedConsultant && 
+            c.ano_vigencia === currentYear
+        ) || consultants.find(c => c.nome_consultores === selectedConsultant) || null;
+    }, [selectedConsultant, consultants, currentYear]);
 
     // Obter dados do gestor/coordenador associado
     const managerData = useMemo(() => {

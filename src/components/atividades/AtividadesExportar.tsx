@@ -181,7 +181,11 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
 
     // ===== CONSULTORES FILTRADOS POR CLIENTE =====
     const consultantsForFilter = useMemo(() => {
-        let filtered = consultantsWithReports.filter(c => c.status === 'Ativo');
+        // ✅ v2.4: Filtrar por status E ano_vigencia
+        let filtered = consultantsWithReports.filter(c => 
+            c.status === 'Ativo' && 
+            c.ano_vigencia === selectedYear
+        );
         
         if (selectedClient !== 'all') {
             const client = clients.find(c => c.razao_social_cliente === selectedClient);
@@ -193,7 +197,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
         }
         
         return filtered.sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores));
-    }, [consultantsWithReports, selectedClient, clients, usuariosCliente]);
+    }, [consultantsWithReports, selectedClient, clients, usuariosCliente, selectedYear]);
 
     // ===== RELATÓRIOS FILTRADOS =====
     const filteredReports = useMemo(() => {

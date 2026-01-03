@@ -301,41 +301,86 @@ export const useReportAnalysis = () => {
       
       // Buscar consultor pelo nome (case insensitive e trim)
       const consultantSearchName = result.consultantName.toLowerCase().trim();
-      console.log(`🔍 Buscando consultor: "${consultantSearchName}"`);
+      const reportYear = (result as any).reportYear || new Date().getFullYear();
+      
+      console.log(`🔍 Buscando consultor: "${consultantSearchName}" para ano ${reportYear}`);
       console.log(`📋 Total de consultores no estado: ${consultants.length}`);
       
-      const consultant = consultants.find(c => 
-        c.nome_consultores.toLowerCase().trim() === consultantSearchName
+      // ✅ v2.4: CORREÇÃO - Filtrar por nome E ano_vigencia
+      // Primeiro tenta encontrar consultor do ano do relatório
+      let consultant = consultants.find(c => 
+        c.nome_consultores.toLowerCase().trim() === consultantSearchName &&
+        c.ano_vigencia === reportYear
       );
+      
+      // Se não encontrar no ano específico, tenta buscar em qualquer ano (fallback)
+      if (!consultant) {
+        console.log(`⚠️ Consultor não encontrado em ${reportYear}, buscando em qualquer ano...`);
+        consultant = consultants.find(c => 
+          c.nome_consultores.toLowerCase().trim() === consultantSearchName
+        );
+        
+        if (consultant && consultant.ano_vigencia !== reportYear) {
+          console.warn(`⚠️ ATENÇÃO: Consultor encontrado em ano diferente (${consultant.ano_vigencia} vs ${reportYear})`);
+        }
+      }
       
       if (!consultant) {
         console.warn(`⚠️ Consultor não encontrado no estado local: "${result.consultantName}"`);
         
-        // ✅ v2.2: Tentar buscar diretamente no Supabase como fallback
-        console.log('🔄 Tentando buscar diretamente no Supabase...');
-        const { data: dbConsultants, error: searchError } = await supabase
+        // ✅ v2.4: Tentar buscar diretamente no Supabase como fallback (com filtro de ano)
+        console.log(`🔄 Tentando buscar diretamente no Supabase para ano ${reportYear}...`);
+        
+        // Primeiro tenta com filtro de ano
+        let { data: dbConsultants, error: searchError } = await supabase
           .from('consultants')
-          .select('id, nome_consultores')
+          .select('id, nome_consultores, ano_vigencia')
           .ilike('nome_consultores', `%${result.consultantName.split(' ')[0]}%`)
+          .eq('ano_vigencia', reportYear)
           .limit(5);
+        
+        // Se não encontrar no ano específico, busca sem filtro de ano
+        if (!dbConsultants || dbConsultants.length === 0) {
+          console.log(`⚠️ Não encontrado em ${reportYear}, buscando em qualquer ano...`);
+          const fallbackResult = await supabase
+            .from('consultants')
+            .select('id, nome_consultores, ano_vigencia')
+            .ilike('nome_consultores', `%${result.consultantName.split(' ')[0]}%`)
+            .limit(5);
+          
+          dbConsultants = fallbackResult.data;
+          searchError = fallbackResult.error;
+        }
         
         if (searchError || !dbConsultants || dbConsultants.length === 0) {
           console.error(`❌ Consultor "${result.consultantName}" não encontrado nem no Supabase`);
           return;
         }
         
-        // Tentar match exato
-        const exactMatch = dbConsultants.find(c => 
-          c.nome_consultores.toLowerCase().trim() === consultantSearchName
+        // Tentar match exato (prioriza ano correto)
+        let exactMatch = dbConsultants.find(c => 
+          c.nome_consultores.toLowerCase().trim() === consultantSearchName &&
+          c.ano_vigencia === reportYear
         );
+        
+        // Fallback: match só por nome
+        if (!exactMatch) {
+          exactMatch = dbConsultants.find(c => 
+            c.nome_consultores.toLowerCase().trim() === consultantSearchName
+          );
+          
+          if (exactMatch) {
+            console.warn(`⚠️ ATENÇÃO: Consultor encontrado em ano diferente (${exactMatch.ano_vigencia} vs ${reportYear})`);
+          }
+        }
         
         if (!exactMatch) {
           console.error(`❌ Nenhum match exato encontrado. Candidatos:`);
-          dbConsultants.forEach(c => console.log(`   - ${c.nome_consultores} (ID: ${c.id})`));
+          dbConsultants.forEach(c => console.log(`   - ${c.nome_consultores} (ID: ${c.id}, Ano: ${c.ano_vigencia})`));
           return;
         }
         
-        console.log(`✅ Consultor encontrado no Supabase: ${exactMatch.nome_consultores} (ID: ${exactMatch.id})`);
+        console.log(`✅ Consultor encontrado no Supabase: ${exactMatch.nome_consultores} (ID: ${exactMatch.id}, Ano: ${exactMatch.ano_vigencia})`);
         // Continuar com o ID do banco
         await performUpdate(exactMatch.id, result, users, usuariosCliente, clients, setConsultants);
         return;

@@ -80,7 +80,11 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     };
 
     const dataGroupedByClient = useMemo(() => {
-        const activeConsultants = consultants.filter(c => c.status === 'Ativo');
+        // ✅ v2.4: Filtrar por status E ano_vigencia
+        const activeConsultants = consultants.filter(c => 
+            c.status === 'Ativo' && 
+            c.ano_vigencia === selectedYear
+        );
         const clientMap = new Map<string, Consultant[]>();
 
         activeConsultants.forEach(consultant => {
@@ -102,7 +106,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
 
         return clientEntries.sort((a, b) => a[0].localeCompare(b[0]));
 
-    }, [consultants, clients, usuariosCliente, selectedClient]);
+    }, [consultants, clients, usuariosCliente, selectedClient, selectedYear]);
 
     const statistics = useMemo(() => {
         const stats = { total: 0, excellent: 0, good: 0, medium: 0, high: 0, critical: 0 };
