@@ -150,14 +150,10 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
             }
         }
 
-        // ✅ NOVO: Filtro por Gestão de Pessoas
+        // ✅ v2.5 CORRIGIDO: Filtro por Gestão de Pessoas (id_gestao_de_pessoas do CONSULTOR)
         if (selectedManager !== 'all') {
             const selectedManagerId = parseInt(selectedManager, 10);
-            list = list.filter(c => {
-                const manager = usuariosCliente.find(u => u.id === c.gestor_imediato_id);
-                return manager?.id_cliente === selectedManagerId || 
-                       users.find(u => u.id === selectedManagerId && u.tipo_usuario === 'Gestão de Pessoas');
-            });
+            list = list.filter(c => c.id_gestao_de_pessoas === selectedManagerId);
         }
 
         // Ordenar por maior risco primeiro (score mais alto = pior)
