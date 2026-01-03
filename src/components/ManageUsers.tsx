@@ -1,12 +1,21 @@
 import React, { useState } from 'react';
 import { User, UserRole } from '@/types';
 
+// Tipo do resultado da migração
+interface MigrationResult {
+    success: boolean;
+    migrated: number;
+    skipped: number;
+    errors: string[];
+    details: Array<{ nome: string; status: string }>;
+}
+
 interface ManageUsersProps {
     users: User[];
     addUser: (user: Omit<User, 'id'>) => void;
     updateUser: (id: number, updates: Partial<User>) => void;
     currentUser: User;
-    migrateYearlyData: () => void;
+    migrateYearlyData: () => Promise<MigrationResult>;
 }
 
 const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, currentUser, migrateYearlyData }) => {
@@ -16,6 +25,12 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
     const [searchTerm, setSearchTerm] = useState('');
     const [filterRole, setFilterRole] = useState<UserRole | 'Todos'>('Todos');
     const [filterStatus, setFilterStatus] = useState<'Todos' | 'Ativo' | 'Inativo'>('Todos');
+
+    // Estados para Migração Anual
+    const [isMigrationConfirmOpen, setIsMigrationConfirmOpen] = useState(false);
+    const [isMigrationResultOpen, setIsMigrationResultOpen] = useState(false);
+    const [migrationResult, setMigrationResult] = useState<MigrationResult | null>(null);
+    const [isMigrating, setIsMigrating] = useState(false);
 
     // Form states
     const [formData, setFormData] = useState({
@@ -151,16 +166,68 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
         return colors[role] || 'bg-gray-100 text-gray-800';
     };
 
+    // Migração Anual
+    const anoAtual = new Date().getFullYear();
+    const anoAnterior = anoAtual - 1;
+
+    const handleMigration = async () => {
+        setIsMigrating(true);
+        setIsMigrationConfirmOpen(false);
+        
+        try {
+            const result = await migrateYearlyData();
+            setMigrationResult(result);
+            setIsMigrationResultOpen(true);
+        } catch (error: any) {
+            setMigrationResult({
+                success: false,
+                migrated: 0,
+                skipped: 0,
+                errors: [error.message || 'Erro desconhecido'],
+                details: []
+            });
+            setIsMigrationResultOpen(true);
+        } finally {
+            setIsMigrating(false);
+        }
+    };
+
     return (
         <div className="p-6">
             <div className="flex justify-between items-center mb-6">
                 <h2 className="text-2xl font-bold text-[#4D5253]">Gerenciamento de Usuários</h2>
-                <button
-                    onClick={() => setIsAddModalOpen(true)}
-                    className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
-                >
-                    <span>+</span> Novo Usuário
-                </button>
+                <div className="flex gap-3">
+                    {/* Botão Migração Anual - Apenas Administrador */}
+                    {currentUser.tipo_usuario === 'Administrador' && (
+                        <button
+                            onClick={() => setIsMigrationConfirmOpen(true)}
+                            disabled={isMigrating}
+                            className="bg-amber-600 text-white px-4 py-2 rounded hover:bg-amber-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title={`Migrar consultores ativos de ${anoAnterior} para ${anoAtual}`}
+                        >
+                            {isMigrating ? (
+                                <>
+                                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                    </svg>
+                                    <span>Migrando...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span>📅</span>
+                                    <span>Migração {anoAnterior} → {anoAtual}</span>
+                                </>
+                            )}
+                        </button>
+                    )}
+                    <button
+                        onClick={() => setIsAddModalOpen(true)}
+                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
+                    >
+                        <span>+</span> Novo Usuário
+                    </button>
+                </div>
             </div>
 
             {/* Filtros */}
@@ -489,6 +556,144 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
                                     Cancelar
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal Confirmação de Migração */}
+            {isMigrationConfirmOpen && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl max-w-lg w-full">
+                        <div className="p-6">
+                            <div className="flex items-center gap-3 mb-4">
+                                <span className="text-4xl">📅</span>
+                                <h3 className="text-xl font-bold text-gray-900">Migração Anual de Consultores</h3>
+                            </div>
+                            
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4">
+                                <h4 className="font-semibold text-amber-800 mb-2">O que será feito:</h4>
+                                <ul className="text-sm text-amber-700 space-y-1">
+                                    <li>• Buscar todos os consultores <strong>ATIVOS</strong> de {anoAnterior}</li>
+                                    <li>• Criar novos registros para {anoAtual}</li>
+                                    <li>• P1 de {anoAtual} = Parecer Final de {anoAnterior}</li>
+                                    <li>• P2 a P12 serão resetados (novo ciclo)</li>
+                                    <li>• Histórico de {anoAnterior} será <strong>preservado</strong></li>
+                                </ul>
+                            </div>
+
+                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                                <p className="text-sm text-blue-700">
+                                    <strong>💡 Dica:</strong> Esta operação pode ser executada múltiplas vezes. 
+                                    Consultores já migrados serão automaticamente ignorados.
+                                </p>
+                            </div>
+
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={handleMigration}
+                                    className="flex-1 bg-amber-600 text-white px-4 py-2 rounded hover:bg-amber-700 font-semibold"
+                                >
+                                    ✅ Confirmar Migração
+                                </button>
+                                <button
+                                    onClick={() => setIsMigrationConfirmOpen(false)}
+                                    className="flex-1 bg-gray-300 text-gray-700 px-4 py-2 rounded hover:bg-gray-400"
+                                >
+                                    Cancelar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal Resultado da Migração */}
+            {isMigrationResultOpen && migrationResult && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-hidden">
+                        <div className="p-6">
+                            <div className="flex items-center gap-3 mb-4">
+                                <span className="text-4xl">{migrationResult.success ? '✅' : '⚠️'}</span>
+                                <h3 className="text-xl font-bold text-gray-900">
+                                    {migrationResult.success ? 'Migração Concluída!' : 'Migração com Alertas'}
+                                </h3>
+                            </div>
+
+                            {/* Estatísticas */}
+                            <div className="grid grid-cols-3 gap-4 mb-4">
+                                <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
+                                    <p className="text-3xl font-bold text-green-600">{migrationResult.migrated}</p>
+                                    <p className="text-sm text-green-700">Migrados</p>
+                                </div>
+                                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-center">
+                                    <p className="text-3xl font-bold text-yellow-600">{migrationResult.skipped}</p>
+                                    <p className="text-sm text-yellow-700">Já existiam</p>
+                                </div>
+                                <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
+                                    <p className="text-3xl font-bold text-red-600">{migrationResult.errors.length}</p>
+                                    <p className="text-sm text-red-700">Erros</p>
+                                </div>
+                            </div>
+
+                            {/* Lista de Erros */}
+                            {migrationResult.errors.length > 0 && (
+                                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                                    <h4 className="font-semibold text-red-800 mb-2">Erros encontrados:</h4>
+                                    <ul className="text-sm text-red-700 space-y-1 max-h-24 overflow-y-auto">
+                                        {migrationResult.errors.map((error, idx) => (
+                                            <li key={idx}>• {error}</li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+
+                            {/* Detalhes */}
+                            {migrationResult.details.length > 0 && (
+                                <div className="border rounded-lg overflow-hidden mb-4">
+                                    <div className="bg-gray-100 px-4 py-2 font-semibold text-gray-700">
+                                        Detalhes da Migração
+                                    </div>
+                                    <div className="max-h-48 overflow-y-auto">
+                                        <table className="w-full text-sm">
+                                            <thead className="bg-gray-50 sticky top-0">
+                                                <tr>
+                                                    <th className="text-left px-4 py-2">Consultor</th>
+                                                    <th className="text-left px-4 py-2">Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {migrationResult.details.map((detail, idx) => (
+                                                    <tr key={idx} className="border-t">
+                                                        <td className="px-4 py-2">{detail.nome}</td>
+                                                        <td className="px-4 py-2">
+                                                            <span className={`px-2 py-1 rounded text-xs ${
+                                                                detail.status.includes('Migrado') 
+                                                                    ? 'bg-green-100 text-green-700'
+                                                                    : detail.status.includes('Erro')
+                                                                    ? 'bg-red-100 text-red-700'
+                                                                    : 'bg-yellow-100 text-yellow-700'
+                                                            }`}>
+                                                                {detail.status}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            )}
+
+                            <button
+                                onClick={() => {
+                                    setIsMigrationResultOpen(false);
+                                    setMigrationResult(null);
+                                }}
+                                className="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                            >
+                                Fechar
+                            </button>
                         </div>
                     </div>
                 </div>

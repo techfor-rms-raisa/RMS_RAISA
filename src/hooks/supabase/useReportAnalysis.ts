@@ -572,10 +572,192 @@ export const useReportAnalysis = () => {
   };
 
   /**
-   * Migração de dados anuais (stub - não implementado)
+   * Migração de dados anuais - Virada de Ano
+   * 
+   * REGRAS:
+   * - Migra apenas consultores ATIVOS do ano anterior
+   * - Cria NOVOS registros para o ano corrente (preserva histórico)
+   * - P1 do novo ano = parecer_final do ano anterior
+   * - P2 a P12 = null (novo ciclo)
+   * - parecer_final = mesmo do ano anterior (base inicial)
+   * 
+   * @returns Objeto com estatísticas da migração
    */
-  const migrateYearlyData = async () => {
-    console.warn('⚠️ migrateYearlyData: Não implementado');
+  const migrateYearlyData = async (): Promise<{
+    success: boolean;
+    migrated: number;
+    skipped: number;
+    errors: string[];
+    details: Array<{ nome: string; status: string }>;
+  }> => {
+    const anoAtual = new Date().getFullYear();
+    const anoAnterior = anoAtual - 1;
+    const errors: string[] = [];
+    const details: Array<{ nome: string; status: string }> = [];
+    let migrated = 0;
+    let skipped = 0;
+
+    console.log('═══════════════════════════════════════════════════════');
+    console.log(`🔄 INICIANDO MIGRAÇÃO DE ANO: ${anoAnterior} → ${anoAtual}`);
+    console.log('═══════════════════════════════════════════════════════');
+
+    try {
+      // 1. Buscar consultores ATIVOS do ano anterior
+      const { data: consultoresAnoAnterior, error: fetchError } = await supabase
+        .from('consultants')
+        .select('*')
+        .eq('ano_vigencia', anoAnterior)
+        .eq('status', 'Ativo');
+
+      if (fetchError) {
+        throw new Error(`Erro ao buscar consultores de ${anoAnterior}: ${fetchError.message}`);
+      }
+
+      if (!consultoresAnoAnterior || consultoresAnoAnterior.length === 0) {
+        console.log(`⚠️ Nenhum consultor ativo encontrado em ${anoAnterior}`);
+        return {
+          success: true,
+          migrated: 0,
+          skipped: 0,
+          errors: [],
+          details: [{ nome: 'N/A', status: `Nenhum consultor ativo em ${anoAnterior}` }]
+        };
+      }
+
+      console.log(`📋 ${consultoresAnoAnterior.length} consultores ativos encontrados em ${anoAnterior}`);
+
+      // 2. Verificar quais já foram migrados (evitar duplicatas)
+      const { data: consultoresAnoAtual } = await supabase
+        .from('consultants')
+        .select('cpf, email_consultor')
+        .eq('ano_vigencia', anoAtual);
+
+      const jaMigrados = new Set<string>();
+      (consultoresAnoAtual || []).forEach(c => {
+        if (c.cpf) jaMigrados.add(`cpf:${c.cpf}`);
+        if (c.email_consultor) jaMigrados.add(`email:${c.email_consultor}`);
+      });
+
+      // 3. Migrar cada consultor
+      for (const consultor of consultoresAnoAnterior) {
+        try {
+          // Verificar se já foi migrado
+          const cpfKey = consultor.cpf ? `cpf:${consultor.cpf}` : null;
+          const emailKey = consultor.email_consultor ? `email:${consultor.email_consultor}` : null;
+          
+          if ((cpfKey && jaMigrados.has(cpfKey)) || (emailKey && jaMigrados.has(emailKey))) {
+            console.log(`⏭️ ${consultor.nome_consultores} já migrado para ${anoAtual} - pulando`);
+            details.push({ nome: consultor.nome_consultores, status: 'Já migrado' });
+            skipped++;
+            continue;
+          }
+
+          // Determinar o score inicial para P1 do novo ano
+          const scoreInicial = consultor.parecer_final_consultor || consultor.parecer_12_consultor || 3;
+
+          // Criar novo registro para o ano atual
+          const novoConsultor = {
+            // Dados básicos (copiados)
+            nome_consultores: consultor.nome_consultores,
+            email_consultor: consultor.email_consultor,
+            celular: consultor.celular,
+            cpf: consultor.cpf,
+            cargo_consultores: consultor.cargo_consultores,
+            data_inclusao_consultores: consultor.data_inclusao_consultores,
+            status: 'Ativo',
+            ativo_consultor: true,
+            
+            // Dados financeiros (copiados)
+            valor_faturamento: consultor.valor_faturamento,
+            valor_pagamento: consultor.valor_pagamento,
+            
+            // Relacionamentos (copiados)
+            gestor_imediato_id: consultor.gestor_imediato_id,
+            coordenador_id: consultor.coordenador_id,
+            analista_rs_id: consultor.analista_rs_id,
+            id_gestao_de_pessoas: consultor.id_gestao_de_pessoas,
+            
+            // Dados adicionais (copiados)
+            especialidade: consultor.especialidade,
+            dt_aniversario: consultor.dt_aniversario,
+            cnpj_consultor: consultor.cnpj_consultor,
+            empresa_consultor: consultor.empresa_consultor,
+            
+            // Vínculo com candidato (copiados)
+            pessoa_id: consultor.pessoa_id,
+            candidatura_id: consultor.candidatura_id,
+            curriculo_url: consultor.curriculo_url,
+            
+            // ✅ ANO NOVO
+            ano_vigencia: anoAtual,
+            
+            // ✅ PARECERES DO NOVO ANO
+            parecer_1_consultor: scoreInicial, // P1 = score final do ano anterior
+            parecer_2_consultor: null,
+            parecer_3_consultor: null,
+            parecer_4_consultor: null,
+            parecer_5_consultor: null,
+            parecer_6_consultor: null,
+            parecer_7_consultor: null,
+            parecer_8_consultor: null,
+            parecer_9_consultor: null,
+            parecer_10_consultor: null,
+            parecer_11_consultor: null,
+            parecer_12_consultor: null,
+            parecer_final_consultor: scoreInicial, // Base inicial
+            
+            // Campos de controle
+            data_ultima_alteracao: new Date().toISOString()
+          };
+
+          const { error: insertError } = await supabase
+            .from('consultants')
+            .insert([novoConsultor]);
+
+          if (insertError) {
+            throw new Error(`Erro ao inserir: ${insertError.message}`);
+          }
+
+          console.log(`✅ ${consultor.nome_consultores} migrado com P1=${scoreInicial}`);
+          details.push({ 
+            nome: consultor.nome_consultores, 
+            status: `Migrado (P1=${scoreInicial})` 
+          });
+          migrated++;
+
+          // Adicionar à lista de já migrados para evitar duplicatas no mesmo batch
+          if (cpfKey) jaMigrados.add(cpfKey);
+          if (emailKey) jaMigrados.add(emailKey);
+
+        } catch (consultorError: any) {
+          console.error(`❌ Erro ao migrar ${consultor.nome_consultores}:`, consultorError);
+          errors.push(`${consultor.nome_consultores}: ${consultorError.message}`);
+          details.push({ nome: consultor.nome_consultores, status: `Erro: ${consultorError.message}` });
+        }
+      }
+
+      console.log('═══════════════════════════════════════════════════════');
+      console.log(`✅ MIGRAÇÃO CONCLUÍDA: ${migrated} migrados, ${skipped} pulados, ${errors.length} erros`);
+      console.log('═══════════════════════════════════════════════════════');
+
+      return {
+        success: errors.length === 0,
+        migrated,
+        skipped,
+        errors,
+        details
+      };
+
+    } catch (err: any) {
+      console.error('❌ Erro fatal na migração:', err);
+      return {
+        success: false,
+        migrated,
+        skipped,
+        errors: [err.message],
+        details
+      };
+    }
   };
 
   return {

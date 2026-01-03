@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "@emailjs/browser": "3.11.0",
     "@google/genai": "^0.6.0",
     "@supabase/supabase-js": "^2.39.0",
