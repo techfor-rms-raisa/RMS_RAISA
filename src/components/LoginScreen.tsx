@@ -17,11 +17,12 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
     setError(null);
 
     try {
+      // ✅ CORRIGIDO: Usar tabela app_users com campos corretos
       const { data, error: queryError } = await supabase
-        .from('users')
+        .from('app_users')
         .select('*')
-        .eq('email', email)
-        .eq('senha', password)
+        .eq('email_usuario', email)
+        .eq('senha_usuario', password)
         .single();
 
       if (queryError) {
@@ -29,20 +30,20 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
         return;
       }
 
-      if (data && data.ativo) {
+      if (data && data.ativo_usuario) {
         const user: User = {
           id: data.id,
-          nome_usuario: data.nome,
-          nome: data.nome, // ✅ Alias para compatibilidade com componentes que usam user.nome
-          email_usuario: data.email,
-          senha_usuario: data.senha,
-          ativo_usuario: data.ativo,
-          tipo_usuario: data.tipo,
+          nome_usuario: data.nome_usuario,
+          nome: data.nome_usuario, // ✅ Alias para compatibilidade com componentes que usam user.nome
+          email_usuario: data.email_usuario,
+          senha_usuario: data.senha_usuario,
+          ativo_usuario: data.ativo_usuario,
+          tipo_usuario: data.tipo_usuario,
           receber_alertas_email: data.receber_alertas_email || false,
           analista_rs_id: data.analista_rs_id || null,
         };
         onLogin(user);
-      } else if (data && !data.ativo) {
+      } else if (data && !data.ativo_usuario) {
         setError('Este usuário está inativo.');
       } else {
         setError('E-mail ou senha inválidos.');
