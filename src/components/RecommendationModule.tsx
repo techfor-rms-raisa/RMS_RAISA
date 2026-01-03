@@ -150,10 +150,21 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
             }
         }
 
-        // ✅ v2.5 CORRIGIDO: Filtro por Gestão de Pessoas (id_gestao_de_pessoas do CONSULTOR)
+        // ✅ v2.5 CORRIGIDO: Filtro por Gestão de Pessoas (id_gestao_de_pessoas do CLIENTE)
         if (selectedManager !== 'all') {
             const selectedManagerId = parseInt(selectedManager, 10);
-            list = list.filter(c => c.id_gestao_de_pessoas === selectedManagerId);
+            list = list.filter(c => {
+                // Buscar o gestor imediato do consultor
+                const gestorImediato = usuariosCliente.find(uc => uc.id === c.gestor_imediato_id);
+                if (!gestorImediato) return false;
+                
+                // Buscar o cliente do gestor imediato
+                const clienteDoConsultor = clients.find(cl => cl.id === gestorImediato.id_cliente);
+                if (!clienteDoConsultor) return false;
+                
+                // Verificar se o id_gestao_de_pessoas do cliente corresponde ao selecionado
+                return Number(clienteDoConsultor.id_gestao_de_pessoas) === selectedManagerId;
+            });
         }
 
         // Ordenar por maior risco primeiro (score mais alto = pior)

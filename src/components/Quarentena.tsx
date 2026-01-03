@@ -322,10 +322,21 @@ const Quarentena: React.FC<QuarentenaProps> = ({
         // Filtrar apenas consultores em quarentena
         managerConsultants = managerConsultants.filter(c => isInQuarantine(c));
 
-        // ✅ v2.5 CORRIGIDO: Filtrar por id_gestao_de_pessoas do CONSULTOR (não do cliente)
+        // ✅ v2.5 CORRIGIDO: Filtrar por id_gestao_de_pessoas do CLIENTE (via gestor_imediato -> cliente)
         if (selectedManager !== 'all') {
           const selectedManagerId = parseInt(selectedManager, 10);
-          managerConsultants = managerConsultants.filter(c => c.id_gestao_de_pessoas === selectedManagerId);
+          managerConsultants = managerConsultants.filter(c => {
+            // Buscar o gestor imediato do consultor
+            const gestorImediato = usuariosCliente.find(uc => uc.id === c.gestor_imediato_id);
+            if (!gestorImediato) return false;
+            
+            // Buscar o cliente do gestor imediato
+            const clienteDoConsultor = clients.find(cl => cl.id === gestorImediato.id_cliente);
+            if (!clienteDoConsultor) return false;
+            
+            // Verificar se o id_gestao_de_pessoas do cliente corresponde ao selecionado
+            return Number(clienteDoConsultor.id_gestao_de_pessoas) === selectedManagerId;
+          });
         }
 
         // Aplicar filtro de score selecionado
