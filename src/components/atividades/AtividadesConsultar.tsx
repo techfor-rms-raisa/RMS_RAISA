@@ -80,10 +80,10 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     };
 
     const dataGroupedByClient = useMemo(() => {
-        // ✅ v2.4: Filtrar por status E ano_vigencia
+        // ✅ v2.4: Filtrar por status E ano_vigencia (tratando NULL)
         const activeConsultants = consultants.filter(c => 
             c.status === 'Ativo' && 
-            c.ano_vigencia === selectedYear
+            (c.ano_vigencia === selectedYear || c.ano_vigencia === null || c.ano_vigencia === undefined)
         );
         const clientMap = new Map<string, Consultant[]>();
 

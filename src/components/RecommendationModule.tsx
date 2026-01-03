@@ -102,8 +102,8 @@ const RecommendationModule: React.FC<RecommendationModuleProps> = ({
         let list = consultants.filter(c => {
             if (c.status !== 'Ativo') return false;
             
-            // ✅ v2.4: Filtrar por ano_vigencia
-            if (c.ano_vigencia !== selectedYear) return false;
+            // ✅ v2.4: Filtrar por ano_vigencia (tratando NULL como ano atual)
+            if (c.ano_vigencia !== null && c.ano_vigencia !== undefined && c.ano_vigencia !== selectedYear) return false;
 
             // Verificar parecer_final_consultor (1-5)
             const finalScore = getValidFinalScore(c);

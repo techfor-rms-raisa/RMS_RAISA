@@ -190,17 +190,17 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             c.status === 'Ativo' && 
             c.gestor_imediato_id && 
             managerIds.includes(c.gestor_imediato_id) &&
-            c.ano_vigencia === currentYear // ✅ v2.4: Filtrar pelo ano atual
+            (c.ano_vigencia === currentYear || c.ano_vigencia === null || c.ano_vigencia === undefined) // ✅ v2.4: Filtrar pelo ano atual (tratando NULL)
         ).sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores));
     }, [selectedClient, clients, consultants, usuariosCliente, currentYear]);
 
-    // Obter dados do consultor selecionado (também considera ano)
+    // Obter dados do consultor selecionado (também considera ano, tratando NULL)
     const selectedConsultantData = useMemo(() => {
         if (!selectedConsultant) return null;
-        // ✅ v2.4: Prioriza consultor do ano atual
+        // ✅ v2.4: Prioriza consultor do ano atual (tratando NULL)
         return consultants.find(c => 
             c.nome_consultores === selectedConsultant && 
-            c.ano_vigencia === currentYear
+            (c.ano_vigencia === currentYear || c.ano_vigencia === null || c.ano_vigencia === undefined)
         ) || consultants.find(c => c.nome_consultores === selectedConsultant) || null;
     }, [selectedConsultant, consultants, currentYear]);
 

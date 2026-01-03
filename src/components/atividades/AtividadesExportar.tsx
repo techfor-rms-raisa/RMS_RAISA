@@ -181,10 +181,10 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
 
     // ===== CONSULTORES FILTRADOS POR CLIENTE =====
     const consultantsForFilter = useMemo(() => {
-        // ✅ v2.4: Filtrar por status E ano_vigencia
+        // ✅ v2.4: Filtrar por status E ano_vigencia (tratando NULL)
         let filtered = consultantsWithReports.filter(c => 
             c.status === 'Ativo' && 
-            c.ano_vigencia === selectedYear
+            (c.ano_vigencia === selectedYear || c.ano_vigencia === null || c.ano_vigencia === undefined)
         );
         
         if (selectedClient !== 'all') {

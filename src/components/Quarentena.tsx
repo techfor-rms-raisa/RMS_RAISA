@@ -313,11 +313,11 @@ const Quarentena: React.FC<QuarentenaProps> = ({
       let clientManagers = usuariosCliente.filter(uc => uc.id_cliente === client.id);
       
       const managers = clientManagers.map(manager => {
-        // ✅ v2.4: Filtrar por gestor_imediato_id, status E ano_vigencia
+        // ✅ v2.4: Filtrar por gestor_imediato_id, status E ano_vigencia (tratando NULL)
         let managerConsultants = consultants.filter(c => 
           c.gestor_imediato_id === manager.id && 
           c.status === 'Ativo' &&
-          c.ano_vigencia === selectedYear
+          (c.ano_vigencia === selectedYear || c.ano_vigencia === null || c.ano_vigencia === undefined)
         );
         
         // Filtrar apenas consultores em quarentena

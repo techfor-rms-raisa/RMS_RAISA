@@ -33,10 +33,13 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
     }, [consultants, currentYear]);
 
     // ============================================================================
-    // FILTRO: Apenas consultores ativos DO ANO SELECIONADO
+    // FILTRO: Apenas consultores ativos DO ANO SELECIONADO (tratando NULL)
     // ============================================================================
     const activeConsultants = useMemo(() => {
-        return consultants.filter(c => c.status === 'Ativo' && c.ano_vigencia === selectedYear);
+        return consultants.filter(c => 
+            c.status === 'Ativo' && 
+            (c.ano_vigencia === selectedYear || c.ano_vigencia === null || c.ano_vigencia === undefined)
+        );
     }, [consultants, selectedYear]);
 
     // ============================================================================
@@ -74,11 +77,11 @@ const Analytics: React.FC<AnalyticsProps> = ({ consultants, clients, usuariosCli
             'Excelente (1)': activeConsultants.filter(c => c.parecer_final_consultor === 1).length,
         };
 
-        // Status de consultores (para aba Overview) - ✅ v2.4: Filtrar por ano
+        // Status de consultores (para aba Overview) - ✅ v2.4: Filtrar por ano (tratando NULL)
         const statusDistribution = {
-            active: consultants.filter(c => c.status === 'Ativo' && c.ano_vigencia === selectedYear).length,
-            lost: consultants.filter(c => c.status === 'Perdido' && c.ano_vigencia === selectedYear).length,
-            terminated: consultants.filter(c => c.status === 'Encerrado' && c.ano_vigencia === selectedYear).length,
+            active: consultants.filter(c => c.status === 'Ativo' && (c.ano_vigencia === selectedYear || !c.ano_vigencia)).length,
+            lost: consultants.filter(c => c.status === 'Perdido' && (c.ano_vigencia === selectedYear || !c.ano_vigencia)).length,
+            terminated: consultants.filter(c => c.status === 'Encerrado' && (c.ano_vigencia === selectedYear || !c.ano_vigencia)).length,
         };
 
         const totalClients = clients.filter(c => c.ativo_cliente).length;
