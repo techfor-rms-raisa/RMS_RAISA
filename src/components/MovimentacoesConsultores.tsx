@@ -20,7 +20,7 @@
  * Data: 30/12/2024
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   useMovimentacoes, 
   InclusaoConsultor, 
@@ -71,7 +71,14 @@ const MovimentacoesConsultores: React.FC = () => {
     valorLiquido: 0
   });
 
+  // ✅ v2.5: Ano selecionável
   const anoAtual = new Date().getFullYear();
+  const [anoSelecionado, setAnoSelecionado] = useState<number>(anoAtual);
+
+  // ✅ v2.5: Anos disponíveis (atual e anteriores)
+  const anosDisponiveis = useMemo(() => {
+    return [anoAtual, anoAtual - 1, anoAtual - 2].filter(a => a >= 2024);
+  }, [anoAtual]);
 
   // ============================================
   // CARREGAR DADOS
@@ -83,12 +90,12 @@ const MovimentacoesConsultores: React.FC = () => {
 
   useEffect(() => {
     carregarMovimentacoes();
-  }, [mesSelecionado, gestorSelecionado]);
+  }, [mesSelecionado, gestorSelecionado, anoSelecionado]); // ✅ v2.5: Inclui ano nas dependências
 
   const carregarMovimentacoes = async () => {
     const [inc, exc] = await Promise.all([
-      buscarInclusoes(mesSelecionado, anoAtual, gestorSelecionado),
-      buscarExclusoes(mesSelecionado, anoAtual, gestorSelecionado)
+      buscarInclusoes(mesSelecionado, anoSelecionado, gestorSelecionado), // ✅ v2.5: Usa anoSelecionado
+      buscarExclusoes(mesSelecionado, anoSelecionado, gestorSelecionado)  // ✅ v2.5: Usa anoSelecionado
     ]);
 
     setDadosInclusoes(inc);
@@ -124,22 +131,39 @@ const MovimentacoesConsultores: React.FC = () => {
                 <TrendingUp className="w-6 h-6 text-indigo-500" />
                 Movimentações de Consultores
               </h1>
-              <p className="text-sm text-slate-500 mt-1">Relatório de Inclusões e Exclusões - {anoAtual}</p>
+              <p className="text-sm text-slate-500 mt-1">Relatório de Inclusões e Exclusões - {anoSelecionado}</p>
             </div>
             
-            {/* Filtro Gestão Comercial */}
-            <div className="flex items-center gap-3">
-              <label className="text-sm font-medium text-slate-600">Gestão Comercial:</label>
-              <select
-                value={gestorSelecionado || ''}
-                onChange={handleGestorChange}
-                className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 min-w-[200px] transition-all shadow-sm"
-              >
-                <option value="">Todos</option>
-                {gestoresComerciais.map(g => (
-                  <option key={g.id} value={g.id}>{g.nome_usuario}</option>
-                ))}
-              </select>
+            {/* Filtros - Gestão Comercial e Ano */}
+            <div className="flex items-center gap-4">
+              {/* ✅ v2.5: Filtro de Ano */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-slate-600">Ano:</label>
+                <select
+                  value={anoSelecionado}
+                  onChange={(e) => setAnoSelecionado(parseInt(e.target.value))}
+                  className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 transition-all shadow-sm"
+                >
+                  {anosDisponiveis.map(ano => (
+                    <option key={ano} value={ano}>{ano}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro Gestão Comercial */}
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-medium text-slate-600">Gestão Comercial:</label>
+                <select
+                  value={gestorSelecionado || ''}
+                  onChange={handleGestorChange}
+                  className="px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm text-slate-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-400 min-w-[200px] transition-all shadow-sm"
+                >
+                  <option value="">Todos</option>
+                  {gestoresComerciais.map(g => (
+                    <option key={g.id} value={g.id}>{g.nome_usuario}</option>
+                  ))}
+                </select>
+              </div>
               
               {loading && (
                 <RefreshCw className="w-5 h-5 text-indigo-500 animate-spin" />
