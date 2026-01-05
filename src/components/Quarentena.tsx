@@ -648,12 +648,20 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                               <div className="info-block-content">
                                 {coordenador ? (
                                   <>
-                                    <span className="info-value">{coordenador.nome_coordenador || 'N/A'}</span>
+                                    <span className="info-value">{coordenador.nome_coordenador_cliente || 'N/A'}</span>
                                     {coordenador.email_coordenador && (
                                       <div className="info-row">
                                         <Mail className="info-icon" size={14} />
                                         <a href={`mailto:${coordenador.email_coordenador}`} className="info-link">
                                           {coordenador.email_coordenador}
+                                        </a>
+                                      </div>
+                                    )}
+                                    {coordenador.celular && (
+                                      <div className="info-row">
+                                        <Phone className="info-icon" size={14} />
+                                        <a href={`tel:${coordenador.celular}`} className="info-link">
+                                          {coordenador.celular}
                                         </a>
                                       </div>
                                     )}
