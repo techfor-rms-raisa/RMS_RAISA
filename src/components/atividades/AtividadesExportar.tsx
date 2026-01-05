@@ -203,6 +203,34 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
         return tipo.replace(/([a-z])([A-Z])/g, '$1 $2');
     };
 
+    // ===== SANITIZAR CONTEÚDO PARA PDF =====
+    const sanitizeContentForPDF = (text: string): string => {
+        if (!text) return '';
+        
+        return text
+            // Remove emojis e caracteres Unicode especiais
+            .replace(/[\u{1F600}-\u{1F64F}]/gu, '') // Emoticons
+            .replace(/[\u{1F300}-\u{1F5FF}]/gu, '') // Símbolos
+            .replace(/[\u{1F680}-\u{1F6FF}]/gu, '') // Transportes
+            .replace(/[\u{1F1E0}-\u{1F1FF}]/gu, '') // Bandeiras
+            .replace(/[\u{2600}-\u{26FF}]/gu, '')   // Símbolos diversos
+            .replace(/[\u{2700}-\u{27BF}]/gu, '')   // Dingbats
+            .replace(/[\u{FE00}-\u{FE0F}]/gu, '')   // Variation Selectors
+            .replace(/[\u{1F900}-\u{1F9FF}]/gu, '') // Suplemento
+            .replace(/[\u{1FA00}-\u{1FA6F}]/gu, '') // Xadrez
+            .replace(/[\u{1FA70}-\u{1FAFF}]/gu, '') // Símbolos estendidos
+            .replace(/[ð]/g, '')                    // Caractere problemático específico
+            .replace(/[\u0000-\u001F]/g, ' ')       // Caracteres de controle
+            // Normaliza espaços e quebras de linha
+            .replace(/\r\n/g, ' ')
+            .replace(/\n/g, ' ')
+            .replace(/\t/g, ' ')
+            .replace(/\s+/g, ' ')                   // Múltiplos espaços → um espaço
+            .replace(/\s*\|\s*/g, ' | ')            // Normaliza pipes
+            .replace(/\s*-\s*/g, ' - ')             // Normaliza hífens
+            .trim();
+    };
+
     const formatDate = (dateStr: string | undefined): string => {
         if (!dateStr) return 'N/A';
         try {
@@ -428,28 +456,36 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 const report = filteredReports[i];
                 const consultant = report.consultant;
 
-                // ✅ CORREÇÃO 3: Usar conteúdo COMPLETO
-                const content = report.content || 'Sem conteúdo disponível';
-                const maxContentWidth = pageWidth - (margin * 2) - 12;
+                // ✅ CORREÇÃO: Sanitizar e formatar conteúdo
+                const rawContent = report.content || 'Sem conteúdo disponível';
+                const cleanContent = sanitizeContentForPDF(rawContent);
                 
-                // Calcular linhas necessárias para o conteúdo completo
-                const contentLines = doc.splitTextToSize(content, maxContentWidth);
-                const numContentLines = Math.min(contentLines.length, 8); // Máximo 8 linhas de conteúdo
+                // Largura máxima mais conservadora para garantir que não estoure
+                const maxContentWidth = pageWidth - (margin * 2) - 20;
+                
+                // Calcular linhas necessárias para o conteúdo
+                doc.setFontSize(8);
+                doc.setFont('helvetica', 'normal');
+                const contentLines = doc.splitTextToSize(cleanContent, maxContentWidth);
+                const numContentLines = Math.min(contentLines.length, 10); // Máximo 10 linhas de conteúdo
                 
                 // Calcular linhas das recomendações
                 let numRecsLines = 0;
                 let recsLines: string[] = [];
                 if (report.recommendations && Array.isArray(report.recommendations) && report.recommendations.length > 0) {
-                    const recsText = report.recommendations.slice(0, 2).map((r: any) => `• ${formatRecommendationType(r.tipo)}: ${r.descricao}`).join('  ');
+                    const recsText = report.recommendations.slice(0, 2).map((r: any) => {
+                        const tipo = formatRecommendationType(r.tipo);
+                        const descricao = sanitizeContentForPDF(r.descricao || '');
+                        return `• ${tipo}: ${descricao}`;
+                    }).join('  ');
                     recsLines = doc.splitTextToSize(recsText, maxContentWidth);
-                    numRecsLines = Math.min(recsLines.length, 3); // Máximo 3 linhas de recomendações
+                    numRecsLines = Math.min(recsLines.length, 4); // Máximo 4 linhas de recomendações
                 }
 
-                // ✅ CORREÇÃO 2: Card com altura dinâmica
-                // Base: 28 (header) + conteúdo + recomendações + padding
-                const baseHeight = 35;
+                // ✅ Card com altura dinâmica
+                const baseHeight = 38;
                 const contentHeight = numContentLines * 4; // ~4mm por linha
-                const recsHeight = numRecsLines > 0 ? (12 + numRecsLines * 4) : 0; // 12mm título + linhas
+                const recsHeight = numRecsLines > 0 ? (10 + numRecsLines * 4) : 0;
                 const cardHeight = baseHeight + contentHeight + recsHeight;
 
                 // Verificar se precisa de nova página
@@ -501,12 +537,12 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 doc.text('Atividades:', margin + 5, yPos + 28);
                 
                 doc.setFont('helvetica', 'normal');
-                // ✅ CORREÇÃO 3: Mostrar conteúdo completo (até 8 linhas)
+                // Renderiza o conteúdo sanitizado
                 doc.text(contentLines.slice(0, numContentLines), margin + 5, yPos + 34);
 
                 // ===== RECOMENDAÇÕES =====
                 if (numRecsLines > 0) {
-                    const recsStartY = yPos + 34 + (numContentLines * 4) + 4;
+                    const recsStartY = yPos + 36 + (numContentLines * 4);
                     doc.setFontSize(8);
                     doc.setFont('helvetica', 'bold');
                     doc.setTextColor(83, 55, 56); // Cor do header
@@ -514,7 +550,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                     
                     doc.setFont('helvetica', 'normal');
                     doc.setTextColor(80, 80, 80);
-                    doc.text(recsLines.slice(0, numRecsLines), margin + 5, recsStartY + 6);
+                    doc.text(recsLines.slice(0, numRecsLines), margin + 5, recsStartY + 5);
                 }
 
                 yPos += cardHeight + 8;
