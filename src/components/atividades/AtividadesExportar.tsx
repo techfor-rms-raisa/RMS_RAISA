@@ -156,11 +156,20 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
         return client?.razao_social_cliente || 'N/A';
     };
 
-    // ===== CORREÇÃO 2: Buscar Gestão de Pessoas da tabela app_users =====
+    // ===== CORREÇÃO 1: Buscar Gestão de Pessoas do CLIENTE (não do consultor) =====
     const getGestaoPessoasName = (consultant: Consultant): string => {
-        // Primeiro tenta pelo id_gestao_de_pessoas do consultor
-        if (consultant.id_gestao_de_pessoas) {
-            const user = users.find(u => u.id === consultant.id_gestao_de_pessoas);
+        // 1. Pegar o gestor_imediato_id do consultor
+        const gestorImediato = usuariosCliente.find(u => u.id === consultant.gestor_imediato_id);
+        if (!gestorImediato) return 'N/A';
+        
+        // 2. Buscar o cliente
+        const client = clients.find(c => c.id === gestorImediato.id_cliente);
+        if (!client) return 'N/A';
+        
+        // 3. Buscar o Gestão de Pessoas do CLIENTE (não do consultor!)
+        const gestaoPessoasId = (client as any).id_gestao_de_pessoas;
+        if (gestaoPessoasId) {
+            const user = users.find(u => u.id === gestaoPessoasId);
             if (user?.nome_usuario) return user.nome_usuario;
         }
         
@@ -333,7 +342,8 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
             let yPos = margin;
 
             // ===== CABEÇALHO =====
-            doc.setFillColor(30, 58, 138); // Azul escuro
+            // ✅ CORREÇÃO 4: Cor do header #533738 (marrom)
+            doc.setFillColor(83, 55, 56); // #533738
             doc.rect(0, 0, pageWidth, 35, 'F');
             
             doc.setTextColor(255, 255, 255);
@@ -418,15 +428,37 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 const report = filteredReports[i];
                 const consultant = report.consultant;
 
+                // ✅ CORREÇÃO 3: Usar conteúdo COMPLETO
+                const content = report.content || 'Sem conteúdo disponível';
+                const maxContentWidth = pageWidth - (margin * 2) - 12;
+                
+                // Calcular linhas necessárias para o conteúdo completo
+                const contentLines = doc.splitTextToSize(content, maxContentWidth);
+                const numContentLines = Math.min(contentLines.length, 8); // Máximo 8 linhas de conteúdo
+                
+                // Calcular linhas das recomendações
+                let numRecsLines = 0;
+                let recsLines: string[] = [];
+                if (report.recommendations && Array.isArray(report.recommendations) && report.recommendations.length > 0) {
+                    const recsText = report.recommendations.slice(0, 2).map((r: any) => `• ${formatRecommendationType(r.tipo)}: ${r.descricao}`).join('  ');
+                    recsLines = doc.splitTextToSize(recsText, maxContentWidth);
+                    numRecsLines = Math.min(recsLines.length, 3); // Máximo 3 linhas de recomendações
+                }
+
+                // ✅ CORREÇÃO 2: Card com altura dinâmica
+                // Base: 28 (header) + conteúdo + recomendações + padding
+                const baseHeight = 35;
+                const contentHeight = numContentLines * 4; // ~4mm por linha
+                const recsHeight = numRecsLines > 0 ? (12 + numRecsLines * 4) : 0; // 12mm título + linhas
+                const cardHeight = baseHeight + contentHeight + recsHeight;
+
                 // Verificar se precisa de nova página
-                if (yPos > pageHeight - 80) {
+                if (yPos > pageHeight - cardHeight - 20) {
                     doc.addPage();
                     yPos = margin;
                 }
 
                 // ===== CARD DO RELATÓRIO =====
-                const cardHeight = 65;
-                
                 // Borda colorida baseada no score
                 const scoreColor = getRiskColor(report.riskScore);
                 doc.setDrawColor(parseInt(scoreColor.slice(1, 3), 16), parseInt(scoreColor.slice(3, 5), 16), parseInt(scoreColor.slice(5, 7), 16));
@@ -440,7 +472,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 // ===== CABEÇALHO DO CARD =====
                 doc.setFontSize(11);
                 doc.setFont('helvetica', 'bold');
-                doc.setTextColor(30, 58, 138);
+                doc.setTextColor(83, 55, 56); // Mesma cor do header #533738
                 doc.text(consultant.nome_consultores, margin + 5, yPos + 7);
 
                 // Score Badge
@@ -469,27 +501,20 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 doc.text('Atividades:', margin + 5, yPos + 28);
                 
                 doc.setFont('helvetica', 'normal');
-                // ✅ CORREÇÃO 5: Usar SEMPRE content (original), nunca summary (resumo IA)
-                const content = report.content || 'Sem conteúdo disponível';
-                // ✅ CORREÇÃO 4: Ajustar largura para não ultrapassar o box
-                const maxContentWidth = pageWidth - (margin * 2) - 12;
-                const contentLines = doc.splitTextToSize(content.substring(0, 350) + (content.length > 350 ? '...' : ''), maxContentWidth);
-                doc.text(contentLines.slice(0, 3), margin + 5, yPos + 34);
+                // ✅ CORREÇÃO 3: Mostrar conteúdo completo (até 8 linhas)
+                doc.text(contentLines.slice(0, numContentLines), margin + 5, yPos + 34);
 
                 // ===== RECOMENDAÇÕES =====
-                if (report.recommendations && Array.isArray(report.recommendations) && report.recommendations.length > 0) {
+                if (numRecsLines > 0) {
+                    const recsStartY = yPos + 34 + (numContentLines * 4) + 4;
                     doc.setFontSize(8);
                     doc.setFont('helvetica', 'bold');
-                    doc.setTextColor(30, 58, 138);
-                    doc.text('Recomendações:', margin + 5, yPos + 52);
+                    doc.setTextColor(83, 55, 56); // Cor do header
+                    doc.text('Recomendações:', margin + 5, recsStartY);
                     
                     doc.setFont('helvetica', 'normal');
                     doc.setTextColor(80, 80, 80);
-                    // ✅ CORREÇÃO 3: Usar formatRecommendationType para formatar literais
-                    const recsText = report.recommendations.slice(0, 2).map((r: any) => `• ${formatRecommendationType(r.tipo)}: ${r.descricao}`).join('  ');
-                    // ✅ CORREÇÃO 4: Ajustar largura das recomendações
-                    const recsLines = doc.splitTextToSize(recsText.substring(0, 250), maxContentWidth);
-                    doc.text(recsLines.slice(0, 2), margin + 5, yPos + 58);
+                    doc.text(recsLines.slice(0, numRecsLines), margin + 5, recsStartY + 6);
                 }
 
                 yPos += cardHeight + 8;
@@ -501,7 +526,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 doc.setPage(i);
                 doc.setFontSize(8);
                 doc.setTextColor(150, 150, 150);
-                doc.text(`TECH FOR TI - Página ${i} de ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+                doc.text(`RMS-RAISA.ai - Powered by Gemini-2.5-flash/Claude Opus 4.5 - Página ${i} de ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
             }
 
             // ===== SALVAR =====
