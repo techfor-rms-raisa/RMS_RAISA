@@ -208,6 +208,9 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
         if (!text) return '';
         
         return text
+            // ✅ Remove o caractere específico problemático (ð¨ = \uf0a8)
+            .replace(/\uf0a8/g, '')
+            .replace(/[\uF000-\uFFFF]/g, '')      // Private Use Area
             // Remove emojis e caracteres Unicode especiais
             .replace(/[\u{1F600}-\u{1F64F}]/gu, '') // Emoticons
             .replace(/[\u{1F300}-\u{1F5FF}]/gu, '') // Símbolos
@@ -219,8 +222,13 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
             .replace(/[\u{1F900}-\u{1F9FF}]/gu, '') // Suplemento
             .replace(/[\u{1FA00}-\u{1FA6F}]/gu, '') // Xadrez
             .replace(/[\u{1FA70}-\u{1FAFF}]/gu, '') // Símbolos estendidos
-            .replace(/[ð]/g, '')                    // Caractere problemático específico
+            .replace(/[ð]/g, '')                    // Caractere ð isolado
             .replace(/[\u0000-\u001F]/g, ' ')       // Caracteres de controle
+            // Substitui caracteres tipográficos por versões simples
+            .replace(/['']/g, "'")                  // Aspas simples tipográficas
+            .replace(/[""]/g, '"')                  // Aspas duplas tipográficas
+            .replace(/[–—]/g, '-')                  // Traços tipográficos
+            .replace(/•/g, '-')                     // Bullet point
             // Normaliza espaços e quebras de linha
             .replace(/\r\n/g, ' ')
             .replace(/\n/g, ' ')
