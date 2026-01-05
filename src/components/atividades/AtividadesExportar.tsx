@@ -156,10 +156,42 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
         return client?.razao_social_cliente || 'N/A';
     };
 
+    // ===== CORREÇÃO 2: Buscar Gestão de Pessoas da tabela app_users =====
     const getGestaoPessoasName = (consultant: Consultant): string => {
-        if (!consultant.id_gestao_de_pessoas) return 'N/A';
-        const user = users.find(u => u.id === consultant.id_gestao_de_pessoas);
-        return user?.nome_usuario || 'N/A';
+        // Primeiro tenta pelo id_gestao_de_pessoas do consultor
+        if (consultant.id_gestao_de_pessoas) {
+            const user = users.find(u => u.id === consultant.id_gestao_de_pessoas);
+            if (user?.nome_usuario) return user.nome_usuario;
+        }
+        
+        // Fallback: buscar qualquer usuário com tipo_usuario = 'Gestão de Pessoas'
+        const gestaoPessoas = users.find(u => u.tipo_usuario === 'Gestão de Pessoas' && u.ativo_usuario);
+        return gestaoPessoas?.nome_usuario || 'N/A';
+    };
+
+    // ===== FORMATAR TIPO DE RECOMENDAÇÃO (Correção literais grudados) =====
+    const formatRecommendationType = (tipo: string): string => {
+        if (!tipo) return '';
+        
+        // Mapa de tipos conhecidos para versão formatada
+        const typeMap: Record<string, string> = {
+            'AcaoImediata': 'Ação Imediata',
+            'QuestaoSondagem': 'Questão de Sondagem',
+            'RecomendacaoEstrategica': 'Recomendação Estratégica',
+            'ProcessoInterno': 'Processo Interno',
+            'Acompanhamento': 'Acompanhamento',
+            'Suporte': 'Suporte',
+            'Treinamento': 'Treinamento',
+            'Desenvolvimento': 'Desenvolvimento',
+            'Nenhum': 'Nenhuma',
+            'Nenhuma': 'Nenhuma'
+        };
+        
+        // Se está no mapa, retorna a versão formatada
+        if (typeMap[tipo]) return typeMap[tipo];
+        
+        // Caso contrário, adiciona espaço antes de letras maiúsculas (camelCase → camel Case)
+        return tipo.replace(/([a-z])([A-Z])/g, '$1 $2');
     };
 
     const formatDate = (dateStr: string | undefined): string => {
@@ -307,7 +339,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
             doc.setTextColor(255, 255, 255);
             doc.setFontSize(18);
             doc.setFont('helvetica', 'bold');
-            doc.text('RMS-RAISA.ai', margin, 15);
+            doc.text('TECH FOR TI - Gestão de Pessoas', margin, 15);
             
             doc.setFontSize(12);
             doc.setFont('helvetica', 'normal');
@@ -437,8 +469,11 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 doc.text('Atividades:', margin + 5, yPos + 28);
                 
                 doc.setFont('helvetica', 'normal');
-                const content = report.content || report.summary || 'Sem conteúdo disponível';
-                const contentLines = doc.splitTextToSize(content.substring(0, 300) + (content.length > 300 ? '...' : ''), pageWidth - (margin * 2) - 15);
+                // ✅ CORREÇÃO 5: Usar SEMPRE content (original), nunca summary (resumo IA)
+                const content = report.content || 'Sem conteúdo disponível';
+                // ✅ CORREÇÃO 4: Ajustar largura para não ultrapassar o box
+                const maxContentWidth = pageWidth - (margin * 2) - 12;
+                const contentLines = doc.splitTextToSize(content.substring(0, 350) + (content.length > 350 ? '...' : ''), maxContentWidth);
                 doc.text(contentLines.slice(0, 3), margin + 5, yPos + 34);
 
                 // ===== RECOMENDAÇÕES =====
@@ -450,8 +485,10 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                     
                     doc.setFont('helvetica', 'normal');
                     doc.setTextColor(80, 80, 80);
-                    const recsText = report.recommendations.slice(0, 2).map((r: any) => `• ${r.tipo}: ${r.descricao}`).join('  ');
-                    const recsLines = doc.splitTextToSize(recsText.substring(0, 200), pageWidth - (margin * 2) - 15);
+                    // ✅ CORREÇÃO 3: Usar formatRecommendationType para formatar literais
+                    const recsText = report.recommendations.slice(0, 2).map((r: any) => `• ${formatRecommendationType(r.tipo)}: ${r.descricao}`).join('  ');
+                    // ✅ CORREÇÃO 4: Ajustar largura das recomendações
+                    const recsLines = doc.splitTextToSize(recsText.substring(0, 250), maxContentWidth);
                     doc.text(recsLines.slice(0, 2), margin + 5, yPos + 58);
                 }
 
@@ -464,7 +501,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 doc.setPage(i);
                 doc.setFontSize(8);
                 doc.setTextColor(150, 150, 150);
-                doc.text(`RMS-RAISA.ai - Página ${i} de ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+                doc.text(`TECH FOR TI - Página ${i} de ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
             }
 
             // ===== SALVAR =====
