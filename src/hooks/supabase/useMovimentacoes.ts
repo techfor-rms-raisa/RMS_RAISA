@@ -2,20 +2,12 @@
  * useMovimentacoes.ts - Hook para Movimentações de Consultores
  * 
  * ============================================
- * LÓGICA CORRETA:
- * 
- * INCLUSÕES = Consultores ATIVOS cuja data_inclusao_consultores
- *             está dentro do mês/ano selecionado
- *             
- * EXCLUSÕES = Consultores PERDIDOS/ENCERRADOS cuja data_saida
- *             está dentro do mês/ano selecionado
- * 
- * TIPO DE VAGA:
- * - substituicao = true  → "Reposição"
- * - substituicao = false → "Nova Posição"
+ * VERSÃO 4.0 - CORREÇÕES:
+ * 1. Cliente: Busca via cliente_id OU via gestor_imediato_id
+ * 2. Exclusões: MOTIVAÇÃO mostra motivo_desligamento
+ * 3. Exclusões: Nova coluna SUBSTITUIÇÃO (Sim/Não)
  * ============================================
  * 
- * Versão: 3.0 - CORRIGIDA
  * Data: 05/01/2026
  */
 
@@ -37,7 +29,7 @@ export interface InclusaoConsultor {
   valor_anual: number;
   data_inclusao: string;
   gestor_comercial_nome: string;
-  nome_substituido?: string; // Quem foi substituído (se reposição)
+  nome_substituido?: string;
 }
 
 export interface ExclusaoConsultor {
@@ -45,12 +37,12 @@ export interface ExclusaoConsultor {
   nome_consultores: string;
   cargo_consultores: string;
   razao_social_cliente: string;
-  label_substituicao: string; // 'Reposição' | 'Sem Reposição'
+  motivo_desligamento: string;      // ✅ CORREÇÃO 2: Agora é motivo_desligamento
+  substituicao_label: string;        // ✅ CORREÇÃO 3: "Sim" ou "Não"
   regime_contratacao: string;
   valor_mensal: number;
   valor_anual: number;
   data_saida: string;
-  motivo_desligamento: string;
   gestor_comercial_nome: string;
 }
 
@@ -106,15 +98,51 @@ export function useMovimentacoes() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Estados dos dados
   const [inclusoes, setInclusoes] = useState<InclusaoConsultor[]>([]);
   const [exclusoes, setExclusoes] = useState<ExclusaoConsultor[]>([]);
   const [resumoMensal, setResumoMensal] = useState<ResumoMensal[]>([]);
   const [gestoresComerciais, setGestoresComerciais] = useState<GestorComercial[]>([]);
 
   // ============================================
+  // HELPER: Buscar nome do cliente
+  // ============================================
+  const buscarNomeCliente = async (
+    clienteId: number | null,
+    gestorImediatoId: number | null,
+    clientsMap: Map<number, any>,
+    usuariosClienteMap: Map<number, any>
+  ): Promise<{ razaoSocial: string; idGestaoComercial: number | null }> => {
+    
+    // 1. Se tem cliente_id direto, usar ele
+    if (clienteId) {
+      const cliente = clientsMap.get(clienteId);
+      if (cliente) {
+        return {
+          razaoSocial: cliente.razao_social_cliente,
+          idGestaoComercial: cliente.id_gestao_comercial
+        };
+      }
+    }
+    
+    // 2. Se não tem cliente_id, buscar via gestor_imediato_id → usuarios_cliente → clients
+    if (gestorImediatoId) {
+      const usuarioCliente = usuariosClienteMap.get(gestorImediatoId);
+      if (usuarioCliente && usuarioCliente.id_cliente) {
+        const cliente = clientsMap.get(usuarioCliente.id_cliente);
+        if (cliente) {
+          return {
+            razaoSocial: cliente.razao_social_cliente,
+            idGestaoComercial: cliente.id_gestao_comercial
+          };
+        }
+      }
+    }
+    
+    return { razaoSocial: 'Cliente não identificado', idGestaoComercial: null };
+  };
+
+  // ============================================
   // BUSCAR INCLUSÕES
-  // Lógica: Consultores ATIVOS com data_inclusao no mês/ano
   // ============================================
 
   const buscarInclusoes = useCallback(async (
@@ -130,14 +158,8 @@ export function useMovimentacoes() {
       
       console.log(`🔍 Buscando INCLUSÕES: ano_vigencia=${anoSelecionado}, mes=${mes || 'todos'}`);
 
-      // ============================================
-      // QUERY CORRETA:
-      // - status = 'Ativo'
-      // - ano_vigencia = ano selecionado (para evitar duplicatas de anos anteriores)
-      // - data_inclusao_consultores filtrada por mês/ano
-      // ============================================
-      
-      let query = supabase
+      // Query principal
+      const { data: consultantsData, error: queryError } = await supabase
         .from('consultants')
         .select(`
           id,
@@ -158,31 +180,34 @@ export function useMovimentacoes() {
         .eq('ano_vigencia', anoSelecionado)
         .not('data_inclusao_consultores', 'is', null);
 
-      const { data: consultantsData, error: queryError } = await query;
+      if (queryError) throw queryError;
 
-      if (queryError) {
-        console.error('Erro na query de inclusões:', queryError);
-        throw queryError;
-      }
-
-      console.log(`📊 Consultores ativos encontrados: ${consultantsData?.length || 0}`);
-
-      // Buscar dados auxiliares para montar o resultado
+      // ============================================
+      // CORREÇÃO 1: Buscar dados para resolver cliente
+      // ============================================
+      
+      // Buscar TODOS os clientes
       const { data: clientsData } = await supabase
         .from('clients')
         .select('id, razao_social_cliente, id_gestao_comercial');
       
       const clientsMap = new Map((clientsData || []).map(c => [c.id, c]));
 
+      // Buscar usuarios_cliente para mapear gestor_imediato_id → cliente
+      const { data: usuariosClienteData } = await supabase
+        .from('usuarios_cliente')
+        .select('id, id_cliente, nome_gestor_cliente');
+      
+      const usuariosClienteMap = new Map((usuariosClienteData || []).map(u => [u.id, u]));
+
+      // Buscar gestores comerciais (app_users)
       const { data: gestoresData } = await supabase
         .from('app_users')
         .select('id, nome_usuario');
       
       const gestoresMap = new Map((gestoresData || []).map(g => [g.id, g]));
 
-      // ============================================
-      // FILTRAR POR MÊS/ANO DA DATA_INCLUSAO
-      // ============================================
+      // Filtrar por mês/ano da data_inclusao
       let resultado = (consultantsData || []).filter(c => {
         if (!c.data_inclusao_consultores) return false;
         
@@ -190,63 +215,75 @@ export function useMovimentacoes() {
         const anoInclusao = dataInc.getFullYear();
         const mesInclusao = dataInc.getMonth() + 1;
         
-        // Filtrar por ano da data de inclusão
         if (anoInclusao !== anoSelecionado) return false;
-        
-        // Filtrar por mês se especificado
         if (mes && mesInclusao !== mes) return false;
         
         return true;
       });
 
-      console.log(`📊 Após filtro de data: ${resultado.length} inclusões`);
-
-      // Filtrar por gestor comercial se especificado
-      if (gestorComercialId) {
-        resultado = resultado.filter(c => {
-          const cliente = clientsMap.get(c.cliente_id);
-          return cliente?.id_gestao_comercial === gestorComercialId;
-        });
-        console.log(`📊 Após filtro de gestor: ${resultado.length} inclusões`);
-      }
-
-      // ============================================
-      // REMOVER DUPLICATAS (mesmo consultor_id)
-      // ============================================
+      // Remover duplicatas
       const consultorIdsVistos = new Set<number>();
-      const resultadoUnico = resultado.filter(c => {
-        if (consultorIdsVistos.has(c.id)) {
-          return false;
-        }
+      resultado = resultado.filter(c => {
+        if (consultorIdsVistos.has(c.id)) return false;
         consultorIdsVistos.add(c.id);
         return true;
       });
 
       // Mapear para o formato esperado
-      const inclusoesFinal: InclusaoConsultor[] = resultadoUnico.map(c => {
-        const cliente = clientsMap.get(c.cliente_id);
-        const gestorComercial = cliente ? gestoresMap.get(cliente.id_gestao_comercial) : null;
-        
-        return {
-          consultor_id: c.id,
-          nome_consultores: c.nome_consultores || '',
-          cargo_consultores: c.cargo_consultores || '',
-          razao_social_cliente: cliente?.razao_social_cliente || 'Cliente não identificado',
-          // ✅ CORREÇÃO: Usar campo substituicao (boolean)
-          tipo_de_vaga: c.substituicao === true ? 'Reposição' : 'Nova Posição',
-          regime_contratacao: c.modalidade_contrato || 'PJ',
-          valor_mensal: c.valor_faturamento || c.valor_pagamento || 0,
-          valor_anual: (c.valor_faturamento || c.valor_pagamento || 0) * 12,
-          data_inclusao: c.data_inclusao_consultores,
-          gestor_comercial_nome: gestorComercial?.nome_usuario || '',
-          nome_substituido: c.nome_substituido || undefined
-        };
-      });
+      const inclusoesFinal: InclusaoConsultor[] = await Promise.all(
+        resultado.map(async c => {
+          // ✅ CORREÇÃO 1: Buscar cliente corretamente
+          const { razaoSocial, idGestaoComercial } = await buscarNomeCliente(
+            c.cliente_id,
+            c.gestor_imediato_id,
+            clientsMap,
+            usuariosClienteMap
+          );
+          
+          const gestorComercial = idGestaoComercial ? gestoresMap.get(idGestaoComercial) : null;
+          
+          return {
+            consultor_id: c.id,
+            nome_consultores: c.nome_consultores || '',
+            cargo_consultores: c.cargo_consultores || '',
+            razao_social_cliente: razaoSocial,
+            tipo_de_vaga: c.substituicao === true ? 'Reposição' : 'Nova Posição',
+            regime_contratacao: c.modalidade_contrato || 'PJ',
+            valor_mensal: c.valor_faturamento || c.valor_pagamento || 0,
+            valor_anual: (c.valor_faturamento || c.valor_pagamento || 0) * 12,
+            data_inclusao: c.data_inclusao_consultores,
+            gestor_comercial_nome: gestorComercial?.nome_usuario || '',
+            nome_substituido: c.nome_substituido || undefined
+          };
+        })
+      );
 
-      console.log(`✅ INCLUSÕES finais: ${inclusoesFinal.length}`);
+      // Filtrar por gestor comercial se especificado
+      let inclusoesFiltradas = inclusoesFinal;
+      if (gestorComercialId) {
+        // Precisamos refiltrar baseado no gestor comercial
+        inclusoesFiltradas = await Promise.all(
+          resultado.map(async c => {
+            const { idGestaoComercial } = await buscarNomeCliente(
+              c.cliente_id,
+              c.gestor_imediato_id,
+              clientsMap,
+              usuariosClienteMap
+            );
+            return { ...c, idGestaoComercial };
+          })
+        ).then(items => 
+          items
+            .filter(c => c.idGestaoComercial === gestorComercialId)
+            .map(c => inclusoesFinal.find(i => i.consultor_id === c.id)!)
+            .filter(Boolean)
+        );
+      }
+
+      console.log(`✅ INCLUSÕES finais: ${inclusoesFiltradas.length}`);
       
-      setInclusoes(inclusoesFinal);
-      return inclusoesFinal;
+      setInclusoes(gestorComercialId ? inclusoesFiltradas : inclusoesFinal);
+      return gestorComercialId ? inclusoesFiltradas : inclusoesFinal;
 
     } catch (err: any) {
       console.error('Erro ao buscar inclusões:', err);
@@ -259,7 +296,6 @@ export function useMovimentacoes() {
 
   // ============================================
   // BUSCAR EXCLUSÕES
-  // Lógica: Consultores PERDIDOS/ENCERRADOS com data_saida no mês/ano
   // ============================================
 
   const buscarExclusoes = useCallback(async (
@@ -275,14 +311,7 @@ export function useMovimentacoes() {
       
       console.log(`🔍 Buscando EXCLUSÕES: ano=${anoSelecionado}, mes=${mes || 'todos'}`);
 
-      // ============================================
-      // QUERY CORRETA:
-      // - status IN ('Perdido', 'Encerrado')
-      // - ano_vigencia = ano selecionado
-      // - data_saida filtrada por mês/ano
-      // ============================================
-      
-      let query = supabase
+      const { data: consultantsData, error: queryError } = await supabase
         .from('consultants')
         .select(`
           id,
@@ -303,14 +332,7 @@ export function useMovimentacoes() {
         .eq('ano_vigencia', anoSelecionado)
         .not('data_saida', 'is', null);
 
-      const { data: consultantsData, error: queryError } = await query;
-
-      if (queryError) {
-        console.error('Erro na query de exclusões:', queryError);
-        throw queryError;
-      }
-
-      console.log(`📊 Consultores perdidos/encerrados encontrados: ${consultantsData?.length || 0}`);
+      if (queryError) throw queryError;
 
       // Buscar dados auxiliares
       const { data: clientsData } = await supabase
@@ -319,15 +341,19 @@ export function useMovimentacoes() {
       
       const clientsMap = new Map((clientsData || []).map(c => [c.id, c]));
 
+      const { data: usuariosClienteData } = await supabase
+        .from('usuarios_cliente')
+        .select('id, id_cliente, nome_gestor_cliente');
+      
+      const usuariosClienteMap = new Map((usuariosClienteData || []).map(u => [u.id, u]));
+
       const { data: gestoresData } = await supabase
         .from('app_users')
         .select('id, nome_usuario');
       
       const gestoresMap = new Map((gestoresData || []).map(g => [g.id, g]));
 
-      // ============================================
-      // FILTRAR POR MÊS/ANO DA DATA_SAIDA
-      // ============================================
+      // Filtrar por mês/ano da data_saida
       let resultado = (consultantsData || []).filter(c => {
         if (!c.data_saida) return false;
         
@@ -335,64 +361,76 @@ export function useMovimentacoes() {
         const anoSaida = dataSaida.getFullYear();
         const mesSaida = dataSaida.getMonth() + 1;
         
-        // Filtrar por ano da data de saída
         if (anoSaida !== anoSelecionado) return false;
-        
-        // Filtrar por mês se especificado
         if (mes && mesSaida !== mes) return false;
         
         return true;
       });
 
-      console.log(`📊 Após filtro de data: ${resultado.length} exclusões`);
-
-      // Filtrar por gestor comercial se especificado
-      if (gestorComercialId) {
-        resultado = resultado.filter(c => {
-          const cliente = clientsMap.get(c.cliente_id);
-          return cliente?.id_gestao_comercial === gestorComercialId;
-        });
-        console.log(`📊 Após filtro de gestor: ${resultado.length} exclusões`);
-      }
-
-      // ============================================
-      // REMOVER DUPLICATAS
-      // ============================================
+      // Remover duplicatas
       const consultorIdsVistos = new Set<number>();
-      const resultadoUnico = resultado.filter(c => {
-        if (consultorIdsVistos.has(c.id)) {
-          return false;
-        }
+      resultado = resultado.filter(c => {
+        if (consultorIdsVistos.has(c.id)) return false;
         consultorIdsVistos.add(c.id);
         return true;
       });
 
       // Mapear para o formato esperado
-      const exclusoesFinal: ExclusaoConsultor[] = resultadoUnico.map(c => {
-        const cliente = clientsMap.get(c.cliente_id);
-        const gestorComercial = cliente ? gestoresMap.get(cliente.id_gestao_comercial) : null;
-        
-        return {
-          consultor_id: c.id,
-          nome_consultores: c.nome_consultores || '',
-          cargo_consultores: c.cargo_consultores || '',
-          razao_social_cliente: cliente?.razao_social_cliente || 'Cliente não identificado',
-          // Para exclusões: se teve substituição = "Reposição" (alguém entrou no lugar)
-          // Se não teve = "Sem Reposição"
-          label_substituicao: c.substituicao === true ? 'Reposição' : 'Sem Reposição',
-          regime_contratacao: c.modalidade_contrato || 'PJ',
-          valor_mensal: c.valor_faturamento || c.valor_pagamento || 0,
-          valor_anual: (c.valor_faturamento || c.valor_pagamento || 0) * 12,
-          data_saida: c.data_saida,
-          motivo_desligamento: c.motivo_desligamento || '',
-          gestor_comercial_nome: gestorComercial?.nome_usuario || ''
-        };
-      });
+      const exclusoesFinal: ExclusaoConsultor[] = await Promise.all(
+        resultado.map(async c => {
+          // ✅ CORREÇÃO 1: Buscar cliente corretamente
+          const { razaoSocial, idGestaoComercial } = await buscarNomeCliente(
+            c.cliente_id,
+            c.gestor_imediato_id,
+            clientsMap,
+            usuariosClienteMap
+          );
+          
+          const gestorComercial = idGestaoComercial ? gestoresMap.get(idGestaoComercial) : null;
+          
+          return {
+            consultor_id: c.id,
+            nome_consultores: c.nome_consultores || '',
+            cargo_consultores: c.cargo_consultores || '',
+            razao_social_cliente: razaoSocial,
+            // ✅ CORREÇÃO 2: MOTIVAÇÃO agora é motivo_desligamento
+            motivo_desligamento: c.motivo_desligamento || 'Não informado',
+            // ✅ CORREÇÃO 3: SUBSTITUIÇÃO como "Sim" ou "Não"
+            substituicao_label: c.substituicao === true ? 'Sim' : 'Não',
+            regime_contratacao: c.modalidade_contrato || 'PJ',
+            valor_mensal: c.valor_faturamento || c.valor_pagamento || 0,
+            valor_anual: (c.valor_faturamento || c.valor_pagamento || 0) * 12,
+            data_saida: c.data_saida,
+            gestor_comercial_nome: gestorComercial?.nome_usuario || ''
+          };
+        })
+      );
 
-      console.log(`✅ EXCLUSÕES finais: ${exclusoesFinal.length}`);
+      // Filtrar por gestor comercial se especificado
+      let exclusoesFiltradas = exclusoesFinal;
+      if (gestorComercialId) {
+        exclusoesFiltradas = await Promise.all(
+          resultado.map(async c => {
+            const { idGestaoComercial } = await buscarNomeCliente(
+              c.cliente_id,
+              c.gestor_imediato_id,
+              clientsMap,
+              usuariosClienteMap
+            );
+            return { ...c, idGestaoComercial };
+          })
+        ).then(items => 
+          items
+            .filter(c => c.idGestaoComercial === gestorComercialId)
+            .map(c => exclusoesFinal.find(e => e.consultor_id === c.id)!)
+            .filter(Boolean)
+        );
+      }
+
+      console.log(`✅ EXCLUSÕES finais: ${exclusoesFiltradas.length}`);
       
-      setExclusoes(exclusoesFinal);
-      return exclusoesFinal;
+      setExclusoes(gestorComercialId ? exclusoesFiltradas : exclusoesFinal);
+      return gestorComercialId ? exclusoesFiltradas : exclusoesFinal;
 
     } catch (err: any) {
       console.error('Erro ao buscar exclusões:', err);
@@ -411,13 +449,11 @@ export function useMovimentacoes() {
     try {
       const anoSelecionado = ano || new Date().getFullYear();
       
-      // Buscar todas as inclusões e exclusões do ano
       const [todasInclusoes, todasExclusoes] = await Promise.all([
         buscarInclusoes(null, anoSelecionado, null),
         buscarExclusoes(null, anoSelecionado, null)
       ]);
 
-      // Agrupar por mês
       const resumo: ResumoMensal[] = MESES.map(m => {
         const inclusoesMes = todasInclusoes.filter(i => {
           const data = new Date(i.data_inclusao);
@@ -461,7 +497,6 @@ export function useMovimentacoes() {
 
   const buscarGestoresComerciais = useCallback(async (): Promise<GestorComercial[]> => {
     try {
-      // Buscar IDs únicos de gestores comerciais nos clientes ativos
       const { data: clientsData } = await supabase
         .from('clients')
         .select('id_gestao_comercial')
@@ -473,10 +508,8 @@ export function useMovimentacoes() {
         return [];
       }
       
-      // Extrair IDs únicos
       const idsUnicos = [...new Set(clientsData.map(c => c.id_gestao_comercial))];
       
-      // Buscar dados dos usuários correspondentes
       const { data: users } = await supabase
         .from('app_users')
         .select('id, nome_usuario')
@@ -485,7 +518,6 @@ export function useMovimentacoes() {
         .order('nome_usuario');
 
       const gestores = users || [];
-      console.log('✅ Gestores comerciais carregados:', gestores.map(g => g.nome_usuario));
       setGestoresComerciais(gestores);
       return gestores;
 
@@ -545,10 +577,6 @@ export function useMovimentacoes() {
       totais: calcularTotais(inc, exc)
     };
   }, [buscarInclusoes, buscarExclusoes, buscarGestoresComerciais, calcularTotais]);
-
-  // ============================================
-  // RETURN
-  // ============================================
 
   return {
     loading,

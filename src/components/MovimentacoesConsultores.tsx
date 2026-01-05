@@ -350,6 +350,7 @@ const MovimentacoesConsultores: React.FC = () => {
                     <th className="px-5 py-3.5 text-left font-semibold text-slate-600">FUNÇÃO</th>
                     <th className="px-5 py-3.5 text-left font-semibold text-slate-600">NOME CONSULTOR</th>
                     <th className="px-5 py-3.5 text-left font-semibold text-slate-600">MOTIVAÇÃO</th>
+                    <th className="px-5 py-3.5 text-center font-semibold text-slate-600">SUBSTITUIÇÃO</th>
                     <th className="px-5 py-3.5 text-right font-semibold text-slate-600">VALOR MENSAL</th>
                     <th className="px-5 py-3.5 text-right font-semibold text-slate-600">VALOR ANUAL</th>
                   </tr>
@@ -367,12 +368,17 @@ const MovimentacoesConsultores: React.FC = () => {
                         {item.nome_consultores}
                       </td>
                       <td className="px-5 py-3.5">
+                        <span className="px-3 py-1 rounded-full text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                          {item.motivo_desligamento || 'Não informado'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3.5 text-center">
                         <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          item.label_substituicao === 'Reposição' 
+                          item.substituicao_label === 'Sim' 
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
                             : 'bg-slate-100 text-slate-600 border border-slate-200'
                         }`}>
-                          {item.label_substituicao}
+                          {item.substituicao_label || 'Não'}
                         </span>
                       </td>
                       <td className="px-5 py-3.5 text-right font-medium text-slate-700">
@@ -386,7 +392,7 @@ const MovimentacoesConsultores: React.FC = () => {
                 </tbody>
                 <tfoot>
                   <tr className="bg-rose-50/50 border-t-2 border-rose-200">
-                    <td colSpan={4} className="px-5 py-3.5 text-right font-semibold text-slate-600">Total</td>
+                    <td colSpan={5} className="px-5 py-3.5 text-right font-semibold text-slate-600">Total</td>
                     <td className="px-5 py-3.5 text-right font-bold text-rose-500">
                       {formatarMoeda(totais.valorTotalExclusoes)}
                     </td>
