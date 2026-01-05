@@ -525,186 +525,156 @@ const Quarentena: React.FC<QuarentenaProps> = ({
                       const clientInfo = client;
                       const coordenador = coordenadoresCliente.find(cc => cc.id_gestor_cliente === manager.id);
                       const recommendations = getRecommendations(consultant);
+                      
+                      // ✅ CORREÇÃO: Buscar nome da Analista de R&S da tabela users
+                      const analistaRS = users.find(u => u.id === consultant.analista_rs_id);
+                      const analistaRSName = analistaRS?.nome_usuario || 'N/A';
 
                       return (
                         <div 
                           key={consultant.id} 
-                          className="consultant-container"
+                          className="consultant-card-redesign"
                           style={{ borderLeftColor: getScoreColor(finalScore) }}
                         >
-                          {/* Header com Informações e Score */}
-                          <div className="consultant-header-wrapper">
-                            {/* Seção de Informações */}
-                            <div className="consultant-info-section">
-                              <div className="consultant-header-info">
-                                <div className="flex items-center gap-3 flex-wrap">
-                                  <h3 className="consultant-name">
-                                    {consultant.nome_consultores}
-                                  </h3>
-                                  <button
-                                    onClick={() => onNavigateToAtividades(clientInfo?.razao_social_cliente, consultant.nome_consultores)}
-                                    className="px-2 py-1 text-xs bg-white text-blue-600 border border-blue-600 rounded hover:bg-blue-50 transition whitespace-nowrap"
-                                    title="Registrar nova atividade para este consultor"
-                                  >
-                                    + Atividade
-                                  </button>
-                                  
-                                  {/* ============================================ */}
-                                  {/* ✅ NOVO: Botão "Ver Recomendação" com Modal */}
-                                  {/* ============================================ */}
-                                  <button
-                                    onClick={() => handleViewRecommendations(consultant)}
-                                    disabled={loadingRecommendations}
-                                    className="px-2 py-1 text-xs bg-white text-indigo-600 border border-indigo-600 rounded hover:bg-indigo-50 transition whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-                                    title="Ver recomendações de ação para este consultor"
-                                  >
-                                    {loadingRecommendations ? '⏳ Carregando...' : '⚡ Ver Recomendação'}
-                                  </button>
-
-                                  {/* ✅ NOVO: Botão "Ver Histórico" */}
-                                  <button
-                                    onClick={() => handleViewHistoryClick(consultant)}
-                                    className="px-2 py-1 text-xs bg-white text-purple-600 border border-purple-600 rounded hover:bg-purple-50 transition whitespace-nowrap"
-                                    title="Ver histórico de atividades"
-                                  >
-                                    Ver Histórico
-                                  </button>
-                                </div>
-                                <p className="consultant-profession">{consultant.cargo_consultores || 'N/A'}</p>
-                                
-                                {/* ✅ CORRIGIDO: Email e Celular do Consultor movidos para abaixo do cargo */}
-                                <div className="space-y-1 mt-2">
-                                  {consultant.email_consultor && (
-                                    <div className="flex items-center gap-2 text-sm">
-                                      <Mail className="w-3 h-3 text-blue-600" />
-                                      <a href={`mailto:${consultant.email_consultor}`} className="text-blue-700 hover:underline">
-                                        {consultant.email_consultor}
-                                      </a>
-                                    </div>
-                                  )}
-                                  {consultant.celular && (
-                                    <div className="flex items-center gap-2 text-sm">
-                                      <Phone className="w-3 h-3 text-blue-600" />
-                                      <a href={`tel:${consultant.celular}`} className="text-blue-700 hover:underline">
-                                        {consultant.celular}
-                                      </a>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-
-                              {/* ✅ CORRIGIDO: Detalhes reorganizados - Cliente, Gestor, Coordenador, Analista de R&S */}
-                              <div className="space-y-3 mt-3">
-                                {/* Cliente */}
-                                <div className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-semibold text-gray-700">Cliente:</span>
-                                    <span className="text-gray-900">{clientInfo?.razao_social_cliente || 'N/A'}</span>
-                                  </div>
-                                </div>
-
-                                {/* ✅ CORRIGIDO: Renomeado de "Gestor de Pessoas" para "Gestor" */}
-                                <div className="bg-purple-50 p-3 rounded-lg border border-purple-200">
-                                  <div className="flex items-center gap-2 mb-2">
-                                    <span className="font-semibold text-purple-900">Gestor</span>
-                                  </div>
-                                  <div className="space-y-1 ml-6">
-                                    <div className="text-sm font-medium text-purple-900">{manager.nome_gestor_cliente || 'N/A'}</div>
-                                    {manager.email_gestor && (
-                                      <div className="flex items-center gap-2 text-sm">
-                                        <Mail className="w-3 h-3 text-purple-600" />
-                                        <a href={`mailto:${manager.email_gestor}`} className="text-purple-700 hover:underline">
-                                          {manager.email_gestor}
-                                        </a>
-                                      </div>
-                                    )}
-                                    {manager.celular && (
-                                      <div className="flex items-center gap-2 text-sm">
-                                        <Phone className="w-3 h-3 text-purple-600" />
-                                        <a href={`tel:${manager.celular}`} className="text-purple-700 hover:underline">
-                                          {manager.celular}
-                                        </a>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Coordenador */}
-                                {coordenador && (
-                                  <div className="bg-green-50 p-3 rounded-lg border border-green-200">
-                                    <div className="flex items-center gap-2 mb-2">
-                                      <span className="font-semibold text-green-900">Coordenador</span>
-                                    </div>
-                                    <div className="space-y-1 ml-6">
-                                      <div className="text-sm font-medium text-green-900">{coordenador.nome_coordenador || 'N/A'}</div>
-                                      {coordenador.email_coordenador && (
-                                        <div className="flex items-center gap-2 text-sm">
-                                          <Mail className="w-3 h-3 text-green-600" />
-                                          <a href={`mailto:${coordenador.email_coordenador}`} className="text-green-700 hover:underline">
-                                            {coordenador.email_coordenador}
-                                          </a>
-                                        </div>
-                                      )}
-                                      {coordenador.celular && (
-                                        <div className="flex items-center gap-2 text-sm">
-                                          <Phone className="w-3 h-3 text-green-600" />
-                                          <a href={`tel:${coordenador.celular}`} className="text-green-700 hover:underline">
-                                            {coordenador.celular}
-                                          </a>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* ✅ CORRIGIDO: Analista de R&S SEM email/celular (movidos para cima) */}
-                                <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
-                                  <div className="flex items-center gap-2">
-                                    <FocalRSIcon className="w-4 h-4 text-blue-600" size={16} />
-                                    <span className="font-semibold text-blue-900">Analista de R&S:</span>
-                                    <span className="text-sm font-medium text-blue-900">{consultant.analista_rs || 'N/A'}</span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              {/* ❌ REMOVIDO: Seção "Recomendações de Ação" inline foi removida conforme solicitado */}
+                          {/* ===== HEADER: Nome + Botões + Score ===== */}
+                          <div className="card-header-row">
+                            <div className="card-header-left">
+                              <h3 className="consultant-name-redesign">{consultant.nome_consultores}</h3>
+                              <p className="consultant-cargo">{consultant.cargo_consultores || 'N/A'}</p>
+                            </div>
+                            
+                            <div className="card-header-actions">
+                              <button
+                                onClick={() => onNavigateToAtividades(clientInfo?.razao_social_cliente, consultant.nome_consultores)}
+                                className="btn-action btn-atividade"
+                                title="Registrar nova atividade"
+                              >
+                                + Atividade
+                              </button>
+                              <button
+                                onClick={() => handleViewRecommendations(consultant)}
+                                disabled={loadingRecommendations}
+                                className="btn-action btn-recomendacao"
+                                title="Ver recomendações"
+                              >
+                                {loadingRecommendations ? '⏳' : '⚡'} Ver Recomendação
+                              </button>
+                              <button
+                                onClick={() => handleViewHistoryClick(consultant)}
+                                className="btn-action btn-historico"
+                                title="Ver histórico"
+                              >
+                                Ver Histórico
+                              </button>
                             </div>
 
-                            {/* Score Badge - Lado Direito */}
-                            <div className="consultant-score-section">
-                              <div className="score-info">
-                                {isNew && daysSinceHiring && (
-                                  <div className="contratado-info">
-                                    <span className="contratado-label">Contratado:</span>
-                                    <span className="contratado-dias">{daysSinceHiring} dias</span>
-                                  </div>
-                                )}
-                                {finalScore !== null ? (
-                                  <div 
-                                    className="score-badge"
-                                    style={{ backgroundColor: getScoreColor(finalScore) }}
-                                    title="Score do consultor"
-                                  >
-                                    <span className="score-label-text">RISCO</span>
-                                    <span className="score-label-text">{getScoreLabel(finalScore)}</span>
-                                    <span className="score-number">Score {finalScore}</span>
-                                  </div>
-                                ) : (
-                                  <div 
-                                    className="score-badge"
-                                    style={{ backgroundColor: '#fbc02d' }}
-                                    title="Score do consultor"
-                                  >
-                                    <span className="score-label-text">RISCO</span>
-                                    <span className="score-label-text">MODERADO</span>
-                                    <span className="score-number">Score 3</span>
-                                  </div>
-                                )}
-                              </div>
+                            {/* Score Badge */}
+                            <div className="card-score-badge" style={{ backgroundColor: getScoreColor(finalScore) }}>
+                              {isNew && daysSinceHiring && (
+                                <div className="score-new-badge">
+                                  <span className="new-label">Novo</span>
+                                  <span className="new-days">{daysSinceHiring}d</span>
+                                </div>
+                              )}
+                              <span className="score-risk-label">RISCO</span>
+                              <span className="score-risk-level">{getScoreLabel(finalScore)}</span>
+                              <span className="score-risk-number">Score {finalScore || 3}</span>
                             </div>
                           </div>
 
-                          {/* ❌ REMOVIDO: Seção de Recomendações foi completamente removida */}
+                          {/* ===== BODY: Informações em Grid ===== */}
+                          <div className="card-body-grid">
+                            {/* Coluna 1: Contato do Consultor */}
+                            <div className="card-info-block">
+                              <div className="info-block-header">Contato do Consultor</div>
+                              <div className="info-block-content">
+                                {consultant.email_consultor && (
+                                  <div className="info-row">
+                                    <Mail className="info-icon" size={14} />
+                                    <a href={`mailto:${consultant.email_consultor}`} className="info-link">
+                                      {consultant.email_consultor}
+                                    </a>
+                                  </div>
+                                )}
+                                {consultant.celular && (
+                                  <div className="info-row">
+                                    <Phone className="info-icon" size={14} />
+                                    <a href={`tel:${consultant.celular}`} className="info-link">
+                                      {consultant.celular}
+                                    </a>
+                                  </div>
+                                )}
+                                {!consultant.email_consultor && !consultant.celular && (
+                                  <span className="info-na">Não informado</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Coluna 2: Cliente */}
+                            <div className="card-info-block">
+                              <div className="info-block-header">Cliente</div>
+                              <div className="info-block-content">
+                                <span className="info-value-highlight">{clientInfo?.razao_social_cliente || 'N/A'}</span>
+                              </div>
+                            </div>
+
+                            {/* Coluna 3: Gestor */}
+                            <div className="card-info-block">
+                              <div className="info-block-header">Gestor</div>
+                              <div className="info-block-content">
+                                <span className="info-value">{manager.nome_gestor_cliente || 'N/A'}</span>
+                                {manager.email_gestor && (
+                                  <div className="info-row">
+                                    <Mail className="info-icon" size={14} />
+                                    <a href={`mailto:${manager.email_gestor}`} className="info-link">
+                                      {manager.email_gestor}
+                                    </a>
+                                  </div>
+                                )}
+                                {manager.celular && (
+                                  <div className="info-row">
+                                    <Phone className="info-icon" size={14} />
+                                    <a href={`tel:${manager.celular}`} className="info-link">
+                                      {manager.celular}
+                                    </a>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Coluna 4: Coordenador */}
+                            <div className="card-info-block">
+                              <div className="info-block-header">Coordenador</div>
+                              <div className="info-block-content">
+                                {coordenador ? (
+                                  <>
+                                    <span className="info-value">{coordenador.nome_coordenador || 'N/A'}</span>
+                                    {coordenador.email_coordenador && (
+                                      <div className="info-row">
+                                        <Mail className="info-icon" size={14} />
+                                        <a href={`mailto:${coordenador.email_coordenador}`} className="info-link">
+                                          {coordenador.email_coordenador}
+                                        </a>
+                                      </div>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="info-na">N/A</span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Coluna 5: Analista de R&S */}
+                            <div className="card-info-block">
+                              <div className="info-block-header">
+                                <FocalRSIcon className="info-header-icon" size={14} />
+                                Analista de R&S
+                              </div>
+                              <div className="info-block-content">
+                                <span className="info-value">{analistaRSName}</span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       );
                     })}
