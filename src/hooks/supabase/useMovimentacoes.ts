@@ -2,10 +2,11 @@
  * useMovimentacoes.ts - Hook para Movimentações de Consultores
  * 
  * ============================================
- * VERSÃO 4.0 - CORREÇÕES:
+ * VERSÃO 4.1 - CORREÇÕES:
  * 1. Cliente: Busca via cliente_id OU via gestor_imediato_id
  * 2. Exclusões: MOTIVAÇÃO mostra motivo_desligamento
  * 3. Exclusões: Nova coluna SUBSTITUIÇÃO (Sim/Não)
+ * 4. Valor Mensal: PJ = valor_faturamento * 168, CLT = 0
  * ============================================
  * 
  * Data: 05/01/2026
@@ -242,15 +243,21 @@ export function useMovimentacoes() {
           
           const gestorComercial = idGestaoComercial ? gestoresMap.get(idGestaoComercial) : null;
           
+          // ✅ CORREÇÃO: Cálculo do valor mensal
+          // PJ = valor_faturamento * 168
+          // CLT = 0
+          const modalidade = c.modalidade_contrato || 'PJ';
+          const valorMensal = modalidade === 'CLT' ? 0 : (c.valor_faturamento || 0) * 168;
+          
           return {
             consultor_id: c.id,
             nome_consultores: c.nome_consultores || '',
             cargo_consultores: c.cargo_consultores || '',
             razao_social_cliente: razaoSocial,
             tipo_de_vaga: c.substituicao === true ? 'Reposição' : 'Nova Posição',
-            regime_contratacao: c.modalidade_contrato || 'PJ',
-            valor_mensal: c.valor_faturamento || c.valor_pagamento || 0,
-            valor_anual: (c.valor_faturamento || c.valor_pagamento || 0) * 12,
+            regime_contratacao: modalidade,
+            valor_mensal: valorMensal,
+            valor_anual: valorMensal * 12,
             data_inclusao: c.data_inclusao_consultores,
             gestor_comercial_nome: gestorComercial?.nome_usuario || '',
             nome_substituido: c.nome_substituido || undefined
@@ -388,6 +395,12 @@ export function useMovimentacoes() {
           
           const gestorComercial = idGestaoComercial ? gestoresMap.get(idGestaoComercial) : null;
           
+          // ✅ CORREÇÃO: Cálculo do valor mensal
+          // PJ = valor_faturamento * 168
+          // CLT = 0
+          const modalidade = c.modalidade_contrato || 'PJ';
+          const valorMensal = modalidade === 'CLT' ? 0 : (c.valor_faturamento || 0) * 168;
+          
           return {
             consultor_id: c.id,
             nome_consultores: c.nome_consultores || '',
@@ -397,9 +410,9 @@ export function useMovimentacoes() {
             motivo_desligamento: c.motivo_desligamento || 'Não informado',
             // ✅ CORREÇÃO 3: SUBSTITUIÇÃO como "Sim" ou "Não"
             substituicao_label: c.substituicao === true ? 'Sim' : 'Não',
-            regime_contratacao: c.modalidade_contrato || 'PJ',
-            valor_mensal: c.valor_faturamento || c.valor_pagamento || 0,
-            valor_anual: (c.valor_faturamento || c.valor_pagamento || 0) * 12,
+            regime_contratacao: modalidade,
+            valor_mensal: valorMensal,
+            valor_anual: valorMensal * 12,
             data_saida: c.data_saida,
             gestor_comercial_nome: gestorComercial?.nome_usuario || ''
           };
