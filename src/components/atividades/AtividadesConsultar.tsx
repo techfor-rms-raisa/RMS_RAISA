@@ -98,13 +98,21 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
             clientMap.get(clientName)!.push(consultant);
         });
 
+        // ✅ CORREÇÃO: Ordenar consultores por nome dentro de cada cliente
+        clientMap.forEach((consultantsList, clientName) => {
+            consultantsList.sort((a, b) => 
+                (a.nome_consultores || '').localeCompare(b.nome_consultores || '', 'pt-BR')
+            );
+        });
+
         let clientEntries = Array.from(clientMap.entries());
 
         if (selectedClient !== 'all') {
             clientEntries = clientEntries.filter(([clientName]) => clientName === selectedClient);
         }
 
-        return clientEntries.sort((a, b) => a[0].localeCompare(b[0]));
+        // Ordenar clientes por nome
+        return clientEntries.sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'));
 
     }, [consultants, clients, usuariosCliente, selectedClient, selectedYear]);
 
