@@ -317,6 +317,7 @@ Analise cada campo e sugira melhorias quando necessário. Avalie:
 
 async function extrairRequisitosVaga(descricao: string, titulo?: string) {
   console.log('🤖 [Gemini] Extraindo requisitos da vaga...');
+  console.log('📌 Título:', titulo || '(não informado)');
 
   if (!descricao || descricao.trim().length < 50) {
     return {
@@ -325,7 +326,10 @@ async function extrairRequisitosVaga(descricao: string, titulo?: string) {
     };
   }
 
-  const prompt = `Você é um **Especialista em Análise de Vagas de TI** com 15 anos de experiência.
+  // ✅ Combinar título + descrição para análise completa
+  const textoCompleto = `${titulo || ''}\n\n${descricao}`;
+
+  const prompt = `Você é um **Especialista em Análise de Vagas de TI** com 15 anos de experiência em recrutamento SAP e tecnologias.
 
 TAREFA: Analise a descrição da vaga e extraia informações estruturadas.
 
@@ -351,43 +355,49 @@ ${descricao}
    - Certificações adicionais
    - Conhecimentos complementares
 
-3. **STACK TECNOLÓGICA:**
+3. **STACK TECNOLÓGICA (MUITO IMPORTANTE):**
    - Liste TODAS as tecnologias, ferramentas, linguagens, frameworks mencionados
-   - Normalize os nomes (ex: "reactjs" -> "React", "node" -> "Node.js")
-   - Inclua versões se mencionadas
-   - Categorize: frontend, backend, database, devops, cloud, tools, metodologias
-
+   - **ATENÇÃO ESPECIAL PARA MÓDULOS SAP:** Extraia do TÍTULO e da DESCRIÇÃO todos os módulos SAP mencionados
+   - **MÓDULOS SAP COMUNS:** PP, SD, MM, FI, CO, WM, EWM, QM, PM, PS, HR/HCM, ABAP, BASIS, HANA, BW, BI, CRM, SRM, APO, TM, GTS, LE, CS, Ariba, SuccessFactors, S/4HANA, ECC, R/3
+   - Se o título menciona "SAP PP" ou "Analista SAP MM", extraia "SAP PP" ou "SAP MM" como stack
+   - Normalize os nomes: "sap pp" -> "SAP PP", "sap-mm" -> "SAP MM"
+   - Inclua variações: "SAP PP/MM" deve gerar ["SAP PP", "SAP MM"]
+   
 4. **INFORMAÇÕES ADICIONAIS:**
    - Modalidade (Remoto/Híbrido/Presencial)
    - Regime de contratação (PJ/CLT)
    - Valor/Hora ou Salário se mencionado
    - Prazo de entrega/Data limite
-   - Tipo de projeto (Sustentação, Novo Projeto, etc.)
+   - Tipo de projeto (Sustentação, Novo Projeto, Roll out, etc.)
 
 **RESPONDA APENAS EM JSON VÁLIDO:**
 {
   "requisitos_obrigatorios": "• Requisito 1\\n• Requisito 2\\n• Requisito 3",
   "requisitos_desejaveis": "• Desejável 1\\n• Desejável 2",
   "stack_tecnologica": [
+    {"nome": "SAP PP", "categoria": "sap_modulo"},
+    {"nome": "SAP MM", "categoria": "sap_modulo"},
+    {"nome": "S/4HANA", "categoria": "sap_plataforma"},
+    {"nome": "ABAP", "categoria": "sap_linguagem"},
     {"nome": "React", "categoria": "frontend"},
-    {"nome": "Node.js", "categoria": "backend"},
-    {"nome": "PostgreSQL", "categoria": "database"}
+    {"nome": "Node.js", "categoria": "backend"}
   ],
   "informacoes_extraidas": {
     "modalidade": "Remoto",
     "regime_contratacao": "PJ",
     "valor_hora": 110.00,
     "prazo_fechamento": "2025-01-28",
-    "tipo_projeto": "Sustentação",
+    "tipo_projeto": "Roll out",
     "senioridade_detectada": "Senior"
   },
   "confianca_extracao": 85,
-  "observacoes": ["Descrição bem detalhada", "Requisitos claros"]
+  "observacoes": ["Descrição bem detalhada", "Módulo SAP PP identificado no título"]
 }
 
 **REGRAS IMPORTANTES:**
 - Se não encontrar informação, use null (não invente)
 - Separe claramente obrigatórios de desejáveis
+- **PRIORIZE a extração de módulos SAP do título e descrição**
 - Normalize nomes de tecnologias (capitalização correta)
 - Use bullet points (•) nos requisitos para melhor formatação
 - Valor/hora deve ser número, não string`;
@@ -413,19 +423,27 @@ ${descricao}
       console.log('✅ Requisitos extraídos com sucesso');
       
       // Formatar stacks como array simples de strings para compatibilidade
-      const stacksFormatadas = dadosExtraidos.stack_tecnologica?.map((s: any) => 
+      let stacksFormatadas = dadosExtraidos.stack_tecnologica?.map((s: any) => 
         typeof s === 'string' ? s : s.nome
       ) || [];
 
+      // ✅ PÓS-PROCESSAMENTO: Detectar módulos SAP do título e descrição
+      const modulosSAPDetectados = detectarModulosSAP(titulo || '', descricao);
+      console.log('🔍 Módulos SAP detectados por regex:', modulosSAPDetectados);
+      
+      // Combinar módulos detectados com stacks da IA (sem duplicatas)
+      const stacksUnicas = [...new Set([...modulosSAPDetectados, ...stacksFormatadas])];
+      
       return {
         sucesso: true,
         requisitos_obrigatorios: dadosExtraidos.requisitos_obrigatorios || null,
         requisitos_desejaveis: dadosExtraidos.requisitos_desejaveis || null,
-        stack_tecnologica: stacksFormatadas,
+        stack_tecnologica: stacksUnicas,
         stack_detalhada: dadosExtraidos.stack_tecnologica || [],
         informacoes_extraidas: dadosExtraidos.informacoes_extraidas || {},
         confianca: dadosExtraidos.confianca_extracao || 70,
-        observacoes: dadosExtraidos.observacoes || []
+        observacoes: dadosExtraidos.observacoes || [],
+        modulos_sap_detectados: modulosSAPDetectados
       };
     } catch (parseError) {
       console.error('❌ Erro ao parsear JSON:', parseError);
@@ -434,19 +452,24 @@ ${descricao}
       const jsonMatch = text.match(/{[\s\S]*}/);
       if (jsonMatch) {
         const dadosExtraidos = JSON.parse(jsonMatch[0]);
-        const stacksFormatadas = dadosExtraidos.stack_tecnologica?.map((s: any) => 
+        let stacksFormatadas = dadosExtraidos.stack_tecnologica?.map((s: any) => 
           typeof s === 'string' ? s : s.nome
         ) || [];
+
+        // ✅ PÓS-PROCESSAMENTO: Detectar módulos SAP do título e descrição
+        const modulosSAPDetectados = detectarModulosSAP(titulo || '', descricao);
+        const stacksUnicas = [...new Set([...modulosSAPDetectados, ...stacksFormatadas])];
 
         return {
           sucesso: true,
           requisitos_obrigatorios: dadosExtraidos.requisitos_obrigatorios || null,
           requisitos_desejaveis: dadosExtraidos.requisitos_desejaveis || null,
-          stack_tecnologica: stacksFormatadas,
+          stack_tecnologica: stacksUnicas,
           stack_detalhada: dadosExtraidos.stack_tecnologica || [],
           informacoes_extraidas: dadosExtraidos.informacoes_extraidas || {},
           confianca: dadosExtraidos.confianca_extracao || 60,
-          observacoes: ['Parsing com fallback']
+          observacoes: ['Parsing com fallback'],
+          modulos_sap_detectados: modulosSAPDetectados
         };
       }
       
@@ -454,11 +477,110 @@ ${descricao}
     }
   } catch (error: any) {
     console.error('❌ Erro na extração:', error);
+    
+    // ✅ FALLBACK: Mesmo com erro da IA, tentar detectar módulos SAP
+    const modulosSAPDetectados = detectarModulosSAP(titulo || '', descricao);
+    if (modulosSAPDetectados.length > 0) {
+      return {
+        sucesso: true,
+        requisitos_obrigatorios: null,
+        requisitos_desejaveis: null,
+        stack_tecnologica: modulosSAPDetectados,
+        stack_detalhada: [],
+        informacoes_extraidas: {},
+        confianca: 40,
+        observacoes: ['Extração parcial - apenas módulos SAP detectados'],
+        modulos_sap_detectados: modulosSAPDetectados
+      };
+    }
+    
     return {
       sucesso: false,
       erro: error.message || 'Erro ao processar descrição'
     };
   }
+}
+
+/**
+ * ✅ FUNÇÃO AUXILIAR: Detecta módulos SAP do título e descrição usando regex
+ */
+function detectarModulosSAP(titulo: string, descricao: string): string[] {
+  const textoCompleto = `${titulo} ${descricao}`.toUpperCase();
+  
+  // Lista completa de módulos SAP
+  const modulosSAP = [
+    // Módulos principais ECC/S4
+    'PP', 'SD', 'MM', 'FI', 'CO', 'WM', 'EWM', 'QM', 'PM', 'PS', 'HR', 'HCM',
+    'LE', 'CS', 'TR', 'RE', 'IM', 'EC', 'CA', 'IS',
+    // Técnicos
+    'ABAP', 'BASIS', 'BC', 'PI', 'PO', 'XI', 'BTP', 'CPI', 'FIORI',
+    // Analytics & Data
+    'BW', 'BI', 'BPC', 'BOBJ', 'SAC', 'HANA', 'BW/4HANA',
+    // Cloud & Específicos
+    'CRM', 'SRM', 'APO', 'SCM', 'TM', 'GTS', 'EHS', 'PLM', 'MES',
+    'ARIBA', 'SUCCESSFACTORS', 'CONCUR', 'FIELDGLASS',
+    // Plataformas
+    'S/4HANA', 'S4HANA', 'ECC', 'R/3', 'R3'
+  ];
+  
+  const detectados: string[] = [];
+  
+  for (const modulo of modulosSAP) {
+    // Padrões de busca mais flexíveis
+    const patterns = [
+      new RegExp(`\\bSAP\\s*${modulo}\\b`, 'i'),           // "SAP PP", "SAP MM"
+      new RegExp(`\\bSAP[\\s-]*${modulo}\\b`, 'i'),        // "SAP-PP", "SAP PP"
+      new RegExp(`\\b${modulo}[\\s-]*SAP\\b`, 'i'),        // "PP SAP"
+      new RegExp(`\\b${modulo}\\b(?=.*SAP|SAP.*)`, 'i'),   // PP em contexto SAP
+    ];
+    
+    // Para módulos de 2-3 letras, exigir contexto SAP
+    if (modulo.length <= 3) {
+      // Verificar se SAP está no texto e o módulo aparece
+      if (textoCompleto.includes('SAP') && 
+          new RegExp(`\\b${modulo}\\b`).test(textoCompleto)) {
+        const formatado = `SAP ${modulo}`;
+        if (!detectados.includes(formatado)) {
+          detectados.push(formatado);
+        }
+      }
+    } else {
+      // Módulos maiores podem ser detectados diretamente
+      for (const pattern of patterns) {
+        if (pattern.test(textoCompleto)) {
+          // Normalizar nome
+          let nomeNormalizado = modulo;
+          if (modulo === 'S4HANA') nomeNormalizado = 'S/4HANA';
+          if (modulo === 'R3') nomeNormalizado = 'R/3';
+          if (modulo === 'SUCCESSFACTORS') nomeNormalizado = 'SuccessFactors';
+          if (modulo === 'BW/4HANA') nomeNormalizado = 'BW/4HANA';
+          
+          const formatado = modulo.length > 4 ? nomeNormalizado : `SAP ${nomeNormalizado}`;
+          if (!detectados.includes(formatado) && !detectados.includes(`SAP ${nomeNormalizado}`)) {
+            detectados.push(formatado);
+          }
+          break;
+        }
+      }
+    }
+  }
+  
+  // Detectar combinações como "PP/MM" ou "FI/CO"
+  const combos = textoCompleto.match(/\b(PP|SD|MM|FI|CO|WM|QM|PM|PS|HR)\s*[\/]\s*(PP|SD|MM|FI|CO|WM|QM|PM|PS|HR)\b/gi);
+  if (combos) {
+    for (const combo of combos) {
+      const partes = combo.toUpperCase().split(/\s*\/\s*/);
+      for (const parte of partes) {
+        const formatado = `SAP ${parte}`;
+        if (!detectados.includes(formatado)) {
+          detectados.push(formatado);
+        }
+      }
+    }
+  }
+  
+  console.log(`🔍 Módulos SAP encontrados: ${detectados.join(', ') || 'nenhum'}`);
+  return detectados;
 }
 
 async function extrairDadosCV(textoCV?: string, base64PDF?: string) {

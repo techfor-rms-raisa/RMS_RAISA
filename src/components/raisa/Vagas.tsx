@@ -57,19 +57,38 @@ const ensureStackArray = (stack: any): string[] => {
 // Stacks conhecidas para extração automática
 // NOTA: Removido "IA" e "AI" pois são termos genéricos, não tecnologias específicas
 const STACKS_CONHECIDAS = [
+    // Frontend
     'React', 'Angular', 'Vue', 'Vue.js', 'Next.js', 'Node.js', 'Express',
+    // Backend
     'Python', 'Django', 'Flask', 'FastAPI', 'Java', 'Spring', 'Spring Boot',
     'C#', '.NET', '.NET Core', 'PHP', 'Laravel', 'Symfony',
+    // Linguagens
     'JavaScript', 'TypeScript', 'HTML', 'CSS', 'Sass', 'Tailwind',
+    // Banco de dados
     'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'SQL Server', 'Oracle',
+    // Cloud & DevOps
     'AWS', 'Azure', 'GCP', 'Docker', 'Kubernetes', 'K8s',
     'Git', 'GitHub', 'GitLab', 'CI/CD', 'Jenkins',
     'REST', 'API', 'GraphQL', 'Microservices',
     'Agile', 'Scrum', 'Kanban', 'DevOps',
     'Linux', 'Terraform', 'Ansible',
+    // Testes
     'Selenium', 'Cypress', 'Jest', 'JUnit',
-    'Power BI', 'Tableau', 'SAP', 'SAP WM', 'SAP MM', 'SAP SD', 'SAP FI', 'SAP CO', 'SAP ABAP', 'SAP HANA', 'Salesforce',
-    'Machine Learning', 'Data Science', 'TensorFlow', 'PyTorch'
+    // BI & Analytics
+    'Power BI', 'Tableau', 'Salesforce',
+    'Machine Learning', 'Data Science', 'TensorFlow', 'PyTorch',
+    // ✅ SAP - Módulos principais
+    'SAP', 'SAP PP', 'SAP SD', 'SAP MM', 'SAP FI', 'SAP CO', 'SAP WM', 'SAP EWM',
+    'SAP QM', 'SAP PM', 'SAP PS', 'SAP HR', 'SAP HCM', 'SAP LE', 'SAP CS', 'SAP TR',
+    // ✅ SAP - Técnicos
+    'SAP ABAP', 'SAP BASIS', 'SAP BC', 'SAP PI', 'SAP PO', 'SAP XI', 'SAP BTP', 'SAP CPI', 'SAP FIORI',
+    // ✅ SAP - Analytics & Data
+    'SAP BW', 'SAP BI', 'SAP BPC', 'SAP BOBJ', 'SAP SAC', 'SAP HANA', 'SAP BW/4HANA',
+    // ✅ SAP - Cloud & Específicos
+    'SAP CRM', 'SAP SRM', 'SAP APO', 'SAP SCM', 'SAP TM', 'SAP GTS', 'SAP EHS', 'SAP PLM', 'SAP MES',
+    'SAP Ariba', 'SuccessFactors', 'SAP SuccessFactors', 'SAP Concur', 'SAP Fieldglass',
+    // ✅ SAP - Plataformas
+    'S/4HANA', 'SAP S/4HANA', 'SAP ECC', 'SAP R/3', 'SAP ACTIVATE'
 ];
 
 const Vagas: React.FC<VagasProps> = ({ 
