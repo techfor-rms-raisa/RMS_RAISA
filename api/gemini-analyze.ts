@@ -59,6 +59,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await analyzeJobDescription(payload.dados);
         break;
 
+      // ✅ NOVA ACTION: Extração de Requisitos e Stacks da Descrição
+      case 'extrair_requisitos_vaga':
+        result = await extrairRequisitosVaga(payload.descricao, payload.titulo);
+        break;
+
       // ✅ NOVA ACTION: Extração de CV com IA (RAISA)
       case 'extrair_cv':
         result = await extrairDadosCV(payload.textoCV, payload.base64PDF);
@@ -305,6 +310,156 @@ Analise cada campo e sugira melhorias quando necessário. Avalie:
 // ========================================
 // EXTRAÇÃO DE CV (RAISA - Banco de Talentos)
 // ========================================
+
+// ========================================
+// EXTRAÇÃO DE REQUISITOS E STACKS DA VAGA (NOVO!)
+// ========================================
+
+async function extrairRequisitosVaga(descricao: string, titulo?: string) {
+  console.log('🤖 [Gemini] Extraindo requisitos da vaga...');
+
+  if (!descricao || descricao.trim().length < 50) {
+    return {
+      sucesso: false,
+      erro: 'Descrição muito curta. Forneça mais detalhes sobre a vaga.'
+    };
+  }
+
+  const prompt = `Você é um **Especialista em Análise de Vagas de TI** com 15 anos de experiência.
+
+TAREFA: Analise a descrição da vaga e extraia informações estruturadas.
+
+${titulo ? `**TÍTULO DA VAGA:** ${titulo}` : ''}
+
+**DESCRIÇÃO COMPLETA DA VAGA:**
+==================
+${descricao}
+==================
+
+**INSTRUÇÕES DETALHADAS:**
+
+1. **REQUISITOS OBRIGATÓRIOS:**
+   - Identifique TODOS os requisitos que são obrigatórios/mandatórios
+   - Inclua experiências mínimas exigidas (anos, certificações)
+   - Inclua formação acadêmica se exigida
+   - Inclua soft skills mandatórias
+   - Formate como lista clara e concisa
+
+2. **REQUISITOS DESEJÁVEIS:**
+   - Identifique requisitos que são diferenciais/desejáveis
+   - Experiências que agregam mas não eliminam
+   - Certificações adicionais
+   - Conhecimentos complementares
+
+3. **STACK TECNOLÓGICA:**
+   - Liste TODAS as tecnologias, ferramentas, linguagens, frameworks mencionados
+   - Normalize os nomes (ex: "reactjs" -> "React", "node" -> "Node.js")
+   - Inclua versões se mencionadas
+   - Categorize: frontend, backend, database, devops, cloud, tools, metodologias
+
+4. **INFORMAÇÕES ADICIONAIS:**
+   - Modalidade (Remoto/Híbrido/Presencial)
+   - Regime de contratação (PJ/CLT)
+   - Valor/Hora ou Salário se mencionado
+   - Prazo de entrega/Data limite
+   - Tipo de projeto (Sustentação, Novo Projeto, etc.)
+
+**RESPONDA APENAS EM JSON VÁLIDO:**
+{
+  "requisitos_obrigatorios": "• Requisito 1\\n• Requisito 2\\n• Requisito 3",
+  "requisitos_desejaveis": "• Desejável 1\\n• Desejável 2",
+  "stack_tecnologica": [
+    {"nome": "React", "categoria": "frontend"},
+    {"nome": "Node.js", "categoria": "backend"},
+    {"nome": "PostgreSQL", "categoria": "database"}
+  ],
+  "informacoes_extraidas": {
+    "modalidade": "Remoto",
+    "regime_contratacao": "PJ",
+    "valor_hora": 110.00,
+    "prazo_fechamento": "2025-01-28",
+    "tipo_projeto": "Sustentação",
+    "senioridade_detectada": "Senior"
+  },
+  "confianca_extracao": 85,
+  "observacoes": ["Descrição bem detalhada", "Requisitos claros"]
+}
+
+**REGRAS IMPORTANTES:**
+- Se não encontrar informação, use null (não invente)
+- Separe claramente obrigatórios de desejáveis
+- Normalize nomes de tecnologias (capitalização correta)
+- Use bullet points (•) nos requisitos para melhor formatação
+- Valor/hora deve ser número, não string`;
+
+  try {
+    const result = await ai.models.generateContent({ 
+      model: 'gemini-2.0-flash-exp', 
+      contents: prompt 
+    });
+    
+    const text = result.text || '';
+    console.log('🤖 Resposta da IA recebida');
+
+    // Limpar e parsear JSON
+    const jsonClean = text
+      .replace(/^```json\n?/i, '')
+      .replace(/^```\n?/i, '')
+      .replace(/```$/i, '')
+      .trim();
+
+    try {
+      const dadosExtraidos = JSON.parse(jsonClean);
+      console.log('✅ Requisitos extraídos com sucesso');
+      
+      // Formatar stacks como array simples de strings para compatibilidade
+      const stacksFormatadas = dadosExtraidos.stack_tecnologica?.map((s: any) => 
+        typeof s === 'string' ? s : s.nome
+      ) || [];
+
+      return {
+        sucesso: true,
+        requisitos_obrigatorios: dadosExtraidos.requisitos_obrigatorios || null,
+        requisitos_desejaveis: dadosExtraidos.requisitos_desejaveis || null,
+        stack_tecnologica: stacksFormatadas,
+        stack_detalhada: dadosExtraidos.stack_tecnologica || [],
+        informacoes_extraidas: dadosExtraidos.informacoes_extraidas || {},
+        confianca: dadosExtraidos.confianca_extracao || 70,
+        observacoes: dadosExtraidos.observacoes || []
+      };
+    } catch (parseError) {
+      console.error('❌ Erro ao parsear JSON:', parseError);
+      
+      // Tentar extrair JSON do texto
+      const jsonMatch = text.match(/{[\s\S]*}/);
+      if (jsonMatch) {
+        const dadosExtraidos = JSON.parse(jsonMatch[0]);
+        const stacksFormatadas = dadosExtraidos.stack_tecnologica?.map((s: any) => 
+          typeof s === 'string' ? s : s.nome
+        ) || [];
+
+        return {
+          sucesso: true,
+          requisitos_obrigatorios: dadosExtraidos.requisitos_obrigatorios || null,
+          requisitos_desejaveis: dadosExtraidos.requisitos_desejaveis || null,
+          stack_tecnologica: stacksFormatadas,
+          stack_detalhada: dadosExtraidos.stack_tecnologica || [],
+          informacoes_extraidas: dadosExtraidos.informacoes_extraidas || {},
+          confianca: dadosExtraidos.confianca_extracao || 60,
+          observacoes: ['Parsing com fallback']
+        };
+      }
+      
+      throw new Error('Falha ao parsear resposta da IA');
+    }
+  } catch (error: any) {
+    console.error('❌ Erro na extração:', error);
+    return {
+      sucesso: false,
+      erro: error.message || 'Erro ao processar descrição'
+    };
+  }
+}
 
 async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
   console.log('🤖 [Gemini] Iniciando extração de CV...');
