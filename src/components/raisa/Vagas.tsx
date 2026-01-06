@@ -1,6 +1,10 @@
 /**
- * Vagas.tsx - RMS RAISA v56.2
+ * Vagas.tsx - RMS RAISA v56.3
  * Componente de Gestão de Vagas
+ * 
+ * v56.3: Fix erro "Cannot read properties of undefined (reading 'titulo')"
+ *        - Corrigido: updateVaga(editingVaga.id, vagaData) 
+ *        - Antes estava: updateVaga({ ...editingVaga, ...vagaData })
  * 
  * v56.2: Novo campo Tipo de Remuneração
  *        - Dropdown: Hora Aberta / Hora Fechada / Valor Fechado
@@ -9,11 +13,7 @@
  * 
  * v56.1: Correções de bugs
  *        - Removido "IA" e "AI" da lista de stacks (termos genéricos)
- *        - Filtro de termos genéricos na extração via IA
  *        - Select de "Gestão Comercial" com usuários filtrados
- *        - Label corrigido: "Gestão Comercial"
- *        - Auto-preenchimento com feedback visual e alerta
- *        - Adicionadas stacks SAP (WM, MM, SD, FI, CO, ABAP, HANA)
  * 
  * v56.0: Extração de Requisitos e Stack via Backend/Gemini
  */
@@ -31,7 +31,7 @@ interface VagasProps {
     usuariosCliente?: UsuarioCliente[];
     users?: User[];  // ✅ NOVO: Lista de usuários do sistema (app_users)
     addVaga: (v: any) => void;
-    updateVaga: (v: Vaga) => void;
+    updateVaga: (id: string, updates: Partial<Vaga>) => void;  // ✅ CORRIGIDO: assinatura correta
     deleteVaga: (id: string) => void;
     currentUserId?: number;
 }
@@ -331,7 +331,7 @@ const Vagas: React.FC<VagasProps> = ({
         };
 
         if (editingVaga) {
-            updateVaga({ ...editingVaga, ...vagaData });
+            updateVaga(editingVaga.id, vagaData);
         } else {
             addVaga(vagaData);
         }
@@ -1184,7 +1184,7 @@ const Vagas: React.FC<VagasProps> = ({
                     vaga={sugestoesIAVaga}
                     onClose={() => setSugestoesIAVaga(null)}
                     onAplicarSugestoes={(vagaAtualizada) => {
-                        updateVaga({ ...sugestoesIAVaga, ...vagaAtualizada } as Vaga);
+                        updateVaga(sugestoesIAVaga.id, vagaAtualizada);
                         setSugestoesIAVaga(null);
                     }}
                     currentUserId={currentUserId}

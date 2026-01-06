@@ -38,6 +38,7 @@ export const useVagas = () => {
         requisitos_desejaveis: vaga.requisitos_desejaveis,
         regime_contratacao: vaga.regime_contratacao,
         modalidade: vaga.modalidade,
+        tipo_remuneracao: vaga.tipo_remuneracao,  // ✅ NOVO CAMPO
         beneficios: vaga.beneficios,
         analista_id: vaga.analista_id,
         cliente_id: vaga.cliente_id,
@@ -81,6 +82,7 @@ export const useVagas = () => {
           requisitos_desejaveis: newVaga.requisitos_desejaveis,
           regime_contratacao: newVaga.regime_contratacao,
           modalidade: newVaga.modalidade,
+          tipo_remuneracao: (newVaga as any).tipo_remuneracao || 'Hora Aberta',  // ✅ NOVO CAMPO
           beneficios: newVaga.beneficios,
           analista_id: newVaga.analista_id,
           cliente_id: newVaga.cliente_id,
@@ -106,6 +108,7 @@ export const useVagas = () => {
         requisitos_desejaveis: data.requisitos_desejaveis,
         regime_contratacao: data.regime_contratacao,
         modalidade: data.modalidade,
+        tipo_remuneracao: data.tipo_remuneracao,  // ✅ NOVO CAMPO
         beneficios: data.beneficios,
         analista_id: data.analista_id,
         cliente_id: data.cliente_id,
@@ -148,6 +151,7 @@ export const useVagas = () => {
           requisitos_desejaveis: updates.requisitos_desejaveis,
           regime_contratacao: updates.regime_contratacao,
           modalidade: updates.modalidade,
+          tipo_remuneracao: (updates as any).tipo_remuneracao,  // ✅ NOVO CAMPO
           beneficios: updates.beneficios,
           analista_id: updates.analista_id,
           cliente_id: updates.cliente_id,
@@ -175,6 +179,7 @@ export const useVagas = () => {
         requisitos_desejaveis: data.requisitos_desejaveis,
         regime_contratacao: data.regime_contratacao,
         modalidade: data.modalidade,
+        tipo_remuneracao: data.tipo_remuneracao,  // ✅ NOVO CAMPO
         beneficios: data.beneficios,
         analista_id: data.analista_id,
         cliente_id: data.cliente_id,

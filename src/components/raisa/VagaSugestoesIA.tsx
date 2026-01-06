@@ -3,8 +3,12 @@
  * 
  * Exibe análise da IA sobre a vaga e permite aplicar sugestões
  * 
- * Versão: 1.0
- * Data: 25/12/2024
+ * Versão: 1.1
+ * Data: 06/01/2026
+ * 
+ * v1.1: Fix botão "Aplicar Sugestões" / "Concluir Análise"
+ *       - Se há sugestões selecionáveis: mostra "Aplicar (N) Sugestões"
+ *       - Se não há (apenas keywords/dicas): mostra "✓ Concluir Análise"
  */
 
 import React, { useState, useEffect } from 'react';
@@ -62,9 +66,34 @@ const VagaSugestoesIA: React.FC<VagaSugestoesIAProps> = ({
     );
   };
 
-  // Aplicar sugestões selecionadas
+  // Verificar se há sugestões de campos selecionáveis
+  const temSugestoesSelecionaveis = analiseAtual?.sugestoes && 
+    Object.keys(analiseAtual.sugestoes).filter(k => 
+      analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes] && 
+      typeof analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes] === 'object' &&
+      'sugerido' in (analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes] as any)
+    ).length > 0;
+
+  // Aplicar sugestões selecionadas ou concluir análise
   const handleAplicar = async () => {
-    if (!analiseAtual || sugestoesSelecionadas.length === 0) return;
+    if (!analiseAtual) return;
+    
+    // Se não há sugestões selecionáveis, apenas marcar como aprovado e fechar
+    if (!temSugestoesSelecionaveis) {
+      const sucesso = await aplicarSugestoes(
+        analiseAtual.id,
+        parseInt(vaga.id),
+        ['analise_revisada'],  // Marca que foi revisado
+        currentUserId
+      );
+      if (sucesso) {
+        onClose();
+      }
+      return;
+    }
+    
+    // Se há sugestões selecionáveis mas nenhuma foi selecionada
+    if (sugestoesSelecionadas.length === 0) return;
     
     const sucesso = await aplicarSugestoes(
       analiseAtual.id,
@@ -342,10 +371,13 @@ const VagaSugestoesIA: React.FC<VagaSugestoesIAProps> = ({
               </button>
               <button
                 onClick={handleAplicar}
-                disabled={sugestoesSelecionadas.length === 0}
+                disabled={temSugestoesSelecionaveis && sugestoesSelecionadas.length === 0}
                 className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
               >
-                Aplicar {sugestoesSelecionadas.length > 0 && `(${sugestoesSelecionadas.length})`} Sugestões
+                {temSugestoesSelecionaveis 
+                  ? `Aplicar ${sugestoesSelecionadas.length > 0 ? `(${sugestoesSelecionadas.length})` : ''} Sugestões`
+                  : '✓ Concluir Análise'
+                }
               </button>
             </div>
           </div>
