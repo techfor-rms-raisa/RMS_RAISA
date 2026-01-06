@@ -1,22 +1,21 @@
 /**
- * Vagas.tsx - RMS RAISA v56.1
+ * Vagas.tsx - RMS RAISA v56.2
  * Componente de Gestão de Vagas
+ * 
+ * v56.2: Novo campo Tipo de Remuneração
+ *        - Dropdown: Hora Aberta / Hora Fechada / Valor Fechado
+ *        - Labels alteradas: "Valor Hora Min/Máx R$", "Valor/H Faturamento R$"
+ *        - CRUD completo do novo campo tipo_remuneracao
  * 
  * v56.1: Correções de bugs
  *        - Removido "IA" e "AI" da lista de stacks (termos genéricos)
  *        - Filtro de termos genéricos na extração via IA
  *        - Select de "Gestão Comercial" com usuários filtrados
- *        - Label corrigido: "Gestão Comercial" (antes era "Gestor Comercial (Analista)")
+ *        - Label corrigido: "Gestão Comercial"
  *        - Auto-preenchimento com feedback visual e alerta
  *        - Adicionadas stacks SAP (WM, MM, SD, FI, CO, ABAP, HANA)
  * 
  * v56.0: Extração de Requisitos e Stack via Backend/Gemini
- *        - Botão "🤖 Extrair Requisitos com IA" na descrição
- *        - Chamada ao backend /api/gemini-analyze (action: extrair_requisitos_vaga)
- *        - Auto-preenchimento do Gestor Comercial ao selecionar Cliente
- *        - Indicadores visuais de campos extraídos pela IA
- * 
- * v55.0: Modal COMPLETO com todos os campos da tabela vagas
  */
 
 import React, { useState, useMemo } from 'react';
@@ -130,6 +129,7 @@ const Vagas: React.FC<VagasProps> = ({
         requisitos_desejaveis: '',
         regime_contratacao: 'PJ',
         modalidade: 'Remoto',
+        tipo_remuneracao: 'Hora Aberta',  // ✅ NOVO CAMPO
         salario_min: null,
         salario_max: null,
         faturamento_mensal: null,
@@ -209,6 +209,7 @@ const Vagas: React.FC<VagasProps> = ({
                 requisitos_desejaveis: vaga.requisitos_desejaveis || '',
                 regime_contratacao: vaga.regime_contratacao || 'PJ',
                 modalidade: vaga.modalidade || 'Remoto',
+                tipo_remuneracao: (vaga as any).tipo_remuneracao || 'Hora Aberta',  // ✅ NOVO CAMPO
                 salario_min: vaga.salario_min || null,
                 salario_max: vaga.salario_max || null,
                 faturamento_mensal: vaga.faturamento_mensal || null,
@@ -234,6 +235,7 @@ const Vagas: React.FC<VagasProps> = ({
                 requisitos_desejaveis: '',
                 regime_contratacao: 'PJ',
                 modalidade: 'Remoto',
+                tipo_remuneracao: 'Hora Aberta',  // ✅ NOVO CAMPO
                 salario_min: null,
                 salario_max: null,
                 faturamento_mensal: null,
@@ -318,6 +320,7 @@ const Vagas: React.FC<VagasProps> = ({
             requisitos_desejaveis: formData.requisitos_desejaveis || null,
             regime_contratacao: formData.regime_contratacao,
             modalidade: formData.modalidade,
+            tipo_remuneracao: (formData as any).tipo_remuneracao || 'Hora Aberta',  // ✅ NOVO CAMPO
             salario_min: formData.salario_min,
             salario_max: formData.salario_max,
             faturamento_mensal: formData.faturamento_mensal,
@@ -1011,33 +1014,52 @@ const Vagas: React.FC<VagasProps> = ({
                                                     </select>
                                                 </div>
                                             </div>
+                                            
+                                            {/* ✅ NOVO: Tipo de Remuneração */}
+                                            <div>
+                                                <label className="text-sm font-bold text-gray-700">Tipo de Remuneração</label>
+                                                <select 
+                                                    className="w-full border p-2 rounded mt-1" 
+                                                    value={(formData as any).tipo_remuneracao || 'Hora Aberta'} 
+                                                    onChange={e => setFormData({...formData, tipo_remuneracao: e.target.value} as any)}
+                                                >
+                                                    <option value="Hora Aberta">Hora Aberta</option>
+                                                    <option value="Hora Fechada">Hora Fechada</option>
+                                                    <option value="Valor Fechado">Valor Fechado</option>
+                                                </select>
+                                            </div>
+
+                                            {/* ✅ ALTERADO: Labels de valores */}
                                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                                 <div>
-                                                    <label className="text-sm font-bold text-gray-700">Salário Mín (R$)</label>
+                                                    <label className="text-sm font-bold text-gray-700">Valor Hora Min R$</label>
                                                     <input 
                                                         type="number"
                                                         className="w-full border p-2 rounded mt-1" 
                                                         placeholder="0.00" 
+                                                        step="0.01"
                                                         value={formData.salario_min || ''} 
                                                         onChange={e => setFormData({...formData, salario_min: e.target.value ? parseFloat(e.target.value) : null})} 
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="text-sm font-bold text-gray-700">Salário Máx (R$)</label>
+                                                    <label className="text-sm font-bold text-gray-700">Valor Hora Máx R$</label>
                                                     <input 
                                                         type="number"
                                                         className="w-full border p-2 rounded mt-1" 
                                                         placeholder="0.00" 
+                                                        step="0.01"
                                                         value={formData.salario_max || ''} 
                                                         onChange={e => setFormData({...formData, salario_max: e.target.value ? parseFloat(e.target.value) : null})} 
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="text-sm font-bold text-gray-700">Faturamento Mensal (R$)</label>
+                                                    <label className="text-sm font-bold text-gray-700">Valor/H Faturamento R$</label>
                                                     <input 
                                                         type="number"
                                                         className="w-full border p-2 rounded mt-1" 
                                                         placeholder="0.00" 
+                                                        step="0.01"
                                                         value={formData.faturamento_mensal || ''} 
                                                         onChange={e => setFormData({...formData, faturamento_mensal: e.target.value ? parseFloat(e.target.value) : null})} 
                                                     />

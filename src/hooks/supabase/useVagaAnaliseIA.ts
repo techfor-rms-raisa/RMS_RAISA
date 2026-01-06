@@ -166,7 +166,7 @@ export const useVagaAnaliseIA = () => {
   }, []);
 
   // ============================================
-  // ANALISAR VAGA COM IA (GEMINI)
+  // ANALISAR VAGA COM IA (VIA BACKEND)
   // ============================================
 
   const analisarVaga = useCallback(async (vaga: Vaga): Promise<VagaAnaliseIADB | null> => {
@@ -174,53 +174,47 @@ export const useVagaAnaliseIA = () => {
     setError(null);
 
     try {
-      // Buscar API key do Gemini
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      // ✅ CORRIGIDO: Chamar backend em vez de API direta
+      console.log('🤖 Chamando backend para análise de vaga...');
       
-      if (!apiKey) {
-        // Fallback: análise local simulada
-        console.warn('⚠️ GEMINI_API_KEY não configurada. Usando análise simulada.');
-        return await analisarVagaLocal(vaga);
-      }
-
-      const prompt = buildAnalysisPrompt(vaga);
-
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 2048,
+      const response = await fetch('/api/gemini-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'analise_vaga',
+          payload: {
+            dados: {
+              titulo: vaga.titulo,
+              descricao: vaga.descricao,
+              senioridade: vaga.senioridade,
+              stack_tecnologica: vaga.stack_tecnologica,
+              requisitos_obrigatorios: vaga.requisitos_obrigatorios,
+              requisitos_desejaveis: vaga.requisitos_desejaveis,
+              regime_contratacao: vaga.regime_contratacao,
+              modalidade: vaga.modalidade,
+              beneficios: vaga.beneficios,
+              salario_min: vaga.salario_min,
+              salario_max: vaga.salario_max
             }
-          })
-        }
-      );
+          }
+        })
+      });
 
       if (!response.ok) {
-        throw new Error(`Erro na API Gemini: ${response.status}`);
+        throw new Error(`Erro na API: ${response.status}`);
       }
 
       const result = await response.json();
-      const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
 
-      if (!textResponse) {
-        throw new Error('Resposta vazia da IA');
+      if (!result.success) {
+        throw new Error(result.error || 'Erro ao analisar vaga');
       }
 
-      // Limpar e parsear JSON
-      const jsonClean = textResponse
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-
-      const analise = JSON.parse(jsonClean);
+      const analise = result.data;
+      console.log('✅ Análise recebida do backend');
 
       // Salvar no banco
-      const analiseDB = await salvarAnalise(vaga.id, analise, 'Gemini 1.5 Flash');
+      const analiseDB = await salvarAnalise(vaga.id, analise, 'Gemini 2.0 Flash');
       
       if (analiseDB) {
         setAnaliseAtual(analiseDB);
@@ -235,6 +229,7 @@ export const useVagaAnaliseIA = () => {
       
       // Tentar análise local como fallback
       try {
+        console.log('⚠️ Usando análise local como fallback...');
         return await analisarVagaLocal(vaga);
       } catch {
         return null;
