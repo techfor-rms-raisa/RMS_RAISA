@@ -7,8 +7,12 @@
  * - Indicador de analistas atribuídos
  * - Estatísticas de candidatos por analista
  * 
- * Versão: 2.0 - Integração com Distribuição
- * Data: 26/12/2024
+ * Versão: 2.1 - Fix: colunas prioridade/data_abertura não existem
+ * Data: 06/01/2026
+ * 
+ * v2.1: Corrigido erro "column vagas.prioridade does not exist"
+ *       - Substituído prioridade por urgente (boolean)
+ *       - Substituído data_abertura por criado_em
  */
 
 import React, { useState, useEffect } from 'react';
@@ -21,8 +25,8 @@ interface Vaga {
   status: string;
   cliente_id: number;
   cliente_nome?: string;
-  prioridade?: string;
-  data_abertura?: string;
+  urgente?: boolean;  // ✅ CORRIGIDO: era prioridade (string)
+  criado_em?: string;  // ✅ CORRIGIDO: era data_abertura
   total_candidatos?: number;
   analistas_count?: number;
 }
@@ -70,11 +74,11 @@ const Pipeline: React.FC<PipelineProps> = ({ currentUserId }) => {
           titulo,
           status,
           cliente_id,
-          prioridade,
-          data_abertura,
+          urgente,
+          criado_em,
           cliente:clients(razao_social_cliente)
         `)
-        .order('data_abertura', { ascending: false });
+        .order('criado_em', { ascending: false });
 
       if (vagasError) throw vagasError;
 
@@ -154,9 +158,9 @@ const Pipeline: React.FC<PipelineProps> = ({ currentUserId }) => {
         <h4 className="font-medium text-gray-800 text-sm line-clamp-2">
           {vaga.titulo}
         </h4>
-        {vaga.prioridade === 'alta' && (
+        {vaga.urgente && (
           <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded">
-            🔥 Alta
+            🔥 Urgente
           </span>
         )}
       </div>
