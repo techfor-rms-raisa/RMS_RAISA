@@ -1,6 +1,12 @@
 /**
- * Vagas.tsx - RMS RAISA v55.0
+ * Vagas.tsx - RMS RAISA v56.0
  * Componente de Gestão de Vagas
+ * 
+ * v56.0: Extração de Requisitos e Stack via Backend/Gemini
+ *        - Botão "🤖 Extrair Requisitos com IA" na descrição
+ *        - Chamada ao backend /api/gemini-analyze (action: extrair_requisitos_vaga)
+ *        - Auto-preenchimento do Gestor Comercial ao selecionar Cliente
+ *        - Indicadores visuais de campos extraídos pela IA
  * 
  * v55.0: Modal COMPLETO com todos os campos da tabela vagas
  *        - tipo_de_vaga, ocorrencia, vaga_faturavel
@@ -95,6 +101,10 @@ const Vagas: React.FC<VagasProps> = ({
     
     // Estado para extração de stacks
     const [extractingStacks, setExtractingStacks] = useState(false);
+    
+    // ✅ NOVO: Estado para extração completa via IA (requisitos + stacks)
+    const [extractingRequisitos, setExtractingRequisitos] = useState(false);
+    const [iaExtractionSuccess, setIaExtractionSuccess] = useState(false);
     
     // Estado do formulário COMPLETO
     const [formData, setFormData] = useState<Partial<Vaga> & { gestor_cliente_id?: number | null }>({
@@ -222,12 +232,28 @@ const Vagas: React.FC<VagasProps> = ({
     };
 
     // Handler para mudança de cliente no formulário
+    // ✅ MODIFICADO: Auto-preenche gestor comercial associado ao cliente
     const handleFormClientChange = (clientId: number | null) => {
+        let analistaId = formData.analista_id;
+        
+        // Auto-preencher gestor comercial se cliente tiver associação
+        if (clientId) {
+            const clienteSelecionado = safeClients.find(c => c.id === clientId);
+            if (clienteSelecionado?.id_gestao_comercial) {
+                analistaId = clienteSelecionado.id_gestao_comercial;
+                console.log(`✅ Gestor comercial auto-preenchido: ${analistaId}`);
+            }
+        }
+        
         setFormData({
             ...formData,
             cliente_id: clientId,
-            gestor_cliente_id: null
+            gestor_cliente_id: null,
+            analista_id: analistaId
         });
+        
+        // Reset do estado de extração IA ao mudar cliente
+        setIaExtractionSuccess(false);
     };
 
     // Validar e salvar
@@ -293,7 +319,76 @@ const Vagas: React.FC<VagasProps> = ({
         });
     };
 
-    // ✅ NOVO: Extrair stacks automaticamente do texto
+    // ✅ MODIFICADO: Extrair requisitos e stacks via Backend/Gemini
+    const extrairRequisitosComIA = async () => {
+        const descricao = formData.descricao || '';
+        
+        if (!descricao.trim() || descricao.length < 50) {
+            alert('⚠️ Preencha a descrição da vaga com pelo menos 50 caracteres para a IA analisar.');
+            return;
+        }
+
+        setExtractingRequisitos(true);
+        setIaExtractionSuccess(false);
+
+        try {
+            console.log('🤖 Chamando API para extrair requisitos...');
+            
+            const response = await fetch('/api/gemini-analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'extrair_requisitos_vaga',
+                    payload: {
+                        descricao: descricao,
+                        titulo: formData.titulo
+                    }
+                })
+            });
+
+            const result = await response.json();
+
+            if (!result.success || !result.data?.sucesso) {
+                throw new Error(result.data?.erro || result.error || 'Erro na extração');
+            }
+
+            const dados = result.data;
+            
+            // Atualizar campos do formulário com dados extraídos
+            setFormData(prev => ({
+                ...prev,
+                // Requisitos
+                requisitos_obrigatorios: dados.requisitos_obrigatorios || prev.requisitos_obrigatorios,
+                requisitos_desejaveis: dados.requisitos_desejaveis || prev.requisitos_desejaveis,
+                // Stacks (merge com existentes)
+                stack_tecnologica: [...new Set([...(prev.stack_tecnologica || []), ...(dados.stack_tecnologica || [])])],
+                // Informações adicionais (se não preenchidas)
+                modalidade: dados.informacoes_extraidas?.modalidade || prev.modalidade,
+                regime_contratacao: dados.informacoes_extraidas?.regime_contratacao || prev.regime_contratacao,
+                senioridade: dados.informacoes_extraidas?.senioridade_detectada || prev.senioridade,
+                prazo_fechamento: dados.informacoes_extraidas?.prazo_fechamento || prev.prazo_fechamento,
+                salario_min: dados.informacoes_extraidas?.valor_hora || prev.salario_min,
+            }));
+
+            // Expandir seção de requisitos para revisão
+            setExpandedSections(prev => ({
+                ...prev,
+                requisitos: true
+            }));
+
+            setIaExtractionSuccess(true);
+            const totalStacks = dados.stack_tecnologica?.length || 0;
+            alert(`✅ IA extraiu com sucesso!\n\n• ${totalStacks} tecnologias\n• Requisitos obrigatórios\n• Requisitos desejáveis\n\nConfiança: ${dados.confianca}%\n\nRevise os dados na seção "Requisitos".`);
+
+        } catch (err: any) {
+            console.error('❌ Erro na extração:', err);
+            alert('❌ Erro ao extrair requisitos: ' + err.message);
+        } finally {
+            setExtractingRequisitos(false);
+        }
+    };
+
+    // Função legacy para extração local de stacks (fallback)
     const extrairStacksAutomaticamente = () => {
         setExtractingStacks(true);
         
@@ -680,13 +775,46 @@ const Vagas: React.FC<VagasProps> = ({
 
                                 {/* ===== SEÇÃO 2: DESCRIÇÃO ===== */}
                                 <div>
-                                    <label className="text-sm font-bold text-gray-700">Descrição da Vaga</label>
+                                    <div className="flex justify-between items-center mb-1">
+                                        <label className="text-sm font-bold text-gray-700">Descrição da Vaga</label>
+                                        <button
+                                            type="button"
+                                            onClick={extrairRequisitosComIA}
+                                            disabled={extractingRequisitos || !formData.descricao || formData.descricao.length < 50}
+                                            className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed text-sm font-medium shadow-sm transition-all"
+                                            title="A IA irá extrair: Requisitos Obrigatórios, Desejáveis e Stack Tecnológica"
+                                        >
+                                            {extractingRequisitos ? (
+                                                <>
+                                                    <Loader2 className="animate-spin" size={16} />
+                                                    Analisando...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Wand2 size={16} />
+                                                    🤖 Extrair Requisitos com IA
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
                                     <textarea 
                                         className="w-full border p-3 rounded mt-1 h-32 focus:ring-2 focus:ring-orange-500 font-mono text-sm" 
-                                        placeholder="Cole aqui a descrição completa da vaga..." 
+                                        placeholder="Cole aqui a descrição completa da vaga. Após colar, clique em '🤖 Extrair Requisitos com IA' para preencher automaticamente os requisitos e a stack tecnológica..." 
                                         value={formData.descricao} 
-                                        onChange={e => setFormData({...formData, descricao: e.target.value})} 
+                                        onChange={e => {
+                                            setFormData({...formData, descricao: e.target.value});
+                                            setIaExtractionSuccess(false);
+                                        }} 
                                     />
+                                    <p className="text-xs text-gray-500 mt-1">
+                                        💡 Dica: Cole a descrição completa e clique em "🤖 Extrair Requisitos com IA" para preenchimento automático
+                                    </p>
+                                    {iaExtractionSuccess && (
+                                        <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2 text-sm text-green-700">
+                                            <span>✅</span>
+                                            <span>Requisitos e Stack extraídos com sucesso! Revise na seção "Requisitos" abaixo.</span>
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* ===== SEÇÃO 3: REQUISITOS (Expandível) ===== */}
@@ -694,26 +822,53 @@ const Vagas: React.FC<VagasProps> = ({
                                     <button
                                         type="button"
                                         onClick={() => toggleSection('requisitos')}
-                                        className="w-full flex justify-between items-center p-4 bg-gray-50 hover:bg-gray-100"
+                                        className={`w-full flex justify-between items-center p-4 hover:bg-gray-100 ${
+                                            iaExtractionSuccess ? 'bg-green-50' : 'bg-gray-50'
+                                        }`}
                                     >
-                                        <span className="font-bold text-gray-700">📝 Requisitos</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold text-gray-700">📝 Requisitos</span>
+                                            {iaExtractionSuccess && (
+                                                <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+                                                    ✓ Extraído pela IA
+                                                </span>
+                                            )}
+                                        </div>
                                         {expandedSections.requisitos ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                                     </button>
                                     {expandedSections.requisitos && (
                                         <div className="p-4 space-y-4">
                                             <div>
-                                                <label className="text-sm font-bold text-gray-700">Requisitos Obrigatórios</label>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <label className="text-sm font-bold text-gray-700">Requisitos Obrigatórios</label>
+                                                    {formData.requisitos_obrigatorios && iaExtractionSuccess && (
+                                                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">✓ IA</span>
+                                                    )}
+                                                </div>
                                                 <textarea 
-                                                    className="w-full border p-2 rounded mt-1 h-24" 
+                                                    className={`w-full border p-2 rounded mt-1 h-28 ${
+                                                        formData.requisitos_obrigatorios && iaExtractionSuccess 
+                                                            ? 'border-green-300 bg-green-50/30' 
+                                                            : ''
+                                                    }`}
                                                     placeholder="Liste os requisitos obrigatórios..." 
                                                     value={formData.requisitos_obrigatorios || ''} 
                                                     onChange={e => setFormData({...formData, requisitos_obrigatorios: e.target.value})} 
                                                 />
                                             </div>
                                             <div>
-                                                <label className="text-sm font-bold text-gray-700">Requisitos Desejáveis</label>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <label className="text-sm font-bold text-gray-700">Requisitos Desejáveis</label>
+                                                    {formData.requisitos_desejaveis && iaExtractionSuccess && (
+                                                        <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">✓ IA</span>
+                                                    )}
+                                                </div>
                                                 <textarea 
-                                                    className="w-full border p-2 rounded mt-1 h-24" 
+                                                    className={`w-full border p-2 rounded mt-1 h-28 ${
+                                                        formData.requisitos_desejaveis && iaExtractionSuccess 
+                                                            ? 'border-green-300 bg-green-50/30' 
+                                                            : ''
+                                                    }`}
                                                     placeholder="Liste os requisitos desejáveis..." 
                                                     value={formData.requisitos_desejaveis || ''} 
                                                     onChange={e => setFormData({...formData, requisitos_desejaveis: e.target.value})} 
