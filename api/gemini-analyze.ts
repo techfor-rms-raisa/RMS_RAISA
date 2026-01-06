@@ -74,6 +74,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await analisarCVCandidatura(payload);
         break;
 
+      // ✅ NOVA ACTION: Triagem genérica de CV (sem contexto de vaga)
+      case 'triagem_cv_generica':
+        result = await triagemCVGenerica(payload.curriculo_texto);
+        break;
+
       default:
         return res.status(400).json({ error: `Ação desconhecida: ${action}` });
     }
@@ -937,6 +942,148 @@ INSTRUÇÕES DE ANÁLISE
     }
   } catch (error: any) {
     console.error('❌ Erro na análise de CV:', error);
+    return {
+      sucesso: false,
+      erro: error.message || 'Erro ao analisar currículo'
+    };
+  }
+}
+
+// ============================================
+// TRIAGEM GENÉRICA DE CV (SEM CONTEXTO DE VAGA)
+// ============================================
+
+async function triagemCVGenerica(curriculo_texto: string) {
+  console.log('🤖 [Gemini] Triagem genérica de CV...');
+
+  if (!curriculo_texto || curriculo_texto.trim().length < 50) {
+    return {
+      sucesso: false,
+      erro: 'Texto do currículo muito curto ou não disponível.'
+    };
+  }
+
+  const prompt = `Você é um **Especialista Sênior em Recrutamento de TI** com 15 anos de experiência.
+
+TAREFA: Analise o currículo abaixo e forneça uma triagem completa para determinar se o candidato deve ser adicionado ao banco de talentos.
+
+============================================
+CURRÍCULO
+============================================
+${curriculo_texto}
+
+============================================
+INSTRUÇÕES DE ANÁLISE
+============================================
+
+1. **SCORE GERAL (0-100):**
+   - Avalie a qualidade geral do perfil
+   - Considere: clareza do CV, experiência, skills, formação
+
+2. **NÍVEL DE RISCO:**
+   - Baixo (0-30), Médio (31-50), Alto (51-70), Crítico (71-100)
+
+3. **FATORES DE RISCO:**
+   - Identifique padrões preocupantes
+   - Tipos: job_hopping, gap_emprego, skills_desatualizadas, experiencia_curta, inconsistencias
+
+4. **INFORMAÇÕES DETECTADAS:**
+   - Senioridade estimada
+   - Anos de experiência
+   - Áreas de atuação
+   - Skills técnicas
+
+5. **PONTOS FORTES E FRACOS**
+
+6. **RECOMENDAÇÃO:**
+   - banco_talentos: Perfil bom, adicionar à base (score >= 70)
+   - analisar_mais: Potencial, mas precisa de mais informações (score 50-69)
+   - descartar: Não atende requisitos mínimos (score < 50)
+
+**RESPONDA APENAS EM JSON VÁLIDO:**
+{
+  "sucesso": true,
+  "score_geral": 75,
+  "nivel_risco": "Baixo",
+  "recomendacao": "banco_talentos",
+  "justificativa": "Candidato com perfil sólido em desenvolvimento...",
+  "fatores_risco": [
+    {
+      "tipo": "gap_emprego",
+      "nivel": "low",
+      "descricao": "Pequeno gap de 3 meses em 2022",
+      "evidencia": "Entre empresa X e Y"
+    }
+  ],
+  "pontos_fortes": [
+    "5 anos de experiência com tecnologias modernas",
+    "Progressão de carreira consistente"
+  ],
+  "pontos_fracos": [
+    "Falta certificações oficiais",
+    "Inglês não mencionado"
+  ],
+  "skills_detectadas": ["React", "Node.js", "TypeScript", "AWS"],
+  "experiencia_anos": 5,
+  "senioridade_estimada": "Pleno",
+  "areas_atuacao": ["Desenvolvimento Web", "Backend", "Cloud"]
+}
+
+**REGRAS:**
+- score_geral: número inteiro de 0 a 100
+- nivel_risco: "Baixo", "Médio", "Alto" ou "Crítico"
+- recomendacao: "banco_talentos", "analisar_mais" ou "descartar"
+- Se não identificar riscos, retorne array vazio em fatores_risco
+- Seja específico e objetivo`;
+
+  try {
+    const startTime = Date.now();
+    
+    const result = await ai.models.generateContent({ 
+      model: 'gemini-2.0-flash-exp', 
+      contents: prompt 
+    });
+    
+    const tempoAnalise = Date.now() - startTime;
+    const text = result.text || '';
+    console.log(`🤖 Triagem concluída em ${tempoAnalise}ms`);
+
+    // Limpar e parsear JSON
+    const jsonClean = text
+      .replace(/^```json\n?/i, '')
+      .replace(/^```\n?/i, '')
+      .replace(/```$/i, '')
+      .trim();
+
+    try {
+      const analise = JSON.parse(jsonClean);
+      console.log('✅ Triagem de CV parseada com sucesso');
+      
+      return {
+        sucesso: true,
+        ...analise,
+        tempo_analise_ms: tempoAnalise,
+        modelo_ia: 'Gemini 2.0 Flash'
+      };
+    } catch (parseError) {
+      console.error('❌ Erro ao parsear JSON:', parseError);
+      
+      // Tentar extrair JSON do texto
+      const jsonMatch = text.match(/{[\s\S]*}/);
+      if (jsonMatch) {
+        const analise = JSON.parse(jsonMatch[0]);
+        return {
+          sucesso: true,
+          ...analise,
+          tempo_analise_ms: tempoAnalise,
+          modelo_ia: 'Gemini 2.0 Flash'
+        };
+      }
+      
+      throw new Error('Falha ao parsear resposta da IA');
+    }
+  } catch (error: any) {
+    console.error('❌ Erro na triagem de CV:', error);
     return {
       sucesso: false,
       erro: error.message || 'Erro ao analisar currículo'

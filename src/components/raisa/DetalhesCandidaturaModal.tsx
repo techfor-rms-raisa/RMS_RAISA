@@ -372,6 +372,48 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
     }
   };
 
+  // 🆕 Registrar resultado real da análise (para métricas de acurácia)
+  const registrarResultadoRealAnalise = async (candidaturaId: number, statusFinal: string) => {
+    try {
+      // Buscar análise de CV mais recente para esta candidatura
+      const { data: analise } = await supabase
+        .from('ia_recomendacoes_candidato')
+        .select('id, recomendacao')
+        .eq('candidatura_id', candidaturaId)
+        .eq('tipo_recomendacao', 'analise_cv')
+        .order('criado_em', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!analise) {
+        console.log('Nenhuma análise de CV encontrada para registrar resultado');
+        return;
+      }
+
+      // Determinar se a predição foi correta
+      const resultadosPositivos = ['contratado', 'aprovado_cliente'];
+      const resultadosNegativos = ['reprovado', 'reprovado_cliente', 'desistencia'];
+      
+      const foiAprovado = resultadosPositivos.includes(statusFinal);
+      const iaRecomendou = ['aprovar', 'entrevistar'].includes(analise.recomendacao);
+      const predicaoCorreta = foiAprovado === iaRecomendou;
+
+      // Atualizar a análise com o resultado real
+      await supabase
+        .from('ia_recomendacoes_candidato')
+        .update({
+          resultado_real: statusFinal,
+          predicao_correta: predicaoCorreta,
+          atualizado_em: new Date().toISOString()
+        })
+        .eq('id', analise.id);
+
+      console.log(`✅ Resultado real registrado: ${statusFinal} (Predição ${predicaoCorreta ? 'correta' : 'incorreta'})`);
+    } catch (err) {
+      console.error('Erro ao registrar resultado real:', err);
+    }
+  };
+
   const handleMudarStatus = async () => {
     if (!novoStatus) return;
 
@@ -413,7 +455,13 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
           observacao: observacao || null
         });
 
-      // 3. Callback
+      // 3. 🆕 Registrar resultado_real na análise de IA (para métricas)
+      const statusFinais = ['contratado', 'reprovado', 'reprovado_cliente', 'aprovado_cliente', 'desistencia'];
+      if (statusFinais.includes(novoStatus)) {
+        await registrarResultadoRealAnalise(parseInt(candidatura.id), novoStatus);
+      }
+
+      // 4. Callback
       onStatusChange(novoStatus, motivoFinal);
       
       // Resetar estados
