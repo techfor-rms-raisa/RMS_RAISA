@@ -3,12 +3,20 @@
  * 
  * Exibe análise da IA sobre a vaga e permite aplicar sugestões
  * 
- * Versão: 1.1
+ * Versão: 1.3
  * Data: 06/01/2026
  * 
+ * v1.3: Debug e melhorias na seleção
+ *       - Adicionados logs de debug para identificar problemas
+ *       - Corrigido filtro para excluir arrays (keywords, melhorias_gerais)
+ *       - Adicionado contador visual de sugestões selecionadas
+ *       - Melhor feedback visual ao selecionar
+ * 
+ * v1.2: Fix checkboxes não funcionavam
+ *       - Adicionado stopPropagation() para evitar duplo toggle (event bubbling)
+ *       - Agora é possível selecionar sugestões clicando no card OU no checkbox
+ * 
  * v1.1: Fix botão "Aplicar Sugestões" / "Concluir Análise"
- *       - Se há sugestões selecionáveis: mostra "Aplicar (N) Sugestões"
- *       - Se não há (apenas keywords/dicas): mostra "✓ Concluir Análise"
  */
 
 import React, { useState, useEffect } from 'react';
@@ -59,20 +67,33 @@ const VagaSugestoesIA: React.FC<VagaSugestoesIAProps> = ({
 
   // Função para alternar seleção de sugestão
   const toggleSugestao = (campo: string) => {
-    setSugestoesSelecionadas(prev => 
-      prev.includes(campo) 
+    console.log('🔄 Toggle sugestão:', campo);
+    console.log('📋 Selecionadas antes:', sugestoesSelecionadas);
+    setSugestoesSelecionadas(prev => {
+      const novaLista = prev.includes(campo) 
         ? prev.filter(c => c !== campo)
-        : [...prev, campo]
-    );
+        : [...prev, campo];
+      console.log('📋 Selecionadas depois:', novaLista);
+      return novaLista;
+    });
   };
 
-  // Verificar se há sugestões de campos selecionáveis
-  const temSugestoesSelecionaveis = analiseAtual?.sugestoes && 
-    Object.keys(analiseAtual.sugestoes).filter(k => 
-      analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes] && 
-      typeof analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes] === 'object' &&
-      'sugerido' in (analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes] as any)
-    ).length > 0;
+  // Verificar se há sugestões de campos selecionáveis (excluindo arrays como keywords e melhorias_gerais)
+  const camposSelecionaveis = analiseAtual?.sugestoes 
+    ? Object.keys(analiseAtual.sugestoes).filter(k => {
+        const valor = analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes];
+        // Excluir arrays (keywords, stacks_identificadas, melhorias_gerais) e strings
+        const ehObjeto = valor && typeof valor === 'object' && !Array.isArray(valor);
+        const temSugerido = ehObjeto && 'sugerido' in (valor as any);
+        return temSugerido;
+      })
+    : [];
+  
+  const temSugestoesSelecionaveis = camposSelecionaveis.length > 0;
+  
+  console.log('🎯 Campos selecionáveis:', camposSelecionaveis);
+  console.log('✅ Tem sugestões selecionáveis:', temSugestoesSelecionaveis);
+  console.log('📝 Sugestões selecionadas:', sugestoesSelecionadas);
 
   // Aplicar sugestões selecionadas ou concluir análise
   const handleAplicar = async () => {
@@ -152,8 +173,12 @@ const VagaSugestoesIA: React.FC<VagaSugestoesIAProps> = ({
             <input
               type="checkbox"
               checked={isSelected}
-              onChange={() => toggleSugestao(campo)}
-              className="w-5 h-5 text-blue-600 rounded"
+              onChange={(e) => {
+                e.stopPropagation();  // ✅ CORRIGIDO: Evita duplo toggle
+                toggleSugestao(campo);
+              }}
+              onClick={(e) => e.stopPropagation()}  // ✅ CORRIGIDO: Para click também
+              className="w-5 h-5 text-blue-600 rounded cursor-pointer"
             />
             <span className="font-bold text-gray-800 capitalize">{campo.replace('_', ' ')}</span>
           </div>
@@ -270,21 +295,22 @@ const VagaSugestoesIA: React.FC<VagaSugestoesIAProps> = ({
               </div>
 
               {/* Sugestões */}
-              {analiseAtual.sugestoes && Object.keys(analiseAtual.sugestoes).filter(k => 
-                analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes] && 
-                typeof analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes] === 'object' &&
-                'sugerido' in (analiseAtual.sugestoes[k as keyof typeof analiseAtual.sugestoes] as any)
-              ).length > 0 ? (
+              {temSugestoesSelecionaveis ? (
                 <div className="mb-6">
                   <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
                     💡 Sugestões de Melhoria
                     <span className="text-sm font-normal text-gray-500">
                       (clique para selecionar)
                     </span>
+                    {sugestoesSelecionadas.length > 0 && (
+                      <span className="bg-blue-500 text-white text-xs px-2 py-1 rounded-full">
+                        {sugestoesSelecionadas.length} selecionada(s)
+                      </span>
+                    )}
                   </h3>
                   <div className="grid gap-4">
                     {Object.entries(analiseAtual.sugestoes)
-                      .filter(([_, v]) => v && typeof v === 'object' && 'sugerido' in v)
+                      .filter(([_, v]) => v && typeof v === 'object' && !Array.isArray(v) && 'sugerido' in v)
                       .map(([campo, sugestao]) => 
                         renderSugestaoCard(campo, sugestao as SugestaoIA)
                       )}
