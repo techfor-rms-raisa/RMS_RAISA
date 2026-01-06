@@ -38,13 +38,17 @@ export const useVagas = () => {
         requisitos_desejaveis: vaga.requisitos_desejaveis,
         regime_contratacao: vaga.regime_contratacao,
         modalidade: vaga.modalidade,
-        tipo_remuneracao: vaga.tipo_remuneracao,  // ✅ NOVO CAMPO
+        tipo_remuneracao: vaga.tipo_remuneracao,
         beneficios: vaga.beneficios,
         analista_id: vaga.analista_id,
         cliente_id: vaga.cliente_id,
         urgente: vaga.urgente,
         prazo_fechamento: vaga.prazo_fechamento,
         faturamento_mensal: vaga.faturamento_mensal,
+        // ✅ CAMPOS FALTANTES
+        ocorrencia: vaga.ocorrencia,
+        tipo_de_vaga: vaga.tipo_de_vaga,
+        vaga_faturavel: vaga.vaga_faturavel,
         criado_em: vaga.criado_em,
         atualizado_em: vaga.atualizado_em
       }));
@@ -82,13 +86,17 @@ export const useVagas = () => {
           requisitos_desejaveis: newVaga.requisitos_desejaveis,
           regime_contratacao: newVaga.regime_contratacao,
           modalidade: newVaga.modalidade,
-          tipo_remuneracao: (newVaga as any).tipo_remuneracao || 'Hora Aberta',  // ✅ NOVO CAMPO
+          tipo_remuneracao: (newVaga as any).tipo_remuneracao || 'Hora Aberta',
           beneficios: newVaga.beneficios,
           analista_id: newVaga.analista_id,
           cliente_id: newVaga.cliente_id,
           urgente: newVaga.urgente || false,
           prazo_fechamento: newVaga.prazo_fechamento,
-          faturamento_mensal: newVaga.faturamento_mensal
+          faturamento_mensal: newVaga.faturamento_mensal,
+          // ✅ CAMPOS FALTANTES
+          ocorrencia: (newVaga as any).ocorrencia || null,
+          tipo_de_vaga: (newVaga as any).tipo_de_vaga || 'Nova Posição',
+          vaga_faturavel: (newVaga as any).vaga_faturavel !== false
         }])
         .select()
         .single();
@@ -108,13 +116,17 @@ export const useVagas = () => {
         requisitos_desejaveis: data.requisitos_desejaveis,
         regime_contratacao: data.regime_contratacao,
         modalidade: data.modalidade,
-        tipo_remuneracao: data.tipo_remuneracao,  // ✅ NOVO CAMPO
+        tipo_remuneracao: data.tipo_remuneracao,
         beneficios: data.beneficios,
         analista_id: data.analista_id,
         cliente_id: data.cliente_id,
         urgente: data.urgente,
         prazo_fechamento: data.prazo_fechamento,
         faturamento_mensal: data.faturamento_mensal,
+        // ✅ CAMPOS FALTANTES
+        ocorrencia: data.ocorrencia,
+        tipo_de_vaga: data.tipo_de_vaga,
+        vaga_faturavel: data.vaga_faturavel,
         criado_em: data.criado_em,
         atualizado_em: data.atualizado_em
       };
@@ -151,13 +163,17 @@ export const useVagas = () => {
           requisitos_desejaveis: updates.requisitos_desejaveis,
           regime_contratacao: updates.regime_contratacao,
           modalidade: updates.modalidade,
-          tipo_remuneracao: (updates as any).tipo_remuneracao,  // ✅ NOVO CAMPO
+          tipo_remuneracao: (updates as any).tipo_remuneracao,
           beneficios: updates.beneficios,
           analista_id: updates.analista_id,
           cliente_id: updates.cliente_id,
           urgente: updates.urgente,
           prazo_fechamento: updates.prazo_fechamento,
           faturamento_mensal: updates.faturamento_mensal,
+          // ✅ CAMPOS FALTANTES
+          ocorrencia: (updates as any).ocorrencia,
+          tipo_de_vaga: (updates as any).tipo_de_vaga,
+          vaga_faturavel: (updates as any).vaga_faturavel,
           atualizado_em: new Date().toISOString()
         })
         .eq('id', parseInt(id))
@@ -179,13 +195,17 @@ export const useVagas = () => {
         requisitos_desejaveis: data.requisitos_desejaveis,
         regime_contratacao: data.regime_contratacao,
         modalidade: data.modalidade,
-        tipo_remuneracao: data.tipo_remuneracao,  // ✅ NOVO CAMPO
+        tipo_remuneracao: data.tipo_remuneracao,
         beneficios: data.beneficios,
         analista_id: data.analista_id,
         cliente_id: data.cliente_id,
         urgente: data.urgente,
         prazo_fechamento: data.prazo_fechamento,
         faturamento_mensal: data.faturamento_mensal,
+        // ✅ CAMPOS FALTANTES
+        ocorrencia: data.ocorrencia,
+        tipo_de_vaga: data.tipo_de_vaga,
+        vaga_faturavel: data.vaga_faturavel,
         criado_em: data.criado_em,
         atualizado_em: data.atualizado_em
       };

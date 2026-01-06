@@ -213,8 +213,8 @@ export const useVagaAnaliseIA = () => {
       const analise = result.data;
       console.log('✅ Análise recebida do backend');
 
-      // Salvar no banco
-      const analiseDB = await salvarAnalise(vaga.id, analise, 'Gemini 2.0 Flash');
+      // Salvar no banco - incluindo descrição original
+      const analiseDB = await salvarAnalise(vaga.id, analise, 'Gemini 2.0 Flash', vaga.descricao);
       
       if (analiseDB) {
         setAnaliseAtual(analiseDB);
@@ -313,8 +313,8 @@ export const useVagaAnaliseIA = () => {
       sugestoes
     };
 
-    // Salvar no banco
-    return await salvarAnalise(vaga.id, analise, 'Análise Local');
+    // Salvar no banco - incluindo descrição original
+    return await salvarAnalise(vaga.id, analise, 'Análise Local', vaga.descricao);
   };
 
   // ============================================
@@ -324,7 +324,8 @@ export const useVagaAnaliseIA = () => {
   const salvarAnalise = async (
     vagaId: string | number, 
     analise: any, 
-    analisadoPor: string
+    analisadoPor: string,
+    descricaoOriginal?: string  // ✅ NOVO: Descrição original da vaga
   ): Promise<VagaAnaliseIADB | null> => {
     try {
       const { data, error } = await supabase
@@ -337,7 +338,8 @@ export const useVagaAnaliseIA = () => {
           analisado_por: analisadoPor,
           analisado_em: new Date().toISOString(),
           aprovado: false,
-          rejeitado: false
+          rejeitado: false,
+          descricao_original: descricaoOriginal || null  // ✅ NOVO: Salvar descrição original
         })
         .select()
         .single();
