@@ -146,9 +146,9 @@ export const useVagaAnaliseIA = () => {
         .eq('rejeitado', false)
         .order('analisado_em', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();  // ✅ CORRIGIDO: maybeSingle em vez de single (evita erro 406 quando não há dados)
 
-      if (error && error.code !== 'PGRST116') {
+      if (error) {
         console.error('Erro ao carregar análise:', error);
         return null;
       }
