@@ -160,7 +160,7 @@ export const ROUTE_LABELS: Record<Route, string> = {
   // RAISA
   [ROUTES.VAGAS]: 'Vagas',
   [ROUTES.CANDIDATURAS]: 'Candidaturas',
-  [ROUTES.ANALISE_RISCO]: 'Análise de Risco',
+  [ROUTES.ANALISE_RISCO]: 'Análise de Currículo (AI)',
   [ROUTES.PIPELINE]: 'Pipeline',
   [ROUTES.TALENTOS]: 'Banco de Talentos',
   [ROUTES.CONTROLE_ENVIOS]: 'Controle de Envios',

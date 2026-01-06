@@ -49,7 +49,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
         { view: 'candidaturas', label: 'Candidaturas', icon: 'fa-solid fa-id-card', roles: ['Administrador', 'Analista de R&S'] },
         { view: 'entrevista_tecnica', label: 'Entrevista Técnica', icon: 'fa-solid fa-headset', roles: ['Administrador', 'Analista de R&S'] },
         { view: 'controle_envios', label: 'Controle de Envios', icon: 'fa-solid fa-paper-plane', roles: ['Administrador', 'Analista de R&S', 'Gestão Comercial'] },
-        { view: 'analise_risco', label: 'Análise de Risco', icon: 'fa-solid fa-magnifying-glass', roles: ['Administrador', 'Analista de R&S'] },
+        { view: 'analise_risco', label: 'Análise de Currículo (AI)', icon: 'fa-solid fa-magnifying-glass', roles: ['Administrador', 'Analista de R&S'] },
         { view: 'pipeline', label: 'Pipeline', icon: 'fa-solid fa-filter', roles: ['Administrador', 'Gestão de Pessoas', 'Analista de R&S'] },
         { view: 'talentos', label: 'Banco de Talentos', icon: 'fa-solid fa-user-graduate', roles: ['Administrador', 'Analista de R&S'] },
         // ✅ Importação e Distribuição
