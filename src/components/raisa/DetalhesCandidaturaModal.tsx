@@ -8,6 +8,7 @@
  * - Ações rápidas (agendar entrevista, aprovar, reprovar)
  * - Motivo obrigatório para reprovação
  * - Observações e feedback
+ * - 🆕 Análise de CV com IA (integração RAISA)
  * 
  * FLUXO DE STATUS (Processos Internos):
  * Triagem → Entrevista → Aprovado/Reprovado
@@ -15,8 +16,8 @@
  * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
  * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
  * 
- * Versão: 1.1 - Fluxo ajustado conforme processos internos
- * Data: 30/12/2025
+ * Versão: 1.2 - Integração com Análise de CV (RAISA)
+ * Data: 06/01/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -24,10 +25,13 @@ import {
   X, User, Mail, Phone, Briefcase, MapPin, Calendar,
   CheckCircle, XCircle, Clock, Send, FileText, 
   ChevronRight, AlertTriangle, MessageSquare, History,
-  ExternalLink, Loader2, Star, Award, UserCheck, Building2
+  ExternalLink, Loader2, Star, Award, UserCheck, Building2,
+  Brain
 } from 'lucide-react';
 import { supabase } from '@/config/supabase';
 import { Candidatura, Vaga, Pessoa } from '@/types';
+import { useCandidaturaAnaliseIA } from '@/hooks/supabase/useCandidaturaAnaliseIA';
+import AnaliseCVPanel from './AnaliseCVPanel';
 
 // ============================================
 // TIPOS
@@ -225,12 +229,27 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
   const [observacao, setObservacao] = useState<string>('');
   const [showConfirmacao, setShowConfirmacao] = useState(false);
 
+  // 🆕 Hook para Análise de CV com IA
+  const {
+    loading: loadingAnaliseIA,
+    error: errorAnaliseIA,
+    analiseAtual,
+    carregarAnalise,
+    analisarCV,
+    registrarFeedback,
+    limparAnalise
+  } = useCandidaturaAnaliseIA();
+
   // Configuração do status atual
   const statusAtual = STATUS_CONFIG[candidatura.status] || STATUS_CONFIG['triagem'];
   const StatusIcon = statusAtual.icon;
 
   // Verificar se é reprovação
   const isReprovacao = (status: string) => status === 'reprovado' || status === 'reprovado_cliente';
+  
+  // Verificar se currículo está disponível
+  const curriculoDisponivel = !!(candidatura as any).curriculo_texto && 
+    (candidatura as any).curriculo_texto.trim().length > 50;
   
   // Obter motivos corretos baseado no tipo de reprovação
   const getMotivosReprovacao = () => {
@@ -248,6 +267,11 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
     if (isOpen && candidatura) {
       carregarHistorico();
       carregarDadosExtras();
+      // 🆕 Carregar análise existente
+      carregarAnalise(parseInt(candidatura.id));
+    } else {
+      // Limpar análise ao fechar modal
+      limparAnalise();
     }
   }, [isOpen, candidatura]);
 
@@ -330,6 +354,23 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
   // ============================================
   // HANDLERS
   // ============================================
+
+  // 🆕 Handler para analisar CV com IA
+  const handleAnalisarCV = async () => {
+    if (!vaga) {
+      alert('Dados da vaga não disponíveis para análise.');
+      return;
+    }
+    
+    await analisarCV(candidatura, vaga, currentUserId);
+  };
+
+  // 🆕 Handler para feedback da análise
+  const handleFeedbackAnalise = async (util: boolean, texto?: string) => {
+    if (analiseAtual?.id) {
+      await registrarFeedback(analiseAtual.id, util, texto, currentUserId);
+    }
+  };
 
   const handleMudarStatus = async () => {
     if (!novoStatus) return;
@@ -570,12 +611,12 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                 </div>
               </div>
 
-              {/* Score de Compatibilidade */}
+              {/* Score de Compatibilidade (estático - da tabela pessoas) */}
               {dadosExtras.score_compatibilidade && (
                 <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-5 border border-blue-200">
                   <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                     <Star className="w-5 h-5 text-yellow-500" />
-                    Score de Compatibilidade
+                    Score de Compatibilidade (Cadastro)
                   </h3>
                   <div className="flex items-center gap-4">
                     <div className="text-4xl font-bold text-blue-600">
@@ -594,6 +635,16 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* 🆕 ANÁLISE DE CV COM IA */}
+              <AnaliseCVPanel
+                analise={analiseAtual}
+                loading={loadingAnaliseIA}
+                error={errorAnaliseIA}
+                onAnalisar={handleAnalisarCV}
+                onFeedback={handleFeedbackAnalise}
+                curriculoDisponivel={curriculoDisponivel}
+              />
 
               {/* Skills */}
               {dadosExtras.skills && dadosExtras.skills.length > 0 && (

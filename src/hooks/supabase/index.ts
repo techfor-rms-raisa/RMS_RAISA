@@ -65,3 +65,11 @@ export { useAudioEntrevista } from './useAudioEntrevista';
 
 // Hook de Análise de Candidatos (Nova Candidatura)
 export { useAnaliseCandidato } from './useAnaliseCandidato';
+
+// ============================================
+// HOOKS ADICIONADOS EM 06/01/2026
+// ============================================
+
+// Hook de Análise de CV com IA (Integração RAISA)
+export { useCandidaturaAnaliseIA } from './useCandidaturaAnaliseIA';
+export type { AnaliseCV, FatorRisco, SkillsMatch } from './useCandidaturaAnaliseIA';

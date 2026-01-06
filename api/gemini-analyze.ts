@@ -69,6 +69,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await extrairDadosCV(payload.textoCV, payload.base64PDF);
         break;
 
+      // ✅ NOVA ACTION: Análise de CV do Candidato com contexto da Vaga
+      case 'analisar_cv_candidatura':
+        result = await analisarCVCandidatura(payload);
+        break;
+
       default:
         return res.status(400).json({ error: `Ação desconhecida: ${action}` });
     }
@@ -732,5 +737,209 @@ REGRAS:
     }
     
     throw new Error('Falha ao parsear resposta da IA');
+  }
+}
+
+// ============================================
+// ANÁLISE DE CV DO CANDIDATO COM CONTEXTO DA VAGA
+// ============================================
+
+interface AnaliseCVPayload {
+  curriculo_texto: string;
+  vaga: {
+    titulo: string;
+    descricao?: string;
+    requisitos_obrigatorios?: string;
+    requisitos_desejaveis?: string;
+    stack_tecnologica?: string[];
+    senioridade?: string;
+    modalidade?: string;
+  };
+  candidato?: {
+    nome: string;
+    email?: string;
+  };
+}
+
+async function analisarCVCandidatura(payload: AnaliseCVPayload) {
+  console.log('🤖 [Gemini] Analisando CV do candidato com contexto da vaga...');
+
+  const { curriculo_texto, vaga, candidato } = payload;
+
+  if (!curriculo_texto || curriculo_texto.trim().length < 50) {
+    return {
+      sucesso: false,
+      erro: 'Texto do currículo muito curto ou não disponível.'
+    };
+  }
+
+  const prompt = `Você é um **Especialista Sênior em Recrutamento de TI** com 15 anos de experiência.
+
+TAREFA: Analise o currículo do candidato em relação à vaga específica e forneça uma análise completa.
+
+============================================
+DADOS DA VAGA
+============================================
+**Título:** ${vaga.titulo}
+**Senioridade Esperada:** ${vaga.senioridade || 'Não especificada'}
+**Modalidade:** ${vaga.modalidade || 'Não especificada'}
+
+**Descrição:**
+${vaga.descricao || 'Não informada'}
+
+**Requisitos Obrigatórios:**
+${vaga.requisitos_obrigatorios || 'Não especificados'}
+
+**Requisitos Desejáveis:**
+${vaga.requisitos_desejaveis || 'Não especificados'}
+
+**Stack Tecnológica:**
+${vaga.stack_tecnologica?.join(', ') || 'Não especificada'}
+
+============================================
+CURRÍCULO DO CANDIDATO
+============================================
+${candidato?.nome ? `**Nome:** ${candidato.nome}` : ''}
+
+${curriculo_texto}
+
+============================================
+INSTRUÇÕES DE ANÁLISE
+============================================
+
+1. **SCORE DE COMPATIBILIDADE (0-100):**
+   - Avalie o quanto o candidato atende aos requisitos da vaga
+   - Considere: skills técnicas, experiência, senioridade, soft skills
+
+2. **RISCO DE REPROVAÇÃO (0-100):**
+   - Estime a probabilidade do candidato ser reprovado
+   - Considere: gaps no CV, job hopping, skills desatualizadas, senioridade inadequada
+
+3. **FATORES DE RISCO:**
+   - Identifique padrões preocupantes no CV
+   - Tipos: job_hopping, gap_emprego, skills_desatualizadas, senioridade_inadequada, experiencia_insuficiente, formacao_inadequada, inconsistencias
+
+4. **PONTOS FORTES:**
+   - Liste as qualidades que se destacam para esta vaga específica
+
+5. **PONTOS DE ATENÇÃO:**
+   - Liste aspectos que precisam ser verificados na entrevista
+
+6. **SKILLS MATCH:**
+   - Compare as skills do candidato com as exigidas pela vaga
+   - Liste matches e gaps
+
+7. **RECOMENDAÇÃO FINAL:**
+   - aprovar: Candidato adequado para a vaga
+   - entrevistar: Potencial, mas precisa de entrevista para confirmar
+   - revisar: Algumas ressalvas importantes
+   - rejeitar: Não atende os requisitos mínimos
+
+**RESPONDA APENAS EM JSON VÁLIDO:**
+{
+  "score_compatibilidade": 75,
+  "risco_reprovacao": 25,
+  "nivel_risco": "Baixo",
+  "recomendacao": "entrevistar",
+  "justificativa": "Candidato possui boa experiência em...",
+  "fatores_risco": [
+    {
+      "tipo": "gap_emprego",
+      "nivel": "medium",
+      "descricao": "Gap de 8 meses entre 2022-2023",
+      "evidencia": "Último emprego encerrou em março/2022...",
+      "peso": 15
+    }
+  ],
+  "pontos_fortes": [
+    "5 anos de experiência com React",
+    "Trabalhou em projetos de grande escala",
+    "Certificação AWS"
+  ],
+  "pontos_atencao": [
+    "Verificar motivo do gap de emprego",
+    "Confirmar nível de inglês"
+  ],
+  "skills_match": {
+    "atendidas": ["React", "Node.js", "TypeScript"],
+    "parciais": ["AWS - certificação mas pouca prática"],
+    "faltantes": ["Kubernetes", "GraphQL"]
+  },
+  "senioridade_analise": {
+    "esperada": "Senior",
+    "detectada": "Pleno-Senior",
+    "compativel": true
+  },
+  "experiencia_relevante": {
+    "anos_total": 6,
+    "anos_relevantes": 4,
+    "projetos_similares": true
+  },
+  "perguntas_entrevista": [
+    "Qual foi o motivo da saída da empresa X?",
+    "Pode detalhar sua experiência com AWS em produção?"
+  ],
+  "confianca_analise": 85
+}
+
+**REGRAS:**
+- Scores devem ser números inteiros de 0 a 100
+- nivel_risco: "Baixo" (0-30), "Médio" (31-50), "Alto" (51-70), "Crítico" (71-100)
+- recomendacao: "aprovar", "entrevistar", "revisar" ou "rejeitar"
+- Se não identificar riscos, retorne array vazio em fatores_risco
+- Seja específico nas evidências, citando partes do CV`;
+
+  try {
+    const startTime = Date.now();
+    
+    const result = await ai.models.generateContent({ 
+      model: 'gemini-2.0-flash-exp', 
+      contents: prompt 
+    });
+    
+    const tempoAnalise = Date.now() - startTime;
+    const text = result.text || '';
+    console.log(`🤖 Análise concluída em ${tempoAnalise}ms`);
+
+    // Limpar e parsear JSON
+    const jsonClean = text
+      .replace(/^```json\n?/i, '')
+      .replace(/^```\n?/i, '')
+      .replace(/```$/i, '')
+      .trim();
+
+    try {
+      const analise = JSON.parse(jsonClean);
+      console.log('✅ Análise de CV parseada com sucesso');
+      
+      return {
+        sucesso: true,
+        ...analise,
+        tempo_analise_ms: tempoAnalise,
+        modelo_ia: 'Gemini 2.0 Flash'
+      };
+    } catch (parseError) {
+      console.error('❌ Erro ao parsear JSON:', parseError);
+      
+      // Tentar extrair JSON do texto
+      const jsonMatch = text.match(/{[\s\S]*}/);
+      if (jsonMatch) {
+        const analise = JSON.parse(jsonMatch[0]);
+        return {
+          sucesso: true,
+          ...analise,
+          tempo_analise_ms: tempoAnalise,
+          modelo_ia: 'Gemini 2.0 Flash'
+        };
+      }
+      
+      throw new Error('Falha ao parsear resposta da IA');
+    }
+  } catch (error: any) {
+    console.error('❌ Erro na análise de CV:', error);
+    return {
+      sucesso: false,
+      erro: error.message || 'Erro ao analisar currículo'
+    };
   }
 }
