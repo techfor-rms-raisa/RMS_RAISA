@@ -265,11 +265,12 @@ const App: React.FC = () => {
       // RAISA Views - ✅ INTEGRADO COM SUPABASE
       // ============================================
       case 'vagas':
-          // ✅ v52.3: Adicionado clients e usuariosCliente para filtros de Cliente e Gestor
+          // ✅ v56.0: Adicionado users para select de Gestão Comercial
           return <Vagas 
             vagas={vagas} 
             clients={clients} 
             usuariosCliente={usuariosCliente}
+            users={users}
             addVaga={addVaga} 
             updateVaga={updateVaga} 
             deleteVaga={deleteVaga} 

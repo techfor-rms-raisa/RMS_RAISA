@@ -1,6 +1,14 @@
 /**
- * Vagas.tsx - RMS RAISA v56.0
+ * Vagas.tsx - RMS RAISA v56.1
  * Componente de Gestão de Vagas
+ * 
+ * v56.1: Correções de bugs
+ *        - Removido "IA" e "AI" da lista de stacks (termos genéricos)
+ *        - Filtro de termos genéricos na extração via IA
+ *        - Select de "Gestão Comercial" com usuários filtrados
+ *        - Label corrigido: "Gestão Comercial" (antes era "Gestor Comercial (Analista)")
+ *        - Auto-preenchimento com feedback visual e alerta
+ *        - Adicionadas stacks SAP (WM, MM, SD, FI, CO, ABAP, HANA)
  * 
  * v56.0: Extração de Requisitos e Stack via Backend/Gemini
  *        - Botão "🤖 Extrair Requisitos com IA" na descrição
@@ -9,14 +17,10 @@
  *        - Indicadores visuais de campos extraídos pela IA
  * 
  * v55.0: Modal COMPLETO com todos os campos da tabela vagas
- *        - tipo_de_vaga, ocorrencia, vaga_faturavel
- *        - requisitos, regime, modalidade, salários
- *        - benefícios, prazo, urgente
- *        - Botão Extrair Stacks com IA
  */
 
 import React, { useState, useMemo } from 'react';
-import { Vaga, Client, UsuarioCliente } from '../../types/types_index';
+import { Vaga, Client, UsuarioCliente, User } from '../../types/types_index';
 import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 import CVMatchingPanel from './CVMatchingPanel';
 import VagaSugestoesIA from './VagaSugestoesIA';
@@ -26,6 +30,7 @@ interface VagasProps {
     vagas: Vaga[];
     clients?: Client[];
     usuariosCliente?: UsuarioCliente[];
+    users?: User[];  // ✅ NOVO: Lista de usuários do sistema (app_users)
     addVaga: (v: any) => void;
     updateVaga: (v: Vaga) => void;
     deleteVaga: (id: string) => void;
@@ -51,6 +56,7 @@ const ensureStackArray = (stack: any): string[] => {
 };
 
 // Stacks conhecidas para extração automática
+// NOTA: Removido "IA" e "AI" pois são termos genéricos, não tecnologias específicas
 const STACKS_CONHECIDAS = [
     'React', 'Angular', 'Vue', 'Vue.js', 'Next.js', 'Node.js', 'Express',
     'Python', 'Django', 'Flask', 'FastAPI', 'Java', 'Spring', 'Spring Boot',
@@ -63,14 +69,15 @@ const STACKS_CONHECIDAS = [
     'Agile', 'Scrum', 'Kanban', 'DevOps',
     'Linux', 'Terraform', 'Ansible',
     'Selenium', 'Cypress', 'Jest', 'JUnit',
-    'Power BI', 'Tableau', 'SAP', 'Salesforce',
-    'Machine Learning', 'Data Science', 'IA', 'AI'
+    'Power BI', 'Tableau', 'SAP', 'SAP WM', 'SAP MM', 'SAP SD', 'SAP FI', 'SAP CO', 'SAP ABAP', 'SAP HANA', 'Salesforce',
+    'Machine Learning', 'Data Science', 'TensorFlow', 'PyTorch'
 ];
 
 const Vagas: React.FC<VagasProps> = ({ 
     vagas = [], 
     clients = [], 
-    usuariosCliente = [], 
+    usuariosCliente = [],
+    users = [],  // ✅ NOVO: Lista de usuários do sistema
     addVaga, 
     updateVaga, 
     deleteVaga,
@@ -137,6 +144,15 @@ const Vagas: React.FC<VagasProps> = ({
     const safeClients = Array.isArray(clients) ? clients : [];
     const safeUsuariosCliente = Array.isArray(usuariosCliente) ? usuariosCliente : [];
     const safeVagas = Array.isArray(vagas) ? vagas : [];
+    const safeUsers = Array.isArray(users) ? users : [];
+
+    // ✅ NOVO: Filtrar usuários do tipo "Gestão Comercial"
+    const gestoresComerciais = useMemo(() => {
+        return safeUsers.filter(u => 
+            u.tipo_usuario === 'Gestão Comercial' && 
+            u.ativo_usuario !== false
+        );
+    }, [safeUsers]);
 
     // Filtrar gestores pelo cliente selecionado (header)
     const gestoresDoCliente = useMemo(() => {
@@ -235,13 +251,23 @@ const Vagas: React.FC<VagasProps> = ({
     // ✅ MODIFICADO: Auto-preenche gestor comercial associado ao cliente
     const handleFormClientChange = (clientId: number | null) => {
         let analistaId = formData.analista_id;
+        let gestorNome = '';
         
         // Auto-preencher gestor comercial se cliente tiver associação
         if (clientId) {
             const clienteSelecionado = safeClients.find(c => c.id === clientId);
             if (clienteSelecionado?.id_gestao_comercial) {
                 analistaId = clienteSelecionado.id_gestao_comercial;
-                console.log(`✅ Gestor comercial auto-preenchido: ${analistaId}`);
+                // Buscar nome do gestor
+                const gestor = safeUsers.find(u => u.id === analistaId);
+                gestorNome = gestor?.nome_usuario || '';
+                console.log(`✅ Gestão Comercial auto-preenchida: ${gestorNome} (ID: ${analistaId})`);
+                
+                // Expandir seção de configurações para mostrar o preenchimento
+                setExpandedSections(prev => ({
+                    ...prev,
+                    config: true
+                }));
             }
         }
         
@@ -254,6 +280,13 @@ const Vagas: React.FC<VagasProps> = ({
         
         // Reset do estado de extração IA ao mudar cliente
         setIaExtractionSuccess(false);
+        
+        // Mostrar alerta se gestor foi preenchido
+        if (gestorNome) {
+            setTimeout(() => {
+                alert(`✅ Gestão Comercial preenchida automaticamente:\n\n${gestorNome}`);
+            }, 100);
+        }
     };
 
     // Validar e salvar
@@ -354,14 +387,20 @@ const Vagas: React.FC<VagasProps> = ({
 
             const dados = result.data;
             
+            // Filtrar termos genéricos que não são tecnologias reais
+            const termosGenericos = ['IA', 'AI', 'ia', 'ai', 'Ia', 'Ai'];
+            const stacksFiltradas = (dados.stack_tecnologica || []).filter(
+                (s: string) => !termosGenericos.includes(s)
+            );
+            
             // Atualizar campos do formulário com dados extraídos
             setFormData(prev => ({
                 ...prev,
                 // Requisitos
                 requisitos_obrigatorios: dados.requisitos_obrigatorios || prev.requisitos_obrigatorios,
                 requisitos_desejaveis: dados.requisitos_desejaveis || prev.requisitos_desejaveis,
-                // Stacks (merge com existentes)
-                stack_tecnologica: [...new Set([...(prev.stack_tecnologica || []), ...(dados.stack_tecnologica || [])])],
+                // Stacks (merge com existentes, filtradas)
+                stack_tecnologica: [...new Set([...(prev.stack_tecnologica || []), ...stacksFiltradas])],
                 // Informações adicionais (se não preenchidas)
                 modalidade: dados.informacoes_extraidas?.modalidade || prev.modalidade,
                 regime_contratacao: dados.informacoes_extraidas?.regime_contratacao || prev.regime_contratacao,
@@ -377,7 +416,7 @@ const Vagas: React.FC<VagasProps> = ({
             }));
 
             setIaExtractionSuccess(true);
-            const totalStacks = dados.stack_tecnologica?.length || 0;
+            const totalStacks = stacksFiltradas.length;
             alert(`✅ IA extraiu com sucesso!\n\n• ${totalStacks} tecnologias\n• Requisitos obrigatórios\n• Requisitos desejáveis\n\nConfiança: ${dados.confianca}%\n\nRevise os dados na seção "Requisitos".`);
 
         } catch (err: any) {
@@ -1040,14 +1079,26 @@ const Vagas: React.FC<VagasProps> = ({
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="text-sm font-bold text-gray-700">Gestor Comercial (Analista)</label>
-                                                    <input 
-                                                        type="number"
-                                                        className="w-full border p-2 rounded mt-1" 
-                                                        placeholder="ID do analista" 
-                                                        value={formData.analista_id || ''} 
-                                                        onChange={e => setFormData({...formData, analista_id: e.target.value ? parseInt(e.target.value) : null})} 
-                                                    />
+                                                    <label className="text-sm font-bold text-gray-700">Gestão Comercial</label>
+                                                    <select
+                                                        className={`w-full border p-2 rounded mt-1 ${
+                                                            formData.analista_id ? 'border-green-300 bg-green-50' : ''
+                                                        }`}
+                                                        value={formData.analista_id || ''}
+                                                        onChange={e => setFormData({...formData, analista_id: e.target.value ? parseInt(e.target.value) : null})}
+                                                    >
+                                                        <option value="">Selecione</option>
+                                                        {gestoresComerciais.map(user => (
+                                                            <option key={user.id} value={user.id}>
+                                                                {user.nome_usuario}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                    {formData.analista_id && (
+                                                        <p className="text-xs text-green-600 mt-1">
+                                                            ✓ {gestoresComerciais.find(u => u.id === formData.analista_id)?.nome_usuario || 'Selecionado'}
+                                                        </p>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
