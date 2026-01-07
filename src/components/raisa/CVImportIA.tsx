@@ -484,29 +484,44 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
       pessoaId = pessoa.id; // Atribuição aqui
 
+      // Salvar Skills
       if (dadosExtraidos.skills.length > 0) {
         const skillsParaSalvar = dadosExtraidos.skills.map(s => ({
           pessoa_id: pessoaId,
-          skill_nome: s.nome,
-          skill_categoria: s.categoria,
-          nivel: s.nivel,
-          anos_experiencia: s.anos_experiencia
+          skill_nome: s.nome || '',
+          skill_categoria: s.categoria || 'other',
+          nivel: s.nivel || 'intermediario',
+          anos_experiencia: s.anos_experiencia || 0
         }));
-        await supabase.from('pessoa_skills').insert(skillsParaSalvar);
+        
+        console.log('💾 Salvando skills:', skillsParaSalvar.length);
+        const { error: errSkills } = await supabase.from('pessoa_skills').insert(skillsParaSalvar);
+        if (errSkills) {
+          console.error('❌ Erro ao salvar skills:', errSkills);
+        } else {
+          console.log('✅ Skills salvas com sucesso');
+        }
       }
 
       if (dadosExtraidos.experiencias.length > 0) {
         const experienciasParaSalvar = dadosExtraidos.experiencias.map(e => ({
           pessoa_id: pessoaId,
-          empresa: e.empresa,
-          cargo: e.cargo,
-          data_inicio: e.data_inicio,
-          data_fim: e.data_fim,
-          atual: e.atual,
-          descricao: e.descricao,
-          tecnologias: e.tecnologias
+          empresa: e.empresa || '',
+          cargo: e.cargo || '',
+          data_inicio: e.data_inicio || null,
+          data_fim: e.data_fim || null,
+          atual: e.atual || false,
+          descricao: e.descricao || '',
+          tecnologias: Array.isArray(e.tecnologias) ? e.tecnologias : []
         }));
-        await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
+        
+        console.log('💾 Salvando experiências:', experienciasParaSalvar.length);
+        const { error: errExp } = await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
+        if (errExp) {
+          console.error('❌ Erro ao salvar experiências:', errExp);
+        } else {
+          console.log('✅ Experiências salvas com sucesso');
+        }
       }
 
       // Combinar formação + certificações (certificações são salvas como formação tipo "certificacao")
