@@ -504,18 +504,31 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       }
 
       if (dadosExtraidos.experiencias.length > 0) {
-        const experienciasParaSalvar = dadosExtraidos.experiencias.map(e => ({
-          pessoa_id: pessoaId,
-          empresa: e.empresa || '',
-          cargo: e.cargo || '',
-          data_inicio: e.data_inicio || null,
-          data_fim: e.data_fim || null,
-          atual: e.atual || false,
-          descricao: e.descricao || '',
-          tecnologias: Array.isArray(e.tecnologias) ? e.tecnologias : []
-        }));
+        const experienciasParaSalvar = dadosExtraidos.experiencias.map(e => {
+          // Converter data "YYYY-MM" para "YYYY-MM-01" (formato DATE)
+          const formatarData = (data: string | null) => {
+            if (!data) return null;
+            // Se já tem dia, retorna como está
+            if (data.match(/^\d{4}-\d{2}-\d{2}$/)) return data;
+            // Se é YYYY-MM, adiciona -01
+            if (data.match(/^\d{4}-\d{2}$/)) return `${data}-01`;
+            return null;
+          };
+          
+          return {
+            pessoa_id: pessoaId,
+            empresa: e.empresa || '',
+            cargo: e.cargo || '',
+            data_inicio: formatarData(e.data_inicio),
+            data_fim: formatarData(e.data_fim),
+            atual: e.atual || false,
+            descricao: e.descricao || '',
+            tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : [] // Nome correto!
+          };
+        });
         
         console.log('💾 Salvando experiências:', experienciasParaSalvar.length);
+        console.log('📋 Primeira experiência:', JSON.stringify(experienciasParaSalvar[0]));
         const { error: errExp } = await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
         if (errExp) {
           console.error('❌ Erro ao salvar experiências:', errExp);
