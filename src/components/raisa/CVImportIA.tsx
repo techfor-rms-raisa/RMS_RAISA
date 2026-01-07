@@ -43,6 +43,7 @@ interface DadosExtraidos {
   skills: SkillExtraida[];
   experiencias: ExperienciaExtraida[];
   formacao: FormacaoExtraida[];
+  certificacoes: CertificacaoExtraida[];
   idiomas: IdiomaExtraido[];
   cv_texto_original: string;
   cv_processado: boolean;
@@ -72,6 +73,12 @@ interface FormacaoExtraida {
   instituicao: string;
   ano_conclusao: number | null;
   em_andamento: boolean;
+}
+
+interface CertificacaoExtraida {
+  nome: string;
+  emissor: string;
+  ano: number | null;
 }
 
 interface IdiomaExtraido {
@@ -295,16 +302,16 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         throw new Error('Resposta inválida da API');
       }
 
-
-      // ✅ CORREÇÃO: Garantir que dados existe antes de acessar
-      const dados = result.data.dados || {};
+      const dados = result.data.dados;
       const textoOriginal = result.data.texto_original || '';
 
-      // Verificar se extração foi bem sucedida
-      if (result.data.sucesso === false) {
-        console.warn('⚠️ Extração parcial:', result.data.erro);
-        setErro(result.data.erro || 'Extração parcial. Revise os dados.');
-      }
+      // Log detalhado para debug
+      console.log('📊 Dados recebidos da API:');
+      console.log('   - Skills:', dados.skills?.length || 0);
+      console.log('   - Experiências:', dados.experiencias?.length || 0);
+      console.log('   - Formação:', dados.formacao?.length || 0);
+      console.log('   - Certificações:', dados.certificacoes?.length || 0);
+      console.log('   - Idiomas:', dados.idiomas?.length || 0);
 
       const dadosCompletos: DadosExtraidos = {
         nome: dados.dados_pessoais?.nome || '',
@@ -322,6 +329,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         skills: dados.skills || [],
         experiencias: dados.experiencias || [],
         formacao: dados.formacao || [],
+        certificacoes: dados.certificacoes || [],
         idiomas: dados.idiomas || [],
         cv_texto_original: textoOriginal,
         cv_processado: true,
@@ -329,10 +337,10 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       };
 
       console.log('✅ CV processado com sucesso:', dadosCompletos.nome);
+      console.log('   Total experiências mapeadas:', dadosCompletos.experiencias.length);
       setDadosExtraidos(dadosCompletos);
       setProgresso(100);
       setEtapaAtual(3);
-
 
     } catch (err: any) {
       console.error('Erro ao processar com IA:', err);
@@ -387,6 +395,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       skills: skillsEncontradas,
       experiencias: [],
       formacao: [],
+      certificacoes: [],
       idiomas: [],
       cv_texto_original: texto,
       cv_processado: true,
@@ -411,6 +420,8 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
     setSalvando(true);
     setErro(null);
+    
+    let pessoaId: number | null = null; // Declarado fora do try para acesso no catch
 
     try {
       // ✅ NOVO: Upload do PDF para Supabase Storage
@@ -471,7 +482,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
       if (erroPessoa) throw erroPessoa;
 
-      const pessoaId = pessoa.id;
+      pessoaId = pessoa.id; // Atribuição aqui
 
       if (dadosExtraidos.skills.length > 0) {
         const skillsParaSalvar = dadosExtraidos.skills.map(s => ({
@@ -498,8 +509,20 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
       }
 
-      if (dadosExtraidos.formacao.length > 0) {
-        const formacaoParaSalvar = dadosExtraidos.formacao.map(f => ({
+      // Combinar formação + certificações (certificações são salvas como formação tipo "certificacao")
+      const todasFormacoes = [
+        ...(dadosExtraidos.formacao || []),
+        ...(dadosExtraidos.certificacoes || []).map(c => ({
+          tipo: 'certificacao',
+          curso: c.nome,
+          instituicao: c.emissor,
+          ano_conclusao: c.ano,
+          em_andamento: false
+        }))
+      ];
+
+      if (todasFormacoes.length > 0) {
+        const formacaoParaSalvar = todasFormacoes.map(f => ({
           pessoa_id: pessoaId,
           tipo: f.tipo,
           curso: f.curso,
@@ -519,12 +542,41 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         await supabase.from('pessoa_idiomas').insert(idiomasParaSalvar);
       }
 
+      // ✅ Registrar log de processamento bem-sucedido
+      await supabase.from('pessoa_cv_log').insert({
+        pessoa_id: pessoaId,
+        acao: 'importacao_cv_ia',
+        status: 'sucesso',
+        detalhes: {
+          skills_extraidas: dadosExtraidos.skills?.length || 0,
+          experiencias_extraidas: dadosExtraidos.experiencias?.length || 0,
+          formacao_extraida: (dadosExtraidos.formacao?.length || 0) + (dadosExtraidos.certificacoes?.length || 0),
+          idiomas_extraidos: dadosExtraidos.idiomas?.length || 0,
+          certificacoes_extraidas: dadosExtraidos.certificacoes?.length || 0
+        }
+      });
+
+      console.log('✅ Todos os dados salvos com sucesso, incluindo log');
       setEtapaAtual(4);
       onImportComplete(dadosExtraidos);
 
     } catch (err: any) {
       console.error('Erro ao salvar:', err);
       setErro(err.message || 'Erro ao salvar dados');
+      
+      // ✅ Registrar log de erro (se pessoaId existir)
+      try {
+        if (pessoaId) {
+          await supabase.from('pessoa_cv_log').insert({
+            pessoa_id: pessoaId,
+            acao: 'importacao_cv_ia',
+            status: 'erro',
+            erro_mensagem: err.message || 'Erro desconhecido'
+          });
+        }
+      } catch (logErr) {
+        console.error('Erro ao registrar log:', logErr);
+      }
     } finally {
       setSalvando(false);
     }
