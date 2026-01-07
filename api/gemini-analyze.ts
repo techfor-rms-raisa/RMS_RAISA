@@ -406,7 +406,7 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
     let textoOriginal = '';
 
     // ========================================
-    // ETAPA 1: Extrair texto do PDF
+    // ETAPA 1: Extrair texto do PDF (para salvar)
     // ========================================
     if (base64PDF) {
       console.log('📄 ETAPA 1: Extraindo texto do PDF...');
@@ -440,11 +440,25 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
     // ========================================
     console.log('🚀 ETAPAS 2-4: Extraindo dados em paralelo...');
 
-    // Prompt base
-    const instrucaoBase = 'Analise este currículo e extraia APENAS os dados solicitados em JSON válido (sem markdown, sem backticks).\n\nCURRÍCULO:\n' + textoOriginal.substring(0, 15000);
+    // Conteúdo para análise (PDF ou texto)
+    const criarConteudo = (prompt: string) => {
+      if (base64PDF) {
+        return [{
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: 'application/pdf', data: base64PDF } },
+            { text: prompt }
+          ]
+        }];
+      } else {
+        return prompt + '\n\nCURRÍCULO:\n' + textoOriginal;
+      }
+    };
 
-    // ETAPA 2: Dados pessoais + profissionais + idiomas (rápido)
-    const promptPessoais = instrucaoBase + `\n\nExtraia APENAS dados pessoais, profissionais e idiomas:
+    // ETAPA 2: Dados pessoais + profissionais + idiomas
+    const promptPessoais = `Analise este currículo e extraia dados pessoais, profissionais e idiomas em JSON válido (sem markdown, sem backticks).
+
+Retorne APENAS este JSON:
 {
   "dados_pessoais": {"nome":"","email":"","telefone":"","linkedin_url":"","cidade":"","estado":""},
   "dados_profissionais": {"titulo_profissional":"","senioridade":"junior|pleno|senior|especialista","resumo_profissional":""},
@@ -452,26 +466,39 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
 }`;
 
     // ETAPA 3: Skills/tecnologias
-    const promptSkills = instrucaoBase + `\n\nExtraia TODAS as skills e tecnologias mencionadas (linguagens, frameworks, clouds, ferramentas, metodologias):
+    const promptSkills = `Analise este currículo e extraia TODAS as skills e tecnologias em JSON válido (sem markdown, sem backticks).
+
+Extraia TODAS: linguagens (Java, Python, C#), frameworks (Spring, React), clouds (AWS, GCP, Azure e serviços), bancos de dados, ferramentas, metodologias.
+
+Retorne APENAS este JSON:
 {
-  "skills": [{"nome":"React","categoria":"frontend|backend|database|devops|cloud|mobile|sap|methodology|tool|other","nivel":"basico|intermediario|avancado|especialista","anos_experiencia":3}]
-}
-Inclua TODAS: linguagens (Java, Python, C#), frameworks (Spring, React, Angular), clouds (AWS, GCP, Azure), bancos (MySQL, MongoDB), ferramentas (Docker, Git), metodologias (Scrum, ITIL).`;
+  "skills": [{"nome":"","categoria":"frontend|backend|database|devops|cloud|mobile|sap|methodology|tool|other","nivel":"basico|intermediario|avancado|especialista","anos_experiencia":0}]
+}`;
 
     // ETAPA 4: Experiências + Formação + Certificações
-    const promptExperiencias = instrucaoBase + `\n\nExtraia TODAS as experiências profissionais, formação acadêmica e certificações:
+    const promptExperiencias = `Analise este currículo e extraia TODAS as experiências profissionais, formação e certificações em JSON válido (sem markdown, sem backticks).
+
+⚠️ MUITO IMPORTANTE: 
+- Liste CADA experiência profissional SEPARADAMENTE
+- Inclua TODAS as empresas onde trabalhou
+- Use formato de data YYYY-MM (ex: 2021-09)
+- Se "Atual", use data_fim: null e atual: true
+
+Retorne APENAS este JSON:
 {
-  "experiencias": [{"empresa":"","cargo":"","data_inicio":"YYYY-MM","data_fim":"YYYY-MM ou null","atual":false,"descricao":"","tecnologias":[]}],
+  "experiencias": [
+    {"empresa":"Banco BV","cargo":"Arquiteto de Tecnologia Sênior","data_inicio":"2021-09","data_fim":null,"atual":true,"descricao":"Descrição das atividades","tecnologias":["GCP","Apigee"]},
+    {"empresa":"Itaú Unibanco","cargo":"Tech Lead","data_inicio":"2020-10","data_fim":"2021-08","atual":false,"descricao":"Descrição","tecnologias":["AWS"]}
+  ],
   "formacao": [{"tipo":"graduacao|pos_graduacao|mba|mestrado|tecnico|bootcamp","curso":"","instituicao":"","ano_conclusao":2020,"em_andamento":false}],
   "certificacoes": [{"nome":"","emissor":"","ano":2023}]
-}
-IMPORTANTE: Extraia TODAS as experiências listadas, não resuma.`;
+}`;
 
-    // Executar em PARALELO para economizar tempo
+    // Executar em PARALELO
     const [resultPessoais, resultSkills, resultExperiencias] = await Promise.all([
-      ai.models.generateContent({ model: 'gemini-2.0-flash', contents: promptPessoais }),
-      ai.models.generateContent({ model: 'gemini-2.0-flash', contents: promptSkills }),
-      ai.models.generateContent({ model: 'gemini-2.0-flash', contents: promptExperiencias })
+      ai.models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptPessoais) }),
+      ai.models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptSkills) }),
+      ai.models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptExperiencias) })
     ]);
 
     const tempoProcessamento = Date.now() - startTime;
@@ -482,25 +509,38 @@ IMPORTANTE: Extraia TODAS as experiências listadas, não resuma.`;
     // ========================================
     console.log('🔗 ETAPA 5: Combinando resultados...');
 
-    const parseJSON = (text: string, fallback: any) => {
+    const parseJSON = (text: string, fallback: any, label: string) => {
       try {
+        console.log(`📝 [${label}] Resposta (primeiros 300 chars):`, text?.substring(0, 300));
         const clean = text.replace(/```json\n?/gi, '').replace(/```/gi, '').trim();
         const match = clean.match(/\{[\s\S]*\}/);
-        return match ? JSON.parse(match[0]) : fallback;
-      } catch {
+        if (match) {
+          const parsed = JSON.parse(match[0]);
+          console.log(`✅ [${label}] JSON parseado com sucesso`);
+          return parsed;
+        }
+        console.warn(`⚠️ [${label}] Não encontrou JSON válido`);
+        return fallback;
+      } catch (err: any) {
+        console.error(`❌ [${label}] Erro ao parsear:`, err.message);
         return fallback;
       }
     };
 
-    const dadosPessoais = parseJSON(resultPessoais.text || '', {});
-    const dadosSkills = parseJSON(resultSkills.text || '', {});
-    const dadosExp = parseJSON(resultExperiencias.text || '', {});
+    const dadosPessoais = parseJSON(resultPessoais.text || '', {}, 'Pessoais');
+    const dadosSkills = parseJSON(resultSkills.text || '', {}, 'Skills');
+    const dadosExp = parseJSON(resultExperiencias.text || '', {}, 'Experiências');
 
-    // Log de verificação
+    // Log detalhado
     console.log('📊 Resultados extraídos:');
-    console.log('   - Dados pessoais:', dadosPessoais.dados_pessoais?.nome || '(vazio)');
+    console.log('   - Nome:', dadosPessoais.dados_pessoais?.nome || '(vazio)');
     console.log('   - Skills:', dadosSkills.skills?.length || 0);
     console.log('   - Experiências:', dadosExp.experiencias?.length || 0);
+    if (dadosExp.experiencias?.length > 0) {
+      console.log('   - Primeira exp:', JSON.stringify(dadosExp.experiencias[0]));
+    } else {
+      console.warn('   ⚠️ NENHUMA EXPERIÊNCIA EXTRAÍDA!');
+    }
     console.log('   - Formação:', dadosExp.formacao?.length || 0);
     console.log('   - Certificações:', dadosExp.certificacoes?.length || 0);
     console.log('   - Idiomas:', dadosPessoais.idiomas?.length || 0);
