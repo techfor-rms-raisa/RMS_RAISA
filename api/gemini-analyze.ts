@@ -380,10 +380,31 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
   console.log('🤖 [Gemini] Iniciando extração OTIMIZADA de CV...');
   const startTime = Date.now();
 
+  // Estrutura padrão para retorno em caso de erro
+  const dadosVazios = {
+    dados_pessoais: {
+      nome: '',
+      email: '',
+      telefone: '',
+      linkedin_url: '',
+      cidade: '',
+      estado: ''
+    },
+    dados_profissionais: {
+      titulo_profissional: '',
+      senioridade: 'pleno',
+      resumo_profissional: ''
+    },
+    skills: [],
+    experiencias: [],
+    formacao: [],
+    idiomas: []
+  };
+
   // Prompt otimizado e mais curto para resposta rápida
   const promptExtracao = `Você é um especialista em análise de currículos. Extraia os dados do CV abaixo em JSON.
 
-RESPONDA APENAS EM JSON VÁLIDO (sem markdown):
+RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
 {
   "dados_pessoais": {
     "nome": "Nome Completo",
@@ -453,7 +474,14 @@ REGRAS: Se não encontrar, use "" ou null. Categorias: frontend, backend, databa
       
       textoOriginal = textoCV;
     } else {
-      throw new Error('Nenhum dado para processar. Envie textoCV ou base64PDF.');
+      // Retorna estrutura vazia mas válida
+      console.error('❌ Nenhum dado para processar');
+      return {
+        sucesso: false,
+        dados: dadosVazios,
+        texto_original: '',
+        erro: 'Nenhum dado para processar. Envie textoCV ou base64PDF.'
+      };
     }
 
     const tempoProcessamento = Date.now() - startTime;
@@ -461,45 +489,62 @@ REGRAS: Se não encontrar, use "" ou null. Categorias: frontend, backend, databa
 
     const text = result.text || '';
     console.log('🤖 Resposta recebida, parseando JSON...');
+    console.log('📝 Primeiros 500 chars da resposta:', text.substring(0, 500));
 
     // Limpar e parsear JSON
-    const jsonClean = text
-      .replace(/^```json\n?/i, '')
-      .replace(/^```\n?/i, '')
-      .replace(/```$/i, '')
+    let jsonClean = text
+      .replace(/^```json\n?/gi, '')
+      .replace(/^```\n?/gi, '')
+      .replace(/\n```$/gi, '')
+      .replace(/```$/gi, '')
       .trim();
+
+    // Tentar encontrar JSON no texto
+    const jsonMatch = jsonClean.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      jsonClean = jsonMatch[0];
+    }
 
     try {
       const dadosExtraidos = JSON.parse(jsonClean);
       console.log('✅ CV extraído com sucesso:', dadosExtraidos.dados_pessoais?.nome);
       
+      // Garantir que todos os campos existam
+      const dadosCompletos = {
+        dados_pessoais: { ...dadosVazios.dados_pessoais, ...dadosExtraidos.dados_pessoais },
+        dados_profissionais: { ...dadosVazios.dados_profissionais, ...dadosExtraidos.dados_profissionais },
+        skills: dadosExtraidos.skills || [],
+        experiencias: dadosExtraidos.experiencias || [],
+        formacao: dadosExtraidos.formacao || [],
+        idiomas: dadosExtraidos.idiomas || []
+      };
+      
       return {
         sucesso: true,
-        dados: dadosExtraidos,
+        dados: dadosCompletos,
         texto_original: textoOriginal,
         tempo_processamento_ms: tempoProcessamento
       };
-    } catch (parseError) {
-      console.error('❌ Erro ao parsear JSON, tentando regex...');
+    } catch (parseError: any) {
+      console.error('❌ Erro ao parsear JSON:', parseError.message);
+      console.error('📝 JSON que tentou parsear:', jsonClean.substring(0, 1000));
       
-      // Tentar extrair JSON do texto
-      const jsonMatch = text.match(/{[\s\S]*}/);
-      if (jsonMatch) {
-        const dadosExtraidos = JSON.parse(jsonMatch[0]);
-        return {
-          sucesso: true,
-          dados: dadosExtraidos,
-          texto_original: textoOriginal,
-          tempo_processamento_ms: tempoProcessamento
-        };
-      }
-      
-      throw new Error('Falha ao parsear resposta da IA');
+      // Retorna estrutura válida mesmo com erro
+      return {
+        sucesso: false,
+        dados: dadosVazios,
+        texto_original: textoOriginal,
+        erro: 'Falha ao parsear resposta da IA: ' + parseError.message,
+        tempo_processamento_ms: tempoProcessamento
+      };
     }
   } catch (error: any) {
     console.error('❌ Erro na extração de CV:', error);
+    // SEMPRE retorna estrutura válida
     return {
       sucesso: false,
+      dados: dadosVazios,
+      texto_original: '',
       erro: error.message || 'Erro ao processar CV',
       tempo_processamento_ms: Date.now() - startTime
     };

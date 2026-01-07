@@ -295,8 +295,16 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         throw new Error('Resposta inválida da API');
       }
 
-      const dados = result.data.dados;
+
+      // ✅ CORREÇÃO: Garantir que dados existe antes de acessar
+      const dados = result.data.dados || {};
       const textoOriginal = result.data.texto_original || '';
+
+      // Verificar se extração foi bem sucedida
+      if (result.data.sucesso === false) {
+        console.warn('⚠️ Extração parcial:', result.data.erro);
+        setErro(result.data.erro || 'Extração parcial. Revise os dados.');
+      }
 
       const dadosCompletos: DadosExtraidos = {
         nome: dados.dados_pessoais?.nome || '',
@@ -324,6 +332,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       setDadosExtraidos(dadosCompletos);
       setProgresso(100);
       setEtapaAtual(3);
+
 
     } catch (err: any) {
       console.error('Erro ao processar com IA:', err);
