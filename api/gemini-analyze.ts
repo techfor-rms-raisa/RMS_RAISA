@@ -401,11 +401,14 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
     idiomas: []
   };
 
-  // Prompt otimizado e mais curto para resposta rápida
+  // Prompt otimizado que também extrai o texto do CV
   const promptExtracao = `Você é um especialista em análise de currículos. Extraia os dados do CV abaixo em JSON.
+
+IMPORTANTE: Inclua também o campo "texto_cv_completo" com TODO o texto extraído do currículo (preservando a estrutura original).
 
 RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
 {
+  "texto_cv_completo": "Todo o texto do CV aqui, preservando quebras de linha com \\n",
   "dados_pessoais": {
     "nome": "Nome Completo",
     "email": "email@email.com",
@@ -433,18 +436,22 @@ RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
   ]
 }
 
-REGRAS: Se não encontrar, use "" ou null. Categorias: frontend, backend, database, devops, mobile, soft_skill, tool. Níveis: basico, intermediario, avancado, especialista.`;
+REGRAS: 
+- Se não encontrar, use "" ou null
+- Categorias: frontend, backend, database, devops, mobile, soft_skill, tool
+- Níveis: basico, intermediario, avancado, especialista
+- SEMPRE inclua o texto_cv_completo com o conteúdo integral do CV`;
 
   try {
     let result;
     let textoOriginal = '';
 
     if (base64PDF) {
-      // ✅ UMA ÚNICA CHAMADA: Extrair E analisar PDF em uma requisição
-      console.log('📄 Processando PDF com extração + análise combinada...');
+      // ✅ UMA ÚNICA CHAMADA: Extrair texto + analisar PDF
+      console.log('📄 Processando PDF com extração de texto + análise combinada...');
       
       result = await ai.models.generateContent({
-        model: 'gemini-2.0-flash', // Modelo mais rápido
+        model: 'gemini-2.0-flash',
         contents: [{
           role: 'user',
           parts: [
@@ -461,7 +468,7 @@ REGRAS: Se não encontrar, use "" ou null. Categorias: frontend, backend, databa
         }]
       });
       
-      textoOriginal = '[PDF processado diretamente pela IA]';
+      // textoOriginal será extraído do JSON de resposta
       
     } else if (textoCV) {
       // Processar texto diretamente
@@ -508,6 +515,12 @@ REGRAS: Se não encontrar, use "" ou null. Categorias: frontend, backend, databa
     try {
       const dadosExtraidos = JSON.parse(jsonClean);
       console.log('✅ CV extraído com sucesso:', dadosExtraidos.dados_pessoais?.nome);
+      
+      // ✅ NOVO: Usar texto_cv_completo extraído pelo Gemini
+      if (base64PDF && dadosExtraidos.texto_cv_completo) {
+        textoOriginal = dadosExtraidos.texto_cv_completo;
+        console.log('✅ Texto do CV extraído com sucesso:', textoOriginal.substring(0, 100) + '...');
+      }
       
       // Garantir que todos os campos existam
       const dadosCompletos = {
