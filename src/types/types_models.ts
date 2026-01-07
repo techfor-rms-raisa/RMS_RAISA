@@ -82,6 +82,19 @@ export interface Pessoa {
   createdAt?: string;
   cpf?: string;
   created_at?: string;
+  // Campos extras do Banco de Talentos
+  titulo_profissional?: string;
+  senioridade?: string;
+  disponibilidade?: string;
+  modalidade_preferida?: string;
+  pretensao_salarial?: number;
+  cidade?: string;
+  estado?: string;
+  cv_processado?: boolean;
+  cv_processado_em?: string;
+  resumo_profissional?: string;
+  cv_texto_original?: string;
+  cv_arquivo_url?: string;
 }
 
 // ============================================

@@ -25,6 +25,7 @@ export const usePessoas = () => {
 
       if (error) throw error;
 
+      // Mapear TODOS os campos, incluindo os novos do CV IA
       const mappedPessoas: Pessoa[] = (data || []).map((pessoa: any) => ({
         id: String(pessoa.id),
         nome: pessoa.nome,
@@ -34,7 +35,20 @@ export const usePessoas = () => {
         linkedin_url: pessoa.linkedin_url,
         curriculo_url: pessoa.curriculo_url,
         observacoes: pessoa.observacoes,
-        created_at: pessoa.created_at
+        created_at: pessoa.created_at,
+        // Campos extras para BancoTalentos
+        titulo_profissional: pessoa.titulo_profissional,
+        senioridade: pessoa.senioridade,
+        disponibilidade: pessoa.disponibilidade,
+        modalidade_preferida: pessoa.modalidade_preferida,
+        pretensao_salarial: pessoa.pretensao_salarial,
+        cidade: pessoa.cidade,
+        estado: pessoa.estado,
+        cv_processado: pessoa.cv_processado,
+        cv_processado_em: pessoa.cv_processado_em,
+        resumo_profissional: pessoa.resumo_profissional,
+        cv_texto_original: pessoa.cv_texto_original,
+        cv_arquivo_url: pessoa.cv_arquivo_url
       }));
 
       setPessoas(mappedPessoas);
