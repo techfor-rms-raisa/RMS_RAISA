@@ -247,6 +247,7 @@ export const useSupabaseData = () => {
     pessoas: pessoasHook.pessoas,
     addPessoa: pessoasHook.addPessoa,
     updatePessoa: pessoasHook.updatePessoa,
+    deletePessoa: pessoasHook.deletePessoa,
 
     // RAISA - Candidaturas (✅ Completo)
     candidaturas: candidaturasHook.candidaturas,

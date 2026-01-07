@@ -99,7 +99,7 @@ const App: React.FC = () => {
     addCampaign, updateCampaign,
     addFeedbackResponse, addRHAction, updateRHActionStatus, getRHActionsByConsultant,
     addVaga, updateVaga, deleteVaga, 
-    addPessoa, updatePessoa,
+    addPessoa, updatePessoa, deletePessoa,
     addCandidatura, updateCandidaturaStatus,
     reload: loadAllData  // ✅ Função para carregar dados
   } = useSupabaseData();
@@ -290,7 +290,7 @@ const App: React.FC = () => {
       case 'pipeline':
           return <Pipeline candidaturas={candidaturas} vagas={vagas} pessoas={pessoas} />;
       case 'talentos':
-          return <BancoTalentos pessoas={pessoas} addPessoa={addPessoa} updatePessoa={updatePessoa} onRefresh={loadAllData} />;
+          return <BancoTalentos pessoas={pessoas} addPessoa={addPessoa} updatePessoa={updatePessoa} deletePessoa={deletePessoa} onRefresh={loadAllData} />;
       
       // ✅ ATUALIZADO: ControleEnvios com props corretas (integrado Supabase)
       case 'controle_envios':

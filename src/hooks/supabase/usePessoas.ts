@@ -178,6 +178,74 @@ export const usePessoas = () => {
     }
   };
 
+  /**
+   * Exclui uma pessoa e todos os dados relacionados
+   */
+  const deletePessoa = async (id: string) => {
+    try {
+      console.log('🗑️ Excluindo pessoa:', id);
+      const pessoaId = parseInt(id);
+
+      // 1. Excluir skills da pessoa
+      const { error: errorSkills } = await supabase
+        .from('pessoa_skills')
+        .delete()
+        .eq('pessoa_id', pessoaId);
+      
+      if (errorSkills) {
+        console.warn('⚠️ Erro ao excluir skills:', errorSkills.message);
+      }
+
+      // 2. Excluir experiências da pessoa
+      const { error: errorExp } = await supabase
+        .from('pessoa_experiencias')
+        .delete()
+        .eq('pessoa_id', pessoaId);
+      
+      if (errorExp) {
+        console.warn('⚠️ Erro ao excluir experiências:', errorExp.message);
+      }
+
+      // 3. Excluir formação da pessoa
+      const { error: errorForm } = await supabase
+        .from('pessoa_formacao')
+        .delete()
+        .eq('pessoa_id', pessoaId);
+      
+      if (errorForm) {
+        console.warn('⚠️ Erro ao excluir formação:', errorForm.message);
+      }
+
+      // 4. Excluir idiomas da pessoa
+      const { error: errorIdiomas } = await supabase
+        .from('pessoa_idiomas')
+        .delete()
+        .eq('pessoa_id', pessoaId);
+      
+      if (errorIdiomas) {
+        console.warn('⚠️ Erro ao excluir idiomas:', errorIdiomas.message);
+      }
+
+      // 5. Finalmente, excluir a pessoa
+      const { error: errorPessoa } = await supabase
+        .from('pessoas')
+        .delete()
+        .eq('id', pessoaId);
+
+      if (errorPessoa) throw errorPessoa;
+
+      // Atualizar estado local
+      setPessoas(prev => prev.filter(p => p.id !== id));
+      console.log('✅ Pessoa excluída com sucesso');
+      
+      return true;
+    } catch (err: any) {
+      console.error('❌ Erro ao excluir pessoa:', err);
+      alert(`Erro ao excluir pessoa: ${err.message}`);
+      throw err;
+    }
+  };
+
   return {
     pessoas,
     setPessoas,
@@ -186,6 +254,7 @@ export const usePessoas = () => {
     loadPessoas,
     addPessoa,
     updatePessoa,
+    deletePessoa,
     findPessoaByCpfOrEmail
   };
 };

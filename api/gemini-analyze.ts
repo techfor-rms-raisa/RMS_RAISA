@@ -401,14 +401,11 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
     idiomas: []
   };
 
-  // Prompt otimizado que também extrai o texto do CV
+  // Prompt para extração de dados estruturados (SEM texto completo para evitar JSON grande)
   const promptExtracao = `Você é um especialista em análise de currículos. Extraia os dados do CV abaixo em JSON.
-
-IMPORTANTE: Inclua também o campo "texto_cv_completo" com TODO o texto extraído do currículo (preservando a estrutura original).
 
 RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
 {
-  "texto_cv_completo": "Todo o texto do CV aqui, preservando quebras de linha com \\n",
   "dados_pessoais": {
     "nome": "Nome Completo",
     "email": "email@email.com",
@@ -438,18 +435,49 @@ RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
 
 REGRAS: 
 - Se não encontrar, use "" ou null
-- Categorias: frontend, backend, database, devops, mobile, soft_skill, tool
-- Níveis: basico, intermediario, avancado, especialista
-- SEMPRE inclua o texto_cv_completo com o conteúdo integral do CV`;
+- Categorias: frontend, backend, database, devops, mobile, soft_skill, tool, cloud, sap, other
+- Níveis: basico, intermediario, avancado, especialista`;
 
   try {
-    let result;
     let textoOriginal = '';
 
+    // ETAPA 1: Se for PDF, primeiro extrair o texto puro
     if (base64PDF) {
-      // ✅ UMA ÚNICA CHAMADA: Extrair texto + analisar PDF
-      console.log('📄 Processando PDF com extração de texto + análise combinada...');
+      console.log('📄 Etapa 1: Extraindo texto puro do PDF...');
       
+      try {
+        const resultTexto = await ai.models.generateContent({
+          model: 'gemini-2.0-flash',
+          contents: [{
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: 'application/pdf',
+                  data: base64PDF
+                }
+              },
+              {
+                text: 'Extraia TODO o texto deste currículo/CV em PDF. Retorne APENAS o texto extraído, sem formatação especial, sem JSON, sem comentários. Preserve quebras de linha usando \\n.'
+              }
+            ]
+          }]
+        });
+        
+        textoOriginal = resultTexto.text || '';
+        console.log(`✅ Texto extraído: ${textoOriginal.length} caracteres`);
+      } catch (errTexto: any) {
+        console.warn('⚠️ Erro ao extrair texto do PDF:', errTexto.message);
+        textoOriginal = '[Não foi possível extrair o texto do PDF]';
+      }
+    }
+
+    // ETAPA 2: Analisar e estruturar os dados
+    console.log('📊 Etapa 2: Analisando e estruturando dados...');
+    
+    let result;
+    
+    if (base64PDF) {
       result = await ai.models.generateContent({
         model: 'gemini-2.0-flash',
         contents: [{
@@ -467,21 +495,13 @@ REGRAS:
           ]
         }]
       });
-      
-      // textoOriginal será extraído do JSON de resposta
-      
     } else if (textoCV) {
-      // Processar texto diretamente
-      console.log('📝 Processando texto do CV...');
-      
+      textoOriginal = textoCV;
       result = await ai.models.generateContent({ 
         model: 'gemini-2.0-flash',
         contents: `${promptExtracao}\n\nCURRÍCULO:\n${textoCV}`
       });
-      
-      textoOriginal = textoCV;
     } else {
-      // Retorna estrutura vazia mas válida
       console.error('❌ Nenhum dado para processar');
       return {
         sucesso: false,
@@ -515,12 +535,6 @@ REGRAS:
     try {
       const dadosExtraidos = JSON.parse(jsonClean);
       console.log('✅ CV extraído com sucesso:', dadosExtraidos.dados_pessoais?.nome);
-      
-      // ✅ NOVO: Usar texto_cv_completo extraído pelo Gemini
-      if (base64PDF && dadosExtraidos.texto_cv_completo) {
-        textoOriginal = dadosExtraidos.texto_cv_completo;
-        console.log('✅ Texto do CV extraído com sucesso:', textoOriginal.substring(0, 100) + '...');
-      }
       
       // Garantir que todos os campos existam
       const dadosCompletos = {
