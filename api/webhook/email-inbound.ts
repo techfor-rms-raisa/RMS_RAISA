@@ -14,10 +14,15 @@ import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
 
 // Supabase com Service Role (backend seguro)
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+// Função para criar cliente Supabase (lazy initialization)
+function getSupabaseAdmin() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error("Missing Supabase environment variables. URL: " + !!supabaseUrl + ", Key: " + !!supabaseKey);
+  }
+  return createClient(supabaseUrl, supabaseKey);
+}
 
 // Configuração
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET || '';
@@ -88,6 +93,7 @@ interface ClassificacaoResposta {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const startTime = Date.now();
+  const supabaseAdmin = getSupabaseAdmin();
   
   // Apenas POST
   if (req.method !== 'POST') {

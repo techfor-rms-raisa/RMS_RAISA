@@ -3,16 +3,23 @@
  * 
  * Endpoint seguro no backend que consulta Supabase
  * 
- * Data: 06/01/2026
+ * Data: 07/01/2026 - CORRIGIDO (lazy initialization)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+// Função para criar cliente Supabase (lazy initialization)
+function getSupabaseAdmin() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error(`Missing Supabase environment variables. URL: ${!!supabaseUrl}, Key: ${!!supabaseKey}`);
+  }
+  
+  return createClient(supabaseUrl, supabaseKey);
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -29,167 +36,180 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    // Parâmetros de filtro (query string ou body)
-    const filtros = req.method === 'GET' ? req.query : req.body;
-    const {
-      status,
-      cliente_id,
-      vaga_id,
-      analista_id,
-      data_inicio,
-      data_fim,
-      limit = 50,
-      offset = 0
-    } = filtros;
+    const supabaseAdmin = getSupabaseAdmin();
+    
+    // Parâmetros de filtro
+    const { status, cliente_id, vaga_id, data_inicio, data_fim } = req.query;
 
-    console.log('📤 [API] Listando envios...', filtros);
-
-    // Query base
+    // Query base - buscar envios
     let query = supabaseAdmin
       .from('candidatura_envios')
-      .select(`
-        *,
-        candidaturas!candidatura_id (
-          id,
-          candidato_nome,
-          candidato_email,
-          status
-        ),
-        vagas!vaga_id (
-          id,
-          titulo
-        ),
-        clients!cliente_id (
-          id,
-          razao_social_cliente
-        )
-      `)
+      .select('*')
       .eq('ativo', true)
       .order('enviado_em', { ascending: false });
 
     // Aplicar filtros
-    if (status) {
+    if (status && typeof status === 'string') {
       query = query.eq('status', status);
     }
-    if (cliente_id) {
-      query = query.eq('cliente_id', parseInt(cliente_id as string));
+
+    if (cliente_id && typeof cliente_id === 'string') {
+      query = query.eq('cliente_id', parseInt(cliente_id));
     }
-    if (vaga_id) {
-      query = query.eq('vaga_id', parseInt(vaga_id as string));
+
+    if (vaga_id && typeof vaga_id === 'string') {
+      query = query.eq('vaga_id', parseInt(vaga_id));
     }
-    if (analista_id) {
-      query = query.eq('analista_id', parseInt(analista_id as string));
-    }
-    if (data_inicio) {
+
+    if (data_inicio && typeof data_inicio === 'string') {
       query = query.gte('enviado_em', data_inicio);
     }
-    if (data_fim) {
-      query = query.lte('enviado_em', data_fim);
+
+    if (data_fim && typeof data_fim === 'string') {
+      query = query.lte('enviado_em', data_fim + 'T23:59:59');
     }
 
-    // Paginação
-    query = query.range(
-      parseInt(offset as string), 
-      parseInt(offset as string) + parseInt(limit as string) - 1
-    );
+    const { data: envios, error } = await query;
 
-    const { data: envios, error, count } = await query;
+    if (error) {
+      console.error('Erro ao buscar envios:', error);
+      return res.status(500).json({ error: error.message });
+    }
 
-    if (error) throw error;
+    // Buscar dados relacionados para enriquecer
+    const candidaturaIds = [...new Set((envios || []).map((e: any) => e.candidatura_id).filter(Boolean))];
+    
+    let candidaturasMap: any = {};
+    let pessoasMap: any = {};
+    let vagasMap: any = {};
+    let clientesMap: any = {};
+
+    if (candidaturaIds.length > 0) {
+      // Buscar candidaturas
+      const { data: candidaturas } = await supabaseAdmin
+        .from('candidaturas')
+        .select('id, pessoa_id, vaga_id')
+        .in('id', candidaturaIds);
+
+      candidaturasMap = (candidaturas || []).reduce((acc: any, c: any) => {
+        acc[c.id] = c;
+        return acc;
+      }, {});
+
+      // Buscar pessoas
+      const pessoaIds = [...new Set((candidaturas || []).map((c: any) => c.pessoa_id).filter(Boolean))];
+      if (pessoaIds.length > 0) {
+        const { data: pessoas } = await supabaseAdmin
+          .from('pessoas')
+          .select('id, nome_completo, email')
+          .in('id', pessoaIds);
+        
+        pessoasMap = (pessoas || []).reduce((acc: any, p: any) => {
+          acc[p.id] = p;
+          return acc;
+        }, {});
+      }
+
+      // Buscar vagas
+      const vagaIds = [...new Set((candidaturas || []).map((c: any) => c.vaga_id).filter(Boolean))];
+      if (vagaIds.length > 0) {
+        const { data: vagas } = await supabaseAdmin
+          .from('vagas')
+          .select('id, titulo, cliente_id')
+          .in('id', vagaIds);
+        
+        vagasMap = (vagas || []).reduce((acc: any, v: any) => {
+          acc[v.id] = v;
+          return acc;
+        }, {});
+
+        // Buscar clientes
+        const clienteIds = [...new Set((vagas || []).map((v: any) => v.cliente_id).filter(Boolean))];
+        if (clienteIds.length > 0) {
+          const { data: clientes } = await supabaseAdmin
+            .from('clients')
+            .select('id, nome_cliente')
+            .in('id', clienteIds);
+          
+          clientesMap = (clientes || []).reduce((acc: any, c: any) => {
+            acc[c.id] = c;
+            return acc;
+          }, {});
+        }
+      }
+    }
 
     // Enriquecer dados
-    const enviosEnriquecidos = (envios || []).map((e: any) => ({
-      ...e,
-      candidato_nome: e.candidaturas?.candidato_nome || 'N/A',
-      candidato_email: e.candidaturas?.candidato_email || '',
-      vaga_titulo: e.vagas?.titulo || 'N/A',
-      cliente_nome: e.clients?.razao_social_cliente || 'N/A'
-    }));
+    const enviosEnriquecidos = (envios || []).map((envio: any) => {
+      const candidatura = candidaturasMap[envio.candidatura_id] || {};
+      const pessoa = pessoasMap[candidatura.pessoa_id] || {};
+      const vaga = vagasMap[candidatura.vaga_id] || vagasMap[envio.vaga_id] || {};
+      const cliente = clientesMap[vaga.cliente_id] || clientesMap[envio.cliente_id] || {};
 
-    // Buscar métricas
-    const metricas = await calcularMetricas();
+      return {
+        id: envio.id,
+        candidatura_id: envio.candidatura_id,
+        vaga_id: envio.vaga_id,
+        cliente_id: envio.cliente_id,
+        candidato_nome: pessoa.nome_completo || 'N/A',
+        candidato_email: pessoa.email || '',
+        vaga_titulo: vaga.titulo || 'N/A',
+        cliente_nome: cliente.nome_cliente || 'N/A',
+        status: envio.status,
+        meio_envio: envio.meio_envio || 'email',
+        enviado_em: envio.enviado_em,
+        enviado_por: envio.enviado_por,
+        visualizado_em: envio.visualizado_em,
+        origem: envio.origem || 'manual',
+        email_message_id: envio.email_message_id
+      };
+    });
 
-    console.log(`✅ [API] ${enviosEnriquecidos.length} envios encontrados`);
+    // Calcular métricas
+    const total_envios = enviosEnriquecidos.length;
+    const total_visualizados = enviosEnriquecidos.filter((e: any) => 
+      e.status === 'visualizado' || e.status === 'em_analise'
+    ).length;
+
+    // Buscar aprovações
+    const { data: aprovacoes } = await supabaseAdmin
+      .from('candidatura_aprovacoes')
+      .select('*')
+      .eq('ativo', true);
+
+    const total_aprovados = (aprovacoes || []).filter((a: any) => a.decisao === 'aprovado').length;
+    const total_reprovados = (aprovacoes || []).filter((a: any) => a.decisao === 'reprovado').length;
+    const total_aguardando = (aprovacoes || []).filter((a: any) => 
+      ['em_analise', 'aguardando_resposta', 'agendado'].includes(a.decisao)
+    ).length;
+
+    // Tempo médio de resposta
+    const aprovacoesComTempo = (aprovacoes || []).filter((a: any) => a.dias_para_resposta !== null);
+    const tempo_medio_resposta_dias = aprovacoesComTempo.length > 0
+      ? Math.round(aprovacoesComTempo.reduce((acc: number, a: any) => acc + (a.dias_para_resposta || 0), 0) / aprovacoesComTempo.length)
+      : 0;
+
+    const metricas = {
+      total_envios,
+      total_visualizados,
+      total_aprovados,
+      total_reprovados,
+      total_aguardando,
+      taxa_aprovacao: total_envios > 0 ? Math.round((total_aprovados / total_envios) * 100) : 0,
+      taxa_visualizacao: total_envios > 0 ? Math.round((total_visualizados / total_envios) * 100) : 0,
+      tempo_medio_resposta_dias
+    };
 
     return res.status(200).json({
       success: true,
-      data: enviosEnriquecidos,
-      metricas,
-      pagination: {
-        total: count,
-        limit: parseInt(limit as string),
-        offset: parseInt(offset as string)
-      }
+      envios: enviosEnriquecidos,
+      metricas
     });
 
   } catch (error: any) {
-    console.error('❌ [API] Erro ao listar envios:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message
+    console.error('Erro na API listar:', error);
+    return res.status(500).json({ 
+      error: error.message || 'Erro interno do servidor'
     });
-  }
-}
-
-async function calcularMetricas() {
-  try {
-    // Total de envios
-    const { count: totalEnvios } = await supabaseAdmin
-      .from('candidatura_envios')
-      .select('id', { count: 'exact', head: true })
-      .eq('ativo', true);
-
-    // Visualizados
-    const { count: totalVisualizados } = await supabaseAdmin
-      .from('candidatura_envios')
-      .select('id', { count: 'exact', head: true })
-      .eq('ativo', true)
-      .in('status', ['visualizado', 'em_analise']);
-
-    // Aprovações
-    const { data: aprovacoes } = await supabaseAdmin
-      .from('candidatura_aprovacoes')
-      .select('decisao, dias_para_resposta')
-      .eq('ativo', true);
-
-    const totalAprovados = aprovacoes?.filter(a => a.decisao === 'aprovado').length || 0;
-    const totalReprovados = aprovacoes?.filter(a => a.decisao === 'reprovado').length || 0;
-    const totalAguardando = aprovacoes?.filter(a => 
-      ['em_analise', 'aguardando_resposta', 'agendado'].includes(a.decisao)
-    ).length || 0;
-
-    // Tempo médio de resposta
-    const temposResposta = aprovacoes
-      ?.filter(a => a.dias_para_resposta !== null)
-      .map(a => a.dias_para_resposta || 0) || [];
-    
-    const tempoMedio = temposResposta.length > 0
-      ? temposResposta.reduce((a, b) => a + b, 0) / temposResposta.length
-      : 0;
-
-    const total = totalEnvios || 0;
-
-    return {
-      total_envios: total,
-      total_visualizados: totalVisualizados || 0,
-      total_aprovados: totalAprovados,
-      total_reprovados: totalReprovados,
-      total_aguardando: totalAguardando,
-      taxa_aprovacao: total > 0 ? Math.round((totalAprovados / total) * 100) : 0,
-      taxa_visualizacao: total > 0 ? Math.round(((totalVisualizados || 0) / total) * 100) : 0,
-      tempo_medio_resposta_dias: Math.round(tempoMedio * 10) / 10
-    };
-  } catch (error) {
-    console.error('Erro ao calcular métricas:', error);
-    return {
-      total_envios: 0,
-      total_visualizados: 0,
-      total_aprovados: 0,
-      total_reprovados: 0,
-      total_aguardando: 0,
-      taxa_aprovacao: 0,
-      taxa_visualizacao: 0,
-      tempo_medio_resposta_dias: 0
-    };
   }
 }

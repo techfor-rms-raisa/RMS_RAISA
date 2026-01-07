@@ -1,18 +1,23 @@
 /**
  * registrar-manual.ts - API para registrar envio manual de CV
  * 
- * Usado quando o analista envia CV fora do sistema e quer registrar
- * 
- * Data: 06/01/2026
+ * Data: 07/01/2026 - CORRIGIDO (lazy initialization)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+// Função para criar cliente Supabase (lazy initialization)
+function getSupabaseAdmin() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error(`Missing Supabase environment variables. URL: ${!!supabaseUrl}, Key: ${!!supabaseKey}`);
+  }
+  
+  return createClient(supabaseUrl, supabaseKey);
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -29,29 +34,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    const supabaseAdmin = getSupabaseAdmin();
+    
     const {
       candidatura_id,
       vaga_id,
       cliente_id,
-      analista_id,
+      meio_envio,
       enviado_por,
-      meio_envio = 'email',
       destinatario_email,
       destinatario_nome,
-      cv_anexado_url,
-      cv_versao = 'original',
-      observacoes
+      observacao
     } = req.body;
 
-    // Validação
-    if (!candidatura_id || !vaga_id) {
+    // Validações
+    if (!candidatura_id) {
       return res.status(400).json({ 
-        success: false, 
-        error: 'candidatura_id e vaga_id são obrigatórios' 
+        error: 'candidatura_id é obrigatório' 
       });
     }
-
-    console.log('📤 [API] Registrando envio manual...', { candidatura_id, vaga_id });
 
     // Criar registro de envio
     const { data: envio, error: envioError } = await supabaseAdmin
@@ -60,15 +61,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         candidatura_id,
         vaga_id,
         cliente_id,
-        analista_id,
+        meio_envio: meio_envio || 'email',
         enviado_por,
         enviado_em: new Date().toISOString(),
-        meio_envio,
         destinatario_email,
         destinatario_nome,
-        cv_anexado_url,
-        cv_versao,
-        observacoes,
+        observacao,
         status: 'enviado',
         origem: 'manual',
         ativo: true
@@ -76,35 +74,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select()
       .single();
 
-    if (envioError) throw envioError;
+    if (envioError) {
+      console.error('Erro ao criar envio:', envioError);
+      return res.status(500).json({ error: envioError.message });
+    }
 
-    // Atualizar status da candidatura
-    const { error: candError } = await supabaseAdmin
+    // Atualizar candidatura
+    await supabaseAdmin
       .from('candidaturas')
-      .update({
+      .update({ 
         status: 'enviado_cliente',
         enviado_ao_cliente: true,
-        data_envio_cliente: new Date().toISOString(),
-        atualizado_em: new Date().toISOString()
+        data_envio_cliente: new Date().toISOString()
       })
       .eq('id', candidatura_id);
 
-    if (candError) {
-      console.warn('⚠️ [API] Erro ao atualizar candidatura:', candError);
-    }
-
-    console.log(`✅ [API] Envio registrado: ID ${envio.id}`);
-
     return res.status(200).json({
       success: true,
-      data: envio
+      envio,
+      message: 'Envio registrado com sucesso'
     });
 
   } catch (error: any) {
-    console.error('❌ [API] Erro ao registrar envio:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message
+    console.error('Erro na API registrar-manual:', error);
+    return res.status(500).json({ 
+      error: error.message || 'Erro interno do servidor'
     });
   }
 }

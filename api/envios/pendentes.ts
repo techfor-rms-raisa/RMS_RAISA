@@ -1,18 +1,23 @@
 /**
- * pendentes.ts - API para listar emails pendentes de classificação manual
+ * pendentes.ts - API para listar emails pendentes de classificação
  * 
- * Lista emails que a IA não conseguiu classificar automaticamente
- * 
- * Data: 06/01/2026
+ * Data: 07/01/2026 - CORRIGIDO (lazy initialization)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-);
+// Função para criar cliente Supabase (lazy initialization)
+function getSupabaseAdmin() {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  if (!supabaseUrl || !supabaseKey) {
+    throw new Error(`Missing Supabase environment variables. URL: ${!!supabaseUrl}, Key: ${!!supabaseKey}`);
+  }
+  
+  return createClient(supabaseUrl, supabaseKey);
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -29,46 +34,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const { status = 'pendente', limit = 50 } = req.query;
+    const supabaseAdmin = getSupabaseAdmin();
+    
+    const { status } = req.query;
 
-    console.log('📋 [API] Listando emails pendentes...', { status });
-
-    // Buscar emails pendentes
     let query = supabaseAdmin
       .from('email_pendente_classificacao')
       .select('*')
-      .order('criado_em', { ascending: false })
-      .limit(parseInt(limit as string));
+      .order('criado_em', { ascending: false });
 
-    if (status !== 'todos') {
+    // Filtrar por status (default: pendente)
+    if (status && typeof status === 'string') {
       query = query.eq('status', status);
+    } else {
+      query = query.eq('status', 'pendente');
     }
 
     const { data: pendentes, error } = await query;
 
-    if (error) throw error;
+    if (error) {
+      console.error('Erro ao buscar pendentes:', error);
+      return res.status(500).json({ error: error.message });
+    }
 
-    // Contar por status
-    const { data: contagem } = await supabaseAdmin
+    // Contar total de pendentes
+    const { count } = await supabaseAdmin
       .from('email_pendente_classificacao')
-      .select('status')
+      .select('*', { count: 'exact', head: true })
       .eq('status', 'pendente');
-
-    const totalPendentes = contagem?.length || 0;
-
-    console.log(`✅ [API] ${pendentes?.length || 0} emails encontrados (${totalPendentes} pendentes)`);
 
     return res.status(200).json({
       success: true,
-      data: pendentes || [],
-      total_pendentes: totalPendentes
+      pendentes: pendentes || [],
+      total_pendentes: count || 0
     });
 
   } catch (error: any) {
-    console.error('❌ [API] Erro ao listar pendentes:', error);
-    return res.status(500).json({
-      success: false,
-      error: error.message
+    console.error('Erro na API pendentes:', error);
+    return res.status(500).json({ 
+      error: error.message || 'Erro interno do servidor'
     });
   }
 }
