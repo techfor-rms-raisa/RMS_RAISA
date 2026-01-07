@@ -27,11 +27,12 @@ dist-ssr
 # ==============================================
 # SEGURANÇA - VARIÁVEIS DE AMBIENTE
 # ==============================================
-# NUNCA commite arquivos com chaves de API!
+# NUNCA commite arquivos com chaves SECRETAS!
+# .env.production é permitido pois contém apenas
+# chaves PÚBLICAS (anon key do Supabase)
 .env
 .env.local
 .env.development
-.env.production
 .env.test
 .env*.local
 
