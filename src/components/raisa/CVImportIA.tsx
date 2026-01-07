@@ -12,7 +12,7 @@
 import React, { useState, useRef } from 'react';
 import { supabase } from '../../config/supabase';
 import { 
-  Upload, Sparkles, Check, X, AlertCircle, 
+  Upload, Sparkles, Check, X, AlertCircle, AlertTriangle,
   User, Briefcase, GraduationCap,
   Globe, Code, ChevronDown, ChevronUp, Save, RefreshCw,
   Loader2, Eye
@@ -457,11 +457,15 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         }
       }
 
+      // Gerar email placeholder se não tiver (para evitar erro de constraint)
+      const emailFinal = dadosExtraidos.email || 
+        `${dadosExtraidos.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.')}@pendente.cadastro`;
+
       const { data: pessoa, error: erroPessoa } = await supabase
         .from('pessoas')
         .insert({
           nome: dadosExtraidos.nome,
-          email: dadosExtraidos.email,
+          email: emailFinal,
           telefone: dadosExtraidos.telefone,
           linkedin_url: dadosExtraidos.linkedin_url,
           cidade: dadosExtraidos.cidade,
@@ -1026,14 +1030,22 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
               <RefreshCw size={18} />
               Reprocessar
             </button>
-            <div className="flex gap-3">
+            <div className="flex gap-3 items-center">
+              {/* Alerta se falta email */}
+              {dadosExtraidos?.nome && !dadosExtraidos?.email && (
+                <span className="text-amber-600 text-sm flex items-center gap-1">
+                  <AlertTriangle size={16} />
+                  Email não encontrado
+                </span>
+              )}
               <button onClick={onClose} className="px-5 py-2 border border-gray-300 rounded-lg hover:bg-gray-100">
                 Cancelar
               </button>
               <button
                 onClick={handleSalvar}
-                disabled={salvando || !dadosExtraidos?.nome || !dadosExtraidos?.email}
+                disabled={salvando || !dadosExtraidos?.nome}
                 className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+                title={!dadosExtraidos?.nome ? 'Nome é obrigatório' : ''}
               >
                 {salvando ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
                 {salvando ? 'Salvando...' : 'Salvar no Banco de Talentos'}
