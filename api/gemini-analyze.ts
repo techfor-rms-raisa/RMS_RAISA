@@ -125,7 +125,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt });
+  const result = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -180,7 +180,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt });
+  const result = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -194,7 +194,7 @@ ${reportText}
 }
 
 async function generateContent(model: string, prompt: string) {
-  const result = await ai.models.generateContent({ model: model || 'gemini-1.5-flash', contents: prompt });
+  const result = await ai.models.generateContent({ model: model || 'gemini-2.0-flash', contents: prompt });
   const text = result.text || '';
 
   return { text };
@@ -234,7 +234,7 @@ Analise a seguinte vaga e sugira melhorias para torná-la mais atrativa e eficaz
 }
 `;
 
-  const result = await ai.models.generateContent({ model: 'gemini-1.5-flash', contents: prompt });
+  const result = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -286,7 +286,7 @@ RESPONDA EM JSON:
 
   try {
     const result = await ai.models.generateContent({ 
-      model: 'gemini-1.5-flash', 
+      model: 'gemini-2.0-flash', 
       contents: prompt 
     });
     
@@ -444,7 +444,7 @@ REGRAS: Se não encontrar, use "" ou null. Categorias: frontend, backend, databa
       console.log('📄 Processando PDF com extração + análise combinada...');
       
       result = await ai.models.generateContent({
-        model: 'gemini-1.5-flash', // Modelo mais rápido
+        model: 'gemini-2.0-flash', // Modelo mais rápido
         contents: [{
           role: 'user',
           parts: [
@@ -468,7 +468,7 @@ REGRAS: Se não encontrar, use "" ou null. Categorias: frontend, backend, databa
       console.log('📝 Processando texto do CV...');
       
       result = await ai.models.generateContent({ 
-        model: 'gemini-1.5-flash',
+        model: 'gemini-2.0-flash',
         contents: `${promptExtracao}\n\nCURRÍCULO:\n${textoCV}`
       });
       
@@ -590,7 +590,7 @@ RESPONDA EM JSON:
 
   try {
     const result = await ai.models.generateContent({ 
-      model: 'gemini-1.5-flash', 
+      model: 'gemini-2.0-flash', 
       contents: prompt 
     });
     
@@ -645,7 +645,7 @@ RESPONDA EM JSON:
 
   try {
     const result = await ai.models.generateContent({ 
-      model: 'gemini-1.5-flash', 
+      model: 'gemini-2.0-flash', 
       contents: prompt 
     });
     
