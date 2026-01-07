@@ -111,6 +111,8 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     const [detailsPessoa, setDetailsPessoa] = useState<PessoaExpanded | null>(null);
     const [detailsSkills, setDetailsSkills] = useState<SkillInfo[]>([]);
     const [detailsExperiencias, setDetailsExperiencias] = useState<ExperienciaInfo[]>([]);
+    const [detailsFormacao, setDetailsFormacao] = useState<any[]>([]);
+    const [detailsIdiomas, setDetailsIdiomas] = useState<any[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
     
     // Estado do formulário
@@ -228,12 +230,12 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
         setLoadingDetails(true);
         
         try {
-            // Carregar skills
+            // Carregar skills (ordenado por anos de experiência desc)
             const { data: skills } = await supabase
                 .from('pessoa_skills')
                 .select('*')
                 .eq('pessoa_id', parseInt(pessoa.id))
-                .order('anos_experiencia', { ascending: false });
+                .order('anos_experiencia', { ascending: false, nullsFirst: false });
             
             setDetailsSkills(skills || []);
 
@@ -245,6 +247,23 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 .order('atual', { ascending: false });
             
             setDetailsExperiencias(experiencias || []);
+
+            // Carregar formação
+            const { data: formacao } = await supabase
+                .from('pessoa_formacao')
+                .select('*')
+                .eq('pessoa_id', parseInt(pessoa.id))
+                .order('ano_conclusao', { ascending: false, nullsFirst: false });
+            
+            setDetailsFormacao(formacao || []);
+
+            // Carregar idiomas
+            const { data: idiomas } = await supabase
+                .from('pessoa_idiomas')
+                .select('*')
+                .eq('pessoa_id', parseInt(pessoa.id));
+            
+            setDetailsIdiomas(idiomas || []);
 
         } catch (err) {
             console.error('Erro ao carregar detalhes:', err);
@@ -763,30 +782,144 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                         </div>
                                     )}
 
-                                    {/* Skills */}
+                                    {/* Skills - Layout Melhorado */}
                                     <div>
                                         <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2">
                                             <Code size={18} className="text-purple-600" />
                                             Skills ({detailsSkills.length})
                                         </h4>
                                         {detailsSkills.length > 0 ? (
-                                            <div className="flex flex-wrap gap-2">
-                                                {detailsSkills.map((skill, i) => (
-                                                    <span 
-                                                        key={i}
-                                                        className={`px-3 py-1.5 rounded-full text-sm ${
-                                                            CATEGORIAS_SKILL[skill.skill_categoria as keyof typeof CATEGORIAS_SKILL]?.cor || 'bg-gray-100 text-gray-700'
-                                                        }`}
-                                                    >
-                                                        {skill.skill_nome}
-                                                        {skill.anos_experiencia > 0 && (
-                                                            <span className="ml-1 opacity-70">({skill.anos_experiencia}a)</span>
-                                                        )}
-                                                    </span>
-                                                ))}
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full text-sm">
+                                                    <thead>
+                                                        <tr className="bg-gray-100 text-left">
+                                                            <th className="px-3 py-2 rounded-tl-lg">Skill</th>
+                                                            <th className="px-3 py-2">Categoria</th>
+                                                            <th className="px-3 py-2">Nível</th>
+                                                            <th className="px-3 py-2 rounded-tr-lg text-center">Anos Exp.</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {detailsSkills.map((skill, i) => (
+                                                            <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                                                                <td className="px-3 py-2 font-medium">
+                                                                    <span className={`inline-block px-2 py-0.5 rounded text-xs mr-2 ${
+                                                                        CATEGORIAS_SKILL[skill.skill_categoria as keyof typeof CATEGORIAS_SKILL]?.cor || 'bg-gray-100 text-gray-700'
+                                                                    }`}>
+                                                                        {skill.skill_nome}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-3 py-2 text-gray-600 capitalize">
+                                                                    {CATEGORIAS_SKILL[skill.skill_categoria as keyof typeof CATEGORIAS_SKILL]?.label || skill.skill_categoria}
+                                                                </td>
+                                                                <td className="px-3 py-2">
+                                                                    <span className={`px-2 py-0.5 rounded text-xs ${
+                                                                        skill.nivel === 'especialista' ? 'bg-purple-100 text-purple-700' :
+                                                                        skill.nivel === 'avancado' ? 'bg-green-100 text-green-700' :
+                                                                        skill.nivel === 'intermediario' ? 'bg-blue-100 text-blue-700' :
+                                                                        'bg-gray-100 text-gray-700'
+                                                                    }`}>
+                                                                        {skill.nivel === 'especialista' ? 'Especialista' :
+                                                                         skill.nivel === 'avancado' ? 'Avançado' :
+                                                                         skill.nivel === 'intermediario' ? 'Intermediário' :
+                                                                         'Básico'}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-3 py-2 text-center font-semibold">
+                                                                    {skill.anos_experiencia > 0 ? `${skill.anos_experiencia}` : '-'}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
                                             </div>
                                         ) : (
                                             <p className="text-gray-500 text-sm">Nenhuma skill cadastrada</p>
+                                        )}
+                                    </div>
+
+                                    {/* Formação Acadêmica e Certificações */}
+                                    <div>
+                                        <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2">
+                                            <GraduationCap size={18} className="text-blue-600" />
+                                            Formação e Certificações ({detailsFormacao.length})
+                                        </h4>
+                                        {detailsFormacao.length > 0 ? (
+                                            <div className="space-y-2">
+                                                {/* Formação Acadêmica */}
+                                                {detailsFormacao.filter(f => f.tipo !== 'certificacao').length > 0 && (
+                                                    <div className="mb-4">
+                                                        <h5 className="text-sm font-semibold text-gray-600 mb-2">Formação Acadêmica</h5>
+                                                        {detailsFormacao.filter(f => f.tipo !== 'certificacao').map((form, i) => (
+                                                            <div key={i} className="bg-blue-50 rounded-lg p-3 mb-2">
+                                                                <div className="flex justify-between items-start">
+                                                                    <div>
+                                                                        <span className="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700 capitalize">
+                                                                            {form.tipo?.replace('_', ' ')}
+                                                                        </span>
+                                                                        <h5 className="font-semibold text-gray-800 mt-1">{form.curso}</h5>
+                                                                        <p className="text-sm text-gray-600">{form.instituicao}</p>
+                                                                    </div>
+                                                                    {form.ano_conclusao && (
+                                                                        <span className="text-sm text-gray-500">{form.ano_conclusao}</span>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Certificações */}
+                                                {detailsFormacao.filter(f => f.tipo === 'certificacao').length > 0 && (
+                                                    <div>
+                                                        <h5 className="text-sm font-semibold text-gray-600 mb-2">Certificações ({detailsFormacao.filter(f => f.tipo === 'certificacao').length})</h5>
+                                                        <div className="flex flex-wrap gap-2">
+                                                            {detailsFormacao.filter(f => f.tipo === 'certificacao').map((cert, i) => (
+                                                                <span 
+                                                                    key={i}
+                                                                    className="px-3 py-1.5 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm"
+                                                                    title={cert.instituicao || ''}
+                                                                >
+                                                                    🏆 {cert.curso}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <p className="text-gray-500 text-sm">Nenhuma formação cadastrada</p>
+                                        )}
+                                    </div>
+
+                                    {/* Idiomas */}
+                                    <div>
+                                        <h4 className="font-bold text-gray-700 mb-3 flex items-center gap-2">
+                                            <Globe size={18} className="text-teal-600" />
+                                            Idiomas ({detailsIdiomas.length})
+                                        </h4>
+                                        {detailsIdiomas.length > 0 ? (
+                                            <div className="flex flex-wrap gap-3">
+                                                {detailsIdiomas.map((idioma, i) => (
+                                                    <div key={i} className="flex items-center gap-2 bg-teal-50 px-4 py-2 rounded-lg">
+                                                        <span className="font-medium text-teal-800">{idioma.idioma}</span>
+                                                        <span className={`px-2 py-0.5 rounded text-xs ${
+                                                            idioma.nivel === 'fluente' || idioma.nivel === 'nativo' ? 'bg-teal-200 text-teal-800' :
+                                                            idioma.nivel === 'avancado' ? 'bg-green-100 text-green-700' :
+                                                            idioma.nivel === 'intermediario' ? 'bg-blue-100 text-blue-700' :
+                                                            'bg-gray-100 text-gray-700'
+                                                        }`}>
+                                                            {idioma.nivel === 'fluente' ? 'Fluente' :
+                                                             idioma.nivel === 'nativo' ? 'Nativo' :
+                                                             idioma.nivel === 'avancado' ? 'Avançado' :
+                                                             idioma.nivel === 'intermediario' ? 'Intermediário' :
+                                                             'Básico'}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <p className="text-gray-500 text-sm">Nenhum idioma cadastrado</p>
                                         )}
                                     </div>
 
@@ -817,9 +950,9 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                                         {exp.descricao && (
                                                             <p className="text-sm text-gray-600 mt-2">{exp.descricao}</p>
                                                         )}
-                                                        {exp.tecnologias && exp.tecnologias.length > 0 && (
+                                                        {exp.tecnologias_usadas && exp.tecnologias_usadas.length > 0 && (
                                                             <div className="flex flex-wrap gap-1 mt-2">
-                                                                {exp.tecnologias.map((tech, j) => (
+                                                                {exp.tecnologias_usadas.map((tech: string, j: number) => (
                                                                     <span key={j} className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded">
                                                                         {tech}
                                                                     </span>
