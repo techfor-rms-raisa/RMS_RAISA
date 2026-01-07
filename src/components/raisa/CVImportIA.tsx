@@ -484,20 +484,48 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
       pessoaId = pessoa.id; // Atribuição aqui
 
-      // Salvar Skills
+      // Salvar Skills (com tratamento robusto)
       if (dadosExtraidos.skills.length > 0) {
-        const skillsParaSalvar = dadosExtraidos.skills.map(s => ({
-          pessoa_id: pessoaId,
-          skill_nome: s.nome || '',
-          skill_categoria: s.categoria || 'other',
-          nivel: s.nivel || 'intermediario',
-          anos_experiencia: s.anos_experiencia || 0
-        }));
+        // Categorias e níveis válidos
+        const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other'];
+        const niveisValidos = ['basico', 'intermediario', 'avancado', 'especialista'];
         
-        console.log('💾 Salvando skills:', skillsParaSalvar.length);
-        const { error: errSkills } = await supabase.from('pessoa_skills').insert(skillsParaSalvar);
+        // Filtrar e normalizar skills
+        const skillsNormalizadas = dadosExtraidos.skills
+          .filter(s => s.nome && s.nome.trim()) // Remover skills sem nome
+          .map(s => ({
+            pessoa_id: pessoaId,
+            skill_nome: String(s.nome || '').trim().substring(0, 100), // Limitar tamanho
+            skill_categoria: categoriasValidas.includes(s.categoria) ? s.categoria : 'other',
+            nivel: niveisValidos.includes(s.nivel) ? s.nivel : 'intermediario',
+            anos_experiencia: typeof s.anos_experiencia === 'number' ? s.anos_experiencia : 0
+          }));
+        
+        // REMOVER DUPLICATAS (baseado em skill_nome, pois há constraint UNIQUE)
+        const skillsUnicas = skillsNormalizadas.filter((skill, index, self) =>
+          index === self.findIndex(s => s.skill_nome.toLowerCase() === skill.skill_nome.toLowerCase())
+        );
+        
+        console.log('💾 Salvando skills:', skillsUnicas.length, '(removidas', skillsNormalizadas.length - skillsUnicas.length, 'duplicatas)');
+        
+        // Tentar inserir em lote
+        const { error: errSkills } = await supabase.from('pessoa_skills').insert(skillsUnicas);
+        
         if (errSkills) {
-          console.error('❌ Erro ao salvar skills:', errSkills);
+          console.error('❌ Erro ao salvar skills em lote:', errSkills);
+          console.log('🔄 Tentando inserir skills individualmente...');
+          
+          // Inserir uma a uma para identificar problemas
+          let salvos = 0;
+          for (const skill of skillsUnicas.slice(0, 100)) { // Limitar a 100
+            const { error: errIndividual } = await supabase.from('pessoa_skills').insert(skill);
+            if (!errIndividual) {
+              salvos++;
+            } else {
+              console.warn(`⚠️ Falha ao salvar skill "${skill.skill_nome}":`, errIndividual.message);
+            }
+          }
+          console.log(`✅ Skills salvas individualmente: ${salvos}/${skillsUnicas.length}`);
         } else {
           console.log('✅ Skills salvas com sucesso');
         }
