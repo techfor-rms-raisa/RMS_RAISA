@@ -9,6 +9,7 @@
  * - Motivo obrigatório para reprovação
  * - Observações e feedback
  * - 🆕 Análise de CV com IA (integração RAISA)
+ * - 🆕 Análise de Adequação de Perfil (requisito a requisito)
  * 
  * FLUXO DE STATUS (Processos Internos):
  * Triagem → Entrevista → Aprovado/Reprovado
@@ -16,8 +17,8 @@
  * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
  * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
  * 
- * Versão: 1.2 - Integração com Análise de CV (RAISA)
- * Data: 06/01/2026
+ * Versão: 2.0 - Integração com Análise de Adequação de Perfil
+ * Data: 08/01/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -26,12 +27,16 @@ import {
   CheckCircle, XCircle, Clock, Send, FileText, 
   ChevronRight, AlertTriangle, MessageSquare, History,
   ExternalLink, Loader2, Star, Award, UserCheck, Building2,
-  Brain
+  Brain, Target, RefreshCw
 } from 'lucide-react';
 import { supabase } from '@/config/supabase';
 import { Candidatura, Vaga, Pessoa } from '@/types';
 import { useCandidaturaAnaliseIA } from '@/hooks/supabase/useCandidaturaAnaliseIA';
+import { useAnaliseAdequacao } from '@/hooks/supabase/useAnaliseAdequacao';
 import AnaliseCVPanel from './AnaliseCVPanel';
+import { AnaliseAdequacaoPanel } from './AnaliseAdequacaoPanel';
+import { AnaliseAdequacaoBadge } from './AnaliseAdequacaoBadge';
+import type { DadosCandidatoAnalise, DadosVagaAnalise } from '@/services/analiseAdequacaoService';
 
 // ============================================
 // TIPOS
@@ -69,6 +74,9 @@ interface DadosExtras {
   senioridade?: string;
   disponibilidade?: string;
   pretensao_salarial?: number;
+  idiomas?: any[];
+  certificacoes?: any[];
+  resumo_profissional?: string;
 }
 
 // ============================================
@@ -229,7 +237,10 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
   const [observacao, setObservacao] = useState<string>('');
   const [showConfirmacao, setShowConfirmacao] = useState(false);
 
-  // 🆕 Hook para Análise de CV com IA
+  // Estado para expandir/recolher análise de adequação
+  const [mostrarAnaliseAdequacao, setMostrarAnaliseAdequacao] = useState(false);
+
+  // Hook para Análise de CV com IA (existente)
   const {
     loading: loadingAnaliseIA,
     error: errorAnaliseIA,
@@ -239,6 +250,18 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
     registrarFeedback,
     limparAnalise
   } = useCandidaturaAnaliseIA();
+
+  // 🆕 Hook para Análise de Adequação de Perfil (NOVO)
+  const {
+    analise: analiseAdequacao,
+    loading: loadingAdequacao,
+    error: errorAdequacao,
+    analisar: analisarAdequacao,
+    salvarAnalise: salvarAnaliseAdequacao,
+    carregarAnalise: carregarAnaliseAdequacao,
+    estatisticas: statsAdequacao,
+    desqualificacao
+  } = useAnaliseAdequacao();
 
   // Configuração do status atual
   const statusAtual = STATUS_CONFIG[candidatura.status] || STATUS_CONFIG['triagem'];
@@ -267,11 +290,14 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
     if (isOpen && candidatura) {
       carregarHistorico();
       carregarDadosExtras();
-      // 🆕 Carregar análise existente
+      // Carregar análise de CV existente
       carregarAnalise(parseInt(candidatura.id));
+      // 🆕 Carregar análise de adequação existente
+      carregarAnaliseAdequacao(parseInt(candidatura.id));
     } else {
-      // Limpar análise ao fechar modal
+      // Limpar análises ao fechar modal
       limparAnalise();
+      setMostrarAnaliseAdequacao(false);
     }
   }, [isOpen, candidatura]);
 
@@ -337,14 +363,23 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
         .eq('pessoa_id', candidatura.pessoa_id)
         .order('data_inicio', { ascending: false });
 
+      const { data: formData } = await supabase
+        .from('pessoa_formacoes')
+        .select('*')
+        .eq('pessoa_id', candidatura.pessoa_id);
+
       setDadosExtras({
         skills: skillsData?.map(s => s.skill_nome) || [],
         experiencias: expData || [],
+        formacoes: formData || [],
         titulo_profissional: pessoaData?.titulo_profissional,
         senioridade: pessoaData?.senioridade,
         disponibilidade: pessoaData?.disponibilidade,
         pretensao_salarial: pessoaData?.pretensao_salarial,
-        score_compatibilidade: pessoaData?.score_compatibilidade
+        score_compatibilidade: pessoaData?.score_compatibilidade,
+        idiomas: pessoaData?.idiomas || [],
+        certificacoes: pessoaData?.certificacoes || [],
+        resumo_profissional: pessoaData?.resumo_profissional
       });
     } catch (err) {
       console.warn('Erro ao carregar dados extras:', err);
@@ -355,7 +390,7 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
   // HANDLERS
   // ============================================
 
-  // 🆕 Handler para analisar CV com IA
+  // Handler para analisar CV com IA (existente)
   const handleAnalisarCV = async () => {
     if (!vaga) {
       alert('Dados da vaga não disponíveis para análise.');
@@ -365,14 +400,70 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
     await analisarCV(candidatura, vaga, currentUserId);
   };
 
-  // 🆕 Handler para feedback da análise
+  // Handler para feedback da análise
   const handleFeedbackAnalise = async (util: boolean, texto?: string) => {
     if (analiseAtual?.id) {
       await registrarFeedback(analiseAtual.id, util, texto, currentUserId);
     }
   };
 
-  // 🆕 Registrar resultado real da análise (para métricas de acurácia)
+  // 🆕 Handler para Análise de Adequação de Perfil (NOVO)
+  const handleAnalisarAdequacao = async () => {
+    if (!vaga) {
+      alert('Dados da vaga não disponíveis para análise de adequação.');
+      return;
+    }
+
+    // Preparar dados do candidato
+    const dadosCandidato: DadosCandidatoAnalise = {
+      nome: candidatura.candidato_nome || pessoa?.nome || 'Candidato',
+      titulo_profissional: dadosExtras.titulo_profissional,
+      senioridade: dadosExtras.senioridade,
+      resumo_profissional: dadosExtras.resumo_profissional || pessoa?.resumo_profissional,
+      skills: dadosExtras.skills,
+      experiencias: dadosExtras.experiencias?.map(exp => ({
+        empresa: exp.empresa,
+        cargo: exp.cargo,
+        periodo: exp.periodo,
+        data_inicio: exp.data_inicio,
+        data_fim: exp.data_fim,
+        descricao: exp.descricao,
+        tecnologias: exp.tecnologias || []
+      })),
+      formacoes: dadosExtras.formacoes,
+      idiomas: dadosExtras.idiomas,
+      certificacoes: dadosExtras.certificacoes,
+      curriculo_texto: (candidatura as any).curriculo_texto
+    };
+
+    // Preparar dados da vaga
+    const dadosVaga: DadosVagaAnalise = {
+      titulo: vaga?.titulo || 'Vaga',
+      descricao: vaga?.descricao,
+      requisitos_obrigatorios: Array.isArray((vaga as any)?.requisitos_obrigatorios) 
+        ? (vaga as any).requisitos_obrigatorios.join('\n') 
+        : (vaga as any)?.requisitos_obrigatorios || (vaga as any)?.requisitos,
+      requisitos_desejaveis: Array.isArray((vaga as any)?.requisitos_desejaveis)
+        ? (vaga as any).requisitos_desejaveis.join('\n')
+        : (vaga as any)?.requisitos_desejaveis,
+      stack_tecnologica: (vaga as any)?.stack_tecnologica || (vaga as any)?.tecnologias,
+      senioridade: (vaga as any)?.senioridade || (vaga as any)?.nivel_senioridade,
+      modalidade: (vaga as any)?.modalidade,
+      cliente_nome: (vaga as any)?.cliente_nome || (vaga as any)?.cliente?.nome
+    };
+
+    // Executar análise
+    const resultado = await analisarAdequacao(dadosCandidato, dadosVaga);
+    
+    if (resultado) {
+      // Salvar no banco automaticamente
+      await salvarAnaliseAdequacao(parseInt(candidatura.id));
+      // Expandir painel para mostrar resultado
+      setMostrarAnaliseAdequacao(true);
+    }
+  };
+
+  // Registrar resultado real da análise (para métricas de acurácia)
   const registrarResultadoRealAnalise = async (candidaturaId: number, statusFinal: string) => {
     try {
       // Buscar análise de CV mais recente para esta candidatura
@@ -455,7 +546,7 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
           observacao: observacao || null
         });
 
-      // 3. 🆕 Registrar resultado_real na análise de IA (para métricas)
+      // 3. Registrar resultado_real na análise de IA (para métricas)
       const statusFinais = ['contratado', 'reprovado', 'reprovado_cliente', 'aprovado_cliente', 'desistencia'];
       if (statusFinais.includes(novoStatus)) {
         await registrarResultadoRealAnalise(parseInt(candidatura.id), novoStatus);
@@ -684,7 +775,149 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                 </div>
               )}
 
-              {/* 🆕 ANÁLISE DE CV COM IA */}
+              {/* ============================================ */}
+              {/* 🆕 ANÁLISE DE ADEQUAÇÃO DE PERFIL (NOVO!) */}
+              {/* ============================================ */}
+              <div className="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-xl border border-indigo-200 overflow-hidden">
+                {/* Header da seção */}
+                <div className="p-5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center">
+                        <Brain className="w-7 h-7 text-indigo-600" />
+                      </div>
+                      <div>
+                        <h3 className="font-bold text-gray-800 text-lg">Análise de Adequação</h3>
+                        <p className="text-sm text-gray-500">Análise profunda requisito a requisito</p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-3">
+                      {/* Badge de status */}
+                      {analiseAdequacao && (
+                        <AnaliseAdequacaoBadge
+                          analise={analiseAdequacao}
+                          loading={loadingAdequacao}
+                        />
+                      )}
+                      
+                      {/* Botão analisar */}
+                      {!analiseAdequacao && !loadingAdequacao && vaga && (
+                        <button
+                          onClick={handleAnalisarAdequacao}
+                          disabled={loadingAdequacao}
+                          className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition flex items-center gap-2 font-medium"
+                        >
+                          <Target className="w-4 h-4" />
+                          Analisar Adequação
+                        </button>
+                      )}
+                      
+                      {/* Loading */}
+                      {loadingAdequacao && (
+                        <div className="flex items-center gap-2 text-indigo-600">
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          <span className="text-sm">Analisando...</span>
+                        </div>
+                      )}
+                      
+                      {/* Botão reanalisar */}
+                      {analiseAdequacao && !loadingAdequacao && (
+                        <button
+                          onClick={handleAnalisarAdequacao}
+                          disabled={loadingAdequacao}
+                          className="px-3 py-2 bg-white text-gray-700 rounded-lg hover:bg-gray-100 transition text-sm flex items-center gap-1 border"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          Reanalisar
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Aviso se não tem vaga vinculada */}
+                  {!vaga && (
+                    <div className="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-700 flex items-center gap-2">
+                      <AlertTriangle className="w-5 h-5" />
+                      A vaga não está disponível. Não é possível analisar adequação.
+                    </div>
+                  )}
+
+                  {/* Erro */}
+                  {errorAdequacao && (
+                    <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700 flex items-center gap-2">
+                      <XCircle className="w-5 h-5" />
+                      {errorAdequacao}
+                    </div>
+                  )}
+
+                  {/* Alerta de desqualificação */}
+                  {desqualificacao?.desqualificado && (
+                    <div className="mt-4 bg-red-100 border border-red-300 rounded-lg p-4">
+                      <div className="font-semibold text-red-800 flex items-center gap-2 mb-2">
+                        <AlertTriangle className="w-5 h-5" />
+                        ⚠️ Gaps Eliminatórios Identificados
+                      </div>
+                      <ul className="text-sm text-red-700 space-y-1">
+                        {desqualificacao.motivos.slice(0, 3).map((m, i) => (
+                          <li key={i}>• {m}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Resumo rápido quando tem análise */}
+                  {analiseAdequacao && statsAdequacao && !mostrarAnaliseAdequacao && (
+                    <div className="mt-4 grid grid-cols-4 gap-3">
+                      <div className="text-center p-3 bg-white rounded-lg border">
+                        <div className="text-2xl font-bold text-indigo-600">{analiseAdequacao.score_geral}%</div>
+                        <div className="text-xs text-gray-500">Score</div>
+                      </div>
+                      <div className="text-center p-3 bg-white rounded-lg border">
+                        <div className="text-2xl font-bold text-green-600">{statsAdequacao.atende}</div>
+                        <div className="text-xs text-gray-500">Atende</div>
+                      </div>
+                      <div className="text-center p-3 bg-white rounded-lg border">
+                        <div className="text-2xl font-bold text-yellow-600">{statsAdequacao.atendeParcialmente}</div>
+                        <div className="text-xs text-gray-500">Parcial</div>
+                      </div>
+                      <div className="text-center p-3 bg-white rounded-lg border">
+                        <div className="text-2xl font-bold text-red-600">{statsAdequacao.gaps}</div>
+                        <div className="text-xs text-gray-500">Gaps</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Botão expandir/recolher */}
+                  {analiseAdequacao && (
+                    <button
+                      onClick={() => setMostrarAnaliseAdequacao(!mostrarAnaliseAdequacao)}
+                      className="mt-4 w-full py-2 text-indigo-600 hover:text-indigo-800 text-sm font-medium flex items-center justify-center gap-1"
+                    >
+                      {mostrarAnaliseAdequacao ? '▲ Recolher análise detalhada' : '▼ Ver análise detalhada'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Painel completo expandido */}
+                {analiseAdequacao && mostrarAnaliseAdequacao && (
+                  <div className="border-t">
+                    <AnaliseAdequacaoPanel
+                      analise={analiseAdequacao}
+                      onAddPergunta={(pergunta) => {
+                        console.log('Pergunta adicionada:', pergunta);
+                        alert(`Pergunta copiada: "${pergunta.substring(0, 50)}..."`);
+                      }}
+                      onExportar={() => {
+                        console.log('Exportar PDF da análise');
+                        alert('Funcionalidade de exportar PDF em breve!');
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Análise de CV com IA (existente) */}
               <AnaliseCVPanel
                 analise={analiseAtual}
                 loading={loadingAnaliseIA}
