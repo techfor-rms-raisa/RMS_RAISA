@@ -13,7 +13,21 @@ import Anthropic from '@anthropic-ai/sdk';
 // CONFIGURAÇÃO
 // ============================================================
 
-const apiKey = process.env.ANTHROPIC_API_KEY || '';
+// Debug: listar variáveis de ambiente disponíveis (sem valores)
+console.log('🔍 Verificando variáveis de ambiente...');
+console.log('📋 ANTHROPIC_API_KEY presente:', !!process.env.ANTHROPIC_API_KEY);
+console.log('📋 API_KEY presente:', !!process.env.API_KEY);
+
+// Tentar múltiplas fontes para a API key
+const apiKey = process.env.ANTHROPIC_API_KEY || process.env.API_KEY || '';
+
+if (!apiKey) {
+  console.error('❌ ANTHROPIC_API_KEY não encontrada no ambiente Vercel!');
+  console.error('📋 Variáveis disponíveis:', Object.keys(process.env).filter(k => k.includes('API') || k.includes('KEY')).join(', '));
+} else {
+  console.log('✅ API Key carregada, comprimento:', apiKey.length);
+}
+
 const anthropic = new Anthropic({ apiKey });
 
 const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'; // Usando Sonnet para análise mais profunda
@@ -151,7 +165,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!apiKey) {
-    return res.status(500).json({ error: 'ANTHROPIC_API_KEY não configurada' });
+    console.error('❌ API Key não disponível no momento da requisição');
+    return res.status(500).json({ 
+      error: 'ANTHROPIC_API_KEY não configurada',
+      debug: {
+        hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
+        hasApiKey: !!process.env.API_KEY,
+        envKeysWithApi: Object.keys(process.env).filter(k => k.toLowerCase().includes('api') || k.toLowerCase().includes('key')).length
+      }
+    });
   }
 
   try {
