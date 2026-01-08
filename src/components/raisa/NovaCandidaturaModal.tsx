@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { Vaga } from '@/types';
 import { useAnaliseCandidato, EtapaAnalise } from '@/hooks/supabase/useAnaliseCandidato';
+import { useRaisaCVSearch, CandidatoMatch } from '@/hooks/supabase/useRaisaCVSearch';
 import ScoreCompatibilidadeCircle, { ScoreCard } from './ScoreCompatibilidadeCircle';
 import { AnaliseGapsCard } from './AnaliseGapsCard';
 
@@ -80,6 +81,21 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     analiseGaps
   } = useAnaliseCandidato();
 
+  // 🆕 Hook de busca no Banco de Talentos (Match)
+  const {
+    matches,
+    loading: loadingMatches,
+    error: errorMatches,
+    buscarParaVaga,
+    criarCandidaturaDoMatch,
+    carregarMatchesVaga
+  } = useRaisaCVSearch();
+
+  // 🆕 Estados para aba Banco de Talentos
+  const [buscaBancoRealizada, setBuscaBancoRealizada] = useState(false);
+  const [criandoCandidaturaMatch, setCriandoCandidaturaMatch] = useState<number | null>(null);
+  const [filtroScoreMin, setFiltroScoreMin] = useState<number>(0);
+
   // Vaga selecionada
   const vagaSelecionada = vagas.find(v => v.id === vagaSelecionadaId);
 
@@ -102,6 +118,8 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       setArquivo(null);
       setUploadError(null);
       setUploadProgress(0);
+      setBuscaBancoRealizada(false); // 🆕 Reset busca banco
+      setFiltroScoreMin(0); // 🆕 Reset filtro
       resetar();
     }
   }, [isOpen, resetar]);
@@ -564,36 +582,262 @@ HABILIDADES
 
               {/* ABA: BANCO DE TALENTOS */}
               {abaAtiva === 'banco' && (
-                <div className="text-center py-12">
-                  <Search className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-500 text-lg">Busca no Banco de Talentos</p>
-                  <p className="text-sm text-gray-400 mt-2">
-                    Selecione uma vaga acima para buscar candidatos compatíveis
-                  </p>
-                  <button 
-                    className="mt-4 bg-blue-500 text-white px-6 py-2 rounded-lg hover:bg-blue-600 transition"
-                    onClick={() => alert('Funcionalidade em desenvolvimento')}
-                  >
-                    🔍 Buscar Candidatos
-                  </button>
+                <div className="space-y-4">
+                  {/* Se não tem vaga selecionada */}
+                  {!vagaSelecionadaId && (
+                    <div className="text-center py-12">
+                      <Search className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                      <p className="text-gray-500 text-lg">Selecione uma Vaga</p>
+                      <p className="text-sm text-gray-400 mt-2">
+                        Escolha uma vaga no dropdown acima para buscar candidatos compatíveis
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Se tem vaga, mostrar busca */}
+                  {vagaSelecionadaId && (
+                    <>
+                      {/* Toolbar de busca */}
+                      <div className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
+                        <div className="flex items-center gap-3">
+                          <button
+                            onClick={async () => {
+                              if (vagaSelecionada) {
+                                setBuscaBancoRealizada(false);
+                                await buscarParaVaga(vagaSelecionada);
+                                setBuscaBancoRealizada(true);
+                              }
+                            }}
+                            disabled={loadingMatches}
+                            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
+                          >
+                            {loadingMatches ? (
+                              <>
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                                Buscando...
+                              </>
+                            ) : (
+                              <>
+                                <Search className="w-4 h-4" />
+                                Buscar Candidatos
+                              </>
+                            )}
+                          </button>
+
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-600">Score mín:</span>
+                            <input
+                              type="number"
+                              value={filtroScoreMin}
+                              onChange={e => setFiltroScoreMin(parseInt(e.target.value) || 0)}
+                              min={0}
+                              max={100}
+                              className="border rounded px-2 py-1 w-16 text-center text-sm"
+                            />
+                          </div>
+                        </div>
+
+                        {buscaBancoRealizada && (
+                          <span className="text-sm text-gray-500">
+                            {matches.filter(m => m.score_total >= filtroScoreMin).length} candidato(s) encontrado(s)
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Loading */}
+                      {loadingMatches && !buscaBancoRealizada && (
+                        <div className="text-center py-12">
+                          <Loader2 className="w-12 h-12 text-blue-500 mx-auto mb-4 animate-spin" />
+                          <p className="text-gray-600">Buscando candidatos compatíveis...</p>
+                          <p className="text-sm text-gray-400">Analisando banco de talentos</p>
+                        </div>
+                      )}
+
+                      {/* Erro */}
+                      {errorMatches && (
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                          <p className="text-red-800">❌ {errorMatches}</p>
+                        </div>
+                      )}
+
+                      {/* Sem resultados */}
+                      {buscaBancoRealizada && matches.length === 0 && (
+                        <div className="text-center py-12">
+                          <span className="text-6xl">🔍</span>
+                          <p className="mt-4 text-gray-600 text-lg">Nenhum candidato encontrado</p>
+                          <p className="text-sm text-gray-400">
+                            Adicione mais pessoas ao banco de talentos ou ajuste a vaga
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Lista de Matches */}
+                      {matches.filter(m => m.score_total >= filtroScoreMin).length > 0 && (
+                        <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                          {matches
+                            .filter(m => m.score_total >= filtroScoreMin)
+                            .map((match, index) => (
+                              <div
+                                key={match.pessoa_id}
+                                className={`border rounded-lg p-4 hover:shadow-md transition-shadow bg-white ${
+                                  match.status === 'candidatura_criada' ? 'opacity-60' : ''
+                                }`}
+                              >
+                                <div className="flex items-start gap-4">
+                                  {/* Ranking */}
+                                  <div className="text-center min-w-[40px]">
+                                    <div className={`text-xl font-bold ${
+                                      index === 0 ? 'text-yellow-500' :
+                                      index === 1 ? 'text-gray-400' :
+                                      index === 2 ? 'text-orange-400' :
+                                      'text-gray-500'
+                                    }`}>
+                                      {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
+                                    </div>
+                                  </div>
+
+                                  {/* Score */}
+                                  <div className="text-center min-w-[70px]">
+                                    <div className={`text-2xl font-bold px-2 py-1 rounded ${
+                                      match.score_total >= 80 ? 'text-green-600 bg-green-100' :
+                                      match.score_total >= 60 ? 'text-yellow-600 bg-yellow-100' :
+                                      match.score_total >= 40 ? 'text-orange-600 bg-orange-100' :
+                                      'text-red-600 bg-red-100'
+                                    }`}>
+                                      {match.score_total}%
+                                    </div>
+                                    <span className="text-xs text-gray-500">Score</span>
+                                  </div>
+
+                                  {/* Info */}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <h4 className="font-bold text-gray-900 truncate">{match.nome}</h4>
+                                      {match.status === 'candidatura_criada' && (
+                                        <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-xs">
+                                          ✓ Candidatura criada
+                                        </span>
+                                      )}
+                                    </div>
+                                    
+                                    <p className="text-sm text-gray-600 mb-2">
+                                      {match.titulo_profissional} | {match.senioridade}
+                                    </p>
+
+                                    <div className="flex flex-wrap gap-2 text-xs text-gray-500 mb-2">
+                                      <span>📧 {match.email}</span>
+                                      {match.telefone && <span>📱 {match.telefone}</span>}
+                                    </div>
+
+                                    {/* Skills Match */}
+                                    <div className="space-y-1">
+                                      {match.skills_match.length > 0 && (
+                                        <div className="flex flex-wrap gap-1">
+                                          <span className="text-xs text-green-700 font-medium">✅</span>
+                                          {match.skills_match.slice(0, 5).map((skill, i) => (
+                                            <span key={i} className="bg-green-100 text-green-800 px-1.5 py-0.5 rounded text-xs">
+                                              {skill}
+                                            </span>
+                                          ))}
+                                          {match.skills_match.length > 5 && (
+                                            <span className="text-xs text-green-600">+{match.skills_match.length - 5}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                      
+                                      {match.skills_faltantes.length > 0 && (
+                                        <div className="flex flex-wrap gap-1">
+                                          <span className="text-xs text-red-700 font-medium">⚠️</span>
+                                          {match.skills_faltantes.slice(0, 3).map((skill, i) => (
+                                            <span key={i} className="bg-red-100 text-red-800 px-1.5 py-0.5 rounded text-xs">
+                                              {skill}
+                                            </span>
+                                          ))}
+                                          {match.skills_faltantes.length > 3 && (
+                                            <span className="text-xs text-red-600">+{match.skills_faltantes.length - 3}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Ação */}
+                                  <div className="flex-shrink-0">
+                                    {match.status !== 'candidatura_criada' ? (
+                                      <button
+                                        onClick={async () => {
+                                          setCriandoCandidaturaMatch(match.pessoa_id);
+                                          try {
+                                            const candidaturaId = await criarCandidaturaDoMatch(
+                                              parseInt(vagaSelecionadaId),
+                                              match.pessoa_id,
+                                              currentUserId
+                                            );
+                                            if (candidaturaId && onCandidaturaCriada) {
+                                              onCandidaturaCriada(candidaturaId);
+                                            }
+                                          } finally {
+                                            setCriandoCandidaturaMatch(null);
+                                          }
+                                        }}
+                                        disabled={criandoCandidaturaMatch === match.pessoa_id}
+                                        className="bg-green-600 text-white px-3 py-1.5 rounded text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
+                                      >
+                                        {criandoCandidaturaMatch === match.pessoa_id ? (
+                                          <>
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                            Criando...
+                                          </>
+                                        ) : (
+                                          <>➕ Candidatura</>
+                                        )}
+                                      </button>
+                                    ) : (
+                                      <span className="text-purple-600 text-sm font-medium">
+                                        ✓ Criada
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
 
               {/* ABA: SUGESTÕES IA */}
               {abaAtiva === 'sugestoes' && (
-                <div className="text-center py-12">
-                  <Sparkles className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-500 text-lg">Sugestões Automáticas da IA</p>
-                  <p className="text-sm text-gray-400 mt-2">
-                    A IA buscará os melhores candidatos do banco para a vaga selecionada
-                  </p>
-                  <button 
-                    className="mt-4 bg-purple-500 text-white px-6 py-2 rounded-lg hover:bg-purple-600 transition"
-                    onClick={() => alert('Funcionalidade em desenvolvimento')}
-                    disabled={!vagaSelecionadaId}
-                  >
-                    🤖 Buscar Sugestões
-                  </button>
+                <div className="space-y-4">
+                  {/* Se não tem vaga selecionada */}
+                  {!vagaSelecionadaId && (
+                    <div className="text-center py-12">
+                      <Sparkles className="w-16 h-16 text-gray-300 mx-auto mb-4" />
+                      <p className="text-gray-500 text-lg">Selecione uma Vaga</p>
+                      <p className="text-sm text-gray-400 mt-2">
+                        Escolha uma vaga no dropdown acima para receber sugestões da IA
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Se tem vaga */}
+                  {vagaSelecionadaId && (
+                    <div className="text-center py-12">
+                      <Sparkles className="w-16 h-16 text-purple-300 mx-auto mb-4" />
+                      <p className="text-gray-600 text-lg mb-2">Sugestões Inteligentes</p>
+                      <p className="text-sm text-gray-400 mb-4">
+                        Use a aba "Banco de Talentos" para buscar candidatos compatíveis com a vaga
+                      </p>
+                      <button 
+                        className="bg-purple-500 text-white px-6 py-2 rounded-lg hover:bg-purple-600 transition"
+                        onClick={() => setAbaAtiva('banco')}
+                      >
+                        🔍 Ir para Busca
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </>
