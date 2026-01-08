@@ -7,6 +7,50 @@ import { useState } from 'react';
 import { supabase } from '../../config/supabase';
 import { Pessoa } from '@/types';
 
+// ============================================
+// 🆕 FUNÇÕES HELPER PARA ANONIMIZAÇÃO
+// ============================================
+
+/**
+ * Gera nome anonimizado total: José da Silva Xavier → J.S.X.
+ */
+export const gerarNomeAnoniTotal = (nomeCompleto: string | null | undefined): string => {
+  if (!nomeCompleto) return '';
+  
+  const preposicoes = ['da', 'de', 'do', 'dos', 'das', 'e'];
+  const partes = nomeCompleto.trim().split(/\s+/);
+  
+  return partes
+    .filter(parte => parte.length > 2 && !preposicoes.includes(parte.toLowerCase()))
+    .map(parte => parte.charAt(0).toUpperCase() + '.')
+    .join('');
+};
+
+/**
+ * Gera nome anonimizado parcial: José da Silva Xavier → José S.X.
+ */
+export const gerarNomeAnoniParcial = (nomeCompleto: string | null | undefined): string => {
+  if (!nomeCompleto) return '';
+  
+  const preposicoes = ['da', 'de', 'do', 'dos', 'das', 'e'];
+  const partes = nomeCompleto.trim().split(/\s+/);
+  
+  if (partes.length === 0) return '';
+  
+  const primeiroNome = partes[0];
+  const iniciais = partes
+    .slice(1)
+    .filter(parte => parte.length > 2 && !preposicoes.includes(parte.toLowerCase()))
+    .map(parte => parte.charAt(0).toUpperCase() + '.')
+    .join('');
+  
+  if (!iniciais) {
+    return primeiroNome + ' ' + primeiroNome.charAt(0).toUpperCase() + '.';
+  }
+  
+  return primeiroNome + ' ' + iniciais;
+};
+
 export const usePessoas = () => {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [loading, setLoading] = useState(false);
@@ -36,6 +80,9 @@ export const usePessoas = () => {
         curriculo_url: pessoa.curriculo_url,
         observacoes: pessoa.observacoes,
         created_at: pessoa.created_at,
+        // 🆕 Campos de anonimização
+        nome_anoni_total: pessoa.nome_anoni_total,
+        nome_anoni_parcial: pessoa.nome_anoni_parcial,
         // Campos extras para BancoTalentos
         titulo_profissional: pessoa.titulo_profissional,
         senioridade: pessoa.senioridade,
@@ -70,6 +117,10 @@ export const usePessoas = () => {
     try {
       console.log('➕ Criando pessoa:', newPessoa);
 
+      // 🆕 Gerar nomes anonimizados automaticamente
+      const nomeAnoniTotal = gerarNomeAnoniTotal(newPessoa.nome);
+      const nomeAnoniParcial = gerarNomeAnoniParcial(newPessoa.nome);
+
       const { data, error } = await supabase
         .from('pessoas')
         .insert([{
@@ -79,7 +130,10 @@ export const usePessoas = () => {
           cpf: newPessoa.cpf,
           linkedin_url: newPessoa.linkedin_url,
           curriculo_url: newPessoa.curriculo_url,
-          observacoes: newPessoa.observacoes
+          observacoes: newPessoa.observacoes,
+          // 🆕 Campos de anonimização
+          nome_anoni_total: nomeAnoniTotal,
+          nome_anoni_parcial: nomeAnoniParcial
         }])
         .select()
         .single();
@@ -95,7 +149,10 @@ export const usePessoas = () => {
         linkedin_url: data.linkedin_url,
         curriculo_url: data.curriculo_url,
         observacoes: data.observacoes,
-        created_at: data.created_at
+        created_at: data.created_at,
+        // 🆕 Campos de anonimização
+        nome_anoni_total: data.nome_anoni_total,
+        nome_anoni_parcial: data.nome_anoni_parcial
       };
 
       setPessoas(prev => [createdPessoa, ...prev]);
@@ -116,17 +173,26 @@ export const usePessoas = () => {
     try {
       console.log('📝 Atualizando pessoa:', id, updates);
 
+      // 🆕 Gerar nomes anonimizados se nome foi atualizado
+      const updateData: any = {
+        nome: updates.nome,
+        email: updates.email,
+        telefone: updates.telefone,
+        cpf: updates.cpf,
+        linkedin_url: updates.linkedin_url,
+        curriculo_url: updates.curriculo_url,
+        observacoes: updates.observacoes
+      };
+
+      // Se nome foi alterado, atualizar anonimizações
+      if (updates.nome) {
+        updateData.nome_anoni_total = gerarNomeAnoniTotal(updates.nome);
+        updateData.nome_anoni_parcial = gerarNomeAnoniParcial(updates.nome);
+      }
+
       const { data, error } = await supabase
         .from('pessoas')
-        .update({
-          nome: updates.nome,
-          email: updates.email,
-          telefone: updates.telefone,
-          cpf: updates.cpf,
-          linkedin_url: updates.linkedin_url,
-          curriculo_url: updates.curriculo_url,
-          observacoes: updates.observacoes
-        })
+        .update(updateData)
         .eq('id', parseInt(id))
         .select()
         .single();
@@ -142,7 +208,10 @@ export const usePessoas = () => {
         linkedin_url: data.linkedin_url,
         curriculo_url: data.curriculo_url,
         observacoes: data.observacoes,
-        created_at: data.created_at
+        created_at: data.created_at,
+        // 🆕 Campos de anonimização
+        nome_anoni_total: data.nome_anoni_total,
+        nome_anoni_parcial: data.nome_anoni_parcial
       };
 
       setPessoas(prev => prev.map(p => p.id === id ? updatedPessoa : p));
@@ -184,11 +253,57 @@ export const usePessoas = () => {
         linkedin_url: data.linkedin_url,
         curriculo_url: data.curriculo_url,
         observacoes: data.observacoes,
-        created_at: data.created_at
+        created_at: data.created_at,
+        // 🆕 Campos de anonimização
+        nome_anoni_total: data.nome_anoni_total,
+        nome_anoni_parcial: data.nome_anoni_parcial
       };
     } catch (err) {
       console.error('❌ Erro ao buscar pessoa:', err);
       return null;
+    }
+  };
+
+  /**
+   * 🆕 Busca pessoa por nome (inclui busca em nomes anonimizados)
+   * Útil para integração com emails onde o nome pode estar anonimizado
+   */
+  const findPessoaByNome = async (nomeBusca: string): Promise<Pessoa[]> => {
+    try {
+      if (!nomeBusca || nomeBusca.length < 2) return [];
+      
+      const termoBusca = nomeBusca.trim();
+      
+      // Buscar em nome completo, nome_anoni_parcial e nome_anoni_total
+      const { data, error } = await supabase
+        .from('pessoas')
+        .select('*')
+        .or(`nome.ilike.%${termoBusca}%,nome_anoni_parcial.ilike.%${termoBusca}%,nome_anoni_total.ilike.%${termoBusca}%`)
+        .limit(10);
+      
+      if (error) {
+        console.error('❌ Erro na busca por nome:', error);
+        return [];
+      }
+      
+      return (data || []).map((pessoa: any) => ({
+        id: String(pessoa.id),
+        nome: pessoa.nome,
+        email: pessoa.email,
+        telefone: pessoa.telefone,
+        cpf: pessoa.cpf,
+        linkedin_url: pessoa.linkedin_url,
+        curriculo_url: pessoa.curriculo_url,
+        observacoes: pessoa.observacoes,
+        created_at: pessoa.created_at,
+        nome_anoni_total: pessoa.nome_anoni_total,
+        nome_anoni_parcial: pessoa.nome_anoni_parcial,
+        titulo_profissional: pessoa.titulo_profissional,
+        senioridade: pessoa.senioridade
+      }));
+    } catch (err) {
+      console.error('❌ Erro ao buscar pessoa por nome:', err);
+      return [];
     }
   };
 
@@ -269,6 +384,7 @@ export const usePessoas = () => {
     addPessoa,
     updatePessoa,
     deletePessoa,
-    findPessoaByCpfOrEmail
+    findPessoaByCpfOrEmail,
+    findPessoaByNome // 🆕 Busca por nome (inclui anonimizados)
   };
 };

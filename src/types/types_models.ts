@@ -98,6 +98,9 @@ export interface Pessoa {
   createdAt?: string;
   cpf?: string;
   created_at?: string;
+  // 🆕 Campos de anonimização para envio a clientes
+  nome_anoni_total?: string;    // Ex: J.S.X. (primeira letra de cada nome)
+  nome_anoni_parcial?: string;  // Ex: José S.X. (primeiro nome + iniciais)
   // Campos extras do Banco de Talentos
   titulo_profissional?: string;
   senioridade?: string;

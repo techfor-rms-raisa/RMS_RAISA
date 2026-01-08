@@ -405,23 +405,26 @@ function stripHtml(html: string): string {
 
 /**
  * Busca candidatura no banco usando dados da classificação
+ * 🆕 v2.0: Inclui busca por nomes anonimizados (nome_anoni_parcial, nome_anoni_total)
  */
 async function buscarCandidatura(classificacao: ClassificacaoEmail) {
-  // Tentar busca exata primeiro
+  const supabaseAdmin = getSupabaseAdmin();
+  
+  // ============================================
+  // 1. BUSCA PRINCIPAL POR NOME E VAGA
+  // ============================================
+  
   if (classificacao.candidato_nome && classificacao.vaga_titulo) {
-    const { data: candidaturas } = await supabaseAdmin
-      .from('candidaturas')
-      .select(`
-        id, 
-        candidato_nome, 
-        status,
-        vaga_id,
-        vagas!inner(id, titulo, cliente_id, clients(razao_social_cliente))
-      `)
-      .ilike('candidato_nome', `%${classificacao.candidato_nome}%`)
-      .limit(10);
+    // Buscar por nome completo
+    let candidaturas = await buscarPorNome(classificacao.candidato_nome);
+    
+    // Se não encontrou, tentar por nomes anonimizados
+    if (candidaturas.length === 0) {
+      console.log(`🔍 [Webhook] Buscando por nome anonimizado: ${classificacao.candidato_nome}`);
+      candidaturas = await buscarPorNomeAnonimizado(classificacao.candidato_nome);
+    }
 
-    if (candidaturas && candidaturas.length > 0) {
+    if (candidaturas.length > 0) {
       // Filtrar por vaga
       const vagaTitulo = classificacao.vaga_titulo.toLowerCase();
       const alternativas = classificacao.vaga_titulo_alternativas?.map(a => a.toLowerCase()) || [];
@@ -437,23 +440,21 @@ async function buscarCandidatura(classificacao: ClassificacaoEmail) {
     }
   }
 
-  // Busca fuzzy por alternativas
+  // ============================================
+  // 2. BUSCA POR ALTERNATIVAS DE NOME
+  // ============================================
+  
   const alternativasNome = classificacao.candidato_nome_alternativas || [];
   for (const nome of alternativasNome) {
-    const { data: candidaturas } = await supabaseAdmin
-      .from('candidaturas')
-      .select(`
-        id, 
-        candidato_nome, 
-        status,
-        vaga_id,
-        vagas!inner(id, titulo, cliente_id)
-      `)
-      .ilike('candidato_nome', `%${nome}%`)
-      .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente'])
-      .limit(5);
+    // Tentar nome completo
+    let candidaturas = await buscarPorNome(nome);
+    
+    // Se não encontrou, tentar anonimizado
+    if (candidaturas.length === 0) {
+      candidaturas = await buscarPorNomeAnonimizado(nome);
+    }
 
-    if (candidaturas && candidaturas.length === 1) {
+    if (candidaturas.length === 1) {
       return candidaturas[0];
     }
   }
@@ -462,7 +463,71 @@ async function buscarCandidatura(classificacao: ClassificacaoEmail) {
 }
 
 /**
+ * 🆕 Busca candidatura por nome completo
+ */
+async function buscarPorNome(nome: string) {
+  const supabaseAdmin = getSupabaseAdmin();
+  
+  const { data: candidaturas } = await supabaseAdmin
+    .from('candidaturas')
+    .select(`
+      id, 
+      candidato_nome, 
+      status,
+      vaga_id,
+      pessoa_id,
+      vagas!inner(id, titulo, cliente_id, status_posicao, clients(razao_social_cliente))
+    `)
+    .ilike('candidato_nome', `%${nome}%`)
+    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista'])
+    .limit(10);
+
+  return candidaturas || [];
+}
+
+/**
+ * 🆕 Busca candidatura por nome anonimizado (parcial ou total)
+ * Busca na tabela pessoas e depois relaciona com candidaturas
+ */
+async function buscarPorNomeAnonimizado(nomeOuAnoni: string) {
+  const supabaseAdmin = getSupabaseAdmin();
+  
+  // Primeiro, buscar pessoas pelo nome anonimizado
+  const { data: pessoas } = await supabaseAdmin
+    .from('pessoas')
+    .select('id, nome, nome_anoni_parcial, nome_anoni_total')
+    .or(`nome_anoni_parcial.ilike.%${nomeOuAnoni}%,nome_anoni_total.ilike.%${nomeOuAnoni}%`)
+    .limit(10);
+
+  if (!pessoas || pessoas.length === 0) {
+    return [];
+  }
+
+  console.log(`✅ [Webhook] Encontradas ${pessoas.length} pessoas com nome anonimizado similar`);
+
+  // Buscar candidaturas dessas pessoas
+  const pessoaIds = pessoas.map((p: any) => p.id);
+  
+  const { data: candidaturas } = await supabaseAdmin
+    .from('candidaturas')
+    .select(`
+      id, 
+      candidato_nome, 
+      status,
+      vaga_id,
+      pessoa_id,
+      vagas!inner(id, titulo, cliente_id, status_posicao)
+    `)
+    .in('pessoa_id', pessoaIds)
+    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista'])
+    .limit(10);
+
+  return candidaturas || [];
+}
+
+/**
  * Processa email de envio de CV
+ * 🆕 v2.0: Também atualiza status_posicao da vaga
  */
 async function processarEnvioCV(
   emailData: any, 
@@ -470,6 +535,7 @@ async function processarEnvioCV(
   classificacao: ClassificacaoEmail,
   logId: number | null
 ) {
+  const supabaseAdmin = getSupabaseAdmin();
   console.log('📤 [Webhook] Processando envio de CV...');
 
   // Criar registro de envio
@@ -509,6 +575,19 @@ async function processarEnvioCV(
     })
     .eq('id', candidatura.id);
 
+  // 🆕 Atualizar status_posicao da VAGA
+  if (candidatura.vaga_id) {
+    await supabaseAdmin
+      .from('vagas')
+      .update({
+        status_posicao: 'enviado_cliente',
+        atualizado_em: new Date().toISOString()
+      })
+      .eq('id', candidatura.vaga_id);
+    
+    console.log(`✅ [Webhook] status_posicao da vaga ${candidatura.vaga_id} atualizado para: enviado_cliente`);
+  }
+
   console.log(`✅ [Webhook] Envio registrado: ID ${envio?.id}`);
 
   return { acao: 'criou_envio', envio_id: envio?.id };
@@ -516,6 +595,7 @@ async function processarEnvioCV(
 
 /**
  * Processa resposta do cliente
+ * 🆕 v2.0: Também atualiza status_posicao da vaga
  */
 async function processarRespostaCliente(
   emailData: any, 
@@ -523,6 +603,7 @@ async function processarRespostaCliente(
   classificacao: ClassificacaoEmail,
   logId: number | null
 ) {
+  const supabaseAdmin = getSupabaseAdmin();
   console.log('📬 [Webhook] Processando resposta do cliente...');
 
   // Classificar a resposta com mais detalhes
@@ -564,8 +645,8 @@ async function processarRespostaCliente(
     .limit(1)
     .maybeSingle();
 
-  // Mapear tipo de resposta para status
-  const statusMap: Record<string, string> = {
+  // Mapear tipo de resposta para status da candidatura
+  const statusCandidaturaMap: Record<string, string> = {
     'visualizado': 'visualizado',
     'em_analise': 'em_analise',
     'agendamento': 'entrevista_cliente',
@@ -574,7 +655,18 @@ async function processarRespostaCliente(
     'duvida': 'aguardando_cliente'
   };
 
-  const novoStatus = statusMap[resposta.tipo_resposta] || 'aguardando_cliente';
+  // 🆕 Mapear tipo de resposta para status_posicao da VAGA
+  const statusPosicaoMap: Record<string, string> = {
+    'visualizado': 'aguardando_cliente',
+    'em_analise': 'aguardando_cliente',
+    'agendamento': 'entrevista_cliente',
+    'aprovado': 'aprovado_cliente',
+    'reprovado': 'reprovado',
+    'duvida': 'aguardando_cliente'
+  };
+
+  const novoStatus = statusCandidaturaMap[resposta.tipo_resposta] || 'aguardando_cliente';
+  const novoStatusPosicao = statusPosicaoMap[resposta.tipo_resposta] || 'aguardando_cliente';
 
   // Atualizar status do envio (se existir)
   if (envioExistente) {
@@ -631,7 +723,20 @@ async function processarRespostaCliente(
     })
     .eq('id', candidatura.id);
 
-  console.log(`✅ [Webhook] Status atualizado para: ${novoStatus}`);
+  // 🆕 Atualizar status_posicao da VAGA
+  if (candidatura.vaga_id) {
+    await supabaseAdmin
+      .from('vagas')
+      .update({
+        status_posicao: novoStatusPosicao,
+        atualizado_em: new Date().toISOString()
+      })
+      .eq('id', candidatura.vaga_id);
+    
+    console.log(`✅ [Webhook] status_posicao da vaga ${candidatura.vaga_id} atualizado para: ${novoStatusPosicao}`);
+  }
+
+  console.log(`✅ [Webhook] Status candidatura atualizado para: ${novoStatus}`);
 
   return { 
     acao: `atualizou_status_${resposta.tipo_resposta}`, 
