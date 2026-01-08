@@ -1,5 +1,5 @@
 /**
- * Candidaturas.tsx - RMS RAISA v54.0
+ * Candidaturas.tsx - RMS RAISA v55.0
  * Componente de Gestão de Candidaturas (ATUALIZADO)
  * 
  * FLUXO DE STATUS (Processos Internos):
@@ -8,21 +8,22 @@
  * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
  * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
  * 
- * NOVIDADES v54.0:
+ * NOVIDADES v55.0:
+ * - 🆕 Filtro por Cliente (dropdown)
  * - Modal de Detalhes da Candidatura ao clicar na linha
  * - Histórico de mudanças de status
  * - Ações rápidas para mudar status
  * - Motivo obrigatório para reprovação
  * - Fluxo ajustado conforme processos internos
  * 
- * Data: 30/12/2025
+ * Data: 08/01/2026
  */
 
 import React, { useState, useMemo } from 'react';
 import { 
   Plus, Filter, Search, RefreshCw, 
   User, Mail, Calendar, ChevronDown,
-  FileText, Briefcase, Eye
+  FileText, Briefcase, Eye, Building2
 } from 'lucide-react';
 import { Candidatura, Vaga, Pessoa } from '@/types';
 import NovaCandidaturaModal from './NovaCandidaturaModal';
@@ -32,10 +33,16 @@ import DetalhesCandidaturaModal from './DetalhesCandidaturaModal';
 // TIPOS
 // ============================================
 
+interface Cliente {
+    id: number | string;
+    nome: string;
+}
+
 interface CandidaturasProps {
     candidaturas: Candidatura[];
     vagas: Vaga[];
     pessoas: Pessoa[];
+    clientes?: Cliente[]; // 🆕 Lista de clientes (opcional)
     updateStatus: (id: string, status: any) => void;
     onReload?: () => void;
     currentUserId?: number;
@@ -49,7 +56,8 @@ interface CandidaturasProps {
 const Candidaturas: React.FC<CandidaturasProps> = ({ 
     candidaturas = [], 
     vagas = [], 
-    pessoas = [], 
+    pessoas = [],
+    clientes = [], // 🆕 
     updateStatus,
     onReload,
     currentUserId = 1,
@@ -58,6 +66,7 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     // Estados
     const [filterVaga, setFilterVaga] = useState<string>('all');
     const [filterStatus, setFilterStatus] = useState<string>('all');
+    const [filterCliente, setFilterCliente] = useState<string>('all'); // 🆕 Filtro por cliente
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
     
@@ -69,28 +78,107 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     const safeCandidaturas = Array.isArray(candidaturas) ? candidaturas : [];
     const safeVagas = Array.isArray(vagas) ? vagas : [];
     const safePessoas = Array.isArray(pessoas) ? pessoas : [];
+    const safeClientes = Array.isArray(clientes) ? clientes : [];
+
+    // ============================================
+    // 🆕 EXTRAIR CLIENTES ÚNICOS DAS VAGAS
+    // ============================================
+    
+    const clientesDisponiveis = useMemo(() => {
+        // Se temos lista de clientes via props, usar ela
+        if (safeClientes.length > 0) {
+            return safeClientes;
+        }
+        
+        // Caso contrário, extrair das vagas
+        const clientesMap = new Map<string, Cliente>();
+        
+        safeVagas.forEach(vaga => {
+            const vagaAny = vaga as any;
+            
+            // Tentar diferentes formatos de cliente
+            if (vagaAny.cliente_id && vagaAny.cliente_nome) {
+                clientesMap.set(String(vagaAny.cliente_id), {
+                    id: vagaAny.cliente_id,
+                    nome: vagaAny.cliente_nome
+                });
+            } else if (vagaAny.cliente?.id && vagaAny.cliente?.nome) {
+                clientesMap.set(String(vagaAny.cliente.id), {
+                    id: vagaAny.cliente.id,
+                    nome: vagaAny.cliente.nome
+                });
+            } else if (vagaAny.cliente_id) {
+                // Só temos o ID, criar nome genérico
+                clientesMap.set(String(vagaAny.cliente_id), {
+                    id: vagaAny.cliente_id,
+                    nome: `Cliente #${vagaAny.cliente_id}`
+                });
+            }
+        });
+        
+        return Array.from(clientesMap.values()).sort((a, b) => 
+            a.nome.localeCompare(b.nome)
+        );
+    }, [safeVagas, safeClientes]);
+
+    // ============================================
+    // HELPER: Obter cliente_id da vaga
+    // ============================================
+    
+    const getClienteIdFromVaga = (vagaId: string | number | undefined): string | null => {
+        if (!vagaId) return null;
+        const vaga = safeVagas.find(v => String(v.id) === String(vagaId));
+        if (!vaga) return null;
+        
+        const vagaAny = vaga as any;
+        if (vagaAny.cliente_id) return String(vagaAny.cliente_id);
+        if (vagaAny.cliente?.id) return String(vagaAny.cliente.id);
+        return null;
+    };
+
+    const getClienteNomeFromVaga = (vagaId: string | number | undefined): string => {
+        if (!vagaId) return '-';
+        const vaga = safeVagas.find(v => String(v.id) === String(vagaId));
+        if (!vaga) return '-';
+        
+        const vagaAny = vaga as any;
+        if (vagaAny.cliente_nome) return vagaAny.cliente_nome;
+        if (vagaAny.cliente?.nome) return vagaAny.cliente.nome;
+        if (vagaAny.cliente_id) return `Cliente #${vagaAny.cliente_id}`;
+        return '-';
+    };
 
     // ============================================
     // CONTADORES POR STATUS
     // ============================================
     
     const contadores = useMemo(() => {
+        // Aplicar filtro de cliente aos contadores também
+        let candidaturasParaContar = safeCandidaturas;
+        
+        if (filterCliente !== 'all') {
+            candidaturasParaContar = candidaturasParaContar.filter(c => {
+                const clienteId = getClienteIdFromVaga(c.vaga_id);
+                return clienteId === filterCliente;
+            });
+        }
+        
         return {
-            triagem: safeCandidaturas.filter(c => c.status === 'triagem').length,
-            entrevista: safeCandidaturas.filter(c => c.status === 'entrevista').length,
-            aprovado: safeCandidaturas.filter(c => c.status === 'aprovado').length,
-            enviado_cliente: safeCandidaturas.filter(c => c.status === 'enviado_cliente').length,
-            aguardando_cliente: safeCandidaturas.filter(c => c.status === 'aguardando_cliente').length,
-            entrevista_cliente: safeCandidaturas.filter(c => c.status === 'entrevista_cliente').length,
-            aprovado_cliente: safeCandidaturas.filter(c => c.status === 'aprovado_cliente').length,
-            contratado: safeCandidaturas.filter(c => c.status === 'contratado').length,
-            reprovado: safeCandidaturas.filter(c => 
+            triagem: candidaturasParaContar.filter(c => c.status === 'triagem').length,
+            entrevista: candidaturasParaContar.filter(c => c.status === 'entrevista').length,
+            aprovado: candidaturasParaContar.filter(c => c.status === 'aprovado').length,
+            enviado_cliente: candidaturasParaContar.filter(c => c.status === 'enviado_cliente').length,
+            aguardando_cliente: candidaturasParaContar.filter(c => c.status === 'aguardando_cliente').length,
+            entrevista_cliente: candidaturasParaContar.filter(c => c.status === 'entrevista_cliente').length,
+            aprovado_cliente: candidaturasParaContar.filter(c => c.status === 'aprovado_cliente').length,
+            contratado: candidaturasParaContar.filter(c => c.status === 'contratado').length,
+            reprovado: candidaturasParaContar.filter(c => 
                 c.status === 'reprovado' || 
                 c.status === 'reprovado_cliente'
             ).length,
-            total: safeCandidaturas.length
+            total: candidaturasParaContar.length
         };
-    }, [safeCandidaturas]);
+    }, [safeCandidaturas, filterCliente, safeVagas]);
 
     // ============================================
     // FILTROS
@@ -98,6 +186,14 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
 
     const candidaturasFiltradas = useMemo(() => {
         let filtered = safeCandidaturas;
+        
+        // 🆕 Filtro por cliente
+        if (filterCliente !== 'all') {
+            filtered = filtered.filter(c => {
+                const clienteId = getClienteIdFromVaga(c.vaga_id);
+                return clienteId === filterCliente;
+            });
+        }
         
         // Filtro por vaga
         if (filterVaga !== 'all') {
@@ -126,7 +222,21 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         }
         
         return filtered;
-    }, [filterVaga, filterStatus, searchTerm, safeCandidaturas]);
+    }, [filterVaga, filterStatus, filterCliente, searchTerm, safeCandidaturas, safeVagas]);
+
+    // ============================================
+    // 🆕 VAGAS FILTRADAS POR CLIENTE
+    // ============================================
+    
+    const vagasFiltradas = useMemo(() => {
+        if (filterCliente === 'all') return safeVagas;
+        
+        return safeVagas.filter(vaga => {
+            const vagaAny = vaga as any;
+            const clienteId = vagaAny.cliente_id || vagaAny.cliente?.id;
+            return String(clienteId) === filterCliente;
+        });
+    }, [safeVagas, filterCliente]);
 
     // ============================================
     // HELPERS
@@ -234,6 +344,17 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         }
     };
 
+    // 🆕 Handler para limpar todos os filtros
+    const handleLimparFiltros = () => {
+        setFilterVaga('all');
+        setFilterStatus('all');
+        setFilterCliente('all');
+        setSearchTerm('');
+    };
+
+    // Verificar se há filtros ativos
+    const temFiltrosAtivos = filterVaga !== 'all' || filterStatus !== 'all' || filterCliente !== 'all' || searchTerm;
+
     // ============================================
     // RENDER
     // ============================================
@@ -252,6 +373,11 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                     </h1>
                     <p className="text-gray-500 text-sm mt-1">
                         Gerencie candidatos associados às vagas
+                        {filterCliente !== 'all' && (
+                            <span className="ml-2 text-orange-600 font-medium">
+                                • Filtrando por: {clientesDisponiveis.find(c => String(c.id) === filterCliente)?.nome}
+                            </span>
+                        )}
                     </p>
                 </div>
                 
@@ -350,14 +476,37 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                         />
                     </div>
                     
-                    {/* Filtro por Vaga */}
+                    {/* 🆕 Filtro por Cliente */}
+                    <div className="relative">
+                        <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <select 
+                            className="border border-gray-200 p-2 pl-9 rounded-lg focus:ring-2 focus:ring-orange-500 min-w-[180px] appearance-none bg-white" 
+                            value={filterCliente} 
+                            onChange={e => {
+                                setFilterCliente(e.target.value);
+                                // Limpar filtro de vaga quando mudar cliente
+                                setFilterVaga('all');
+                            }}
+                        >
+                            <option value="all">Todos os Clientes</option>
+                            {clientesDisponiveis.map(c => (
+                                <option key={c.id} value={String(c.id)}>
+                                    {c.nome}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                    
+                    {/* Filtro por Vaga (mostra vagas do cliente selecionado) */}
                     <select 
                         className="border border-gray-200 p-2 rounded-lg focus:ring-2 focus:ring-orange-500 min-w-[200px]" 
                         value={filterVaga} 
                         onChange={e => setFilterVaga(e.target.value)}
                     >
-                        <option value="all">Todas as Vagas</option>
-                        {safeVagas.map(v => (
+                        <option value="all">
+                            {filterCliente !== 'all' ? 'Todas as Vagas do Cliente' : 'Todas as Vagas'}
+                        </option>
+                        {vagasFiltradas.map(v => (
                             <option key={v.id} value={String(v.id)}>
                                 {v.titulo}
                             </option>
@@ -383,13 +532,9 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                     </select>
                     
                     {/* Botão Limpar */}
-                    {(filterVaga !== 'all' || filterStatus !== 'all' || searchTerm) && (
+                    {temFiltrosAtivos && (
                         <button
-                            onClick={() => {
-                                setFilterVaga('all');
-                                setFilterStatus('all');
-                                setSearchTerm('');
-                            }}
+                            onClick={handleLimparFiltros}
                             className="text-gray-500 hover:text-gray-700 px-4 py-2 border border-gray-200 rounded-lg"
                         >
                             Limpar
@@ -436,6 +581,10 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                                     <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
                                         Vaga
                                     </th>
+                                    {/* 🆕 Coluna Cliente */}
+                                    <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
+                                        Cliente
+                                    </th>
                                     <th className="px-6 py-4 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
                                         Data
                                     </th>
@@ -475,6 +624,13 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="text-sm text-gray-900">{getVagaName(c.vaga_id)}</div>
                                         </td>
+                                        {/* 🆕 Célula Cliente */}
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="text-sm text-gray-600 flex items-center gap-1">
+                                                <Building2 className="w-3 h-3 text-gray-400" />
+                                                {getClienteNomeFromVaga(c.vaga_id)}
+                                            </div>
+                                        </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="text-sm text-gray-500 flex items-center gap-1">
                                                 <Calendar className="w-3 h-3" />
@@ -510,7 +666,8 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                     <div className="px-6 py-4 bg-gray-50 border-t text-sm text-gray-500 flex justify-between items-center">
                         <span>
                             {candidaturasFiltradas.length} candidatura{candidaturasFiltradas.length !== 1 ? 's' : ''} encontrada{candidaturasFiltradas.length !== 1 ? 's' : ''}
-                            {filterVaga !== 'all' && ` para "${getVagaName(filterVaga)}"`}
+                            {filterCliente !== 'all' && ` • ${clientesDisponiveis.find(c => String(c.id) === filterCliente)?.nome}`}
+                            {filterVaga !== 'all' && ` • ${getVagaName(filterVaga)}`}
                         </span>
                         {onReload && (
                             <button
