@@ -30,7 +30,7 @@ if (!apiKey) {
 
 const anthropic = new Anthropic({ apiKey });
 
-const CLAUDE_MODEL = 'claude-3-5-sonnet-20241022'; // Usando Sonnet para análise mais profunda
+const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'; // Haiku 4.5 - mais econômico ($1/$5 por 1M tokens)
 const MAX_TOKENS = 8192;
 
 // ============================================================
