@@ -187,57 +187,60 @@ export const useRaisaCVSearch = () => {
   }, []);
 
   /**
+   * 🆕 Normaliza skill para comparação (remove espaços, acentos, lowercase)
+   */
+  const normalizarSkill = (skill: string): string => {
+    return (skill || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '') // Remove acentos
+      .replace(/\s+/g, '') // Remove espaços
+      .replace(/[^a-z0-9]/g, ''); // Remove caracteres especiais
+  };
+
+  /**
    * Busca com sinônimos (fallback quando RPC não disponível)
-   * Usa tabela skill_sinonimos para normalização
+   * 🆕 v2.0: Normalização melhorada para match de skills
    */
   const buscarPorSkillsComSinonimos = async (
     skills: string[],
     filtros?: Omit<BuscaFiltros, 'skills'>
   ): Promise<CandidatoMatch[]> => {
     try {
-      console.log('🔄 Usando busca com sinônimos...');
+      console.log('🔄 Usando busca com sinônimos (v2.0)...');
+      console.log(`📋 Skills da vaga: ${skills.join(', ')}`);
       
-      // 1. Buscar sinônimos para normalizar as skills de entrada
-      const { data: sinonimosData } = await supabase
-        .from('skill_sinonimos')
-        .select('skill_canonica, sinonimo')
-        .or(skills.map(s => `sinonimo.ilike.${s}`).join(','));
-      
-      // Criar mapa de skill original -> skill canônica
+      // 1. Normalizar skills da vaga
       const skillsNormalizadas = new Set<string>();
-      const sinonimosMap = new Map<string, string>();
+      const skillsOriginais = new Map<string, string>(); // normalizada -> original
       
-      (sinonimosData || []).forEach((s: any) => {
-        sinonimosMap.set(s.sinonimo.toLowerCase(), s.skill_canonica);
-        skillsNormalizadas.add(s.skill_canonica.toLowerCase());
-      });
-      
-      // Adicionar skills originais que não têm sinônimo
       skills.forEach(s => {
-        const canonical = sinonimosMap.get(s.toLowerCase());
-        if (canonical) {
-          skillsNormalizadas.add(canonical.toLowerCase());
-        } else {
-          skillsNormalizadas.add(s.toLowerCase());
-        }
+        const normalizada = normalizarSkill(s);
+        skillsNormalizadas.add(normalizada);
+        skillsOriginais.set(normalizada, s);
       });
       
       console.log(`📋 Skills normalizadas: ${Array.from(skillsNormalizadas).join(', ')}`);
 
-      // 2. Buscar TODOS os sinônimos das skills normalizadas
-      const { data: todosSimonimos } = await supabase
+      // 2. Buscar sinônimos para expandir a busca
+      const { data: sinonimosData } = await supabase
         .from('skill_sinonimos')
-        .select('skill_canonica, sinonimo')
-        .in('skill_canonica', Array.from(skillsNormalizadas).map(s => s.charAt(0).toUpperCase() + s.slice(1)));
+        .select('skill_canonica, sinonimo');
       
-      // Lista de todas as variações possíveis
-      const todasVariacoes = new Set<string>();
-      skillsNormalizadas.forEach(s => todasVariacoes.add(s));
-      (todosSimonimos || []).forEach((s: any) => {
-        todasVariacoes.add(s.sinonimo.toLowerCase());
+      // Criar mapa de sinônimos (normalizado)
+      const sinonimosMap = new Map<string, string>();
+      (sinonimosData || []).forEach((s: any) => {
+        const sinonNorm = normalizarSkill(s.sinonimo);
+        const canonNorm = normalizarSkill(s.skill_canonica);
+        sinonimosMap.set(sinonNorm, s.skill_canonica);
+        // Adicionar variações ao conjunto de busca
+        if (skillsNormalizadas.has(canonNorm) || skillsNormalizadas.has(sinonNorm)) {
+          skillsNormalizadas.add(sinonNorm);
+          skillsNormalizadas.add(canonNorm);
+        }
       });
       
-      // 3. Buscar pessoas que têm essas skills
+      // 3. Buscar TODAS as skills de pessoas
       const { data: skillsData, error: skillsError } = await supabase
         .from('pessoa_skills')
         .select('pessoa_id, skill_nome, nivel, anos_experiencia');
@@ -247,25 +250,33 @@ export const useRaisaCVSearch = () => {
         return await buscarEmPessoas(skills, filtros);
       }
 
-      // Filtrar skills que batem com alguma variação
-      const skillsMatch = (skillsData || []).filter((s: any) => 
-        todasVariacoes.has(s.skill_nome.toLowerCase())
-      );
+      console.log(`📊 Total de skills no banco: ${(skillsData || []).length}`);
 
-      // 4. Agrupar por pessoa
-      const pessoaSkillsMap = new Map<number, { skills: string[], anos: number }>();
+      // 4. Filtrar skills que batem (comparação normalizada)
+      const skillsMatch = (skillsData || []).filter((s: any) => {
+        const skillNorm = normalizarSkill(s.skill_nome);
+        return skillsNormalizadas.has(skillNorm);
+      });
+
+      console.log(`✅ Skills com match: ${skillsMatch.length}`);
+
+      // 5. Agrupar por pessoa
+      const pessoaSkillsMap = new Map<number, { skills: string[], skillsOriginais: string[], anos: number }>();
       skillsMatch.forEach((s: any) => {
-        const current = pessoaSkillsMap.get(s.pessoa_id) || { skills: [], anos: 0 };
-        // Normalizar para skill canônica
-        const canonical = sinonimosMap.get(s.skill_nome.toLowerCase()) || s.skill_nome;
-        if (!current.skills.includes(canonical)) {
-          current.skills.push(canonical);
+        const current = pessoaSkillsMap.get(s.pessoa_id) || { skills: [], skillsOriginais: [], anos: 0 };
+        const skillNorm = normalizarSkill(s.skill_nome);
+        
+        if (!current.skills.includes(skillNorm)) {
+          current.skills.push(skillNorm);
+          current.skillsOriginais.push(s.skill_nome);
         }
         current.anos += s.anos_experiencia || 0;
         pessoaSkillsMap.set(s.pessoa_id, current);
       });
 
-      // 5. Ordenar por quantidade de matches
+      console.log(`👥 Pessoas com matches: ${pessoaSkillsMap.size}`);
+
+      // 6. Ordenar por quantidade de matches
       const pessoasOrdenadas = Array.from(pessoaSkillsMap.entries())
         .sort((a, b) => b[1].skills.length - a[1].skills.length)
         .slice(0, filtros?.limite || 20);
@@ -275,7 +286,7 @@ export const useRaisaCVSearch = () => {
         return [];
       }
 
-      // 6. Buscar dados completos das pessoas
+      // 7. Buscar dados completos das pessoas
       const pessoaIds = pessoasOrdenadas.map(([id]) => id);
       
       let query = supabase
@@ -294,16 +305,20 @@ export const useRaisaCVSearch = () => {
 
       if (pessoasError) throw pessoasError;
 
-      // 7. Montar resultados
-      const skillsOriginais = Array.from(skillsNormalizadas);
+      // 8. Montar resultados
+      const skillsOriginaisList = skills; // Lista original da vaga
       
       const resultados: CandidatoMatch[] = (pessoasData || []).map((p: any) => {
-        const dadosMatch = pessoaSkillsMap.get(p.id) || { skills: [], anos: 0 };
-        const skillsEncontradas = dadosMatch.skills;
-        const skillsFaltantes = skillsOriginais.filter(s => 
-          !skillsEncontradas.some(e => e.toLowerCase() === s.toLowerCase())
+        const dadosMatch = pessoaSkillsMap.get(p.id) || { skills: [], skillsOriginais: [], anos: 0 };
+        const skillsEncontradas = dadosMatch.skillsOriginais; // Usar nomes originais para exibição
+        
+        // Calcular skills faltantes (comparando normalizado)
+        const skillsNormEncontradas = dadosMatch.skills;
+        const skillsFaltantes = skillsOriginaisList.filter(s => 
+          !skillsNormEncontradas.includes(normalizarSkill(s))
         );
-        const scoreMatch = Math.round((skillsEncontradas.length / skillsOriginais.length) * 100);
+        
+        const scoreMatch = Math.round((skillsNormEncontradas.length / skills.length) * 100);
 
         return {
           pessoa_id: p.id,
