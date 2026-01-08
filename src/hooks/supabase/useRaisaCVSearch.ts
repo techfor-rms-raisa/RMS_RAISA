@@ -167,7 +167,7 @@ export const useRaisaCVSearch = () => {
           justificativa_ia: '',
           status: 'novo',
           top_skills: (r.skills_match || []).slice(0, 5),
-          anos_experiencia_total: 0
+          anos_experiencia_total: r.anos_experiencia_total || 0  // 🆕 v4.0: Anos de experiência
         }));
 
         setMatches(resultados);
@@ -854,5 +854,4 @@ export const useRaisaCVSearch = () => {
     setError
   };
 };
-
 

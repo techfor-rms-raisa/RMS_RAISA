@@ -1,12 +1,14 @@
 /**
- * AnaliseRisco.tsx - RMS RAISA v3.0
+ * AnaliseRisco.tsx - RMS RAISA v4.0
  * Componente de Análise de Currículo com IA
  * 
- * REFATORADO: 06/01/2026
- * - Upload de PDF/DOC (substitui colar texto)
- * - Opção de salvar candidato no banco de talentos
- * - Alertas buscam dados reais de ia_recomendacoes_candidato
- * - Métricas calculadas com resultado_real
+ * HISTÓRICO:
+ * - v3.0 (06/01/2026): Upload de PDF/DOC, salvar no banco de talentos
+ * - v4.0 (08/01/2026): Análise de Adequação CV vs Vaga com Anthropic Claude
+ *   • Seleção opcional de vaga
+ *   • Gaps, evidências, perguntas por requisito
+ *   • Score detalhado com confiança
+ *   • Sugestões de mitigação
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -16,7 +18,9 @@ import {
   AlertTriangle, Target, RefreshCw, UserPlus, Download,
   TrendingUp, TrendingDown, AlertCircle, ChevronRight,
   File, Trash2, Eye, Save, Database, BarChart3,
-  Users, Clock, Award, ThumbsUp, ThumbsDown
+  Users, Clock, Award, ThumbsUp, ThumbsDown, Briefcase,
+  HelpCircle, MessageSquare, Shield, Zap, ChevronDown,
+  Search, FileQuestion, Lightbulb
 } from 'lucide-react';
 
 // ============================================
@@ -67,6 +71,56 @@ interface MetricasIA {
   };
 }
 
+interface VagaSimples {
+  id: number;
+  titulo: string;
+  cliente_nome?: string;
+  requisitos_obrigatorios?: string;
+  requisitos_desejaveis?: string;
+  stack_tecnologica?: string[];
+  senioridade?: string;
+}
+
+// Tipos para análise de adequação (do hook useAnaliseAdequacao)
+interface RequisitoAnalisado {
+  requisito: string;
+  tipo: 'obrigatorio' | 'desejavel';
+  status: 'atendido' | 'parcial' | 'nao_atendido';
+  evidencias_encontradas: string[];
+  evidencias_ausentes: string[];
+  experiencias_relacionadas: string[];
+  score: number;
+  confianca: number;
+}
+
+interface PerguntaEntrevista {
+  tema: string;
+  pergunta: string;
+  objetivo: string;
+  o_que_avaliar: string;
+  red_flags: string[];
+}
+
+interface GapIdentificado {
+  requisito: string;
+  gap: string;
+  impacto: 'alto' | 'medio' | 'baixo';
+  sugestao_mitigacao: string;
+}
+
+interface AnaliseAdequacaoResultado {
+  score_geral: number;
+  nivel_confianca: number;
+  recomendacao: 'aprovar' | 'entrevistar' | 'revisar' | 'rejeitar';
+  justificativa_recomendacao: string;
+  requisitos_analisados: RequisitoAnalisado[];
+  perguntas_entrevista: PerguntaEntrevista[];
+  gaps_identificados: GapIdentificado[];
+  pontos_fortes: string[];
+  pontos_atencao: string[];
+  resumo_executivo: string;
+}
+
 // ============================================
 // COMPONENTE PRINCIPAL
 // ============================================
@@ -81,10 +135,17 @@ const AnaliseRisco: React.FC = () => {
   const [isExtraindo, setIsExtraindo] = useState(false);
   const [isAnalisando, setIsAnalisando] = useState(false);
   const [analise, setAnalise] = useState<AnaliseTriagem | null>(null);
-  const [isSalvando, setIsSalvando] = useState(false);
   const [salvouBanco, setSalvouBanco] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // 🆕 v4.0: Estados para análise de adequação
+  const [vagas, setVagas] = useState<VagaSimples[]>([]);
+  const [vagaSelecionada, setVagaSelecionada] = useState<VagaSimples | null>(null);
+  const [loadingVagas, setLoadingVagas] = useState(false);
+  const [analiseAdequacao, setAnaliseAdequacao] = useState<AnaliseAdequacaoResultado | null>(null);
+  const [isAnalisandoAdequacao, setIsAnalisandoAdequacao] = useState(false);
+  const [abaResultado, setAbaResultado] = useState<'resumo' | 'requisitos' | 'gaps' | 'perguntas'>('resumo');
   
   // Estados da aba Alertas
   const [alertas, setAlertas] = useState<CandidaturaRisco[]>([]);
@@ -95,8 +156,12 @@ const AnaliseRisco: React.FC = () => {
   const [loadingMetricas, setLoadingMetricas] = useState(false);
 
   // ============================================
-  // CARREGAR DADOS DAS ABAS
+  // CARREGAR DADOS INICIAIS
   // ============================================
+
+  useEffect(() => {
+    carregarVagas();
+  }, []);
 
   useEffect(() => {
     if (abaAtiva === 'alertas') {
@@ -106,6 +171,44 @@ const AnaliseRisco: React.FC = () => {
     }
   }, [abaAtiva]);
 
+  const carregarVagas = async () => {
+    setLoadingVagas(true);
+    try {
+      const { data, error } = await supabase
+        .from('vagas')
+        .select(`
+          id,
+          titulo,
+          requisitos_obrigatorios,
+          requisitos_desejaveis,
+          stack_tecnologica,
+          senioridade,
+          clientes(nome)
+        `)
+        .eq('status', 'aberta')
+        .order('created_at', { ascending: false })
+        .limit(50);
+
+      if (error) throw error;
+
+      const vagasFormatadas: VagaSimples[] = (data || []).map((v: any) => ({
+        id: v.id,
+        titulo: v.titulo,
+        cliente_nome: v.clientes?.nome,
+        requisitos_obrigatorios: v.requisitos_obrigatorios,
+        requisitos_desejaveis: v.requisitos_desejaveis,
+        stack_tecnologica: v.stack_tecnologica,
+        senioridade: v.senioridade
+      }));
+
+      setVagas(vagasFormatadas);
+    } catch (err) {
+      console.error('Erro ao carregar vagas:', err);
+    } finally {
+      setLoadingVagas(false);
+    }
+  };
+
   // ============================================
   // ABA 1: TRIAGEM DE CVs
   // ============================================
@@ -114,7 +217,6 @@ const AnaliseRisco: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Validar tipo de arquivo
     const tiposPermitidos = [
       'application/pdf',
       'application/msword',
@@ -126,7 +228,7 @@ const AnaliseRisco: React.FC = () => {
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) { // 10MB
+    if (file.size > 10 * 1024 * 1024) {
       setErro('Arquivo muito grande. Máximo 10MB.');
       return;
     }
@@ -134,9 +236,9 @@ const AnaliseRisco: React.FC = () => {
     setArquivo(file);
     setErro(null);
     setAnalise(null);
+    setAnaliseAdequacao(null);
     setSalvouBanco(false);
     
-    // Extrair texto automaticamente
     await extrairTexto(file);
   };
 
@@ -145,10 +247,8 @@ const AnaliseRisco: React.FC = () => {
     setErro(null);
 
     try {
-      // Converter arquivo para base64
       const base64 = await fileToBase64(file);
       
-      // Chamar API para extração
       const response = await fetch('/api/gemini-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -166,7 +266,6 @@ const AnaliseRisco: React.FC = () => {
       if (result.success && result.data?.texto_original) {
         setTextoExtraido(result.data.texto_original);
       } else if (result.success && result.data?.dados) {
-        // Se retornou dados estruturados, montar texto
         const dados = result.data.dados;
         const texto = montarTextoDeCV(dados);
         setTextoExtraido(texto);
@@ -188,7 +287,6 @@ const AnaliseRisco: React.FC = () => {
       reader.readAsDataURL(file);
       reader.onload = () => {
         const result = reader.result as string;
-        // Remover prefixo data:application/pdf;base64,
         const base64 = result.split(',')[1];
         resolve(base64);
       };
@@ -223,7 +321,8 @@ const AnaliseRisco: React.FC = () => {
     return texto;
   };
 
-  const handleAnalisar = async () => {
+  // Análise genérica (sem vaga) - TAMBÉM salva no banco automaticamente
+  const handleAnalisarTriagem = async () => {
     if (!textoExtraido || textoExtraido.length < 50) {
       setErro('Texto do currículo muito curto para análise.');
       return;
@@ -231,8 +330,43 @@ const AnaliseRisco: React.FC = () => {
 
     setIsAnalisando(true);
     setErro(null);
+    setAnalise(null);
+    setAnaliseAdequacao(null);
 
     try {
+      // ========================================
+      // PASSO 1: Extrair dados estruturados do CV
+      // ========================================
+      console.log('🤖 Extraindo dados do CV via Gemini...');
+      
+      const extractResponse = await fetch('/api/gemini-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'extrair_cv',
+          payload: {
+            textoCV: textoExtraido,
+            base64PDF: ''
+          }
+        })
+      });
+
+      let dadosExtraidos = null;
+      let textoOriginal = textoExtraido;
+
+      if (extractResponse.ok) {
+        const extractResult = await extractResponse.json();
+        if (extractResult.success && extractResult.data?.dados) {
+          dadosExtraidos = extractResult.data.dados;
+          textoOriginal = extractResult.data.texto_original || textoExtraido;
+        }
+      }
+
+      // ========================================
+      // PASSO 2: Triagem genérica
+      // ========================================
+      console.log('🎯 Realizando triagem genérica...');
+      
       const response = await fetch('/api/gemini-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -248,6 +382,39 @@ const AnaliseRisco: React.FC = () => {
 
       if (result.success && result.data?.sucesso) {
         setAnalise(result.data);
+        
+        // ========================================
+        // PASSO 3: PERSISTIR NO BANCO (OBRIGATÓRIO)
+        // ========================================
+        if (dadosExtraidos) {
+          console.log('💾 Salvando candidato no Banco de Talentos...');
+          
+          const candidato = {
+            nome: dadosExtraidos.dados_pessoais?.nome || 'Candidato',
+            email: dadosExtraidos.dados_pessoais?.email || '',
+            telefone: dadosExtraidos.dados_pessoais?.telefone || '',
+            linkedin_url: dadosExtraidos.dados_pessoais?.linkedin_url || '',
+            cidade: dadosExtraidos.dados_pessoais?.cidade || '',
+            estado: dadosExtraidos.dados_pessoais?.estado || '',
+            titulo_profissional: dadosExtraidos.dados_profissionais?.titulo_profissional || result.data.areas_atuacao?.[0] || '',
+            senioridade: dadosExtraidos.dados_profissionais?.senioridade || result.data.senioridade_estimada || 'pleno',
+            resumo_profissional: dadosExtraidos.dados_profissionais?.resumo_profissional || result.data.justificativa || '',
+            skills: dadosExtraidos.skills || [],
+            experiencias: dadosExtraidos.experiencias || [],
+            formacao: dadosExtraidos.formacao || [],
+            certificacoes: dadosExtraidos.certificacoes || [],
+            idiomas: dadosExtraidos.idiomas || [],
+            cv_texto_original: textoOriginal
+          };
+
+          // Usar mesma função de persistência
+          const pessoaSalva = await salvarCandidatoNoBancoTriagem(candidato, dadosExtraidos, textoOriginal, result.data);
+          
+          if (pessoaSalva) {
+            console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
+            setSalvouBanco(true);
+          }
+        }
       } else {
         throw new Error(result.data?.erro || result.error || 'Erro na análise');
       }
@@ -259,15 +426,204 @@ const AnaliseRisco: React.FC = () => {
     }
   };
 
-  const handleSalvarBancoTalentos = async () => {
-    if (!analise || !textoExtraido) return;
+  // Função de persistência para triagem genérica
+  const salvarCandidatoNoBancoTriagem = async (candidato: any, dados: any, textoOriginal: string, analiseResult: any) => {
+    try {
+      const normalizarEstado = (estado: string): string => {
+        if (!estado) return '';
+        const ESTADOS_BR: Record<string, string> = {
+          'acre': 'AC', 'alagoas': 'AL', 'amapá': 'AP', 'amazonas': 'AM', 'bahia': 'BA',
+          'ceará': 'CE', 'distrito federal': 'DF', 'espírito santo': 'ES', 'goiás': 'GO',
+          'maranhão': 'MA', 'mato grosso': 'MT', 'mato grosso do sul': 'MS', 'minas gerais': 'MG',
+          'pará': 'PA', 'paraíba': 'PB', 'paraná': 'PR', 'pernambuco': 'PE', 'piauí': 'PI',
+          'rio de janeiro': 'RJ', 'rio grande do norte': 'RN', 'rio grande do sul': 'RS',
+          'rondônia': 'RO', 'roraima': 'RR', 'santa catarina': 'SC', 'são paulo': 'SP',
+          'sergipe': 'SE', 'tocantins': 'TO'
+        };
+        const estadoLower = estado.toLowerCase().trim();
+        if (estadoLower.length === 2) return estadoLower.toUpperCase();
+        return ESTADOS_BR[estadoLower] || estado.substring(0, 2).toUpperCase();
+      };
 
-    setIsSalvando(true);
+      const emailFinal = candidato.email || 
+        `${(candidato.nome || 'candidato').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.')}@pendente.cadastro`;
+
+      // 1. Salvar pessoa
+      const { data: pessoa, error: erroPessoa } = await supabase
+        .from('pessoas')
+        .insert({
+          nome: candidato.nome || 'Candidato (CV Importado)',
+          email: emailFinal,
+          telefone: candidato.telefone || null,
+          linkedin_url: candidato.linkedin_url || null,
+          cidade: candidato.cidade || null,
+          estado: normalizarEstado(candidato.estado || ''),
+          titulo_profissional: candidato.titulo_profissional || null,
+          senioridade: candidato.senioridade || 'pleno',
+          resumo_profissional: candidato.resumo_profissional || null,
+          cv_texto_original: textoOriginal?.substring(0, 50000) || null,
+          cv_resumo: analiseResult?.justificativa || null,
+          cv_processado: true,
+          cv_processado_em: new Date().toISOString(),
+          cv_processado_por: 'Triagem Genérica - Gemini',
+          observacoes: `Importado via Triagem de CVs em ${new Date().toLocaleDateString('pt-BR')}\n\nScore: ${analiseResult?.score_geral || 0}%\nRecomendação IA: ${analiseResult?.recomendacao || 'N/A'}`,
+          ativo: true,
+          criado_em: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (erroPessoa) {
+        console.error('❌ Erro ao salvar pessoa:', erroPessoa);
+        return null;
+      }
+
+      const pessoaId = pessoa.id;
+
+      // 2. Salvar Skills - combina extraídas + detectadas na triagem
+      const skillsCombinadas = [
+        ...(candidato.skills || []),
+        ...(analiseResult?.skills_detectadas || []).map((s: string) => ({
+          nome: s,
+          categoria: 'other',
+          nivel: 'intermediario',
+          anos_experiencia: 0
+        }))
+      ];
+
+      if (skillsCombinadas.length > 0) {
+        const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other'];
+        const niveisValidos = ['basico', 'intermediario', 'avancado', 'especialista'];
+        
+        const skillsNormalizadas = skillsCombinadas
+          .filter((s: any) => (s.nome || s) && String(s.nome || s).trim())
+          .map((s: any) => ({
+            pessoa_id: pessoaId,
+            skill_nome: String(s.nome || s).trim().substring(0, 100),
+            skill_categoria: categoriasValidas.includes(s.categoria) ? s.categoria : 'other',
+            nivel: niveisValidos.includes(s.nivel) ? s.nivel : 'intermediario',
+            anos_experiencia: typeof s.anos_experiencia === 'number' ? s.anos_experiencia : 0
+          }));
+        
+        const skillsUnicas = skillsNormalizadas.filter((skill: any, index: number, self: any[]) =>
+          index === self.findIndex(s => s.skill_nome.toLowerCase() === skill.skill_nome.toLowerCase())
+        );
+        
+        if (skillsUnicas.length > 0) {
+          await supabase.from('pessoa_skills').insert(skillsUnicas);
+          console.log('✅ Skills salvas:', skillsUnicas.length);
+        }
+      }
+
+      // 3. Salvar Experiências
+      if (candidato.experiencias?.length > 0) {
+        const formatarData = (data: string | null) => {
+          if (!data) return null;
+          if (data.match(/^\d{4}-\d{2}-\d{2}$/)) return data;
+          if (data.match(/^\d{4}-\d{2}$/)) return `${data}-01`;
+          return null;
+        };
+
+        const experienciasParaSalvar = candidato.experiencias.map((e: any) => ({
+          pessoa_id: pessoaId,
+          empresa: e.empresa || '',
+          cargo: e.cargo || '',
+          data_inicio: formatarData(e.data_inicio),
+          data_fim: formatarData(e.data_fim),
+          atual: e.atual || false,
+          descricao: e.descricao || '',
+          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : []
+        }));
+        
+        await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
+        console.log('✅ Experiências salvas:', experienciasParaSalvar.length);
+      }
+
+      // 4. Salvar Formação
+      const todasFormacoes = [
+        ...(candidato.formacao || []),
+        ...(candidato.certificacoes || []).map((c: any) => ({
+          tipo: 'certificacao',
+          curso: c.nome,
+          instituicao: c.emissor,
+          ano_conclusao: c.ano,
+          em_andamento: false
+        }))
+      ];
+
+      if (todasFormacoes.length > 0) {
+        const formacaoParaSalvar = todasFormacoes.map((f: any) => ({
+          pessoa_id: pessoaId,
+          tipo: f.tipo || 'graduacao',
+          curso: f.curso || '',
+          instituicao: f.instituicao || '',
+          ano_conclusao: f.ano_conclusao || null,
+          em_andamento: f.em_andamento || false
+        }));
+        
+        await supabase.from('pessoa_formacao').insert(formacaoParaSalvar);
+        console.log('✅ Formação salva:', formacaoParaSalvar.length);
+      }
+
+      // 5. Salvar Idiomas
+      if (candidato.idiomas?.length > 0) {
+        const idiomasParaSalvar = candidato.idiomas.map((i: any) => ({
+          pessoa_id: pessoaId,
+          idioma: i.idioma || '',
+          nivel: i.nivel || 'intermediario'
+        }));
+        
+        await supabase.from('pessoa_idiomas').insert(idiomasParaSalvar);
+        console.log('✅ Idiomas salvos:', idiomasParaSalvar.length);
+      }
+
+      // 6. Log
+      await supabase.from('pessoa_cv_log').insert({
+        pessoa_id: pessoaId,
+        acao: 'triagem_cv_generica',
+        status: 'sucesso',
+        detalhes: {
+          score_triagem: analiseResult?.score_geral,
+          recomendacao: analiseResult?.recomendacao,
+          skills_extraidas: skillsCombinadas.length,
+          experiencias_extraidas: candidato.experiencias?.length || 0
+        }
+      });
+
+      return pessoa;
+
+    } catch (err: any) {
+      console.error('❌ Erro ao salvar no banco:', err);
+      return null;
+    }
+  };
+
+  // 🆕 v4.0: Análise de adequação (CV vs Vaga)
+  // Segue o padrão testado do CVImportIA.tsx
+  const handleAnalisarAdequacao = async () => {
+    if (!textoExtraido || textoExtraido.length < 50) {
+      setErro('Texto do currículo muito curto para análise.');
+      return;
+    }
+
+    if (!vagaSelecionada) {
+      setErro('Selecione uma vaga para análise de adequação.');
+      return;
+    }
+
+    setIsAnalisandoAdequacao(true);
     setErro(null);
+    setAnalise(null);
+    setAnaliseAdequacao(null);
 
     try {
-      // Extrair dados básicos do CV
-      const response = await fetch('/api/gemini-analyze', {
+      // ========================================
+      // PASSO 1: Extrair dados do CV via Gemini
+      // (Mesmo padrão do CVImportIA.tsx)
+      // ========================================
+      console.log('🤖 Extraindo dados do CV via Gemini...');
+      
+      const extractResponse = await fetch('/api/gemini-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -279,60 +635,391 @@ const AnaliseRisco: React.FC = () => {
         })
       });
 
-      const result = await response.json();
-      const dados = result.data?.dados || {};
+      if (!extractResponse.ok) {
+        throw new Error('Erro ao extrair dados do CV');
+      }
 
-      // Inserir na tabela pessoas (banco de talentos)
-      const { data: pessoa, error: errorPessoa } = await supabase
+      const extractResult = await extractResponse.json();
+
+      if (!extractResult.success || !extractResult.data) {
+        throw new Error('Resposta inválida da API de extração');
+      }
+
+      // Estrutura EXATA do CVImportIA.tsx
+      const dados = extractResult.data.dados;
+      const textoOriginal = extractResult.data.texto_original || textoExtraido;
+
+      console.log('📊 Dados extraídos:');
+      console.log('   - Nome:', dados.dados_pessoais?.nome);
+      console.log('   - Skills:', dados.skills?.length || 0);
+      console.log('   - Experiências:', dados.experiencias?.length || 0);
+
+      // Montar objeto candidato (padrão CVImportIA)
+      const candidato = {
+        nome: dados.dados_pessoais?.nome || 'Candidato',
+        email: dados.dados_pessoais?.email || '',
+        telefone: dados.dados_pessoais?.telefone || '',
+        linkedin_url: dados.dados_pessoais?.linkedin_url || '',
+        cidade: dados.dados_pessoais?.cidade || '',
+        estado: dados.dados_pessoais?.estado || '',
+        titulo_profissional: dados.dados_profissionais?.titulo_profissional || '',
+        senioridade: dados.dados_profissionais?.senioridade || 'pleno',
+        resumo_profissional: dados.dados_profissionais?.resumo_profissional || '',
+        skills: dados.skills || [],
+        experiencias: dados.experiencias || [],
+        formacao: dados.formacao || [],
+        certificacoes: dados.certificacoes || [],
+        idiomas: dados.idiomas || [],
+        cv_texto_original: textoOriginal
+      };
+
+      // ========================================
+      // PASSO 2: PERSISTIR NO BANCO (OBRIGATÓRIO)
+      // Igual CVImportIA.tsx - salva independente do resultado
+      // ========================================
+      console.log('💾 Salvando candidato no Banco de Talentos...');
+      
+      const pessoaSalva = await salvarCandidatoNoBanco(candidato, dados, textoOriginal);
+      
+      if (pessoaSalva) {
+        console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
+      }
+
+      // ========================================
+      // PASSO 3: Análise de Adequação via Claude
+      // ========================================
+      console.log('🎯 Analisando adequação via Claude...');
+
+      const vaga = {
+        titulo: vagaSelecionada.titulo,
+        senioridade: vagaSelecionada.senioridade,
+        requisitos_obrigatorios: vagaSelecionada.requisitos_obrigatorios,
+        requisitos_desejaveis: vagaSelecionada.requisitos_desejaveis,
+        stack_tecnologica: vagaSelecionada.stack_tecnologica,
+        cliente_nome: vagaSelecionada.cliente_nome
+      };
+
+      const response = await fetch('/api/analise-adequacao-perfil', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ candidato, vaga })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Erro na análise de adequação');
+      }
+
+      const result = await response.json();
+
+      if (!result.success || !result.data) {
+        throw new Error(result.error || 'Resposta inválida da API de adequação');
+      }
+
+      // ========================================
+      // PASSO 4: Mapear resposta para o componente
+      // ========================================
+      const data = result.data;
+      console.log('✅ Análise concluída - Score:', data.score_geral);
+
+      const analiseFormatada: AnaliseAdequacaoResultado = {
+        score_geral: data.score_geral || 0,
+        nivel_confianca: data.confianca_analise || 0,
+        recomendacao: mapearRecomendacao(data.avaliacao_final?.recomendacao),
+        justificativa_recomendacao: data.avaliacao_final?.justificativa || '',
+        requisitos_analisados: [
+          ...(data.requisitos_imprescindiveis || []).map((r: any) => formatarRequisito(r, 'obrigatorio')),
+          ...(data.requisitos_muito_desejaveis || []).map((r: any) => formatarRequisito(r, 'desejavel')),
+          ...(data.requisitos_desejaveis || []).map((r: any) => formatarRequisito(r, 'desejavel'))
+        ],
+        perguntas_entrevista: formatarPerguntas(data.perguntas_entrevista || []),
+        gaps_identificados: formatarGaps(data),
+        pontos_fortes: data.resumo_executivo?.principais_pontos_fortes || [],
+        pontos_atencao: [
+          ...(data.resumo_executivo?.gaps_criticos || []),
+          ...(data.avaliacao_final?.pontos_atencao_entrevista || [])
+        ],
+        resumo_executivo: data.avaliacao_final?.justificativa || ''
+      };
+
+      setAnaliseAdequacao(analiseFormatada);
+      setAbaResultado('resumo');
+      setSalvouBanco(true); // Marcar que já salvou
+
+    } catch (err: any) {
+      console.error('❌ Erro na análise de adequação:', err);
+      setErro(`Erro na análise: ${err.message}`);
+    } finally {
+      setIsAnalisandoAdequacao(false);
+    }
+  };
+
+  // ========================================
+  // FUNÇÃO DE PERSISTÊNCIA NO BANCO
+  // Padrão CVImportIA.tsx - salva pessoa + skills + experiências + formação + idiomas
+  // ========================================
+  const salvarCandidatoNoBanco = async (candidato: any, dados: any, textoOriginal: string) => {
+    try {
+      // Normalizar estado
+      const normalizarEstado = (estado: string): string => {
+        if (!estado) return '';
+        const ESTADOS_BR: Record<string, string> = {
+          'acre': 'AC', 'alagoas': 'AL', 'amapá': 'AP', 'amazonas': 'AM', 'bahia': 'BA',
+          'ceará': 'CE', 'distrito federal': 'DF', 'espírito santo': 'ES', 'goiás': 'GO',
+          'maranhão': 'MA', 'mato grosso': 'MT', 'mato grosso do sul': 'MS', 'minas gerais': 'MG',
+          'pará': 'PA', 'paraíba': 'PB', 'paraná': 'PR', 'pernambuco': 'PE', 'piauí': 'PI',
+          'rio de janeiro': 'RJ', 'rio grande do norte': 'RN', 'rio grande do sul': 'RS',
+          'rondônia': 'RO', 'roraima': 'RR', 'santa catarina': 'SC', 'são paulo': 'SP',
+          'sergipe': 'SE', 'tocantins': 'TO'
+        };
+        const estadoLower = estado.toLowerCase().trim();
+        if (estadoLower.length === 2) return estadoLower.toUpperCase();
+        return ESTADOS_BR[estadoLower] || estado.substring(0, 2).toUpperCase();
+      };
+
+      // Gerar email placeholder se não tiver
+      const emailFinal = candidato.email || 
+        `${(candidato.nome || 'candidato').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.')}@pendente.cadastro`;
+
+      // 1. Salvar pessoa
+      const { data: pessoa, error: erroPessoa } = await supabase
         .from('pessoas')
         .insert({
-          nome: dados.nome || 'Candidato (CV Importado)',
-          email: dados.email || null,
-          telefone: dados.telefone || null,
-          titulo_profissional: dados.titulo_profissional || analise.areas_atuacao?.[0],
-          senioridade: analise.senioridade_estimada,
-          cv_texto_original: textoExtraido.substring(0, 50000),
-          cv_resumo: analise.justificativa,
+          nome: candidato.nome || 'Candidato (CV Importado)',
+          email: emailFinal,
+          telefone: candidato.telefone || null,
+          linkedin_url: candidato.linkedin_url || null,
+          cidade: candidato.cidade || null,
+          estado: normalizarEstado(candidato.estado || ''),
+          titulo_profissional: candidato.titulo_profissional || null,
+          senioridade: candidato.senioridade || 'pleno',
+          resumo_profissional: candidato.resumo_profissional || null,
+          cv_texto_original: textoOriginal?.substring(0, 50000) || null,
           cv_processado: true,
           cv_processado_em: new Date().toISOString(),
-          cv_processado_por: 'Gemini 2.0 Flash - Triagem',
-          observacoes: `Importado via Triagem de CVs em ${new Date().toLocaleDateString('pt-BR')}\n\nScore: ${analise.score_geral}%\nRecomendação IA: ${analise.recomendacao}\n${analise.justificativa}`,
+          cv_processado_por: 'Análise CV vs Vaga - Claude',
+          observacoes: `Importado via Análise de Adequação em ${new Date().toLocaleDateString('pt-BR')}`,
           ativo: true,
           criado_em: new Date().toISOString()
         })
         .select()
         .single();
 
-      if (errorPessoa) throw errorPessoa;
-
-      // Se tiver skills, inserir
-      if (analise.skills_detectadas?.length > 0 && pessoa) {
-        const skillsToInsert = analise.skills_detectadas.slice(0, 20).map(skill => ({
-          pessoa_id: pessoa.id,
-          skill_nome: skill,
-          nivel: 'Informado',
-          criado_em: new Date().toISOString()
-        }));
-
-        await supabase.from('pessoa_skills').insert(skillsToInsert);
+      if (erroPessoa) {
+        console.error('❌ Erro ao salvar pessoa:', erroPessoa);
+        // Continua mesmo com erro (dados podem já existir)
+        return null;
       }
 
-      setSalvouBanco(true);
-      
+      const pessoaId = pessoa.id;
+
+      // 2. Salvar Skills (padrão CVImportIA)
+      if (candidato.skills?.length > 0) {
+        const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other'];
+        const niveisValidos = ['basico', 'intermediario', 'avancado', 'especialista'];
+        
+        const skillsNormalizadas = candidato.skills
+          .filter((s: any) => s.nome && s.nome.trim())
+          .map((s: any) => ({
+            pessoa_id: pessoaId,
+            skill_nome: String(s.nome || '').trim().substring(0, 100),
+            skill_categoria: categoriasValidas.includes(s.categoria) ? s.categoria : 'other',
+            nivel: niveisValidos.includes(s.nivel) ? s.nivel : 'intermediario',
+            anos_experiencia: typeof s.anos_experiencia === 'number' ? s.anos_experiencia : 0
+          }));
+        
+        // Remover duplicatas
+        const skillsUnicas = skillsNormalizadas.filter((skill: any, index: number, self: any[]) =>
+          index === self.findIndex(s => s.skill_nome.toLowerCase() === skill.skill_nome.toLowerCase())
+        );
+        
+        if (skillsUnicas.length > 0) {
+          const { error: errSkills } = await supabase.from('pessoa_skills').insert(skillsUnicas);
+          if (errSkills) {
+            console.warn('⚠️ Erro ao salvar skills:', errSkills.message);
+          } else {
+            console.log('✅ Skills salvas:', skillsUnicas.length);
+          }
+        }
+      }
+
+      // 3. Salvar Experiências
+      if (candidato.experiencias?.length > 0) {
+        const formatarData = (data: string | null) => {
+          if (!data) return null;
+          if (data.match(/^\d{4}-\d{2}-\d{2}$/)) return data;
+          if (data.match(/^\d{4}-\d{2}$/)) return `${data}-01`;
+          return null;
+        };
+
+        const experienciasParaSalvar = candidato.experiencias.map((e: any) => ({
+          pessoa_id: pessoaId,
+          empresa: e.empresa || '',
+          cargo: e.cargo || '',
+          data_inicio: formatarData(e.data_inicio),
+          data_fim: formatarData(e.data_fim),
+          atual: e.atual || false,
+          descricao: e.descricao || '',
+          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : []
+        }));
+        
+        const { error: errExp } = await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
+        if (errExp) {
+          console.warn('⚠️ Erro ao salvar experiências:', errExp.message);
+        } else {
+          console.log('✅ Experiências salvas:', experienciasParaSalvar.length);
+        }
+      }
+
+      // 4. Salvar Formação + Certificações
+      const todasFormacoes = [
+        ...(candidato.formacao || []),
+        ...(candidato.certificacoes || []).map((c: any) => ({
+          tipo: 'certificacao',
+          curso: c.nome,
+          instituicao: c.emissor,
+          ano_conclusao: c.ano,
+          em_andamento: false
+        }))
+      ];
+
+      if (todasFormacoes.length > 0) {
+        const formacaoParaSalvar = todasFormacoes.map((f: any) => ({
+          pessoa_id: pessoaId,
+          tipo: f.tipo || 'graduacao',
+          curso: f.curso || '',
+          instituicao: f.instituicao || '',
+          ano_conclusao: f.ano_conclusao || null,
+          em_andamento: f.em_andamento || false
+        }));
+        
+        const { error: errForm } = await supabase.from('pessoa_formacao').insert(formacaoParaSalvar);
+        if (errForm) {
+          console.warn('⚠️ Erro ao salvar formação:', errForm.message);
+        } else {
+          console.log('✅ Formação salva:', formacaoParaSalvar.length);
+        }
+      }
+
+      // 5. Salvar Idiomas
+      if (candidato.idiomas?.length > 0) {
+        const idiomasParaSalvar = candidato.idiomas.map((i: any) => ({
+          pessoa_id: pessoaId,
+          idioma: i.idioma || '',
+          nivel: i.nivel || 'intermediario'
+        }));
+        
+        const { error: errIdiomas } = await supabase.from('pessoa_idiomas').insert(idiomasParaSalvar);
+        if (errIdiomas) {
+          console.warn('⚠️ Erro ao salvar idiomas:', errIdiomas.message);
+        } else {
+          console.log('✅ Idiomas salvos:', idiomasParaSalvar.length);
+        }
+      }
+
+      // 6. Registrar log
+      await supabase.from('pessoa_cv_log').insert({
+        pessoa_id: pessoaId,
+        acao: 'analise_adequacao_cv',
+        status: 'sucesso',
+        detalhes: {
+          vaga_analisada: vagaSelecionada?.titulo,
+          skills_extraidas: candidato.skills?.length || 0,
+          experiencias_extraidas: candidato.experiencias?.length || 0,
+          formacao_extraida: todasFormacoes.length,
+          idiomas_extraidos: candidato.idiomas?.length || 0
+        }
+      });
+
+      return pessoa;
+
     } catch (err: any) {
-      console.error('Erro ao salvar:', err);
-      setErro(`Erro ao salvar no banco: ${err.message}`);
-    } finally {
-      setIsSalvando(false);
+      console.error('❌ Erro ao salvar no banco:', err);
+      return null;
     }
+  };
+
+  // ========================================
+  // HELPERS - Formatação de resposta da API
+  // ========================================
+
+  const mapearRecomendacao = (rec: string): 'aprovar' | 'entrevistar' | 'revisar' | 'rejeitar' => {
+    const mapa: Record<string, 'aprovar' | 'entrevistar' | 'revisar' | 'rejeitar'> = {
+      'APROVAR': 'aprovar',
+      'ENTREVISTAR': 'entrevistar',
+      'REAVALIAR': 'revisar',
+      'REPROVAR': 'rejeitar'
+    };
+    return mapa[rec] || 'revisar';
+  };
+
+  const formatarRequisito = (req: any, tipo: 'obrigatorio' | 'desejavel'): RequisitoAnalisado => {
+    const statusMap: Record<string, 'atendido' | 'parcial' | 'nao_atendido'> = {
+      'ATENDE': 'atendido',
+      'ATENDE_PARCIALMENTE': 'parcial',
+      'GAP_IDENTIFICADO': 'nao_atendido',
+      'NAO_AVALIAVEL': 'parcial'
+    };
+    
+    return {
+      requisito: req.requisito || '',
+      tipo,
+      status: statusMap[req.nivel_adequacao] || 'parcial',
+      evidencias_encontradas: req.analise_candidato?.evidencias_encontradas || [],
+      evidencias_ausentes: req.analise_candidato?.evidencias_ausentes || [],
+      experiencias_relacionadas: req.analise_candidato?.experiencias_relacionadas || [],
+      score: req.score_adequacao || 0,
+      confianca: 80
+    };
+  };
+
+  const formatarPerguntas = (categorias: any[]): PerguntaEntrevista[] => {
+    const perguntas: PerguntaEntrevista[] = [];
+    (categorias || []).forEach((cat: any) => {
+      (cat.perguntas || []).forEach((p: any) => {
+        perguntas.push({
+          tema: cat.categoria || 'Geral',
+          pergunta: p.pergunta || '',
+          objetivo: p.objetivo || '',
+          o_que_avaliar: Array.isArray(p.o_que_avaliar) ? p.o_que_avaliar.join(', ') : (p.o_que_avaliar || ''),
+          red_flags: p.red_flags || []
+        });
+      });
+    });
+    return perguntas;
+  };
+
+  const formatarGaps = (data: any): GapIdentificado[] => {
+    const gaps: GapIdentificado[] = [];
+    
+    const todosRequisitos = [
+      ...(data.requisitos_imprescindiveis || []),
+      ...(data.requisitos_muito_desejaveis || []),
+      ...(data.requisitos_desejaveis || [])
+    ];
+
+    todosRequisitos
+      .filter((r: any) => r.nivel_adequacao === 'GAP_IDENTIFICADO' || r.nivel_adequacao === 'ATENDE_PARCIALMENTE')
+      .forEach((r: any) => {
+        gaps.push({
+          requisito: r.requisito || '',
+          gap: r.justificativa || 'Gap identificado',
+          impacto: r.obrigatoriedade === 'IMPRESCINDIVEL' ? 'alto' : 'medio',
+          sugestao_mitigacao: r.como_mitigar || 'Investigar na entrevista'
+        });
+      });
+
+    return gaps;
   };
 
   const handleLimpar = () => {
     setArquivo(null);
     setTextoExtraido('');
     setAnalise(null);
+    setAnaliseAdequacao(null);
     setSalvouBanco(false);
     setErro(null);
+    setVagaSelecionada(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -398,7 +1085,6 @@ const AnaliseRisco: React.FC = () => {
     setLoadingMetricas(true);
 
     try {
-      // Buscar todas as análises com resultado real
       const { data, error } = await supabase
         .from('ia_recomendacoes_candidato')
         .select(`
@@ -412,11 +1098,9 @@ const AnaliseRisco: React.FC = () => {
 
       if (error) throw error;
 
-      // Calcular métricas
       const total = data?.length || 0;
       const corretas = data?.filter(d => d.predicao_correta === true).length || 0;
 
-      // Agrupar por recomendação
       const porRecomendacao = {
         aprovar: { total: 0, acertos: 0 },
         entrevistar: { total: 0, acertos: 0 },
@@ -434,7 +1118,6 @@ const AnaliseRisco: React.FC = () => {
         }
       });
 
-      // Buscar total de análises (mesmo sem resultado)
       const { count: totalAnalises } = await supabase
         .from('ia_recomendacoes_candidato')
         .select('id', { count: 'exact', head: true })
@@ -456,6 +1139,47 @@ const AnaliseRisco: React.FC = () => {
   };
 
   // ============================================
+  // HELPERS DE RENDER
+  // ============================================
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'atendido': return 'bg-green-100 text-green-700 border-green-300';
+      case 'parcial': return 'bg-yellow-100 text-yellow-700 border-yellow-300';
+      case 'nao_atendido': return 'bg-red-100 text-red-700 border-red-300';
+      default: return 'bg-gray-100 text-gray-700 border-gray-300';
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'atendido': return '✅ Atendido';
+      case 'parcial': return '⚠️ Parcial';
+      case 'nao_atendido': return '❌ Não Atendido';
+      default: return status;
+    }
+  };
+
+  const getImpactoColor = (impacto: string) => {
+    switch (impacto) {
+      case 'alto': return 'bg-red-100 text-red-700';
+      case 'medio': return 'bg-yellow-100 text-yellow-700';
+      case 'baixo': return 'bg-blue-100 text-blue-700';
+      default: return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const getRecomendacaoStyle = (rec: string) => {
+    switch (rec) {
+      case 'aprovar': return { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700', icon: '✅', label: 'Aprovar' };
+      case 'entrevistar': return { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', icon: '🎯', label: 'Entrevistar' };
+      case 'revisar': return { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-700', icon: '⚠️', label: 'Revisar' };
+      case 'rejeitar': return { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', icon: '❌', label: 'Rejeitar' };
+      default: return { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700', icon: '❓', label: rec };
+    }
+  };
+
+  // ============================================
   // RENDER
   // ============================================
 
@@ -468,7 +1192,7 @@ const AnaliseRisco: React.FC = () => {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Análise de Currículo (AI)</h1>
-          <p className="text-sm text-gray-500">Triagem inteligente de currículos com Gemini 2.0</p>
+          <p className="text-sm text-gray-500">Triagem inteligente com Gemini 2.0 + Análise de Adequação com Claude</p>
         </div>
       </div>
 
@@ -514,10 +1238,10 @@ const AnaliseRisco: React.FC = () => {
         </button>
       </div>
 
-      {/* Conteúdo das Abas */}
+      {/* ===================== ABA TRIAGEM ===================== */}
       {abaAtiva === 'triagem' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Lado Esquerdo: Upload e Texto */}
+          {/* Lado Esquerdo: Upload e Configurações */}
           <div className="space-y-4">
             {/* Card de Upload */}
             <div className="bg-white rounded-xl shadow-md p-6">
@@ -572,7 +1296,6 @@ const AnaliseRisco: React.FC = () => {
                 )}
               </div>
 
-              {/* Status de Extração */}
               {isExtraindo && (
                 <div className="mt-4 flex items-center gap-2 text-purple-600">
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -580,7 +1303,6 @@ const AnaliseRisco: React.FC = () => {
                 </div>
               )}
 
-              {/* Erro */}
               {erro && (
                 <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
                   <XCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
@@ -589,7 +1311,48 @@ const AnaliseRisco: React.FC = () => {
               )}
             </div>
 
-            {/* Texto Extraído */}
+            {/* 🆕 v4.0: Seleção de Vaga (opcional) */}
+            {textoExtraido && (
+              <div className="bg-white rounded-xl shadow-md p-6">
+                <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                  <Briefcase className="w-4 h-4 text-blue-600" />
+                  Comparar com Vaga (opcional)
+                </h3>
+                <p className="text-sm text-gray-500 mb-3">
+                  Selecione uma vaga para análise de adequação detalhada com gaps e perguntas
+                </p>
+                
+                <select
+                  value={vagaSelecionada?.id || ''}
+                  onChange={(e) => {
+                    const vaga = vagas.find(v => v.id === Number(e.target.value));
+                    setVagaSelecionada(vaga || null);
+                  }}
+                  className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">-- Triagem genérica (sem vaga) --</option>
+                  {vagas.map((vaga) => (
+                    <option key={vaga.id} value={vaga.id}>
+                      {vaga.titulo} {vaga.cliente_nome ? `- ${vaga.cliente_nome}` : ''}
+                    </option>
+                  ))}
+                </select>
+
+                {vagaSelecionada && (
+                  <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                    <div className="flex items-center gap-2 text-blue-700 mb-2">
+                      <Zap className="w-4 h-4" />
+                      <span className="font-medium">Análise Avançada Habilitada</span>
+                    </div>
+                    <p className="text-xs text-blue-600">
+                      A análise incluirá: gaps por requisito, evidências encontradas, perguntas para entrevista e sugestões de mitigação
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Texto Extraído + Botões de Análise */}
             {textoExtraido && (
               <div className="bg-white rounded-xl shadow-md p-6">
                 <div className="flex items-center justify-between mb-3">
@@ -604,27 +1367,50 @@ const AnaliseRisco: React.FC = () => {
                 <textarea
                   value={textoExtraido}
                   onChange={(e) => setTextoExtraido(e.target.value)}
-                  className="w-full h-48 p-3 border rounded-lg text-sm font-mono bg-gray-50 resize-none"
+                  className="w-full h-40 p-3 border rounded-lg text-sm font-mono bg-gray-50 resize-none"
                   placeholder="O texto extraído aparecerá aqui..."
                 />
 
-                <button
-                  onClick={handleAnalisar}
-                  disabled={isAnalisando || textoExtraido.length < 50}
-                  className="w-full mt-4 px-4 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg font-medium hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {isAnalisando ? (
-                    <>
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      Analisando com IA...
-                    </>
+                {/* Botões de Análise */}
+                <div className="mt-4 space-y-2">
+                  {vagaSelecionada ? (
+                    <button
+                      onClick={handleAnalisarAdequacao}
+                      disabled={isAnalisandoAdequacao || textoExtraido.length < 50}
+                      className="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg font-medium hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {isAnalisandoAdequacao ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          Analisando Adequação com Claude...
+                        </>
+                      ) : (
+                        <>
+                          <Target className="w-5 h-5" />
+                          Analisar Adequação à Vaga
+                        </>
+                      )}
+                    </button>
                   ) : (
-                    <>
-                      <Brain className="w-5 h-5" />
-                      Analisar Currículo
-                    </>
+                    <button
+                      onClick={handleAnalisarTriagem}
+                      disabled={isAnalisando || textoExtraido.length < 50}
+                      className="w-full px-4 py-3 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg font-medium hover:from-purple-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {isAnalisando ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          Analisando com Gemini...
+                        </>
+                      ) : (
+                        <>
+                          <Brain className="w-5 h-5" />
+                          Triagem Genérica
+                        </>
+                      )}
+                    </button>
                   )}
-                </button>
+                </div>
               </div>
             )}
           </div>
@@ -636,7 +1422,8 @@ const AnaliseRisco: React.FC = () => {
               Resultado da Análise
             </h2>
 
-            {!analise && !isAnalisando && (
+            {/* Estado vazio */}
+            {!analise && !analiseAdequacao && !isAnalisando && !isAnalisandoAdequacao && (
               <div className="text-center py-16 text-gray-400">
                 <Brain className="w-16 h-16 mx-auto mb-4 opacity-30" />
                 <p>Faça upload de um CV e clique em "Analisar"</p>
@@ -644,15 +1431,19 @@ const AnaliseRisco: React.FC = () => {
               </div>
             )}
 
-            {isAnalisando && (
+            {/* Loading */}
+            {(isAnalisando || isAnalisandoAdequacao) && (
               <div className="text-center py-16">
                 <Loader2 className="w-12 h-12 mx-auto mb-4 text-purple-600 animate-spin" />
-                <p className="text-gray-600">Analisando currículo com IA...</p>
+                <p className="text-gray-600">
+                  {isAnalisandoAdequacao ? 'Analisando adequação com Claude...' : 'Analisando currículo com Gemini...'}
+                </p>
                 <p className="text-sm text-gray-400 mt-1">Isso pode levar alguns segundos</p>
               </div>
             )}
 
-            {analise && (
+            {/* ============ RESULTADO TRIAGEM GENÉRICA ============ */}
+            {analise && !analiseAdequacao && (
               <div className="space-y-4">
                 {/* Score e Recomendação */}
                 <div className={`p-4 rounded-xl ${
@@ -778,32 +1569,219 @@ const AnaliseRisco: React.FC = () => {
                   </div>
                 )}
 
-                {/* Botão Salvar no Banco de Talentos */}
-                {analise.score_geral >= 50 && !salvouBanco && (
-                  <button
-                    onClick={handleSalvarBancoTalentos}
-                    disabled={isSalvando}
-                    className="w-full mt-4 px-4 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
-                  >
-                    {isSalvando ? (
-                      <>
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                        Salvando...
-                      </>
-                    ) : (
-                      <>
-                        <Database className="w-5 h-5" />
-                        Salvar no Banco de Talentos
-                      </>
-                    )}
-                  </button>
-                )}
-
+                {/* Indicador de Salvamento Automático */}
                 {salvouBanco && (
-                  <div className="p-4 bg-green-100 border border-green-300 rounded-lg text-center">
-                    <CheckCircle className="w-8 h-8 text-green-600 mx-auto mb-2" />
-                    <p className="font-medium text-green-800">Salvo no Banco de Talentos!</p>
-                    <p className="text-sm text-green-600">O candidato foi adicionado à base de pessoas</p>
+                  <div className="p-4 bg-green-100 border border-green-300 rounded-lg flex items-center gap-3">
+                    <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-green-800">✅ Salvo automaticamente no Banco de Talentos</p>
+                      <p className="text-sm text-green-600">O candidato foi adicionado à base de pessoas</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ============ 🆕 RESULTADO ANÁLISE DE ADEQUAÇÃO ============ */}
+            {analiseAdequacao && (
+              <div className="space-y-4">
+                {/* Header com Score e Recomendação */}
+                <div className={`p-4 rounded-xl border ${getRecomendacaoStyle(analiseAdequacao.recomendacao).bg} ${getRecomendacaoStyle(analiseAdequacao.recomendacao).border}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-gray-600">Score de Adequação</p>
+                      <p className={`text-4xl font-bold ${
+                        analiseAdequacao.score_geral >= 70 ? 'text-green-600' :
+                        analiseAdequacao.score_geral >= 50 ? 'text-yellow-600' : 'text-red-600'
+                      }`}>
+                        {analiseAdequacao.score_geral}%
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Confiança: {analiseAdequacao.nivel_confianca}%
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-lg font-medium px-4 py-2 rounded-full ${getRecomendacaoStyle(analiseAdequacao.recomendacao).bg} ${getRecomendacaoStyle(analiseAdequacao.recomendacao).text}`}>
+                        {getRecomendacaoStyle(analiseAdequacao.recomendacao).icon} {getRecomendacaoStyle(analiseAdequacao.recomendacao).label}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-sm text-gray-700 mt-3">{analiseAdequacao.justificativa_recomendacao}</p>
+                </div>
+
+                {/* Sub-abas de resultado */}
+                <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+                  {[
+                    { key: 'resumo', label: 'Resumo', icon: FileText },
+                    { key: 'requisitos', label: 'Requisitos', icon: CheckCircle },
+                    { key: 'gaps', label: 'Gaps', icon: AlertTriangle },
+                    { key: 'perguntas', label: 'Perguntas', icon: HelpCircle }
+                  ].map(({ key, label, icon: Icon }) => (
+                    <button
+                      key={key}
+                      onClick={() => setAbaResultado(key as any)}
+                      className={`flex-1 px-3 py-2 text-sm font-medium rounded-md flex items-center justify-center gap-1 transition ${
+                        abaResultado === key
+                          ? 'bg-white text-purple-700 shadow-sm'
+                          : 'text-gray-600 hover:text-gray-800'
+                      }`}
+                    >
+                      <Icon className="w-4 h-4" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Conteúdo das sub-abas */}
+                <div className="mt-4">
+                  {/* Resumo */}
+                  {abaResultado === 'resumo' && (
+                    <div className="space-y-4">
+                      <div className="p-4 bg-gray-50 rounded-lg">
+                        <h4 className="font-medium text-gray-800 mb-2">📋 Resumo Executivo</h4>
+                        <p className="text-sm text-gray-700">{analiseAdequacao.resumo_executivo}</p>
+                      </div>
+
+                      {analiseAdequacao.pontos_fortes?.length > 0 && (
+                        <div>
+                          <h4 className="font-medium text-green-700 mb-2 flex items-center gap-1">
+                            <TrendingUp className="w-4 h-4" /> Pontos Fortes
+                          </h4>
+                          <ul className="space-y-1">
+                            {analiseAdequacao.pontos_fortes.map((p, i) => (
+                              <li key={i} className="text-sm text-gray-600 flex items-start gap-2">
+                                <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
+                                {p}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {analiseAdequacao.pontos_atencao?.length > 0 && (
+                        <div>
+                          <h4 className="font-medium text-orange-700 mb-2 flex items-center gap-1">
+                            <AlertCircle className="w-4 h-4" /> Pontos de Atenção
+                          </h4>
+                          <ul className="space-y-1">
+                            {analiseAdequacao.pontos_atencao.map((p, i) => (
+                              <li key={i} className="text-sm text-gray-600 flex items-start gap-2">
+                                <AlertTriangle className="w-4 h-4 text-orange-500 flex-shrink-0 mt-0.5" />
+                                {p}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Requisitos */}
+                  {abaResultado === 'requisitos' && (
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {analiseAdequacao.requisitos_analisados?.map((req, i) => (
+                        <div key={i} className={`p-3 rounded-lg border ${getStatusColor(req.status)}`}>
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex-1">
+                              <span className={`text-xs px-2 py-0.5 rounded ${req.tipo === 'obrigatorio' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                                {req.tipo === 'obrigatorio' ? '⚠️ Obrigatório' : '💡 Desejável'}
+                              </span>
+                              <p className="font-medium text-gray-800 mt-1">{req.requisito}</p>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-lg font-bold">{req.score}%</span>
+                              <p className="text-xs text-gray-500">{getStatusLabel(req.status)}</p>
+                            </div>
+                          </div>
+                          
+                          {req.evidencias_encontradas?.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-xs font-medium text-green-700">✅ Evidências encontradas:</p>
+                              <ul className="text-xs text-gray-600 ml-4">
+                                {req.evidencias_encontradas.map((e, j) => (
+                                  <li key={j}>• {e}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          
+                          {req.evidencias_ausentes?.length > 0 && (
+                            <div className="mt-2">
+                              <p className="text-xs font-medium text-red-700">❌ Não encontrado:</p>
+                              <ul className="text-xs text-gray-600 ml-4">
+                                {req.evidencias_ausentes.map((e, j) => (
+                                  <li key={j}>• {e}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Gaps */}
+                  {abaResultado === 'gaps' && (
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {analiseAdequacao.gaps_identificados?.length === 0 ? (
+                        <div className="text-center py-8 text-gray-400">
+                          <CheckCircle className="w-12 h-12 mx-auto mb-2 text-green-500" />
+                          <p>Nenhum gap crítico identificado!</p>
+                        </div>
+                      ) : (
+                        analiseAdequacao.gaps_identificados?.map((gap, i) => (
+                          <div key={i} className="p-3 bg-gray-50 rounded-lg border">
+                            <div className="flex items-start justify-between mb-2">
+                              <p className="font-medium text-gray-800">{gap.requisito}</p>
+                              <span className={`text-xs px-2 py-0.5 rounded ${getImpactoColor(gap.impacto)}`}>
+                                Impacto {gap.impacto}
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-600 mb-2">{gap.gap}</p>
+                            <div className="p-2 bg-blue-50 rounded border border-blue-200">
+                              <p className="text-xs font-medium text-blue-700 flex items-center gap-1">
+                                <Lightbulb className="w-3 h-3" /> Sugestão de Mitigação
+                              </p>
+                              <p className="text-xs text-blue-600 mt-1">{gap.sugestao_mitigacao}</p>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+
+                  {/* Perguntas */}
+                  {abaResultado === 'perguntas' && (
+                    <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {analiseAdequacao.perguntas_entrevista?.map((perg, i) => (
+                        <div key={i} className="p-3 bg-gray-50 rounded-lg border">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="px-2 py-0.5 bg-purple-100 text-purple-700 text-xs rounded">
+                              {perg.tema}
+                            </span>
+                          </div>
+                          <p className="font-medium text-gray-800 mb-2">❓ {perg.pergunta}</p>
+                          <div className="space-y-1 text-xs text-gray-600">
+                            <p><strong>🎯 Objetivo:</strong> {perg.objetivo}</p>
+                            <p><strong>👀 Avaliar:</strong> {perg.o_que_avaliar}</p>
+                            {perg.red_flags?.length > 0 && (
+                              <p><strong>🚩 Red Flags:</strong> {perg.red_flags.join(', ')}</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Indicador de Salvamento Automático */}
+                {salvouBanco && (
+                  <div className="mt-4 p-4 bg-green-100 border border-green-300 rounded-lg flex items-center gap-3">
+                    <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
+                    <div>
+                      <p className="font-medium text-green-800">✅ Salvo automaticamente no Banco de Talentos</p>
+                      <p className="text-sm text-green-600">O candidato foi adicionado à base de pessoas</p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -812,6 +1790,7 @@ const AnaliseRisco: React.FC = () => {
         </div>
       )}
 
+      {/* ===================== ABA ALERTAS ===================== */}
       {abaAtiva === 'alertas' && (
         <div className="bg-white rounded-xl shadow-md p-6">
           <div className="flex items-center justify-between mb-4">
@@ -829,7 +1808,7 @@ const AnaliseRisco: React.FC = () => {
           </div>
 
           <p className="text-sm text-gray-500 mb-4">
-            Candidaturas em processo com risco de reprovação acima de 50% (dados reais de análises feitas no modal de Candidaturas)
+            Candidaturas em processo com risco de reprovação acima de 50%
           </p>
 
           {loadingAlertas ? (
@@ -841,7 +1820,7 @@ const AnaliseRisco: React.FC = () => {
             <div className="text-center py-12 text-gray-400">
               <CheckCircle className="w-12 h-12 mx-auto mb-3 text-green-500" />
               <p className="font-medium text-gray-600">Nenhum alerta de risco</p>
-              <p className="text-sm">Todas as candidaturas em processo têm risco baixo ou ainda não foram analisadas</p>
+              <p className="text-sm">Todas as candidaturas em processo têm risco baixo</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -886,6 +1865,7 @@ const AnaliseRisco: React.FC = () => {
         </div>
       )}
 
+      {/* ===================== ABA MÉTRICAS ===================== */}
       {abaAtiva === 'metricas' && (
         <div className="space-y-6">
           <div className="bg-white rounded-xl shadow-md p-6">
@@ -920,7 +1900,6 @@ const AnaliseRisco: React.FC = () => {
               </div>
             ) : (
               <>
-                {/* Cards de resumo */}
                 <div className="grid grid-cols-4 gap-4 mb-6">
                   <div className="bg-blue-50 p-4 rounded-xl text-center">
                     <p className="text-3xl font-bold text-blue-600">{metricas.total_analises}</p>
@@ -948,7 +1927,6 @@ const AnaliseRisco: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Detalhamento por recomendação */}
                 <h3 className="font-semibold text-gray-700 mb-3">Acerto por Tipo de Recomendação</h3>
                 <div className="grid grid-cols-4 gap-3">
                   {Object.entries(metricas.por_recomendacao).map(([tipo, dados]) => (
