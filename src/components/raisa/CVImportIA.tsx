@@ -402,13 +402,17 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
     } catch (err: any) {
       console.error('Erro ao processar com IA:', err);
+      
+      // Verificar se é erro de tamanho (413) - mostrar mensagem específica
+      const mensagemErro = err.message || 'Erro na IA. Preencha os dados manualmente.';
+      
       // Fallback: extração básica
       const textoFallback = typeof textoOuBase64 === 'string' && !textoOuBase64.includes('base64') 
         ? textoOuBase64 
         : '';
       const dadosBasicos = extrairDadosBasicos(textoFallback);
       setDadosExtraidos(dadosBasicos);
-      setErro('Erro na IA. Preencha os dados manualmente.');
+      setErro(mensagemErro);
       setProgresso(100);
       setEtapaAtual(3);
     }
