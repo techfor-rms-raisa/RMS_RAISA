@@ -474,18 +474,30 @@ export const useRaisaCVSearch = () => {
         return [];
       }
 
-      // Buscar candidatos
+      // Buscar candidatos (sem filtrar por senioridade para ampliar resultados)
       const resultados = await buscarPorSkills(skills, {
-        senioridade: vaga.senioridade,
+        // senioridade removida - vamos apenas dar bonus para match de senioridade
         limite
       });
 
       // Calcular score completo considerando outros fatores
+      const normalizarSenioridade = (s: string) => 
+        (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      
+      const vagaSenioridade = normalizarSenioridade(vaga.senioridade);
+      
       const resultadosCompletos = resultados.map(r => {
         let scoreExtra = 0;
+        const candidatoSenioridade = normalizarSenioridade(r.senioridade);
 
-        // Bonus por senioridade compatível
-        if (r.senioridade === vaga.senioridade) {
+        // Bonus por senioridade compatível (comparação normalizada)
+        if (candidatoSenioridade === vagaSenioridade || 
+            candidatoSenioridade.includes(vagaSenioridade) ||
+            vagaSenioridade.includes(candidatoSenioridade)) {
+          scoreExtra += 10;
+        }
+        // Especialista pode atender Senior
+        if (vagaSenioridade === 'senior' && candidatoSenioridade === 'especialista') {
           scoreExtra += 10;
         }
 
@@ -500,7 +512,8 @@ export const useRaisaCVSearch = () => {
         return {
           ...r,
           score_total: scoreAjustado,
-          score_senioridade: r.senioridade === vaga.senioridade ? 100 : 50
+          score_senioridade: (candidatoSenioridade === vagaSenioridade || 
+            candidatoSenioridade === 'especialista') ? 100 : 50
         };
       });
 
