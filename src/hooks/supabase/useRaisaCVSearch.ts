@@ -127,6 +127,7 @@ export const useRaisaCVSearch = () => {
 
   /**
    * Busca candidatos com base nas skills da vaga
+   * 🆕 v2.1: Força uso da busca com normalização (bypass RPC)
    */
   const buscarPorSkills = useCallback(async (
     skills: string[],
@@ -137,46 +138,11 @@ export const useRaisaCVSearch = () => {
       setError(null);
       console.log(`🔍 Buscando candidatos por skills: ${skills.join(', ')}`);
 
-      // Chamar função RPC do Supabase
-      const { data, error: rpcError } = await supabase.rpc('buscar_candidatos_por_skills', {
-        p_skills: skills,
-        p_senioridade: filtros?.senioridade || null,
-        p_modalidade: filtros?.modalidade || null,
-        p_disponibilidade: filtros?.disponibilidade || null,
-        p_limite: filtros?.limite || 20
-      });
-
-      if (rpcError) {
-        console.warn('⚠️ RPC buscar_candidatos_por_skills não disponível, usando busca alternativa...');
-        return await buscarPorSkillsComSinonimos(skills, filtros);
-      }
-
-      const resultados: CandidatoMatch[] = (data || []).map((r: any) => ({
-        pessoa_id: r.pessoa_id,
-        nome: r.nome,
-        email: r.email,
-        telefone: r.telefone,
-        titulo_profissional: r.titulo_profissional || 'Não informado',
-        senioridade: r.senioridade || 'Não informado',
-        disponibilidade: r.disponibilidade || 'Não informado',
-        modalidade_preferida: r.modalidade_preferida || 'Não informado',
-        pretensao_salarial: r.pretensao_salarial || 0,
-        score_total: r.score_match || 0,
-        score_skills: r.score_match || 0,
-        score_experiencia: 0,
-        score_senioridade: 0,
-        skills_match: r.skills_match || [],
-        skills_faltantes: r.skills_faltantes || [],
-        skills_extras: [],
-        justificativa_ia: '',
-        status: 'novo',
-        top_skills: r.skills_match || [],
-        anos_experiencia_total: r.anos_experiencia_total || 0
-      }));
-
-      setMatches(resultados);
-      console.log(`✅ ${resultados.length} candidatos encontrados via RPC`);
-      return resultados;
+      // 🆕 v2.1: Usar busca com normalização diretamente (bypass RPC)
+      // A função RPC não normaliza as skills, causando problemas de match
+      console.log('🔄 Usando busca com normalização inteligente...');
+      return await buscarPorSkillsComSinonimos(skills, filtros);
+      
     } catch (err: any) {
       console.error('❌ Erro na busca:', err);
       setError(err.message);
