@@ -267,8 +267,8 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       return;
     }
 
-    if (file.size > 10 * 1024 * 1024) {
-      setErro('Arquivo muito grande. Máximo 10MB.');
+    if (file.size > 4 * 1024 * 1024) {
+      setErro('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
       return;
     }
 
@@ -284,6 +284,11 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         texto = await file.text();
       } else {
         texto = await extrairTextoPDF(file);
+      }
+
+      // Verificar tamanho do base64 antes de enviar
+      if (texto.length > 5 * 1024 * 1024) {
+        throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
       }
 
       setTextoCV(texto);
@@ -334,8 +339,18 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Erro na API');
+        // Tratar erro 413 especificamente
+        if (response.status === 413) {
+          throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
+        }
+        
+        // Tentar parsear erro JSON
+        try {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Erro na API');
+        } catch (parseError) {
+          throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
+        }
       }
 
       const result = await response.json();
