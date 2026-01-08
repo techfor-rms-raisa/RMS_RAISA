@@ -276,14 +276,16 @@ const App: React.FC = () => {
             deleteVaga={deleteVaga} 
           />;
       case 'candidaturas':
-          // ✅ v53.0: Modal Nova Candidatura com análise de CV
+          // ✅ v55.0: Adicionado filtro por cliente + análise de adequação
           return <Candidaturas 
             candidaturas={candidaturas} 
             vagas={vagas} 
-            pessoas={pessoas} 
+            pessoas={pessoas}
+            clientes={clients} // 🆕 Lista de clientes para filtro
             updateStatus={updateCandidaturaStatus}
             onReload={loadAllData}
             currentUserId={currentUser?.id || 1}
+            currentUserName={currentUser?.nome_usuario}
           />;
       case 'analise_risco':
           return <AnaliseRisco />;

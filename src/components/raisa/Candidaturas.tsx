@@ -33,16 +33,18 @@ import DetalhesCandidaturaModal from './DetalhesCandidaturaModal';
 // TIPOS
 // ============================================
 
-interface Cliente {
+// Tipo compatível com a interface Client do sistema
+interface ClienteInfo {
     id: number | string;
-    nome: string;
+    razao_social_cliente?: string; // Nome usado no sistema principal
+    nome?: string; // Fallback
 }
 
 interface CandidaturasProps {
     candidaturas: Candidatura[];
     vagas: Vaga[];
     pessoas: Pessoa[];
-    clientes?: Cliente[]; // 🆕 Lista de clientes (opcional)
+    clientes?: ClienteInfo[]; // 🆕 Lista de clientes (opcional)
     updateStatus: (id: string, status: any) => void;
     onReload?: () => void;
     currentUserId?: number;
@@ -85,13 +87,19 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     // ============================================
     
     const clientesDisponiveis = useMemo(() => {
-        // Se temos lista de clientes via props, usar ela
+        // Se temos lista de clientes via props, usar ela (prioridade)
         if (safeClientes.length > 0) {
-            return safeClientes;
+            return safeClientes
+                .filter(c => c.razao_social_cliente || c.nome) // Apenas com nome
+                .map(c => ({
+                    id: c.id,
+                    nome: c.razao_social_cliente || c.nome || `Cliente #${c.id}`
+                }))
+                .sort((a, b) => a.nome.localeCompare(b.nome));
         }
         
         // Caso contrário, extrair das vagas
-        const clientesMap = new Map<string, Cliente>();
+        const clientesMap = new Map<string, { id: string | number; nome: string }>();
         
         safeVagas.forEach(vaga => {
             const vagaAny = vaga as any;
@@ -102,16 +110,21 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                     id: vagaAny.cliente_id,
                     nome: vagaAny.cliente_nome
                 });
-            } else if (vagaAny.cliente?.id && vagaAny.cliente?.nome) {
+            } else if (vagaAny.cliente?.id && (vagaAny.cliente?.razao_social_cliente || vagaAny.cliente?.nome)) {
                 clientesMap.set(String(vagaAny.cliente.id), {
                     id: vagaAny.cliente.id,
-                    nome: vagaAny.cliente.nome
+                    nome: vagaAny.cliente.razao_social_cliente || vagaAny.cliente.nome
                 });
             } else if (vagaAny.cliente_id) {
-                // Só temos o ID, criar nome genérico
+                // Só temos o ID, buscar na lista de clientes se disponível
+                const clienteEncontrado = safeClientes.find(c => 
+                    String(c.id) === String(vagaAny.cliente_id)
+                );
                 clientesMap.set(String(vagaAny.cliente_id), {
                     id: vagaAny.cliente_id,
-                    nome: `Cliente #${vagaAny.cliente_id}`
+                    nome: clienteEncontrado?.razao_social_cliente || 
+                          clienteEncontrado?.nome || 
+                          `Cliente #${vagaAny.cliente_id}`
                 });
             }
         });
@@ -142,9 +155,22 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         if (!vaga) return '-';
         
         const vagaAny = vaga as any;
+        
+        // Tentar obter nome diretamente da vaga
         if (vagaAny.cliente_nome) return vagaAny.cliente_nome;
+        if (vagaAny.cliente?.razao_social_cliente) return vagaAny.cliente.razao_social_cliente;
         if (vagaAny.cliente?.nome) return vagaAny.cliente.nome;
-        if (vagaAny.cliente_id) return `Cliente #${vagaAny.cliente_id}`;
+        
+        // Se só tem ID, buscar na lista de clientes
+        if (vagaAny.cliente_id) {
+            const clienteEncontrado = safeClientes.find(c => 
+                String(c.id) === String(vagaAny.cliente_id)
+            );
+            if (clienteEncontrado?.razao_social_cliente) return clienteEncontrado.razao_social_cliente;
+            if (clienteEncontrado?.nome) return clienteEncontrado.nome;
+            return `Cliente #${vagaAny.cliente_id}`;
+        }
+        
         return '-';
     };
 
