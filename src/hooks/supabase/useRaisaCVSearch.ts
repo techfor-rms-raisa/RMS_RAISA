@@ -147,14 +147,15 @@ export const useRaisaCVSearch = () => {
       });
 
       if (rpcError) {
-        console.warn('⚠️ RPC não disponível, usando busca alternativa...');
-        return await buscarPorSkillsAlternativo(skills, filtros);
+        console.warn('⚠️ RPC buscar_candidatos_por_skills não disponível, usando busca alternativa...');
+        return await buscarPorSkillsComSinonimos(skills, filtros);
       }
 
       const resultados: CandidatoMatch[] = (data || []).map((r: any) => ({
         pessoa_id: r.pessoa_id,
         nome: r.nome,
         email: r.email,
+        telefone: r.telefone,
         titulo_profissional: r.titulo_profissional || 'Não informado',
         senioridade: r.senioridade || 'Não informado',
         disponibilidade: r.disponibilidade || 'Não informado',
@@ -164,20 +165,17 @@ export const useRaisaCVSearch = () => {
         score_skills: r.score_match || 0,
         score_experiencia: 0,
         score_senioridade: 0,
-        skills_match: r.skills_encontradas || [],
-        skills_faltantes: skills.filter(s => 
-          !(r.skills_encontradas || []).some((e: string) => 
-            e.toLowerCase() === s.toLowerCase()
-          )
-        ),
+        skills_match: r.skills_match || [],
+        skills_faltantes: r.skills_faltantes || [],
         skills_extras: [],
         justificativa_ia: '',
         status: 'novo',
-        top_skills: r.skills_encontradas || []
+        top_skills: r.skills_match || [],
+        anos_experiencia_total: r.anos_experiencia_total || 0
       }));
 
       setMatches(resultados);
-      console.log(`✅ ${resultados.length} candidatos encontrados`);
+      console.log(`✅ ${resultados.length} candidatos encontrados via RPC`);
       return resultados;
     } catch (err: any) {
       console.error('❌ Erro na busca:', err);
@@ -189,13 +187,180 @@ export const useRaisaCVSearch = () => {
   }, []);
 
   /**
-   * Busca alternativa quando RPC não está disponível
+   * Busca com sinônimos (fallback quando RPC não disponível)
+   * Usa tabela skill_sinonimos para normalização
+   */
+  const buscarPorSkillsComSinonimos = async (
+    skills: string[],
+    filtros?: Omit<BuscaFiltros, 'skills'>
+  ): Promise<CandidatoMatch[]> => {
+    try {
+      console.log('🔄 Usando busca com sinônimos...');
+      
+      // 1. Buscar sinônimos para normalizar as skills de entrada
+      const { data: sinonimosData } = await supabase
+        .from('skill_sinonimos')
+        .select('skill_canonica, sinonimo')
+        .or(skills.map(s => `sinonimo.ilike.${s}`).join(','));
+      
+      // Criar mapa de skill original -> skill canônica
+      const skillsNormalizadas = new Set<string>();
+      const sinonimosMap = new Map<string, string>();
+      
+      (sinonimosData || []).forEach((s: any) => {
+        sinonimosMap.set(s.sinonimo.toLowerCase(), s.skill_canonica);
+        skillsNormalizadas.add(s.skill_canonica.toLowerCase());
+      });
+      
+      // Adicionar skills originais que não têm sinônimo
+      skills.forEach(s => {
+        const canonical = sinonimosMap.get(s.toLowerCase());
+        if (canonical) {
+          skillsNormalizadas.add(canonical.toLowerCase());
+        } else {
+          skillsNormalizadas.add(s.toLowerCase());
+        }
+      });
+      
+      console.log(`📋 Skills normalizadas: ${Array.from(skillsNormalizadas).join(', ')}`);
+
+      // 2. Buscar TODOS os sinônimos das skills normalizadas
+      const { data: todosSimonimos } = await supabase
+        .from('skill_sinonimos')
+        .select('skill_canonica, sinonimo')
+        .in('skill_canonica', Array.from(skillsNormalizadas).map(s => s.charAt(0).toUpperCase() + s.slice(1)));
+      
+      // Lista de todas as variações possíveis
+      const todasVariacoes = new Set<string>();
+      skillsNormalizadas.forEach(s => todasVariacoes.add(s));
+      (todosSimonimos || []).forEach((s: any) => {
+        todasVariacoes.add(s.sinonimo.toLowerCase());
+      });
+      
+      // 3. Buscar pessoas que têm essas skills
+      const { data: skillsData, error: skillsError } = await supabase
+        .from('pessoa_skills')
+        .select('pessoa_id, skill_nome, nivel, anos_experiencia');
+
+      if (skillsError) {
+        console.warn('⚠️ Erro ao buscar pessoa_skills:', skillsError);
+        return await buscarEmPessoas(skills, filtros);
+      }
+
+      // Filtrar skills que batem com alguma variação
+      const skillsMatch = (skillsData || []).filter((s: any) => 
+        todasVariacoes.has(s.skill_nome.toLowerCase())
+      );
+
+      // 4. Agrupar por pessoa
+      const pessoaSkillsMap = new Map<number, { skills: string[], anos: number }>();
+      skillsMatch.forEach((s: any) => {
+        const current = pessoaSkillsMap.get(s.pessoa_id) || { skills: [], anos: 0 };
+        // Normalizar para skill canônica
+        const canonical = sinonimosMap.get(s.skill_nome.toLowerCase()) || s.skill_nome;
+        if (!current.skills.includes(canonical)) {
+          current.skills.push(canonical);
+        }
+        current.anos += s.anos_experiencia || 0;
+        pessoaSkillsMap.set(s.pessoa_id, current);
+      });
+
+      // 5. Ordenar por quantidade de matches
+      const pessoasOrdenadas = Array.from(pessoaSkillsMap.entries())
+        .sort((a, b) => b[1].skills.length - a[1].skills.length)
+        .slice(0, filtros?.limite || 20);
+
+      if (pessoasOrdenadas.length === 0) {
+        console.log('⚠️ Nenhum candidato encontrado com as skills solicitadas');
+        return [];
+      }
+
+      // 6. Buscar dados completos das pessoas
+      const pessoaIds = pessoasOrdenadas.map(([id]) => id);
+      
+      let query = supabase
+        .from('pessoas')
+        .select('*')
+        .in('id', pessoaIds);
+
+      if (filtros?.senioridade) {
+        query = query.eq('senioridade', filtros.senioridade);
+      }
+      if (filtros?.disponibilidade) {
+        query = query.eq('disponibilidade', filtros.disponibilidade);
+      }
+
+      const { data: pessoasData, error: pessoasError } = await query;
+
+      if (pessoasError) throw pessoasError;
+
+      // 7. Montar resultados
+      const skillsOriginais = Array.from(skillsNormalizadas);
+      
+      const resultados: CandidatoMatch[] = (pessoasData || []).map((p: any) => {
+        const dadosMatch = pessoaSkillsMap.get(p.id) || { skills: [], anos: 0 };
+        const skillsEncontradas = dadosMatch.skills;
+        const skillsFaltantes = skillsOriginais.filter(s => 
+          !skillsEncontradas.some(e => e.toLowerCase() === s.toLowerCase())
+        );
+        const scoreMatch = Math.round((skillsEncontradas.length / skillsOriginais.length) * 100);
+
+        return {
+          pessoa_id: p.id,
+          nome: p.nome,
+          email: p.email,
+          telefone: p.telefone,
+          titulo_profissional: p.titulo_profissional || 'Não informado',
+          senioridade: p.senioridade || 'Não informado',
+          disponibilidade: p.disponibilidade || 'Não informado',
+          modalidade_preferida: p.modalidade_preferida || 'Não informado',
+          pretensao_salarial: p.pretensao_salarial || 0,
+          score_total: scoreMatch,
+          score_skills: scoreMatch,
+          score_experiencia: 0,
+          score_senioridade: 0,
+          skills_match: skillsEncontradas,
+          skills_faltantes: skillsFaltantes,
+          skills_extras: [],
+          justificativa_ia: '',
+          status: 'novo' as const,
+          top_skills: skillsEncontradas.slice(0, 5),
+          anos_experiencia_total: dadosMatch.anos
+        };
+      });
+
+      // Ordenar por score
+      resultados.sort((a, b) => b.score_total - a.score_total);
+      
+      console.log(`✅ ${resultados.length} candidatos encontrados com sinônimos`);
+      return resultados;
+    } catch (err: any) {
+      console.error('❌ Erro na busca com sinônimos:', err);
+      return await buscarEmPessoas(skills, filtros);
+    }
+  };
+
+  /**
+   * Busca alternativa quando RPC não está disponível (LEGADO)
    */
   const buscarPorSkillsAlternativo = async (
     skills: string[],
     filtros?: Omit<BuscaFiltros, 'skills'>
   ): Promise<CandidatoMatch[]> => {
+    // Redirecionar para busca com sinônimos
+    return buscarPorSkillsComSinonimos(skills, filtros);
+  };
+
+  /**
+   * Busca em pessoas (fallback final quando não há tabela pessoa_skills)
+   */
+  const buscarEmPessoas = async (
+    skills: string[],
+    filtros?: Omit<BuscaFiltros, 'skills'>
+  ): Promise<CandidatoMatch[]> => {
     try {
+      console.log('🔄 Usando busca em cv_texto_original...');
+      
       // Buscar pessoas que têm skills correspondentes
       const skillsLower = skills.map(s => s.toLowerCase());
       
@@ -207,7 +372,6 @@ export const useRaisaCVSearch = () => {
       if (skillsError) {
         // Se tabela não existe, buscar direto em pessoas
         console.warn('⚠️ Tabela pessoa_skills não encontrada, buscando em pessoas...');
-        return await buscarEmPessoas(skills, filtros);
       }
 
       // Agrupar por pessoa
@@ -217,6 +381,67 @@ export const useRaisaCVSearch = () => {
         current.push(s.skill_nome);
         pessoaSkillsMap.set(s.pessoa_id, current);
       });
+
+      // Ordenar por quantidade de matches
+      const pessoasOrdenadas = Array.from(pessoaSkillsMap.entries())
+        .sort((a, b) => b[1].length - a[1].length)
+        .slice(0, filtros?.limite || 20);
+
+      if (pessoasOrdenadas.length === 0) {
+        return [];
+      }
+
+      // Buscar dados completos das pessoas
+      const pessoaIds = pessoasOrdenadas.map(([id]) => id);
+      
+      let query = supabase
+        .from('pessoas')
+        .select('*')
+        .in('id', pessoaIds);
+
+      if (filtros?.senioridade) {
+        query = query.eq('senioridade', filtros.senioridade);
+      }
+
+      const { data: pessoasData, error: pessoasError } = await query;
+
+      if (pessoasError) throw pessoasError;
+
+      const resultados: CandidatoMatch[] = (pessoasData || []).map((p: any) => {
+        const skillsMatch = pessoaSkillsMap.get(p.id) || [];
+        const scoreMatch = Math.round((skillsMatch.length / skills.length) * 100);
+
+        return {
+          pessoa_id: p.id,
+          nome: p.nome,
+          email: p.email,
+          telefone: p.telefone,
+          titulo_profissional: p.titulo_profissional || 'Não informado',
+          senioridade: p.senioridade || 'Não informado',
+          disponibilidade: p.disponibilidade || 'Não informado',
+          modalidade_preferida: p.modalidade_preferida || 'Não informado',
+          pretensao_salarial: p.pretensao_salarial || 0,
+          score_total: scoreMatch,
+          score_skills: scoreMatch,
+          score_experiencia: 0,
+          score_senioridade: 0,
+          skills_match: skillsMatch,
+          skills_faltantes: skills.filter(s => 
+            !skillsMatch.some(e => e.toLowerCase() === s.toLowerCase())
+          ),
+          skills_extras: [],
+          justificativa_ia: '',
+          status: 'novo' as const,
+          top_skills: skillsMatch.slice(0, 5)
+        };
+      });
+
+      return resultados;
+    } catch (err: any) {
+      console.error('❌ Erro na busca em pessoas:', err);
+      return [];
+    }
+  };
 
       // Ordenar por quantidade de matches
       const pessoasOrdenadas = Array.from(pessoaSkillsMap.entries())
@@ -279,75 +504,6 @@ export const useRaisaCVSearch = () => {
       return resultados;
     } catch (err: any) {
       console.error('❌ Erro na busca alternativa:', err);
-      throw err;
-    }
-  };
-
-  /**
-   * Busca direta em pessoas quando não há tabela de skills
-   */
-  const buscarEmPessoas = async (
-    skills: string[],
-    filtros?: Omit<BuscaFiltros, 'skills'>
-  ): Promise<CandidatoMatch[]> => {
-    try {
-      let query = supabase
-        .from('pessoas')
-        .select('*')
-        .eq('ativo', true)
-        .limit(filtros?.limite || 20);
-
-      if (filtros?.senioridade) {
-        query = query.eq('senioridade', filtros.senioridade);
-      }
-
-      const { data, error } = await query;
-
-      if (error) throw error;
-
-      // Filtrar por texto do CV se disponível
-      const resultados: CandidatoMatch[] = (data || [])
-        .filter((p: any) => {
-          if (!p.cv_texto_completo) return true; // Incluir se não tem CV
-          const cvLower = p.cv_texto_completo.toLowerCase();
-          return skills.some(s => cvLower.includes(s.toLowerCase()));
-        })
-        .map((p: any) => {
-          const cvLower = (p.cv_texto_completo || '').toLowerCase();
-          const skillsMatch = skills.filter(s => cvLower.includes(s.toLowerCase()));
-          const scoreMatch = skills.length > 0 
-            ? Math.round((skillsMatch.length / skills.length) * 100)
-            : 50;
-
-          return {
-            pessoa_id: p.id,
-            nome: p.nome,
-            email: p.email,
-            telefone: p.telefone,
-            titulo_profissional: p.titulo_profissional || 'Não informado',
-            senioridade: p.senioridade || 'Não informado',
-            disponibilidade: p.disponibilidade || 'Não informado',
-            modalidade_preferida: p.modalidade_preferida || 'Não informado',
-            pretensao_salarial: p.pretensao_salarial || 0,
-            score_total: scoreMatch,
-            score_skills: scoreMatch,
-            score_experiencia: 0,
-            score_senioridade: 0,
-            skills_match: skillsMatch,
-            skills_faltantes: skills.filter(s => 
-              !skillsMatch.some(e => e.toLowerCase() === s.toLowerCase())
-            ),
-            skills_extras: [],
-            justificativa_ia: '',
-            status: 'novo' as const
-          };
-        });
-
-      resultados.sort((a, b) => b.score_total - a.score_total);
-      setMatches(resultados);
-      return resultados;
-    } catch (err: any) {
-      console.error('❌ Erro na busca em pessoas:', err);
       throw err;
     }
   };
