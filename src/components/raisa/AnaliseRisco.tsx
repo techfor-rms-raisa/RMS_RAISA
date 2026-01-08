@@ -1,5 +1,5 @@
 /**
- * AnaliseRisco.tsx - RMS RAISA v4.0
+ * AnaliseRisco.tsx - RMS RAISA v4.1
  * Componente de Análise de Currículo com IA
  * 
  * HISTÓRICO:
@@ -9,6 +9,11 @@
  *   • Gaps, evidências, perguntas por requisito
  *   • Score detalhado com confiança
  *   • Sugestões de mitigação
+ * - v4.1 (08/01/2026): Melhorias no dropdown e salvamento condicional
+ *   • Dropdown de vagas com filtro por cliente/título
+ *   • Score mínimo 40% para salvamento automático
+ *   • Botão de salvamento manual para scores baixos
+ *   • Persistência automática seguindo padrão CVImportIA
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -146,6 +151,13 @@ const AnaliseRisco: React.FC = () => {
   const [analiseAdequacao, setAnaliseAdequacao] = useState<AnaliseAdequacaoResultado | null>(null);
   const [isAnalisandoAdequacao, setIsAnalisandoAdequacao] = useState(false);
   const [abaResultado, setAbaResultado] = useState<'resumo' | 'requisitos' | 'gaps' | 'perguntas'>('resumo');
+  const [filtroVaga, setFiltroVaga] = useState<string>(''); // 🆕 Filtro para dropdown de vagas
+  const [isSalvandoManual, setIsSalvandoManual] = useState(false); // 🆕 Estado para salvamento manual
+  const [dadosParaSalvarManual, setDadosParaSalvarManual] = useState<any>(null); // 🆕 Dados para salvar manualmente
+  
+  // 🆕 v4.1: Score mínimo para salvamento automático (40%)
+  // Abaixo desse valor, candidato não é salvo automaticamente
+  const SCORE_MINIMO_SALVAR = 40;
   
   // Estados da aba Alertas
   const [alertas, setAlertas] = useState<CandidaturaRisco[]>([]);
@@ -384,10 +396,13 @@ const AnaliseRisco: React.FC = () => {
         setAnalise(result.data);
         
         // ========================================
-        // PASSO 3: PERSISTIR NO BANCO (OBRIGATÓRIO)
+        // PASSO 3: PERSISTIR NO BANCO (SE SCORE >= 40%)
+        // 🆕 v4.1: Só salva automaticamente se score for adequado
         // ========================================
-        if (dadosExtraidos) {
-          console.log('💾 Salvando candidato no Banco de Talentos...');
+        const scoreGeral = result.data.score_geral || 0;
+        
+        if (dadosExtraidos && scoreGeral >= SCORE_MINIMO_SALVAR) {
+          console.log(`💾 Score ${scoreGeral}% >= ${SCORE_MINIMO_SALVAR}% - Salvando candidato...`);
           
           const candidato = {
             nome: dadosExtraidos.dados_pessoais?.nome || 'Candidato',
@@ -407,13 +422,16 @@ const AnaliseRisco: React.FC = () => {
             cv_texto_original: textoOriginal
           };
 
-          // Usar mesma função de persistência
           const pessoaSalva = await salvarCandidatoNoBancoTriagem(candidato, dadosExtraidos, textoOriginal, result.data);
           
           if (pessoaSalva) {
             console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
             setSalvouBanco(true);
           }
+        } else if (dadosExtraidos) {
+          console.log(`⚠️ Score ${scoreGeral}% < ${SCORE_MINIMO_SALVAR}% - Candidato NÃO salvo automaticamente`);
+          // Guardar dados para salvamento manual
+          setDadosParaSalvarManual({ candidato: dadosExtraidos, textoOriginal, analiseResult: result.data });
         }
       } else {
         throw new Error(result.data?.erro || result.error || 'Erro na análise');
@@ -674,19 +692,8 @@ const AnaliseRisco: React.FC = () => {
       };
 
       // ========================================
-      // PASSO 2: PERSISTIR NO BANCO (OBRIGATÓRIO)
-      // Igual CVImportIA.tsx - salva independente do resultado
-      // ========================================
-      console.log('💾 Salvando candidato no Banco de Talentos...');
-      
-      const pessoaSalva = await salvarCandidatoNoBanco(candidato, dados, textoOriginal);
-      
-      if (pessoaSalva) {
-        console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
-      }
-
-      // ========================================
-      // PASSO 3: Análise de Adequação via Claude
+      // PASSO 2: Análise de Adequação via Claude
+      // (Analisamos PRIMEIRO para saber o score)
       // ========================================
       console.log('🎯 Analisando adequação via Claude...');
 
@@ -717,13 +724,14 @@ const AnaliseRisco: React.FC = () => {
       }
 
       // ========================================
-      // PASSO 4: Mapear resposta para o componente
+      // PASSO 3: Mapear resposta para o componente
       // ========================================
       const data = result.data;
-      console.log('✅ Análise concluída - Score:', data.score_geral);
+      const scoreGeral = data.score_geral || 0;
+      console.log('✅ Análise concluída - Score:', scoreGeral);
 
       const analiseFormatada: AnaliseAdequacaoResultado = {
-        score_geral: data.score_geral || 0,
+        score_geral: scoreGeral,
         nivel_confianca: data.confianca_analise || 0,
         recomendacao: mapearRecomendacao(data.avaliacao_final?.recomendacao),
         justificativa_recomendacao: data.avaliacao_final?.justificativa || '',
@@ -744,7 +752,25 @@ const AnaliseRisco: React.FC = () => {
 
       setAnaliseAdequacao(analiseFormatada);
       setAbaResultado('resumo');
-      setSalvouBanco(true); // Marcar que já salvou
+
+      // ========================================
+      // PASSO 4: PERSISTIR NO BANCO (SE SCORE >= 40%)
+      // 🆕 v4.1: Só salva automaticamente se score for adequado
+      // ========================================
+      if (scoreGeral >= SCORE_MINIMO_SALVAR) {
+        console.log(`💾 Score ${scoreGeral}% >= ${SCORE_MINIMO_SALVAR}% - Salvando candidato...`);
+        
+        const pessoaSalva = await salvarCandidatoNoBanco(candidato, dados, textoOriginal);
+        
+        if (pessoaSalva) {
+          console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
+          setSalvouBanco(true);
+        }
+      } else {
+        console.log(`⚠️ Score ${scoreGeral}% < ${SCORE_MINIMO_SALVAR}% - Candidato NÃO salvo automaticamente`);
+        // Guardar dados para salvamento manual opcional
+        setDadosParaSalvarManual({ candidato, dados, textoOriginal, analiseResult: data });
+      }
 
     } catch (err: any) {
       console.error('❌ Erro na análise de adequação:', err);
@@ -1020,8 +1046,43 @@ const AnaliseRisco: React.FC = () => {
     setSalvouBanco(false);
     setErro(null);
     setVagaSelecionada(null);
+    setFiltroVaga('');
+    setDadosParaSalvarManual(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  // 🆕 v4.1: Salvamento manual para candidatos com score baixo
+  const handleSalvarManual = async () => {
+    if (!dadosParaSalvarManual) return;
+    
+    setIsSalvandoManual(true);
+    
+    try {
+      const { candidato, dados, textoOriginal, analiseResult } = dadosParaSalvarManual;
+      
+      // Usar a função apropriada baseado no tipo de análise
+      let pessoaSalva = null;
+      
+      if (analiseAdequacao) {
+        // Análise de adequação
+        pessoaSalva = await salvarCandidatoNoBanco(candidato, dados, textoOriginal);
+      } else if (analise) {
+        // Triagem genérica
+        pessoaSalva = await salvarCandidatoNoBancoTriagem(candidato, dados, textoOriginal, analiseResult);
+      }
+      
+      if (pessoaSalva) {
+        console.log('✅ Candidato salvo manualmente com ID:', pessoaSalva.id);
+        setSalvouBanco(true);
+        setDadosParaSalvarManual(null);
+      }
+    } catch (err: any) {
+      console.error('❌ Erro ao salvar manualmente:', err);
+      setErro(`Erro ao salvar: ${err.message}`);
+    } finally {
+      setIsSalvandoManual(false);
     }
   };
 
@@ -1311,7 +1372,7 @@ const AnaliseRisco: React.FC = () => {
               )}
             </div>
 
-            {/* 🆕 v4.0: Seleção de Vaga (opcional) */}
+            {/* 🆕 v4.0: Seleção de Vaga (opcional) com filtro */}
             {textoExtraido && (
               <div className="bg-white rounded-xl shadow-md p-6">
                 <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
@@ -1322,6 +1383,27 @@ const AnaliseRisco: React.FC = () => {
                   Selecione uma vaga para análise de adequação detalhada com gaps e perguntas
                 </p>
                 
+                {/* 🆕 Campo de filtro */}
+                <div className="relative mb-2">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Filtrar por cliente ou título da vaga..."
+                    value={filtroVaga}
+                    onChange={(e) => setFiltroVaga(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 border rounded-lg bg-gray-50 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                  {filtroVaga && (
+                    <button
+                      onClick={() => setFiltroVaga('')}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      <XCircle className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+                
+                {/* Dropdown com vagas filtradas */}
                 <select
                   value={vagaSelecionada?.id || ''}
                   onChange={(e) => {
@@ -1331,12 +1413,32 @@ const AnaliseRisco: React.FC = () => {
                   className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
                   <option value="">-- Triagem genérica (sem vaga) --</option>
-                  {vagas.map((vaga) => (
-                    <option key={vaga.id} value={vaga.id}>
-                      {vaga.titulo} {vaga.cliente_nome ? `- ${vaga.cliente_nome}` : ''}
-                    </option>
-                  ))}
+                  {vagas
+                    .filter(vaga => {
+                      if (!filtroVaga) return true;
+                      const termo = filtroVaga.toLowerCase();
+                      return (
+                        vaga.titulo.toLowerCase().includes(termo) ||
+                        (vaga.cliente_nome || '').toLowerCase().includes(termo)
+                      );
+                    })
+                    .map((vaga) => (
+                      <option key={vaga.id} value={vaga.id}>
+                        {vaga.cliente_nome ? `[${vaga.cliente_nome}] ` : ''}{vaga.titulo}
+                      </option>
+                    ))
+                  }
                 </select>
+                
+                {/* Contador de vagas filtradas */}
+                {filtroVaga && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    {vagas.filter(v => 
+                      v.titulo.toLowerCase().includes(filtroVaga.toLowerCase()) ||
+                      (v.cliente_nome || '').toLowerCase().includes(filtroVaga.toLowerCase())
+                    ).length} vagas encontradas
+                  </p>
+                )}
 
                 {vagaSelecionada && (
                   <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
@@ -1569,13 +1671,48 @@ const AnaliseRisco: React.FC = () => {
                   </div>
                 )}
 
-                {/* Indicador de Salvamento Automático */}
+                {/* Indicador de Salvamento */}
                 {salvouBanco && (
                   <div className="p-4 bg-green-100 border border-green-300 rounded-lg flex items-center gap-3">
                     <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
                     <div>
                       <p className="font-medium text-green-800">✅ Salvo automaticamente no Banco de Talentos</p>
                       <p className="text-sm text-green-600">O candidato foi adicionado à base de pessoas</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* 🆕 v4.1: Opção de salvamento manual para score baixo */}
+                {!salvouBanco && dadosParaSalvarManual && analise && (
+                  <div className="p-4 bg-yellow-50 border border-yellow-300 rounded-lg">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-6 h-6 text-yellow-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-medium text-yellow-800">
+                          ⚠️ Score abaixo de {SCORE_MINIMO_SALVAR}% - Não salvo automaticamente
+                        </p>
+                        <p className="text-sm text-yellow-700 mt-1">
+                          Este candidato não atingiu o score mínimo para salvamento automático. 
+                          Você pode salvá-lo manualmente se desejar.
+                        </p>
+                        <button
+                          onClick={handleSalvarManual}
+                          disabled={isSalvandoManual}
+                          className="mt-3 px-4 py-2 bg-yellow-600 text-white rounded-lg text-sm font-medium hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {isSalvandoManual ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Salvando...
+                            </>
+                          ) : (
+                            <>
+                              <Database className="w-4 h-4" />
+                              Salvar mesmo assim
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1774,13 +1911,48 @@ const AnaliseRisco: React.FC = () => {
                   )}
                 </div>
 
-                {/* Indicador de Salvamento Automático */}
+                {/* Indicador de Salvamento */}
                 {salvouBanco && (
                   <div className="mt-4 p-4 bg-green-100 border border-green-300 rounded-lg flex items-center gap-3">
                     <CheckCircle className="w-6 h-6 text-green-600 flex-shrink-0" />
                     <div>
                       <p className="font-medium text-green-800">✅ Salvo automaticamente no Banco de Talentos</p>
                       <p className="text-sm text-green-600">O candidato foi adicionado à base de pessoas</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* 🆕 v4.1: Opção de salvamento manual para score baixo */}
+                {!salvouBanco && dadosParaSalvarManual && analiseAdequacao && (
+                  <div className="mt-4 p-4 bg-yellow-50 border border-yellow-300 rounded-lg">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="w-6 h-6 text-yellow-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-medium text-yellow-800">
+                          ⚠️ Score abaixo de {SCORE_MINIMO_SALVAR}% - Não salvo automaticamente
+                        </p>
+                        <p className="text-sm text-yellow-700 mt-1">
+                          Este candidato não atingiu o score mínimo para salvamento automático. 
+                          Você pode salvá-lo manualmente se desejar.
+                        </p>
+                        <button
+                          onClick={handleSalvarManual}
+                          disabled={isSalvandoManual}
+                          className="mt-3 px-4 py-2 bg-yellow-600 text-white rounded-lg text-sm font-medium hover:bg-yellow-700 disabled:opacity-50 flex items-center gap-2"
+                        >
+                          {isSalvandoManual ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Salvando...
+                            </>
+                          ) : (
+                            <>
+                              <Database className="w-4 h-4" />
+                              Salvar mesmo assim
+                            </>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
