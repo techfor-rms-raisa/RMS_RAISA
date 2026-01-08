@@ -9,8 +9,9 @@
  *   • Gaps, evidências, perguntas por requisito
  *   • Score detalhado com confiança
  *   • Sugestões de mitigação
- * - v4.1 (08/01/2026): Melhorias no dropdown e salvamento condicional
- *   • Dropdown de vagas com filtro por cliente/título
+ * - v4.1 (08/01/2026): Dropdown de clientes e salvamento condicional
+ *   • Dropdown de CLIENTE para filtrar vagas (igual Gestão de Vagas)
+ *   • Dropdown de VAGA filtrado pelo cliente selecionado
  *   • Score mínimo 40% para salvamento automático
  *   • Botão de salvamento manual para scores baixos
  *   • Persistência automática seguindo padrão CVImportIA
@@ -25,7 +26,7 @@ import {
   File, Trash2, Eye, Save, Database, BarChart3,
   Users, Clock, Award, ThumbsUp, ThumbsDown, Briefcase,
   HelpCircle, MessageSquare, Shield, Zap, ChevronDown,
-  Search, FileQuestion, Lightbulb
+  Lightbulb
 } from 'lucide-react';
 
 // ============================================
@@ -76,9 +77,16 @@ interface MetricasIA {
   };
 }
 
+// 🆕 v4.1: Interface para clientes
+interface ClienteSimples {
+  id: number;
+  razao_social: string;
+}
+
 interface VagaSimples {
   id: number;
   titulo: string;
+  cliente_id?: number;
   cliente_nome?: string;
   requisitos_obrigatorios?: string;
   requisitos_desejaveis?: string;
@@ -151,12 +159,14 @@ const AnaliseRisco: React.FC = () => {
   const [analiseAdequacao, setAnaliseAdequacao] = useState<AnaliseAdequacaoResultado | null>(null);
   const [isAnalisandoAdequacao, setIsAnalisandoAdequacao] = useState(false);
   const [abaResultado, setAbaResultado] = useState<'resumo' | 'requisitos' | 'gaps' | 'perguntas'>('resumo');
-  const [filtroVaga, setFiltroVaga] = useState<string>(''); // 🆕 Filtro para dropdown de vagas
-  const [isSalvandoManual, setIsSalvandoManual] = useState(false); // 🆕 Estado para salvamento manual
-  const [dadosParaSalvarManual, setDadosParaSalvarManual] = useState<any>(null); // 🆕 Dados para salvar manualmente
+  
+  // 🆕 v4.1: Estados para filtro por cliente
+  const [clientes, setClientes] = useState<ClienteSimples[]>([]);
+  const [clienteSelecionadoId, setClienteSelecionadoId] = useState<number | null>(null);
+  const [isSalvandoManual, setIsSalvandoManual] = useState(false);
+  const [dadosParaSalvarManual, setDadosParaSalvarManual] = useState<any>(null);
   
   // 🆕 v4.1: Score mínimo para salvamento automático (40%)
-  // Abaixo desse valor, candidato não é salvo automaticamente
   const SCORE_MINIMO_SALVAR = 40;
   
   // Estados da aba Alertas
@@ -172,6 +182,7 @@ const AnaliseRisco: React.FC = () => {
   // ============================================
 
   useEffect(() => {
+    carregarClientes();
     carregarVagas();
   }, []);
 
@@ -183,6 +194,30 @@ const AnaliseRisco: React.FC = () => {
     }
   }, [abaAtiva]);
 
+  // 🆕 v4.1: Carregar lista de clientes
+  const carregarClientes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('clientes')
+        .select('id, razao_social_cliente')
+        .eq('ativo_cliente', true)
+        .order('razao_social_cliente', { ascending: true });
+
+      if (error) throw error;
+
+      const clientesFormatados: ClienteSimples[] = (data || []).map((c: any) => ({
+        id: c.id,
+        razao_social: c.razao_social_cliente || 'Sem nome'
+      }));
+
+      setClientes(clientesFormatados);
+      console.log(`✅ ${clientesFormatados.length} clientes carregados`);
+    } catch (err) {
+      console.error('Erro ao carregar clientes:', err);
+    }
+  };
+
+  // Carregar vagas abertas
   const carregarVagas = async () => {
     setLoadingVagas(true);
     try {
@@ -191,22 +226,24 @@ const AnaliseRisco: React.FC = () => {
         .select(`
           id,
           titulo,
+          cliente_id,
           requisitos_obrigatorios,
           requisitos_desejaveis,
           stack_tecnologica,
           senioridade,
-          clientes(nome)
+          clientes!vagas_cliente_id_fkey(razao_social_cliente)
         `)
         .eq('status', 'aberta')
         .order('created_at', { ascending: false })
-        .limit(50);
+        .limit(100);
 
       if (error) throw error;
 
       const vagasFormatadas: VagaSimples[] = (data || []).map((v: any) => ({
         id: v.id,
         titulo: v.titulo,
-        cliente_nome: v.clientes?.nome,
+        cliente_id: v.cliente_id,
+        cliente_nome: v.clientes?.razao_social_cliente || 'Sem cliente',
         requisitos_obrigatorios: v.requisitos_obrigatorios,
         requisitos_desejaveis: v.requisitos_desejaveis,
         stack_tecnologica: v.stack_tecnologica,
@@ -214,12 +251,18 @@ const AnaliseRisco: React.FC = () => {
       }));
 
       setVagas(vagasFormatadas);
+      console.log(`✅ ${vagasFormatadas.length} vagas carregadas`);
     } catch (err) {
       console.error('Erro ao carregar vagas:', err);
     } finally {
       setLoadingVagas(false);
     }
   };
+
+  // 🆕 v4.1: Filtrar vagas por cliente selecionado
+  const vagasFiltradas = clienteSelecionadoId
+    ? vagas.filter(v => v.cliente_id === clienteSelecionadoId)
+    : vagas;
 
   // ============================================
   // ABA 1: TRIAGEM DE CVs
@@ -1046,7 +1089,7 @@ const AnaliseRisco: React.FC = () => {
     setSalvouBanco(false);
     setErro(null);
     setVagaSelecionada(null);
-    setFiltroVaga('');
+    setClienteSelecionadoId(null);
     setDadosParaSalvarManual(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -1372,81 +1415,83 @@ const AnaliseRisco: React.FC = () => {
               )}
             </div>
 
-            {/* 🆕 v4.0: Seleção de Vaga (opcional) com filtro */}
+            {/* 🆕 v4.1: Seleção de Vaga com filtro por Cliente */}
             {textoExtraido && (
               <div className="bg-white rounded-xl shadow-md p-6">
                 <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                   <Briefcase className="w-4 h-4 text-blue-600" />
                   Comparar com Vaga (opcional)
                 </h3>
-                <p className="text-sm text-gray-500 mb-3">
+                <p className="text-sm text-gray-500 mb-4">
                   Selecione uma vaga para análise de adequação detalhada com gaps e perguntas
                 </p>
                 
-                {/* 🆕 Campo de filtro */}
-                <div className="relative mb-2">
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                  <input
-                    type="text"
-                    placeholder="Filtrar por cliente ou título da vaga..."
-                    value={filtroVaga}
-                    onChange={(e) => setFiltroVaga(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border rounded-lg bg-gray-50 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                  {filtroVaga && (
-                    <button
-                      onClick={() => setFiltroVaga('')}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                {/* Grid de dois dropdowns */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Dropdown 1: Filtro por Cliente */}
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 uppercase mb-1 block">
+                      Filtrar por Cliente
+                    </label>
+                    <select
+                      value={clienteSelecionadoId || ''}
+                      onChange={(e) => {
+                        const novoClienteId = e.target.value ? Number(e.target.value) : null;
+                        setClienteSelecionadoId(novoClienteId);
+                        setVagaSelecionada(null); // Limpar vaga ao mudar cliente
+                      }}
+                      className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                     >
-                      <XCircle className="w-4 h-4" />
-                    </button>
-                  )}
+                      <option value="">Todos os Clientes</option>
+                      {clientes.map((cliente) => (
+                        <option key={cliente.id} value={cliente.id}>
+                          {cliente.razao_social}
+                        </option>
+                      ))}
+                    </select>
+                    {clientes.length === 0 && (
+                      <p className="text-xs text-gray-400 mt-1">Carregando clientes...</p>
+                    )}
+                  </div>
+
+                  {/* Dropdown 2: Vagas (filtradas pelo cliente) */}
+                  <div>
+                    <label className="text-xs font-semibold text-gray-500 uppercase mb-1 block">
+                      Selecionar Vaga
+                    </label>
+                    <select
+                      value={vagaSelecionada?.id || ''}
+                      onChange={(e) => {
+                        const vaga = vagas.find(v => v.id === Number(e.target.value));
+                        setVagaSelecionada(vaga || null);
+                      }}
+                      className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">-- Triagem genérica (sem vaga) --</option>
+                      {vagasFiltradas.map((vaga) => (
+                        <option key={vaga.id} value={vaga.id}>
+                          {!clienteSelecionadoId && vaga.cliente_nome ? `[${vaga.cliente_nome}] ` : ''}{vaga.titulo}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {vagasFiltradas.length} vaga{vagasFiltradas.length !== 1 ? 's' : ''} 
+                      {clienteSelecionadoId ? ' neste cliente' : ' abertas'}
+                    </p>
+                  </div>
                 </div>
-                
-                {/* Dropdown com vagas filtradas */}
-                <select
-                  value={vagaSelecionada?.id || ''}
-                  onChange={(e) => {
-                    const vaga = vagas.find(v => v.id === Number(e.target.value));
-                    setVagaSelecionada(vaga || null);
-                  }}
-                  className="w-full p-3 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="">-- Triagem genérica (sem vaga) --</option>
-                  {vagas
-                    .filter(vaga => {
-                      if (!filtroVaga) return true;
-                      const termo = filtroVaga.toLowerCase();
-                      return (
-                        vaga.titulo.toLowerCase().includes(termo) ||
-                        (vaga.cliente_nome || '').toLowerCase().includes(termo)
-                      );
-                    })
-                    .map((vaga) => (
-                      <option key={vaga.id} value={vaga.id}>
-                        {vaga.cliente_nome ? `[${vaga.cliente_nome}] ` : ''}{vaga.titulo}
-                      </option>
-                    ))
-                  }
-                </select>
-                
-                {/* Contador de vagas filtradas */}
-                {filtroVaga && (
-                  <p className="text-xs text-gray-500 mt-1">
-                    {vagas.filter(v => 
-                      v.titulo.toLowerCase().includes(filtroVaga.toLowerCase()) ||
-                      (v.cliente_nome || '').toLowerCase().includes(filtroVaga.toLowerCase())
-                    ).length} vagas encontradas
-                  </p>
-                )}
 
                 {vagaSelecionada && (
-                  <div className="mt-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
                     <div className="flex items-center gap-2 text-blue-700 mb-2">
                       <Zap className="w-4 h-4" />
                       <span className="font-medium">Análise Avançada Habilitada</span>
                     </div>
                     <p className="text-xs text-blue-600">
+                      Vaga selecionada: <strong>{vagaSelecionada.titulo}</strong>
+                      {vagaSelecionada.cliente_nome && ` (${vagaSelecionada.cliente_nome})`}
+                    </p>
+                    <p className="text-xs text-blue-500 mt-1">
                       A análise incluirá: gaps por requisito, evidências encontradas, perguntas para entrevista e sugestões de mitigação
                     </p>
                   </div>
