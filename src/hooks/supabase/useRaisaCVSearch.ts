@@ -187,6 +187,9 @@ export const useRaisaCVSearch = () => {
       });
       
       console.log(`📋 Skills normalizadas: ${Array.from(skillsNormalizadas).join(', ')}`);
+      
+      // 🔍 DEBUG: Mostrar tamanho do set de skills normalizadas
+      console.log(`📋 Total skills normalizadas para busca: ${skillsNormalizadas.size}`);
 
       // 2. Buscar sinônimos para expandir a busca
       const { data: sinonimosData } = await supabase
@@ -225,6 +228,15 @@ export const useRaisaCVSearch = () => {
       });
 
       console.log(`✅ Skills com match: ${skillsMatch.length}`);
+      
+      // 🔍 DEBUG: Ver quais skills do Hugo foram encontradas
+      const hugoSkillsNoBanco = (skillsData || []).filter((s: any) => s.pessoa_id === 58);
+      console.log(`🔍 Skills do HUGO (ID 58) no banco: ${hugoSkillsNoBanco.length}`);
+      hugoSkillsNoBanco.forEach((s: any) => {
+        const norm = normalizarSkill(s.skill_nome);
+        const match = skillsNormalizadas.has(norm);
+        console.log(`   - "${s.skill_nome}" -> "${norm}" ${match ? '✅ MATCH' : '❌ NO MATCH'}`);
+      });
 
       // 5. Agrupar por pessoa
       const pessoaSkillsMap = new Map<number, { skills: string[], skillsOriginais: string[], anos: number }>();
@@ -241,6 +253,23 @@ export const useRaisaCVSearch = () => {
       });
 
       console.log(`👥 Pessoas com matches: ${pessoaSkillsMap.size}`);
+      
+      // 🔍 DEBUG: Ver todas as pessoas e suas skills
+      console.log('📊 DEBUG - Top 15 pessoas por quantidade de skills:');
+      const debugPessoas = Array.from(pessoaSkillsMap.entries())
+        .sort((a, b) => b[1].skills.length - a[1].skills.length)
+        .slice(0, 15);
+      debugPessoas.forEach(([id, data]) => {
+        console.log(`   ID ${id}: ${data.skills.length} skills - [${data.skillsOriginais.join(', ')}]`);
+      });
+      
+      // 🔍 DEBUG: Verificar especificamente o Hugo (ID 58)
+      const hugoData = pessoaSkillsMap.get(58);
+      if (hugoData) {
+        console.log(`🔍 HUGO (ID 58) encontrado: ${hugoData.skills.length} skills - [${hugoData.skillsOriginais.join(', ')}]`);
+      } else {
+        console.log('❌ HUGO (ID 58) NÃO está no mapa de matches!');
+      }
 
       // 6. Ordenar por quantidade de matches
       const pessoasOrdenadas = Array.from(pessoaSkillsMap.entries())
