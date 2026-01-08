@@ -27,6 +27,49 @@ interface CVImportIAProps {
   onClose: () => void;
 }
 
+// Mapeamento de nomes de estados para siglas
+const ESTADOS_BR: Record<string, string> = {
+  'acre': 'AC', 'ac': 'AC',
+  'alagoas': 'AL', 'al': 'AL',
+  'amapá': 'AP', 'amapa': 'AP', 'ap': 'AP',
+  'amazonas': 'AM', 'am': 'AM',
+  'bahia': 'BA', 'ba': 'BA',
+  'ceará': 'CE', 'ceara': 'CE', 'ce': 'CE',
+  'distrito federal': 'DF', 'df': 'DF', 'brasília': 'DF', 'brasilia': 'DF',
+  'espírito santo': 'ES', 'espirito santo': 'ES', 'es': 'ES',
+  'goiás': 'GO', 'goias': 'GO', 'go': 'GO',
+  'maranhão': 'MA', 'maranhao': 'MA', 'ma': 'MA',
+  'mato grosso': 'MT', 'mt': 'MT',
+  'mato grosso do sul': 'MS', 'ms': 'MS',
+  'minas gerais': 'MG', 'mg': 'MG',
+  'pará': 'PA', 'para': 'PA', 'pa': 'PA',
+  'paraíba': 'PB', 'paraiba': 'PB', 'pb': 'PB',
+  'paraná': 'PR', 'parana': 'PR', 'pr': 'PR',
+  'pernambuco': 'PE', 'pe': 'PE',
+  'piauí': 'PI', 'piaui': 'PI', 'pi': 'PI',
+  'rio de janeiro': 'RJ', 'rj': 'RJ',
+  'rio grande do norte': 'RN', 'rn': 'RN',
+  'rio grande do sul': 'RS', 'rs': 'RS',
+  'rondônia': 'RO', 'rondonia': 'RO', 'ro': 'RO',
+  'roraima': 'RR', 'rr': 'RR',
+  'santa catarina': 'SC', 'sc': 'SC',
+  'são paulo': 'SP', 'sao paulo': 'SP', 'sp': 'SP',
+  'sergipe': 'SE', 'se': 'SE',
+  'tocantins': 'TO', 'to': 'TO'
+};
+
+// Função para normalizar estado (converte nome completo para sigla)
+const normalizarEstado = (estado: string): string => {
+  if (!estado) return '';
+  const estadoLower = estado.toLowerCase().trim();
+  // Se já é sigla válida (2 caracteres), retorna em maiúsculo
+  if (estadoLower.length === 2 && ESTADOS_BR[estadoLower]) {
+    return estadoLower.toUpperCase();
+  }
+  // Busca no mapeamento
+  return ESTADOS_BR[estadoLower] || estado.substring(0, 2).toUpperCase();
+};
+
 interface DadosExtraidos {
   nome: string;
   email: string;
@@ -319,7 +362,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         telefone: dados.dados_pessoais?.telefone || '',
         linkedin_url: dados.dados_pessoais?.linkedin_url || '',
         cidade: dados.dados_pessoais?.cidade || '',
-        estado: dados.dados_pessoais?.estado || '',
+        estado: normalizarEstado(dados.dados_pessoais?.estado || ''),
         titulo_profissional: dados.dados_profissionais?.titulo_profissional || '',
         senioridade: dados.dados_profissionais?.senioridade || 'pleno',
         disponibilidade: 'imediata',
@@ -469,7 +512,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           telefone: dadosExtraidos.telefone,
           linkedin_url: dadosExtraidos.linkedin_url,
           cidade: dadosExtraidos.cidade,
-          estado: dadosExtraidos.estado,
+          estado: normalizarEstado(dadosExtraidos.estado),
           titulo_profissional: dadosExtraidos.titulo_profissional,
           senioridade: dadosExtraidos.senioridade,
           disponibilidade: dadosExtraidos.disponibilidade,
