@@ -1,37 +1,29 @@
 // ============================================================
-// ANÁLISE DE ADEQUAÇÃO DE PERFIL - API Backend
+// ANÁLISE DE ADEQUAÇÃO DE PERFIL - API Backend (GEMINI)
 // Endpoint: /api/analise-adequacao-perfil
 // ============================================================
+// v2.0 - Migrado de Claude para Gemini 2.0 Flash
 // Análise profunda requisito a requisito entre Candidato × Vaga
-// Vai além do match de skills - analisa competências e experiências
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from '@google/genai';
 
 // ============================================================
 // CONFIGURAÇÃO
 // ============================================================
 
-// Debug: listar variáveis de ambiente disponíveis (sem valores)
-console.log('🔍 Verificando variáveis de ambiente...');
-console.log('📋 ANTHROPIC_API_KEY presente:', !!process.env.ANTHROPIC_API_KEY);
-console.log('📋 API_KEY presente:', !!process.env.API_KEY);
-
-// Tentar múltiplas fontes para a API key
-const apiKey = process.env.ANTHROPIC_API_KEY || process.env.API_KEY || '';
+const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
 
 if (!apiKey) {
-  console.error('❌ ANTHROPIC_API_KEY não encontrada no ambiente Vercel!');
-  console.error('📋 Variáveis disponíveis:', Object.keys(process.env).filter(k => k.includes('API') || k.includes('KEY')).join(', '));
+  console.error('❌ API_KEY (Gemini) não encontrada no ambiente Vercel!');
 } else {
-  console.log('✅ API Key carregada, comprimento:', apiKey.length);
+  console.log('✅ API_KEY (Gemini) carregada com sucesso');
 }
 
-const anthropic = new Anthropic({ apiKey });
+const ai = new GoogleGenAI({ apiKey });
 
-const CLAUDE_MODEL = 'claude-haiku-4-5-20251001'; // Haiku 4.5 - mais econômico ($1/$5 por 1M tokens)
-const MAX_TOKENS = 8192;
+const GEMINI_MODEL = 'gemini-2.0-flash';
 
 // ============================================================
 // TIPOS
@@ -47,51 +39,29 @@ interface RequisitoAnalisado {
     experiencias_relacionadas: string[];
   };
   nivel_adequacao: 'ATENDE' | 'ATENDE_PARCIALMENTE' | 'GAP_IDENTIFICADO' | 'NAO_AVALIAVEL';
-  score_adequacao: number; // 0-100
+  score_adequacao: number;
   justificativa: string;
   pergunta_investigacao?: string;
   como_mitigar?: string;
 }
 
-interface CategoriaPerguntas {
-  categoria: string;
-  icone: string;
-  perguntas: {
-    pergunta: string;
-    objetivo: string;
-    o_que_avaliar: string[];
-    red_flags: string[];
-  }[];
-}
-
 interface AnaliseAdequacaoPerfil {
-  // Metadados
   candidato_nome: string;
   vaga_titulo: string;
   data_analise: string;
-  
-  // Scores gerais
   score_geral: number;
   nivel_adequacao_geral: 'MUITO_COMPATIVEL' | 'COMPATIVEL' | 'PARCIALMENTE_COMPATIVEL' | 'INCOMPATIVEL';
   confianca_analise: number;
-  
-  // Análise detalhada por requisito
   requisitos_imprescindiveis: RequisitoAnalisado[];
   requisitos_muito_desejaveis: RequisitoAnalisado[];
   requisitos_desejaveis: RequisitoAnalisado[];
-  
-  // Resumo executivo
   resumo_executivo: {
     principais_pontos_fortes: string[];
     gaps_criticos: string[];
     gaps_investigar: string[];
     diferenciais_candidato: string[];
   };
-  
-  // Perguntas organizadas por tema
-  perguntas_entrevista: CategoriaPerguntas[];
-  
-  // Avaliação final
+  perguntas_entrevista: any[];
   avaliacao_final: {
     recomendacao: 'APROVAR' | 'ENTREVISTAR' | 'REAVALIAR' | 'REPROVAR';
     justificativa: string;
@@ -165,14 +135,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (!apiKey) {
-    console.error('❌ API Key não disponível no momento da requisição');
+    console.error('❌ API Key (Gemini) não disponível');
     return res.status(500).json({ 
-      error: 'ANTHROPIC_API_KEY não configurada',
-      debug: {
-        hasAnthropicKey: !!process.env.ANTHROPIC_API_KEY,
-        hasApiKey: !!process.env.API_KEY,
-        envKeysWithApi: Object.keys(process.env).filter(k => k.toLowerCase().includes('api') || k.toLowerCase().includes('key')).length
-      }
+      error: '❌ Erro na API Gemini (gemini-2.0-flash): API_KEY não configurada',
+      tipo: 'CONFIG_ERROR',
+      acao: 'Configure a variável API_KEY no Vercel com a chave do Google AI Studio'
     });
   }
 
@@ -183,24 +150,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Candidato e Vaga são obrigatórios' });
     }
 
-    console.log(`🔍 Iniciando análise de adequação: ${candidato.nome} × ${vaga.titulo}`);
+    console.log(`🔍 [Gemini] Iniciando análise de adequação: ${candidato.nome} × ${vaga.titulo}`);
     const startTime = Date.now();
 
     // Construir prompt detalhado
     const userPrompt = buildAnalysisPrompt(candidato, vaga, opcoes);
 
-    // Chamar Claude
-    const response = await anthropic.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: MAX_TOKENS,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userPrompt }]
+    // Chamar Gemini
+    const response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: SYSTEM_PROMPT + '\n\n' + userPrompt }]
+        }
+      ],
+      config: {
+        temperature: 0.3,
+        maxOutputTokens: 8192,
+      }
     });
 
     // Extrair resposta
-    const responseText = response.content[0].type === 'text' 
-      ? response.content[0].text 
-      : '';
+    const responseText = response.text || '';
 
     // Parsear JSON
     let result: AnaliseAdequacaoPerfil;
@@ -211,23 +183,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .trim();
       result = JSON.parse(cleanedText);
     } catch (parseError) {
-      console.error('❌ Erro ao parsear resposta:', parseError);
+      console.error('❌ Erro ao parsear resposta Gemini:', parseError);
+      console.error('Resposta bruta:', responseText.substring(0, 1000));
       return res.status(500).json({ 
-        error: 'Erro ao processar resposta da IA',
-        raw: responseText.substring(0, 2000)
+        error: '❌ Erro na API Gemini (gemini-2.0-flash): Resposta inválida',
+        tipo: 'PARSE_ERROR',
+        acao: 'Tente novamente. Se persistir, contate o suporte.',
+        raw: responseText.substring(0, 500)
       });
     }
 
     const tempoMs = Date.now() - startTime;
-    console.log(`✅ Análise concluída em ${tempoMs}ms - Score: ${result.score_geral}%`);
+    console.log(`✅ [Gemini] Análise concluída em ${tempoMs}ms - Score: ${result.score_geral}%`);
 
     // Adicionar metadados
     result.data_analise = new Date().toISOString();
     (result as any)._metadata = {
-      modelo: CLAUDE_MODEL,
-      tempo_ms: tempoMs,
-      tokens_input: response.usage?.input_tokens,
-      tokens_output: response.usage?.output_tokens
+      modelo: GEMINI_MODEL,
+      provider: 'Google Gemini',
+      tempo_ms: tempoMs
     };
 
     return res.status(200).json({ 
@@ -236,9 +210,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
   } catch (error: any) {
-    console.error('❌ Erro na análise:', error);
+    console.error('❌ [Gemini] Erro na análise:', error);
+    
+    // Tratamento específico de erros Gemini
+    const errorMessage = error.message || '';
+    const errorStatus = error.status || 500;
+    
+    // API Key inválida ou revogada
+    if (errorStatus === 401 || errorStatus === 403 || errorMessage.includes('API key')) {
+      return res.status(500).json({ 
+        error: '❌ Erro na API Gemini (gemini-2.0-flash): Chave de API inválida ou revogada',
+        tipo: 'AUTH_ERROR',
+        acao: 'Atualize a API_KEY no Vercel com uma chave válida do Google AI Studio',
+        codigo: errorStatus
+      });
+    }
+    
+    // Créditos/Quota esgotada
+    if (errorStatus === 429 || errorMessage.includes('quota') || errorMessage.includes('rate')) {
+      return res.status(500).json({ 
+        error: '❌ Erro na API Gemini (gemini-2.0-flash): Limite de requisições ou créditos esgotados',
+        tipo: 'QUOTA_ERROR',
+        acao: 'Aguarde alguns minutos ou verifique os créditos no Google Cloud Console',
+        codigo: errorStatus
+      });
+    }
+    
+    // Erro genérico
     return res.status(500).json({ 
-      error: error.message || 'Erro interno' 
+      error: `❌ Erro na API Gemini (gemini-2.0-flash): ${errorMessage || 'Erro interno'}`,
+      tipo: 'SERVER_ERROR',
+      acao: 'Tente novamente. Se persistir, contate o suporte.',
+      codigo: errorStatus
     });
   }
 }
