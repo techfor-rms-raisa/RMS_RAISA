@@ -34,6 +34,7 @@ export const useVagas = () => {
         salario_min: vaga.salario_min,
         salario_max: vaga.salario_max,
         status: vaga.status,
+        status_posicao: vaga.status_posicao || 'triagem', // 🆕 Posição no funil
         requisitos_obrigatorios: vaga.requisitos_obrigatorios,
         requisitos_desejaveis: vaga.requisitos_desejaveis,
         regime_contratacao: vaga.regime_contratacao,
@@ -82,6 +83,7 @@ export const useVagas = () => {
           salario_min: newVaga.salario_min,
           salario_max: newVaga.salario_max,
           status: newVaga.status || 'aberta',
+          status_posicao: newVaga.status_posicao || 'triagem', // 🆕 Posição no funil
           requisitos_obrigatorios: newVaga.requisitos_obrigatorios,
           requisitos_desejaveis: newVaga.requisitos_desejaveis,
           regime_contratacao: newVaga.regime_contratacao,
@@ -112,6 +114,7 @@ export const useVagas = () => {
         salario_min: data.salario_min,
         salario_max: data.salario_max,
         status: data.status,
+        status_posicao: data.status_posicao || 'triagem', // 🆕 Posição no funil
         requisitos_obrigatorios: data.requisitos_obrigatorios,
         requisitos_desejaveis: data.requisitos_desejaveis,
         regime_contratacao: data.regime_contratacao,
@@ -159,6 +162,7 @@ export const useVagas = () => {
           salario_min: updates.salario_min,
           salario_max: updates.salario_max,
           status: updates.status,
+          status_posicao: updates.status_posicao, // 🆕 Posição no funil
           requisitos_obrigatorios: updates.requisitos_obrigatorios,
           requisitos_desejaveis: updates.requisitos_desejaveis,
           regime_contratacao: updates.regime_contratacao,
@@ -191,6 +195,7 @@ export const useVagas = () => {
         salario_min: data.salario_min,
         salario_max: data.salario_max,
         status: data.status,
+        status_posicao: data.status_posicao || 'triagem', // 🆕 Posição no funil
         requisitos_obrigatorios: data.requisitos_obrigatorios,
         requisitos_desejaveis: data.requisitos_desejaveis,
         regime_contratacao: data.regime_contratacao,

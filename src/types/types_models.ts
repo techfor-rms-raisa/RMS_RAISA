@@ -42,6 +42,20 @@ export type View =
 // VAGAS (RAISA)
 // ============================================
 
+// Tipo para status comercial da vaga
+export type VagaStatus = 'aberta' | 'pausada' | 'fechada' | 'em_andamento' | 'aprovada' | 'perdida' | 'cancelada';
+
+// 🆕 Tipo para posição no funil de recrutamento
+export type VagaStatusPosicao = 
+  | 'triagem'
+  | 'entrevista'
+  | 'enviado_cliente'
+  | 'aguardando_cliente'
+  | 'entrevista_cliente'
+  | 'aprovado_cliente'
+  | 'contratado'
+  | 'reprovado';
+
 export interface Vaga {
   id: string;
   titulo: string;
@@ -50,7 +64,8 @@ export interface Vaga {
   stack_tecnologica: string[];
   salario_min?: number;
   salario_max?: number;
-  status: 'aberta' | 'pausada' | 'fechada';
+  status: VagaStatus;
+  status_posicao?: VagaStatusPosicao; // 🆕 Posição no funil
   createdAt?: string;
   requisitos_obrigatorios?: string[];
   requisitos_desejaveis?: string[];
@@ -60,6 +75,7 @@ export interface Vaga {
   // Campos Supabase
   analista_id?: number | null;
   cliente_id?: number | null;
+  cliente_nome?: string; // 🆕 Nome do cliente (join)
   urgente?: boolean;
   prazo_fechamento?: string;
   faturamento_mensal?: number;

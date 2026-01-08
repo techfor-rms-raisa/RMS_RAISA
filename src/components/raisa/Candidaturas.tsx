@@ -335,6 +335,30 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         'contratado': 'Contratado'
     };
 
+    // 🆕 Labels para status_posicao da VAGA (posição no funil)
+    const statusPosicaoLabels: Record<string, string> = {
+        'triagem': '📋 Triagem',
+        'entrevista': '🎯 Entrevista',
+        'enviado_cliente': '📤 Enviado ao Cliente',
+        'aguardando_cliente': '⏳ Aguardando Cliente',
+        'entrevista_cliente': '🏢 Entrevista Cliente',
+        'aprovado_cliente': '✅ Aprovado pelo Cliente',
+        'contratado': '🎉 Contratado',
+        'reprovado': '❌ Reprovado'
+    };
+
+    // 🆕 Cores para status_posicao da VAGA
+    const statusPosicaoColors: Record<string, string> = {
+        'triagem': 'bg-gray-100 text-gray-700',
+        'entrevista': 'bg-blue-100 text-blue-700',
+        'enviado_cliente': 'bg-purple-100 text-purple-700',
+        'aguardando_cliente': 'bg-yellow-100 text-yellow-700',
+        'entrevista_cliente': 'bg-indigo-100 text-indigo-700',
+        'aprovado_cliente': 'bg-green-100 text-green-700',
+        'contratado': 'bg-teal-100 text-teal-700',
+        'reprovado': 'bg-red-100 text-red-700'
+    };
+
     // ============================================
     // HANDLERS
     // ============================================
@@ -534,10 +558,22 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                         </option>
                         {vagasFiltradas.map(v => (
                             <option key={v.id} value={String(v.id)}>
-                                {v.titulo}
+                                {v.titulo} {v.status_posicao ? `(${statusPosicaoLabels[v.status_posicao] || v.status_posicao})` : ''}
                             </option>
                         ))}
                     </select>
+                    
+                    {/* 🆕 Badge do Status Posição da Vaga Selecionada */}
+                    {filterVaga !== 'all' && (() => {
+                        const vagaSelecionada = safeVagas.find(v => String(v.id) === filterVaga);
+                        const statusPosicao = vagaSelecionada?.status_posicao || 'triagem';
+                        return (
+                            <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium ${statusPosicaoColors[statusPosicao] || 'bg-gray-100 text-gray-700'}`}>
+                                <span>📍</span>
+                                <span>{statusPosicaoLabels[statusPosicao] || statusPosicao}</span>
+                            </div>
+                        );
+                    })()}
                     
                     {/* Filtro por Status - FLUXO ATUALIZADO */}
                     <select 

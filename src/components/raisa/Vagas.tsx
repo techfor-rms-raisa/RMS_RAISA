@@ -138,6 +138,7 @@ const Vagas: React.FC<VagasProps> = ({
         senioridade: 'Pleno', 
         stack_tecnologica: [], 
         status: 'aberta',
+        status_posicao: 'triagem', // 🆕 Posição no funil de recrutamento
         cliente_id: null,
         gestor_cliente_id: null,
         // ✅ NOVOS CAMPOS
@@ -218,6 +219,7 @@ const Vagas: React.FC<VagasProps> = ({
                 senioridade: vaga.senioridade || 'Pleno',
                 stack_tecnologica: ensureStackArray(vaga.stack_tecnologica),
                 status: vaga.status || 'aberta',
+                status_posicao: vaga.status_posicao || 'triagem', // 🆕 Posição no funil
                 cliente_id: vaga.cliente_id,
                 gestor_cliente_id: null,
                 // Campos adicionais
@@ -245,6 +247,7 @@ const Vagas: React.FC<VagasProps> = ({
                 senioridade: 'Pleno',
                 stack_tecnologica: [],
                 status: 'aberta',
+                status_posicao: 'triagem', // 🆕 Posição no funil
                 cliente_id: selectedClientId,
                 gestor_cliente_id: null,
                 tipo_de_vaga: 'Nova Posição',
@@ -330,6 +333,7 @@ const Vagas: React.FC<VagasProps> = ({
             senioridade: formData.senioridade,
             stack_tecnologica: formData.stack_tecnologica,
             status: formData.status,
+            status_posicao: formData.status_posicao || 'triagem', // 🆕 Posição no funil
             cliente_id: formData.cliente_id,
             // Campos adicionais
             tipo_de_vaga: formData.tipo_de_vaga,
@@ -793,6 +797,27 @@ const Vagas: React.FC<VagasProps> = ({
                                                 <option value="pausada">Pausada</option>
                                                 <option value="fechada">Fechada</option>
                                                 <option value="cancelada">Cancelada</option>
+                                            </select>
+                                        </div>
+                                        {/* 🆕 NOVO: Status Posição no Funil */}
+                                        <div>
+                                            <label className="text-sm font-bold text-gray-700">
+                                                Posição no Funil
+                                                <span className="ml-2 text-xs font-normal text-gray-500">(Status R&S)</span>
+                                            </label>
+                                            <select 
+                                                className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-blue-500" 
+                                                value={formData.status_posicao || 'triagem'} 
+                                                onChange={e => setFormData({...formData, status_posicao: e.target.value as any})}
+                                            >
+                                                <option value="triagem">📋 Triagem</option>
+                                                <option value="entrevista">🎯 Entrevista</option>
+                                                <option value="enviado_cliente">📤 Enviado ao Cliente</option>
+                                                <option value="aguardando_cliente">⏳ Aguardando Cliente</option>
+                                                <option value="entrevista_cliente">🏢 Entrevista Cliente</option>
+                                                <option value="aprovado_cliente">✅ Aprovado pelo Cliente</option>
+                                                <option value="contratado">🎉 Contratado</option>
+                                                <option value="reprovado">❌ Reprovado</option>
                                             </select>
                                         </div>
                                     </div>
