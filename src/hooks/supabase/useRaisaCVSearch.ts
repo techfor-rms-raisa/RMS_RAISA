@@ -127,7 +127,7 @@ export const useRaisaCVSearch = () => {
 
   /**
    * Busca candidatos com base nas skills da vaga
-   * 🆕 v2.1: Força uso da busca com normalização (bypass RPC)
+   * 🆕 v3.0: Usa função RPC otimizada com normalização no banco
    */
   const buscarPorSkills = useCallback(async (
     skills: string[],
@@ -138,9 +138,45 @@ export const useRaisaCVSearch = () => {
       setError(null);
       console.log(`🔍 Buscando candidatos por skills: ${skills.join(', ')}`);
 
-      // 🆕 v2.1: Usar busca com normalização diretamente (bypass RPC)
-      // A função RPC não normaliza as skills, causando problemas de match
-      console.log('🔄 Usando busca com normalização inteligente...');
+      // 🆕 v3.0: Tentar usar função RPC otimizada com normalização
+      const { data, error: rpcError } = await supabase.rpc('buscar_candidatos_normalizado', {
+        p_skills: skills,
+        p_senioridade: filtros?.senioridade || null,
+        p_limite: filtros?.limite || 20
+      });
+
+      if (!rpcError && data) {
+        console.log('✅ Usando busca otimizada via RPC (normalização no banco)');
+        const resultados: CandidatoMatch[] = (data || []).map((r: any) => ({
+          pessoa_id: r.pessoa_id,
+          nome: r.nome,
+          email: r.email,
+          telefone: r.telefone,
+          titulo_profissional: r.titulo_profissional || 'Não informado',
+          senioridade: r.senioridade || 'Não informado',
+          disponibilidade: r.disponibilidade || 'Não informado',
+          modalidade_preferida: r.modalidade_preferida || 'Não informado',
+          pretensao_salarial: r.pretensao_salarial || 0,
+          score_total: r.score_match || 0,
+          score_skills: r.score_match || 0,
+          score_experiencia: 0,
+          score_senioridade: 0,
+          skills_match: r.skills_match || [],
+          skills_faltantes: r.skills_faltantes || [],
+          skills_extras: [],
+          justificativa_ia: '',
+          status: 'novo',
+          top_skills: (r.skills_match || []).slice(0, 5),
+          anos_experiencia_total: 0
+        }));
+
+        setMatches(resultados);
+        console.log(`✅ ${resultados.length} candidatos encontrados via RPC otimizada`);
+        return resultados;
+      }
+
+      // Fallback: usar busca com normalização no frontend
+      console.warn('⚠️ RPC buscar_candidatos_normalizado não disponível, usando busca alternativa...');
       return await buscarPorSkillsComSinonimos(skills, filtros);
       
     } catch (err: any) {
@@ -209,10 +245,11 @@ export const useRaisaCVSearch = () => {
         }
       });
       
-      // 3. Buscar TODAS as skills de pessoas
+      // 3. Buscar TODAS as skills de pessoas (aumentar limite para pegar todos)
       const { data: skillsData, error: skillsError } = await supabase
         .from('pessoa_skills')
-        .select('pessoa_id, skill_nome, nivel, anos_experiencia');
+        .select('pessoa_id, skill_nome, nivel, anos_experiencia')
+        .limit(10000); // 🆕 Aumentar limite para pegar todas as skills
 
       if (skillsError) {
         console.warn('⚠️ Erro ao buscar pessoa_skills:', skillsError);
