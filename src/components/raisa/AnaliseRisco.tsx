@@ -198,7 +198,7 @@ const AnaliseRisco: React.FC = () => {
   const carregarClientes = async () => {
     try {
       const { data, error } = await supabase
-        .from('clientes')
+        .from('clients')
         .select('id, razao_social_cliente')
         .eq('ativo_cliente', true)
         .order('razao_social_cliente', { ascending: true });
@@ -231,7 +231,10 @@ const AnaliseRisco: React.FC = () => {
           requisitos_desejaveis,
           stack_tecnologica,
           senioridade,
-          clientes!vagas_cliente_id_fkey(razao_social_cliente)
+          clients (
+            id,
+            razao_social_cliente
+          )
         `)
         .eq('status', 'aberta')
         .order('created_at', { ascending: false })
@@ -243,7 +246,7 @@ const AnaliseRisco: React.FC = () => {
         id: v.id,
         titulo: v.titulo,
         cliente_id: v.cliente_id,
-        cliente_nome: v.clientes?.razao_social_cliente || 'Sem cliente',
+        cliente_nome: v.clients?.razao_social_cliente || 'Sem cliente',
         requisitos_obrigatorios: v.requisitos_obrigatorios,
         requisitos_desejaveis: v.requisitos_desejaveis,
         stack_tecnologica: v.stack_tecnologica,
