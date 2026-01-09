@@ -26,9 +26,17 @@ function getSupabaseAdmin() {
 
 // Configuração
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET || '';
-const GEMINI_API_URL = process.env.VERCEL_URL 
-  ? `https://${process.env.VERCEL_URL}/api/gemini-analyze`
-  : 'http://localhost:3000/api/gemini-analyze';
+
+// 🆕 FIX: Usar URL absoluta fixa para evitar problemas com VERCEL_URL
+const getGeminiApiUrl = () => {
+  // Em produção, usar a URL do próprio domínio
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}/api/gemini-analyze`;
+  }
+  // Fallback para URL hardcoded do projeto
+  return 'https://rms-raisa.vercel.app/api/gemini-analyze';
+};
+
 const CONFIANCA_MINIMA = 70; // Abaixo disso vai para manual
 
 // ============================================
@@ -206,26 +214,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     const bodyText = emailData.text || stripHtml(emailData.html || '');
     
-    const classificacaoResponse = await fetch(GEMINI_API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'classificar_email_candidatura',
-        payload: {
-          from: emailData.from,
-          to: emailData.to?.join(', '),
-          cc: emailData.cc?.join(', '),
-          subject: emailData.subject,
-          body: bodyText
-        }
-      })
-    });
+    // 🆕 FIX: Usar função para obter URL e adicionar try/catch
+    const geminiApiUrl = getGeminiApiUrl();
+    console.log(`🤖 [Webhook] Chamando Gemini API: ${geminiApiUrl}`);
+    
+    let classificacao: ClassificacaoEmail;
+    
+    try {
+      const classificacaoResponse = await fetch(geminiApiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'classificar_email_candidatura',
+          payload: {
+            from: emailData.from,
+            to: emailData.to?.join(', '),
+            cc: emailData.cc?.join(', '),
+            subject: emailData.subject,
+            body: bodyText
+          }
+        })
+      });
 
-    const classificacaoResult = await classificacaoResponse.json();
-    const classificacao: ClassificacaoEmail = classificacaoResult.data;
+      if (!classificacaoResponse.ok) {
+        throw new Error(`Gemini API retornou ${classificacaoResponse.status}: ${classificacaoResponse.statusText}`);
+      }
 
-    if (!classificacao.sucesso) {
-      throw new Error(classificacao.erro || 'Erro na classificação');
+      const classificacaoResult = await classificacaoResponse.json();
+      
+      // 🆕 FIX: Validar resposta
+      if (!classificacaoResult || !classificacaoResult.data) {
+        console.error('❌ [Webhook] Resposta inválida da Gemini:', classificacaoResult);
+        throw new Error('Resposta inválida da Gemini API');
+      }
+      
+      classificacao = classificacaoResult.data;
+
+      if (!classificacao.sucesso) {
+        throw new Error(classificacao.erro || 'Erro na classificação');
+      }
+    } catch (geminiError: any) {
+      console.error('❌ [Webhook] Erro ao chamar Gemini:', geminiError.message);
+      
+      // 🆕 FIX: Fallback - tentar classificar manualmente pelo subject
+      console.log('⚠️ [Webhook] Usando classificação de fallback pelo subject');
+      classificacao = classificarPorSubject(emailData.subject, emailData.from, bodyText);
     }
 
     console.log(`🤖 [Webhook] Classificação: ${classificacao.tipo_email} (${classificacao.confianca}%)`);
@@ -401,6 +434,68 @@ function stripHtml(html: string): string {
     .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * 🆕 Classificação de fallback quando Gemini não está disponível
+ * Analisa o subject e body para identificar tipo de email
+ */
+function classificarPorSubject(subject: string, from: string, body: string): ClassificacaoEmail {
+  const subjectLower = subject.toLowerCase();
+  const bodyLower = body.toLowerCase();
+  const combinedText = `${subjectLower} ${bodyLower}`;
+  
+  // Extrair código da vaga do subject (ex: VTI-210)
+  const vagaMatch = subject.match(/VTI-\d+|vti-\d+/i);
+  const vagaTitulo = vagaMatch ? vagaMatch[0] : undefined;
+  
+  // Extrair nome do candidato do subject
+  // Padrão: "VTI-210 | Product Owner | NOME DO CANDIDATO | Projeto"
+  const parts = subject.split('|').map(p => p.trim());
+  let candidatoNome: string | undefined;
+  if (parts.length >= 3) {
+    // O nome geralmente está na posição 2 ou 3
+    candidatoNome = parts[2];
+  }
+  
+  // Detectar tipo de email
+  let tipoEmail: 'envio_cv' | 'resposta_cliente' | 'outro' = 'outro';
+  let confianca = 50;
+  
+  // Palavras-chave de aprovação
+  const palavrasAprovacao = ['aprovado', 'aprovada', 'aprovamos', 'aceito', 'aceita', 'aprovação', 'selecionado', 'selecionada'];
+  const palavrasReprovacao = ['reprovado', 'reprovada', 'não aprovado', 'nao aprovado', 'recusado', 'recusada', 'não selecionado'];
+  const palavrasEnvio = ['segue cv', 'segue currículo', 'encaminho cv', 'envio cv', 'apresento candidato', 'apresentando candidato'];
+  
+  if (palavrasAprovacao.some(p => combinedText.includes(p))) {
+    tipoEmail = 'resposta_cliente';
+    confianca = 80;
+  } else if (palavrasReprovacao.some(p => combinedText.includes(p))) {
+    tipoEmail = 'resposta_cliente';
+    confianca = 80;
+  } else if (palavrasEnvio.some(p => combinedText.includes(p))) {
+    tipoEmail = 'envio_cv';
+    confianca = 75;
+  } else if (vagaTitulo && candidatoNome) {
+    // Se tem código de vaga e nome, provavelmente é resposta
+    tipoEmail = 'resposta_cliente';
+    confianca = 60;
+  }
+  
+  console.log(`📧 [Fallback] Classificação: tipo=${tipoEmail}, candidato=${candidatoNome}, vaga=${vagaTitulo}, confiança=${confianca}`);
+  
+  return {
+    sucesso: true,
+    tipo_email: tipoEmail,
+    candidato_nome: candidatoNome,
+    candidato_nome_alternativas: candidatoNome ? [candidatoNome.split(' ')[0]] : [],
+    vaga_titulo: vagaTitulo,
+    vaga_titulo_alternativas: vagaTitulo ? [vagaTitulo] : [],
+    cliente_nome: undefined,
+    cliente_nome_alternativas: [],
+    destinatario_email: from,
+    confianca
+  };
 }
 
 /**
