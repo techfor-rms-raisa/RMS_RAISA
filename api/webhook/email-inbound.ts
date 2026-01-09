@@ -788,7 +788,7 @@ async function buscarPorNome(nome: string) {
       vagas!inner(id, titulo, cliente_id, status_posicao, clients(razao_social_cliente))
     `)
     .ilike('candidato_nome', `%${nome}%`)
-    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista', 'em_andamento'])
+    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista', 'em_andamento', 'aprovado_cliente', 'reprovado_cliente'])
     .limit(10);
 
   if (candidaturas && candidaturas.length > 0) {
@@ -822,7 +822,7 @@ async function buscarPorNome(nome: string) {
       vagas!inner(id, titulo, cliente_id, status_posicao, clients(razao_social_cliente))
     `)
     .in('pessoa_id', pessoaIds)
-    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista', 'em_andamento'])
+    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista', 'em_andamento', 'aprovado_cliente', 'reprovado_cliente'])
     .limit(10);
 
   return candidaturasPessoa || [];
@@ -869,7 +869,7 @@ async function buscarPorNomeAnonimizado(nomeOuAnoni: string) {
       vagas!inner(id, titulo, cliente_id, status_posicao, clients(razao_social_cliente))
     `)
     .in('pessoa_id', pessoaIds)
-    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista', 'em_andamento'])
+    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista', 'em_andamento', 'aprovado_cliente', 'reprovado_cliente'])
     .limit(10);
 
   return candidaturas || [];
@@ -987,16 +987,30 @@ async function processarRespostaCliente(
     'visualizado': 'aguardando_cliente',
     'em_analise': 'aguardando_cliente',
     'agendamento': 'entrevista_cliente',
-    'aprovado': 'aprovado_cliente',
+    'aprovado': 'aprovado',           // 🆕 Candidato aprovado = posição preenchida
     'reprovado': 'reprovado',
     'duvida': 'aguardando_cliente'
   };
 
+  // 🆕 Mapear tipo de resposta para status da VAGA (só muda quando aprovado)
+  const statusVagaMap: Record<string, string | null> = {
+    'visualizado': null,              // Não muda
+    'em_analise': null,               // Não muda
+    'agendamento': null,              // Não muda - continua em andamento
+    'aprovado': 'finalizado',         // 🆕 Vaga finalizada com sucesso!
+    'reprovado': null,                // Não muda - outros candidatos podem concorrer
+    'duvida': null                    // Não muda
+  };
+
   const novoStatus = statusCandidaturaMap[tipoResposta] || 'aguardando_cliente';
   const novoStatusPosicao = statusPosicaoMap[tipoResposta] || 'aguardando_cliente';
+  const novoStatusVaga = statusVagaMap[tipoResposta] || null;
 
   console.log(`📝 [Webhook] Atualizando candidatura ${candidatura.id} para status: ${novoStatus}`);
   console.log(`📝 [Webhook] Atualizando vaga ${candidatura.vaga_id} para status_posicao: ${novoStatusPosicao}`);
+  if (novoStatusVaga) {
+    console.log(`📝 [Webhook] Atualizando vaga ${candidatura.vaga_id} para status: ${novoStatusVaga}`);
+  }
 
   // Atualizar status do envio (se existir)
   if (envioExistente) {
@@ -1075,20 +1089,29 @@ async function processarRespostaCliente(
     console.log(`✅ [Webhook] Candidatura ${candidatura.id} atualizada para: ${novoStatus}`);
   }
 
-  // ATUALIZAR STATUS_POSICAO DA VAGA
+  // ATUALIZAR STATUS_POSICAO DA VAGA (e status quando aprovado)
   if (candidatura.vaga_id) {
+    // Preparar dados de atualização
+    const vagaUpdateData: Record<string, any> = {
+      status_posicao: novoStatusPosicao,
+      atualizado_em: new Date().toISOString()
+    };
+    
+    // 🆕 Se aprovado, também finalizar a vaga
+    if (novoStatusVaga) {
+      vagaUpdateData.status = novoStatusVaga;
+      console.log(`🎉 [Webhook] Vaga será FINALIZADA! Candidato aprovado.`);
+    }
+    
     const { error: vagaError } = await supabaseAdmin
       .from('vagas')
-      .update({
-        status_posicao: novoStatusPosicao,
-        atualizado_em: new Date().toISOString()
-      })
+      .update(vagaUpdateData)
       .eq('id', candidatura.vaga_id);
 
     if (vagaError) {
       console.error('❌ [Webhook] Erro ao atualizar vaga:', vagaError);
     } else {
-      console.log(`✅ [Webhook] Vaga ${candidatura.vaga_id} atualizada para: ${novoStatusPosicao}`);
+      console.log(`✅ [Webhook] Vaga ${candidatura.vaga_id} atualizada - status_posicao: ${novoStatusPosicao}${novoStatusVaga ? `, status: ${novoStatusVaga}` : ''}`);
     }
   }
 
@@ -1100,6 +1123,7 @@ async function processarRespostaCliente(
     tipo_resposta: tipoResposta,
     candidatura_status: novoStatus,
     vaga_status_posicao: novoStatusPosicao,
+    vaga_status: novoStatusVaga,
     aprovacao_id: aprovacaoId
   };
 }
