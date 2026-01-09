@@ -181,6 +181,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       modalidade_preferida: 'Remoto',
       ativo: true,
       origem: 'linkedin',
+      importado_em: new Date().toISOString(),
       atualizado_em: new Date().toISOString()
     };
 

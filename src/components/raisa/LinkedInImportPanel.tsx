@@ -1,343 +1,218 @@
 /**
- * LinkedInImportPanel.tsx - Painel de Integração LinkedIn
+ * LinkedInImportPanel.tsx - Painel de Integração LinkedIn (V3 - Integrado com Pessoas)
+ * 
+ * Este componente mostra pessoas importadas do LinkedIn diretamente da tabela PESSOAS
+ * Não usa tabela separada - tudo integrado ao Banco de Talentos
  * 
  * Funcionalidades:
- * - Importar perfis manualmente
- * - Colar JSON do LinkedIn
- * - Ver matches com vagas
- * - Converter em candidatura
+ * - Ver estatísticas de importação
+ * - Listar pessoas importadas do LinkedIn
+ * - Filtrar por termo, senioridade
+ * - Comparar origens (LinkedIn vs CV vs Manual)
+ * - Instruções de uso da extensão Chrome
  * 
- * Versão: 1.0
- * Data: 26/12/2024
+ * Versão: 3.0
+ * Data: 09/01/2026
  */
 
 import React, { useState, useEffect } from 'react';
-import { useLinkedInIntegration, LinkedInProfile, LinkedInMatch } from '@/hooks/supabase/useLinkedInIntegration';
+import { useLinkedInPessoas, PessoaLinkedIn } from '@/hooks/supabase/useLinkedInPessoas';
 
 interface LinkedInImportPanelProps {
-  vagaId?: number;
-  userId: number;
-  onCandidaturaCreated?: (candidaturaId: number) => void;
+  userId?: number;
 }
 
-const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({
-  vagaId,
-  userId,
-  onCandidaturaCreated
-}) => {
+const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => {
   const {
     loading,
-    profiles,
-    matches,
-    importarPerfil,
-    importarDeJSON,
-    buscarPerfis,
-    buscarMatches,
-    aprovarMatch,
-    descartarMatch,
-    buscarEstatisticas
-  } = useLinkedInIntegration();
+    pessoas,
+    buscarPessoasLinkedIn,
+    buscarEstatisticas,
+    buscarEstatisticasLinkedIn,
+    buscarPessoas
+  } = useLinkedInPessoas();
 
-  const [tab, setTab] = useState<'importar' | 'perfis' | 'matches'>('importar');
-  const [jsonInput, setJsonInput] = useState('');
-  const [manualForm, setManualForm] = useState({
-    nome_completo: '',
-    headline: '',
-    linkedin_url: '',
-    email: '',
-    telefone: '',
-    localizacao: '',
-    skills: ''
+  const [tab, setTab] = useState<'linkedin' | 'todas' | 'instrucoes'>('linkedin');
+  const [filtroTermo, setFiltroTermo] = useState('');
+  const [filtroSenioridade, setFiltroSenioridade] = useState('');
+  const [filtroOrigem, setFiltroOrigem] = useState('');
+  const [statsLinkedIn, setStatsLinkedIn] = useState({
+    totalImportados: 0,
+    importadosHoje: 0,
+    importadosSemana: 0,
+    importadosMes: 0
   });
-  const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null);
-  const [estatisticas, setEstatisticas] = useState<any>(null);
-  const [filtroScore, setFiltroScore] = useState(50);
+  const [statsGeral, setStatsGeral] = useState<any[]>([]);
 
+  // Carregar dados iniciais
   useEffect(() => {
     carregarDados();
-  }, [vagaId]);
+  }, []);
 
   const carregarDados = async () => {
-    const [stats] = await Promise.all([
-      buscarEstatisticas(),
-      buscarPerfis({ limite: 20 }),
-      buscarMatches({ vagaId, scoreMinimo: filtroScore, limite: 30 })
+    const [linkedin, geral] = await Promise.all([
+      buscarEstatisticasLinkedIn(),
+      buscarEstatisticas()
     ]);
-    setEstatisticas(stats);
+    setStatsLinkedIn(linkedin);
+    setStatsGeral(geral);
+    
+    // Carregar pessoas do LinkedIn por padrão
+    await buscarPessoasLinkedIn({ limite: 50 });
   };
 
-  // ============================================
-  // IMPORTAR DE JSON
-  // ============================================
-
-  const handleImportarJSON = async () => {
-    if (!jsonInput.trim()) {
-      setMensagem({ tipo: 'erro', texto: 'Cole o JSON do perfil LinkedIn' });
-      return;
-    }
-
-    try {
-      const jsonData = JSON.parse(jsonInput);
-      const resultado = await importarDeJSON(jsonData, userId);
-      
-      if (resultado.sucesso) {
-        setMensagem({ tipo: 'sucesso', texto: resultado.mensagem });
-        setJsonInput('');
-        carregarDados();
-      } else {
-        setMensagem({ tipo: 'erro', texto: resultado.mensagem });
-      }
-    } catch (err) {
-      setMensagem({ tipo: 'erro', texto: 'JSON inválido. Verifique o formato.' });
+  // Aplicar filtros
+  const aplicarFiltros = async () => {
+    if (tab === 'linkedin') {
+      await buscarPessoasLinkedIn({
+        termo: filtroTermo || undefined,
+        senioridade: filtroSenioridade || undefined,
+        limite: 50
+      });
+    } else if (tab === 'todas') {
+      await buscarPessoas({
+        origem: filtroOrigem || undefined,
+        termo: filtroTermo || undefined,
+        senioridade: filtroSenioridade || undefined,
+        limite: 50
+      });
     }
   };
 
-  // ============================================
-  // IMPORTAR MANUAL
-  // ============================================
-
-  const handleImportarManual = async () => {
-    if (!manualForm.nome_completo.trim()) {
-      setMensagem({ tipo: 'erro', texto: 'Nome completo é obrigatório' });
-      return;
+  // Mudar tab
+  const handleTabChange = async (novaTab: 'linkedin' | 'todas' | 'instrucoes') => {
+    setTab(novaTab);
+    setFiltroTermo('');
+    setFiltroSenioridade('');
+    setFiltroOrigem('');
+    
+    if (novaTab === 'linkedin') {
+      await buscarPessoasLinkedIn({ limite: 50 });
+    } else if (novaTab === 'todas') {
+      await buscarPessoas({ limite: 50 });
     }
+  };
 
-    const perfil: Partial<LinkedInProfile> = {
-      nome_completo: manualForm.nome_completo,
-      headline: manualForm.headline,
-      linkedin_url: manualForm.linkedin_url,
-      email: manualForm.email,
-      telefone: manualForm.telefone,
-      localizacao: manualForm.localizacao,
-      skills: manualForm.skills.split(',').map(s => s.trim()).filter(s => s)
+  // Formatar data
+  const formatarData = (data: string) => {
+    if (!data) return '-';
+    return new Date(data).toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  // Badge de origem
+  const badgeOrigem = (origem: string) => {
+    const cores: Record<string, string> = {
+      'linkedin': 'bg-blue-100 text-blue-700 border-blue-300',
+      'importacao_cv': 'bg-green-100 text-green-700 border-green-300',
+      'manual': 'bg-gray-100 text-gray-700 border-gray-300',
+      'indicacao': 'bg-purple-100 text-purple-700 border-purple-300'
+    };
+    
+    const nomes: Record<string, string> = {
+      'linkedin': '🔗 LinkedIn',
+      'importacao_cv': '📄 CV/IA',
+      'manual': '✏️ Manual',
+      'indicacao': '👥 Indicação'
     };
 
-    const resultado = await importarPerfil(perfil, userId, true);
-
-    if (resultado.sucesso) {
-      setMensagem({ tipo: 'sucesso', texto: resultado.mensagem });
-      setManualForm({
-        nome_completo: '',
-        headline: '',
-        linkedin_url: '',
-        email: '',
-        telefone: '',
-        localizacao: '',
-        skills: ''
-      });
-      carregarDados();
-    } else {
-      setMensagem({ tipo: 'erro', texto: resultado.mensagem });
-    }
+    return (
+      <span className={`px-2 py-1 text-xs rounded-full border ${cores[origem] || cores['manual']}`}>
+        {nomes[origem] || origem}
+      </span>
+    );
   };
 
-  // ============================================
-  // APROVAR MATCH
-  // ============================================
-
-  const handleAprovarMatch = async (matchId: number) => {
-    const resultado = await aprovarMatch(matchId, userId);
-    
-    if (resultado.sucesso) {
-      setMensagem({ tipo: 'sucesso', texto: resultado.mensagem });
-      carregarDados();
-      if (resultado.candidaturaId && onCandidaturaCreated) {
-        onCandidaturaCreated(resultado.candidaturaId);
-      }
-    } else {
-      setMensagem({ tipo: 'erro', texto: resultado.mensagem });
-    }
-  };
-
-  // ============================================
-  // RENDER CARD PERFIL
-  // ============================================
-
-  const renderPerfilCard = (perfil: LinkedInProfile) => (
-    <div key={perfil.id} className="p-4 bg-white rounded-lg border hover:shadow-md transition-shadow">
+  // Render card de pessoa
+  const renderPessoaCard = (pessoa: PessoaLinkedIn) => (
+    <div key={pessoa.id} className="p-4 bg-white rounded-lg border hover:shadow-md transition-shadow">
       <div className="flex items-start gap-4">
         {/* Avatar */}
-        <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-lg">
-          {perfil.nome_completo.charAt(0)}
+        <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+          {pessoa.nome?.charAt(0) || '?'}
         </div>
         
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <h4 className="font-medium text-gray-800 truncate">{perfil.nome_completo}</h4>
-            {perfil.linkedin_url && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <h4 className="font-medium text-gray-800">{pessoa.nome}</h4>
+            {pessoa.linkedin_url && (
               <a 
-                href={perfil.linkedin_url} 
+                href={pessoa.linkedin_url} 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-800"
+                className="text-blue-600 hover:text-blue-800 text-sm"
+                title="Ver no LinkedIn"
               >
-                🔗
+                🔗 LinkedIn
               </a>
             )}
+            {badgeOrigem(pessoa.origem)}
           </div>
-          <p className="text-sm text-gray-500 truncate">{perfil.headline || 'Sem título'}</p>
           
-          <div className="flex items-center gap-3 mt-2 text-xs text-gray-400">
-            {perfil.localizacao && <span>📍 {perfil.localizacao}</span>}
-            {perfil.anos_experiencia && <span>⏱️ {perfil.anos_experiencia} anos</span>}
-            {perfil.senioridade_estimada && (
+          <p className="text-sm text-gray-500 mt-1">{pessoa.titulo_profissional || 'Sem título'}</p>
+          
+          <div className="flex items-center gap-4 mt-2 text-xs text-gray-400 flex-wrap">
+            {pessoa.email && <span>✉️ {pessoa.email}</span>}
+            {pessoa.cidade && <span>📍 {pessoa.cidade}{pessoa.estado ? `, ${pessoa.estado}` : ''}</span>}
+            {pessoa.senioridade && (
               <span className={`px-2 py-0.5 rounded-full ${
-                perfil.senioridade_estimada === 'senior' ? 'bg-purple-100 text-purple-700' :
-                perfil.senioridade_estimada === 'pleno' ? 'bg-blue-100 text-blue-700' :
-                'bg-gray-100 text-gray-600'
+                pessoa.senioridade === 'Senior' || pessoa.senioridade === 'Especialista'
+                  ? 'bg-purple-100 text-purple-700' 
+                  : pessoa.senioridade === 'Pleno' 
+                    ? 'bg-blue-100 text-blue-700' 
+                    : 'bg-gray-100 text-gray-600'
               }`}>
-                {perfil.senioridade_estimada}
+                {pessoa.senioridade}
               </span>
             )}
           </div>
 
           {/* Skills */}
-          {perfil.skills && perfil.skills.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-2">
-              {perfil.skills.slice(0, 5).map((skill, idx) => (
+          {pessoa.skills_lista && pessoa.skills_lista.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-3">
+              {pessoa.skills_lista.slice(0, 6).map((skill, idx) => (
                 <span key={idx} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">
                   {skill}
                 </span>
               ))}
-              {perfil.skills.length > 5 && (
-                <span className="text-xs text-gray-400">+{perfil.skills.length - 5}</span>
+              {pessoa.total_skills && pessoa.total_skills > 6 && (
+                <span className="text-xs text-gray-400">+{pessoa.total_skills - 6}</span>
               )}
             </div>
           )}
-        </div>
 
-        {/* Status */}
-        <div className="text-right">
-          <span className={`px-2 py-1 text-xs rounded-full ${
-            perfil.status === 'vinculado' ? 'bg-green-100 text-green-700' :
-            perfil.status === 'descartado' ? 'bg-red-100 text-red-700' :
-            'bg-yellow-100 text-yellow-700'
-          }`}>
-            {perfil.status || 'importado'}
-          </span>
+          {/* Métricas */}
+          <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
+            <span title="Experiências">💼 {pessoa.total_experiencias || 0} exp</span>
+            <span title="Formações">🎓 {pessoa.total_formacoes || 0} form</span>
+            <span title="Skills">🛠️ {pessoa.total_skills || 0} skills</span>
+            <span title="Importado em">📅 {formatarData(pessoa.criado_em)}</span>
+          </div>
         </div>
       </div>
     </div>
   );
 
   // ============================================
-  // RENDER MATCH CARD
-  // ============================================
-
-  const renderMatchCard = (match: LinkedInMatch) => (
-    <div key={match.match_id} className="p-4 bg-white rounded-lg border hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between">
-        {/* Info do Perfil */}
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h4 className="font-medium text-gray-800">{match.nome_completo}</h4>
-            {match.linkedin_url && (
-              <a 
-                href={match.linkedin_url} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-800 text-sm"
-              >
-                LinkedIn ↗
-              </a>
-            )}
-          </div>
-          <p className="text-sm text-gray-500">{match.headline}</p>
-          
-          <div className="mt-2 text-xs text-gray-500">
-            <span className="inline-block mr-3">🏢 {match.ultima_empresa || 'N/A'}</span>
-            <span className="inline-block">💼 {match.ultimo_cargo || 'N/A'}</span>
-          </div>
-
-          {/* Skills Match */}
-          {match.skills_match && (
-            <div className="mt-3 space-y-1">
-              {match.skills_match.match?.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  <span className="text-xs text-green-600">✓ Match:</span>
-                  {match.skills_match.match.slice(0, 4).map((s, i) => (
-                    <span key={i} className="px-1.5 py-0.5 bg-green-100 text-green-700 text-xs rounded">
-                      {s}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {match.skills_match.faltam?.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  <span className="text-xs text-orange-600">⚠ Faltam:</span>
-                  {match.skills_match.faltam.slice(0, 3).map((s, i) => (
-                    <span key={i} className="px-1.5 py-0.5 bg-orange-100 text-orange-700 text-xs rounded">
-                      {s}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Score e Ações */}
-        <div className="text-right ml-4">
-          {/* Score */}
-          <div className={`text-2xl font-bold ${
-            match.score_match >= 70 ? 'text-green-600' :
-            match.score_match >= 50 ? 'text-yellow-600' :
-            'text-gray-500'
-          }`}>
-            {match.score_match.toFixed(0)}%
-          </div>
-          <p className="text-xs text-gray-400 mb-3">Match Score</p>
-
-          {/* Botões de Ação */}
-          {match.status === 'sugerido' && (
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleAprovarMatch(match.match_id)}
-                disabled={loading}
-                className="px-3 py-1.5 bg-green-600 text-white text-sm rounded hover:bg-green-700 disabled:opacity-50"
-              >
-                ✓ Aprovar
-              </button>
-              <button
-                onClick={() => descartarMatch(match.match_id)}
-                disabled={loading}
-                className="px-3 py-1.5 bg-gray-200 text-gray-600 text-sm rounded hover:bg-gray-300 disabled:opacity-50"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-          {match.status === 'enviado' && (
-            <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">
-              ✓ Candidatura Criada
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Vaga Info */}
-      <div className="mt-3 pt-3 border-t flex items-center justify-between text-xs">
-        <span className="text-gray-500">
-          Vaga: <strong className="text-gray-700">{match.vaga_titulo}</strong>
-        </span>
-        <span className="text-gray-400">{match.cliente_nome}</span>
-      </div>
-    </div>
-  );
-
-  // ============================================
-  // RENDER
+  // RENDER PRINCIPAL
   // ============================================
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-6 p-6">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">🔗 Integração LinkedIn</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Importe candidatos do LinkedIn e encontre matches com vagas
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            🔗 Integração LinkedIn
+          </h1>
+          <p className="text-gray-600 mt-1">
+            Visualize e gerencie candidatos importados do LinkedIn
           </p>
         </div>
         <button
@@ -345,65 +220,69 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({
           disabled={loading}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
         >
-          {loading ? <span className="animate-spin">⚙️</span> : <span>🔄</span>}
-          Atualizar
+          🔄 Atualizar
         </button>
       </div>
 
-      {/* Cards de Estatísticas */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {/* Cards de Estatísticas LinkedIn */}
+      <div className="grid grid-cols-4 gap-4">
         <div className="bg-white rounded-xl p-4 shadow-sm border-l-4 border-blue-500">
-          <p className="text-sm text-gray-500">Perfis Importados</p>
-          <p className="text-2xl font-bold text-gray-800">{estatisticas?.totalPerfis || 0}</p>
-        </div>
-        <div className="bg-white rounded-xl p-4 shadow-sm border-l-4 border-purple-500">
-          <p className="text-sm text-gray-500">Matches Gerados</p>
-          <p className="text-2xl font-bold text-gray-800">{estatisticas?.totalMatches || 0}</p>
+          <p className="text-sm text-gray-500">Total Importados</p>
+          <p className="text-2xl font-bold text-gray-800">{statsLinkedIn.totalImportados}</p>
+          <p className="text-xs text-blue-600 mt-1">do LinkedIn</p>
         </div>
         <div className="bg-white rounded-xl p-4 shadow-sm border-l-4 border-green-500">
-          <p className="text-sm text-gray-500">Candidaturas Criadas</p>
-          <p className="text-2xl font-bold text-gray-800">{estatisticas?.matchesAprovados || 0}</p>
+          <p className="text-sm text-gray-500">Importados Hoje</p>
+          <p className="text-2xl font-bold text-gray-800">{statsLinkedIn.importadosHoje}</p>
+          <p className="text-xs text-green-600 mt-1">últimas 24h</p>
+        </div>
+        <div className="bg-white rounded-xl p-4 shadow-sm border-l-4 border-purple-500">
+          <p className="text-sm text-gray-500">Esta Semana</p>
+          <p className="text-2xl font-bold text-gray-800">{statsLinkedIn.importadosSemana}</p>
+          <p className="text-xs text-purple-600 mt-1">últimos 7 dias</p>
         </div>
         <div className="bg-white rounded-xl p-4 shadow-sm border-l-4 border-orange-500">
-          <p className="text-sm text-gray-500">Score Médio</p>
-          <p className="text-2xl font-bold text-gray-800">{estatisticas?.mediaScore || 0}%</p>
+          <p className="text-sm text-gray-500">Este Mês</p>
+          <p className="text-2xl font-bold text-gray-800">{statsLinkedIn.importadosMes}</p>
+          <p className="text-xs text-orange-600 mt-1">últimos 30 dias</p>
         </div>
       </div>
 
-      {/* Mensagem de Feedback */}
-      {mensagem && (
-        <div className={`p-4 rounded-lg ${
-          mensagem.tipo === 'sucesso' ? 'bg-green-50 text-green-800' : 'bg-red-50 text-red-800'
-        }`}>
-          <p>{mensagem.texto}</p>
-          <button 
-            onClick={() => setMensagem(null)}
-            className="mt-2 text-sm underline"
-          >
-            Fechar
-          </button>
+      {/* Estatísticas por Origem */}
+      {statsGeral.length > 0 && (
+        <div className="bg-white rounded-xl p-4 shadow-sm">
+          <h3 className="font-semibold text-gray-700 mb-3">📊 Distribuição por Origem</h3>
+          <div className="flex flex-wrap gap-4">
+            {statsGeral.map(stat => (
+              <div key={stat.origem} className="flex items-center gap-2">
+                {badgeOrigem(stat.origem)}
+                <span className="font-bold text-gray-800">{stat.total}</span>
+                <span className="text-xs text-gray-400">({stat.ultimos_7_dias} esta semana)</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex gap-2 border-b">
+      <div className="flex gap-1 border-b">
         {[
-          { id: 'importar', label: '📥 Importar', count: null },
-          { id: 'perfis', label: '👤 Perfis', count: profiles.length },
-          { id: 'matches', label: '🎯 Matches', count: matches.length }
+          { id: 'linkedin', label: '🔗 Do LinkedIn', count: statsLinkedIn.totalImportados },
+          { id: 'todas', label: '👥 Todas Origens', count: statsGeral.reduce((a, b) => a + b.total, 0) },
+          { id: 'instrucoes', label: '📖 Como Usar', count: null }
         ].map(t => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id as any)}
-            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+            onClick={() => handleTabChange(t.id as any)}
+            className={`px-4 py-2 text-sm font-medium transition-colors whitespace-nowrap relative ${
               tab === t.id
-                ? 'text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50'
+                : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
             }`}
           >
             {t.label}
-            {t.count !== null && t.count > 0 && (
-              <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-600">
+            {t.count !== null && (
+              <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-gray-200 text-gray-700">
                 {t.count}
               </span>
             )}
@@ -411,160 +290,222 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({
         ))}
       </div>
 
-      {/* Tab Importar */}
-      {tab === 'importar' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Importar por JSON */}
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <h3 className="font-bold text-gray-800 mb-4">📋 Importar via JSON</h3>
-            <p className="text-sm text-gray-500 mb-4">
-              Cole o JSON do perfil LinkedIn (de extensões Chrome ou API)
-            </p>
-            
-            <textarea
-              value={jsonInput}
-              onChange={e => setJsonInput(e.target.value)}
-              placeholder='{"fullName": "João Silva", "headline": "Desenvolvedor Senior", ...}'
-              className="w-full h-48 p-3 border rounded-lg text-sm font-mono resize-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-            
-            <button
-              onClick={handleImportarJSON}
-              disabled={loading || !jsonInput.trim()}
-              className="mt-4 w-full py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-            >
-              {loading ? 'Importando...' : '📥 Importar JSON'}
-            </button>
-          </div>
-
-          {/* Importar Manual */}
-          <div className="bg-white rounded-xl p-6 shadow-sm">
-            <h3 className="font-bold text-gray-800 mb-4">✏️ Cadastro Manual</h3>
-            <p className="text-sm text-gray-500 mb-4">
-              Preencha os dados do candidato manualmente
-            </p>
-            
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder="Nome completo *"
-                value={manualForm.nome_completo}
-                onChange={e => setManualForm(f => ({ ...f, nome_completo: e.target.value }))}
-                className="w-full p-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="text"
-                placeholder="Título/Headline (ex: Desenvolvedor Senior)"
-                value={manualForm.headline}
-                onChange={e => setManualForm(f => ({ ...f, headline: e.target.value }))}
-                className="w-full p-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="url"
-                placeholder="URL do LinkedIn"
-                value={manualForm.linkedin_url}
-                onChange={e => setManualForm(f => ({ ...f, linkedin_url: e.target.value }))}
-                className="w-full p-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
-              <div className="grid grid-cols-2 gap-3">
-                <input
-                  type="email"
-                  placeholder="Email"
-                  value={manualForm.email}
-                  onChange={e => setManualForm(f => ({ ...f, email: e.target.value }))}
-                  className="w-full p-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                />
-                <input
-                  type="tel"
-                  placeholder="Telefone"
-                  value={manualForm.telefone}
-                  onChange={e => setManualForm(f => ({ ...f, telefone: e.target.value }))}
-                  className="w-full p-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-              <input
-                type="text"
-                placeholder="Localização"
-                value={manualForm.localizacao}
-                onChange={e => setManualForm(f => ({ ...f, localizacao: e.target.value }))}
-                className="w-full p-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
-              <input
-                type="text"
-                placeholder="Skills (separadas por vírgula: Java, Spring, AWS)"
-                value={manualForm.skills}
-                onChange={e => setManualForm(f => ({ ...f, skills: e.target.value }))}
-                className="w-full p-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            
-            <button
-              onClick={handleImportarManual}
-              disabled={loading || !manualForm.nome_completo.trim()}
-              className="mt-4 w-full py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-            >
-              {loading ? 'Salvando...' : '✓ Cadastrar Perfil'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Tab Perfis */}
-      {tab === 'perfis' && (
+      {/* Tab LinkedIn */}
+      {tab === 'linkedin' && (
         <div className="space-y-4">
-          {profiles.length > 0 ? (
-            profiles.map(renderPerfilCard)
-          ) : (
-            <div className="text-center py-12 bg-white rounded-xl">
-              <span className="text-4xl">👤</span>
-              <p className="text-gray-500 mt-2">Nenhum perfil importado</p>
-              <p className="text-sm text-gray-400">Importe perfis do LinkedIn para começar</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Tab Matches */}
-      {tab === 'matches' && (
-        <div className="space-y-4">
-          {/* Filtro de Score */}
-          <div className="bg-white rounded-lg p-4 flex items-center gap-4">
-            <span className="text-sm text-gray-600">Score mínimo:</span>
+          {/* Filtros */}
+          <div className="bg-white rounded-lg p-4 flex items-center gap-4 flex-wrap">
             <input
-              type="range"
-              min="0"
-              max="90"
-              step="10"
-              value={filtroScore}
-              onChange={e => setFiltroScore(Number(e.target.value))}
-              className="flex-1"
+              type="text"
+              placeholder="Buscar por nome ou email..."
+              value={filtroTermo}
+              onChange={e => setFiltroTermo(e.target.value)}
+              className="flex-1 min-w-48 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
             />
-            <span className="text-sm font-medium text-gray-800 w-12">{filtroScore}%</span>
-            <button
-              onClick={() => buscarMatches({ vagaId, scoreMinimo: filtroScore, limite: 30 })}
-              className="px-3 py-1 bg-blue-100 text-blue-700 rounded text-sm hover:bg-blue-200"
+            <select
+              value={filtroSenioridade}
+              onChange={e => setFiltroSenioridade(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
             >
-              Filtrar
+              <option value="">Todas Senioridades</option>
+              <option value="Junior">Junior</option>
+              <option value="Pleno">Pleno</option>
+              <option value="Senior">Senior</option>
+              <option value="Especialista">Especialista</option>
+            </select>
+            <button
+              onClick={aplicarFiltros}
+              disabled={loading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              🔍 Filtrar
             </button>
           </div>
 
-          {matches.length > 0 ? (
-            matches.map(renderMatchCard)
+          {/* Lista */}
+          {loading ? (
+            <div className="text-center py-12">
+              <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto"></div>
+              <p className="text-gray-500 mt-2">Carregando...</p>
+            </div>
+          ) : pessoas.length > 0 ? (
+            <div className="space-y-3">
+              {pessoas.map(renderPessoaCard)}
+            </div>
           ) : (
             <div className="text-center py-12 bg-white rounded-xl">
-              <span className="text-4xl">🎯</span>
-              <p className="text-gray-500 mt-2">Nenhum match encontrado</p>
-              <p className="text-sm text-gray-400">Importe perfis para gerar matches com vagas</p>
+              <span className="text-5xl block mb-4">🔗</span>
+              <p className="text-gray-600 font-medium">Nenhuma pessoa importada do LinkedIn ainda</p>
+              <p className="text-sm text-gray-400 mt-2">
+                Use a extensão Chrome para importar perfis do LinkedIn
+              </p>
+              <button
+                onClick={() => setTab('instrucoes')}
+                className="mt-4 px-4 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm hover:bg-blue-200"
+              >
+                📖 Ver instruções
+              </button>
             </div>
           )}
         </div>
       )}
 
-      {/* Dica */}
-      <div className="bg-blue-50 rounded-xl p-4 text-sm text-blue-800">
-        <strong>💡 Dica:</strong> Use extensões como "LinkedIn Profile Scraper" para exportar perfis em JSON 
-        e cole aqui para importação rápida. O sistema calculará automaticamente o match com todas as vagas abertas!
-      </div>
+      {/* Tab Todas Origens */}
+      {tab === 'todas' && (
+        <div className="space-y-4">
+          {/* Filtros */}
+          <div className="bg-white rounded-lg p-4 flex items-center gap-4 flex-wrap">
+            <select
+              value={filtroOrigem}
+              onChange={e => setFiltroOrigem(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Todas Origens</option>
+              <option value="linkedin">🔗 LinkedIn</option>
+              <option value="importacao_cv">📄 CV/IA</option>
+              <option value="manual">✏️ Manual</option>
+              <option value="indicacao">👥 Indicação</option>
+            </select>
+            <input
+              type="text"
+              placeholder="Buscar por nome ou email..."
+              value={filtroTermo}
+              onChange={e => setFiltroTermo(e.target.value)}
+              className="flex-1 min-w-48 px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+            />
+            <select
+              value={filtroSenioridade}
+              onChange={e => setFiltroSenioridade(e.target.value)}
+              className="px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Todas Senioridades</option>
+              <option value="Junior">Junior</option>
+              <option value="Pleno">Pleno</option>
+              <option value="Senior">Senior</option>
+              <option value="Especialista">Especialista</option>
+            </select>
+            <button
+              onClick={aplicarFiltros}
+              disabled={loading}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+            >
+              🔍 Filtrar
+            </button>
+          </div>
+
+          {/* Lista */}
+          {loading ? (
+            <div className="text-center py-12">
+              <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto"></div>
+              <p className="text-gray-500 mt-2">Carregando...</p>
+            </div>
+          ) : pessoas.length > 0 ? (
+            <div className="space-y-3">
+              {pessoas.map(renderPessoaCard)}
+            </div>
+          ) : (
+            <div className="text-center py-12 bg-white rounded-xl">
+              <span className="text-5xl block mb-4">👥</span>
+              <p className="text-gray-600 font-medium">Nenhuma pessoa encontrada</p>
+              <p className="text-sm text-gray-400 mt-2">
+                Tente ajustar os filtros ou importe novos candidatos
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Tab Instruções */}
+      {tab === 'instrucoes' && (
+        <div className="bg-white rounded-xl p-6 shadow-sm space-y-6">
+          <div className="flex items-center gap-3">
+            <span className="text-3xl">📖</span>
+            <div>
+              <h3 className="font-bold text-gray-800 text-lg">Como Importar do LinkedIn</h3>
+              <p className="text-sm text-gray-500">Use a extensão Chrome para importar com 1 clique</p>
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* Passo 1 */}
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-8 h-8 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold">1</span>
+                <h4 className="font-semibold text-gray-800">Instale a Extensão</h4>
+              </div>
+              <p className="text-sm text-gray-600">
+                Baixe e instale a extensão "RMS-RAISA LinkedIn Importer" no Google Chrome.
+                Siga o guia de instalação fornecido pelo time.
+              </p>
+            </div>
+
+            {/* Passo 2 */}
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-8 h-8 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold">2</span>
+                <h4 className="font-semibold text-gray-800">Configure a URL</h4>
+              </div>
+              <p className="text-sm text-gray-600">
+                Clique no ícone da extensão e configure a URL do sistema:
+              </p>
+              <code className="block mt-2 p-2 bg-gray-100 rounded text-sm text-gray-700">
+                https://www.techfortirms.online
+              </code>
+            </div>
+
+            {/* Passo 3 */}
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-8 h-8 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold">3</span>
+                <h4 className="font-semibold text-gray-800">Acesse um Perfil</h4>
+              </div>
+              <p className="text-sm text-gray-600">
+                No LinkedIn, navegue até o perfil do candidato que deseja importar.
+                A URL deve ser no formato: <code className="bg-gray-100 px-1 rounded">linkedin.com/in/nome</code>
+              </p>
+            </div>
+
+            {/* Passo 4 */}
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <span className="w-8 h-8 bg-green-100 text-green-700 rounded-full flex items-center justify-center font-bold">4</span>
+                <h4 className="font-semibold text-gray-800">Clique em Importar</h4>
+              </div>
+              <p className="text-sm text-gray-600">
+                Clique no botão <span className="font-semibold text-blue-600">"Importar para RMS-RAISA"</span> que aparece no perfil.
+                Os dados serão salvos automaticamente no Banco de Talentos!
+              </p>
+            </div>
+          </div>
+
+          {/* Dados Importados */}
+          <div className="bg-blue-50 rounded-lg p-4">
+            <h4 className="font-semibold text-blue-800 mb-2">📊 Dados Importados Automaticamente:</h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm text-blue-700">
+              <span>✓ Nome completo</span>
+              <span>✓ Título/Headline</span>
+              <span>✓ Localização</span>
+              <span>✓ URL LinkedIn</span>
+              <span>✓ Email e Telefone*</span>
+              <span>✓ Experiências</span>
+              <span>✓ Formação</span>
+              <span>✓ Skills</span>
+            </div>
+            <p className="text-xs text-blue-600 mt-2">* Se disponíveis no perfil</p>
+          </div>
+
+          {/* Vantagens */}
+          <div className="bg-green-50 rounded-lg p-4">
+            <h4 className="font-semibold text-green-800 mb-2">✅ Vantagens:</h4>
+            <ul className="text-sm text-green-700 space-y-1">
+              <li>• <strong>Integrado:</strong> Salva direto na tabela de Pessoas (Banco de Talentos)</li>
+              <li>• <strong>Sem duplicatas:</strong> Atualiza se o perfil já existe</li>
+              <li>• <strong>Rastreável:</strong> Origem "linkedin" para filtrar e gerenciar</li>
+              <li>• <strong>Rápido:</strong> 3 segundos por candidato vs 5-10 minutos manual</li>
+            </ul>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
