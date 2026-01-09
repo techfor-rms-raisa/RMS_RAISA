@@ -997,7 +997,7 @@ async function processarRespostaCliente(
     'visualizado': null,              // Não muda
     'em_analise': null,               // Não muda
     'agendamento': null,              // Não muda - continua em andamento
-    'aprovado': 'finalizado',         // 🆕 Vaga finalizada com sucesso!
+    'aprovado': 'finalizada',         // 🆕 Vaga finalizada com sucesso!
     'reprovado': null,                // Não muda - outros candidatos podem concorrer
     'duvida': null                    // Não muda
   };
