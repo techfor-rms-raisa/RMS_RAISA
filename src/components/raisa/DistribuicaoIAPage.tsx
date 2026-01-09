@@ -75,7 +75,7 @@ const DistribuicaoIAPage: React.FC = () => {
       const vagasComContagem: VagaParaDistribuir[] = await Promise.all(
         (vagasData || []).map(async (vaga: any) => {
           const { count } = await supabase
-            .from('vaga_analistas')
+            .from('vaga_analista_distribuicao')
             .select('*', { count: 'exact', head: true })
             .eq('vaga_id', vaga.id)
             .eq('ativo', true);
@@ -92,7 +92,12 @@ const DistribuicaoIAPage: React.FC = () => {
         })
       );
 
-      setVagas(vagasComContagem);
+      // Filtrar: "Pendentes" mostra apenas vagas SEM analistas atribuídos
+      const vagasFiltradas = filtroStatus === 'pendentes'
+        ? vagasComContagem.filter(v => v.total_analistas === 0)
+        : vagasComContagem;
+
+      setVagas(vagasFiltradas);
     } catch (err: any) {
       console.error('Erro ao carregar vagas:', err);
       setError(err.message || 'Erro ao carregar vagas');
