@@ -1016,6 +1016,22 @@ async function processarRespostaCliente(
   if (['aprovado', 'reprovado', 'agendamento'].includes(tipoResposta)) {
     const bodyText = emailData.text || stripHtml(emailData.html || '');
     
+    // Calcular prazo de resposta em dias (diferença entre envio e agora)
+    let prazoRespostaDias = 0;
+    if (envioExistente) {
+      const { data: envioData } = await supabaseAdmin
+        .from('candidatura_envios')
+        .select('enviado_em')
+        .eq('id', envioExistente.id)
+        .single();
+      
+      if (envioData?.enviado_em) {
+        const dataEnvio = new Date(envioData.enviado_em);
+        const agora = new Date();
+        prazoRespostaDias = Math.ceil((agora.getTime() - dataEnvio.getTime()) / (1000 * 60 * 60 * 24));
+      }
+    }
+    
     const { data: aprovacao, error } = await supabaseAdmin
       .from('candidatura_aprovacoes')
       .insert({
@@ -1023,9 +1039,10 @@ async function processarRespostaCliente(
         candidatura_envio_id: envioExistente?.id,
         vaga_id: candidatura.vaga_id,
         cliente_id: candidatura.vagas?.cliente_id,
-        analista_id: candidatura.analista_id, // 🆕 ADICIONADO
+        analista_id: candidatura.analista_id,
         decisao: tipoResposta === 'agendamento' ? 'agendado' : tipoResposta,
         decidido_em: new Date().toISOString(),
+        prazo_resposta_dias: prazoRespostaDias, // 🆕 ADICIONADO
         feedback_cliente: bodyText.substring(0, 1000),
         email_message_id: emailData.email_id,
         email_resposta_texto: bodyText.substring(0, 2000),
@@ -1036,7 +1053,7 @@ async function processarRespostaCliente(
 
     if (!error && aprovacao) {
       aprovacaoId = aprovacao.id;
-      console.log(`✅ [Webhook] Aprovação registrada: ID ${aprovacaoId}`);
+      console.log(`✅ [Webhook] Aprovação registrada: ID ${aprovacaoId}, prazo: ${prazoRespostaDias} dias`);
     } else if (error) {
       console.error('❌ [Webhook] Erro ao registrar aprovação:', error);
     }
