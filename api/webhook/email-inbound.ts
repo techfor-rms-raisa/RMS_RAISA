@@ -12,6 +12,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import crypto from 'crypto';
+import { GoogleGenAI } from '@google/genai';
 
 // Supabase com Service Role (backend seguro)
 // Função para criar cliente Supabase (lazy initialization)
@@ -24,20 +25,103 @@ function getSupabaseAdmin() {
   return createClient(supabaseUrl, supabaseKey);
 }
 
+// 🆕 Inicializar Gemini AI diretamente no webhook
+const geminiApiKey = process.env.API_KEY || '';
+let ai: GoogleGenAI | null = null;
+
+function getGeminiAI(): GoogleGenAI {
+  if (!geminiApiKey) {
+    throw new Error('API_KEY (Gemini) não configurada no ambiente');
+  }
+  if (!ai) {
+    ai = new GoogleGenAI({ apiKey: geminiApiKey });
+  }
+  return ai;
+}
+
 // Configuração
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET || '';
-
-// 🆕 FIX: Usar URL absoluta fixa para evitar problemas com VERCEL_URL
-const getGeminiApiUrl = () => {
-  // Em produção, usar a URL do próprio domínio
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}/api/gemini-analyze`;
-  }
-  // Fallback para URL hardcoded do projeto
-  return 'https://rms-raisa.vercel.app/api/gemini-analyze';
-};
-
 const CONFIANCA_MINIMA = 70; // Abaixo disso vai para manual
+
+/**
+ * 🆕 Classificar email diretamente com Gemini (sem chamar outra função)
+ */
+async function classificarEmailComGemini(emailData: {
+  from: string;
+  to: string;
+  cc?: string;
+  subject: string;
+  body: string;
+}): Promise<ClassificacaoEmail> {
+  try {
+    const gemini = getGeminiAI();
+    
+    const prompt = `Você é um assistente de RH especializado em analisar emails de processos seletivos.
+
+Analise o seguinte email e classifique-o:
+
+DE: ${emailData.from}
+PARA: ${emailData.to}
+CC: ${emailData.cc || 'N/A'}
+ASSUNTO: ${emailData.subject}
+CORPO: ${emailData.body.substring(0, 2000)}
+
+Classifique o email em uma das categorias:
+1. "envio_cv" - Email enviando CV/currículo de candidato para cliente
+2. "resposta_cliente" - Resposta do cliente sobre candidato (aprovação, reprovação, agendamento)
+3. "outro" - Outros tipos de email
+
+Extraia também:
+- Nome do candidato mencionado
+- Título ou código da vaga (ex: VTI-210)
+- Nome do cliente (se identificável)
+- Se for resposta_cliente, qual a decisão (aprovado/reprovado/agendamento/duvida)
+
+Responda APENAS em JSON válido:
+{
+  "tipo_email": "envio_cv" | "resposta_cliente" | "outro",
+  "candidato_nome": "Nome do Candidato" | null,
+  "vaga_titulo": "Código ou título da vaga" | null,
+  "cliente_nome": "Nome do cliente" | null,
+  "decisao": "aprovado" | "reprovado" | "agendamento" | "duvida" | null,
+  "confianca": 0-100,
+  "justificativa": "Breve explicação"
+}`;
+
+    const response = await gemini.models.generateContent({
+      model: 'gemini-2.0-flash-exp',
+      contents: prompt
+    });
+
+    const text = response.text || '';
+    console.log('🤖 [Gemini Direct] Resposta bruta:', text.substring(0, 500));
+
+    // Extrair JSON da resposta
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error('Resposta não contém JSON válido');
+    }
+
+    const parsed = JSON.parse(jsonMatch[0]);
+
+    return {
+      sucesso: true,
+      tipo_email: parsed.tipo_email || 'outro',
+      candidato_nome: parsed.candidato_nome,
+      candidato_nome_alternativas: parsed.candidato_nome ? [parsed.candidato_nome.split(' ')[0]] : [],
+      vaga_titulo: parsed.vaga_titulo,
+      vaga_titulo_alternativas: parsed.vaga_titulo ? [parsed.vaga_titulo] : [],
+      cliente_nome: parsed.cliente_nome,
+      cliente_nome_alternativas: [],
+      destinatario_email: emailData.from,
+      confianca: parsed.confianca || 70,
+      decisao: parsed.decisao
+    };
+  } catch (error: any) {
+    console.error('❌ [Gemini Direct] Erro:', error.message);
+    throw error;
+  }
+}
 
 // ============================================
 // TIPOS
@@ -75,6 +159,7 @@ interface ClassificacaoEmail {
   cliente_nome_alternativas?: string[];
   destinatario_email?: string;
   confianca: number;
+  decisao?: 'aprovado' | 'reprovado' | 'agendamento' | 'duvida' | null;
   erro?: string;
 }
 
@@ -209,46 +294,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ============================================
-    // 5. CLASSIFICAR EMAIL COM GEMINI
+    // 5. CLASSIFICAR EMAIL COM GEMINI (DIRETO)
     // ============================================
     
     const bodyText = emailData.text || stripHtml(emailData.html || '');
     
-    // 🆕 FIX: Usar função para obter URL e adicionar try/catch
-    const geminiApiUrl = getGeminiApiUrl();
-    console.log(`🤖 [Webhook] Chamando Gemini API: ${geminiApiUrl}`);
+    console.log(`🤖 [Webhook] Classificando email diretamente com Gemini...`);
     
     let classificacao: ClassificacaoEmail;
     
     try {
-      const classificacaoResponse = await fetch(geminiApiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'classificar_email_candidatura',
-          payload: {
-            from: emailData.from,
-            to: emailData.to?.join(', '),
-            cc: emailData.cc?.join(', '),
-            subject: emailData.subject,
-            body: bodyText
-          }
-        })
+      // 🆕 Chamada DIRETA à API Gemini (sem passar por outra função serverless)
+      classificacao = await classificarEmailComGemini({
+        from: emailData.from,
+        to: emailData.to?.join(', ') || '',
+        cc: emailData.cc?.join(', '),
+        subject: emailData.subject,
+        body: bodyText
       });
-
-      if (!classificacaoResponse.ok) {
-        throw new Error(`Gemini API retornou ${classificacaoResponse.status}: ${classificacaoResponse.statusText}`);
-      }
-
-      const classificacaoResult = await classificacaoResponse.json();
-      
-      // 🆕 FIX: Validar resposta
-      if (!classificacaoResult || !classificacaoResult.data) {
-        console.error('❌ [Webhook] Resposta inválida da Gemini:', classificacaoResult);
-        throw new Error('Resposta inválida da Gemini API');
-      }
-      
-      classificacao = classificacaoResult.data;
 
       if (!classificacao.sucesso) {
         throw new Error(classificacao.erro || 'Erro na classificação');
@@ -256,7 +319,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (geminiError: any) {
       console.error('❌ [Webhook] Erro ao chamar Gemini:', geminiError.message);
       
-      // 🆕 FIX: Fallback - tentar classificar manualmente pelo subject
+      // Fallback - classificar pelo subject
       console.log('⚠️ [Webhook] Usando classificação de fallback pelo subject');
       classificacao = classificarPorSubject(emailData.subject, emailData.from, bodyText);
     }
