@@ -21,22 +21,50 @@ interface VagaParaDistribuir {
   status: string;
   status_posicao: string;
   cliente_nome: string;
+  cliente_id: number;
   total_analistas: number;
   created_at: string;
+}
+
+interface Cliente {
+  id: number;
+  razao_social_cliente: string;
 }
 
 const DistribuicaoIAPage: React.FC = () => {
   const { user } = useAuth();
   const [vagas, setVagas] = useState<VagaParaDistribuir[]>([]);
+  const [clientes, setClientes] = useState<Cliente[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [vagaSelecionada, setVagaSelecionada] = useState<VagaParaDistribuir | null>(null);
   const [filtroStatus, setFiltroStatus] = useState<string>('pendentes');
+  const [filtroCliente, setFiltroCliente] = useState<number | null>(null);
 
-  // Carregar vagas
+  // Carregar clientes ao montar
+  useEffect(() => {
+    carregarClientes();
+  }, []);
+
+  // Carregar vagas quando filtros mudarem
   useEffect(() => {
     carregarVagas();
-  }, [filtroStatus]);
+  }, [filtroStatus, filtroCliente]);
+
+  const carregarClientes = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('clients')
+        .select('id, razao_social_cliente')
+        .eq('ativo_cliente', true)
+        .order('razao_social_cliente');
+
+      if (error) throw error;
+      setClientes(data || []);
+    } catch (err) {
+      console.error('Erro ao carregar clientes:', err);
+    }
+  };
 
   const carregarVagas = async () => {
     try {
@@ -52,7 +80,8 @@ const DistribuicaoIAPage: React.FC = () => {
           status,
           status_posicao,
           created_at,
-          clients!inner(razao_social_cliente)
+          cliente_id,
+          clients!inner(id, razao_social_cliente)
         `)
         .order('created_at', { ascending: false });
 
@@ -65,6 +94,11 @@ const DistribuicaoIAPage: React.FC = () => {
         query = query.eq('status', 'em_andamento');
       } else if (filtroStatus === 'abertas') {
         query = query.eq('status', 'aberta');
+      }
+
+      // Filtrar por cliente
+      if (filtroCliente) {
+        query = query.eq('cliente_id', filtroCliente);
       }
 
       const { data: vagasData, error: vagasError } = await query;
@@ -86,6 +120,7 @@ const DistribuicaoIAPage: React.FC = () => {
             status: vaga.status,
             status_posicao: vaga.status_posicao || 'triagem',
             cliente_nome: vaga.clients?.razao_social_cliente || 'Cliente não informado',
+            cliente_id: vaga.cliente_id,
             total_analistas: count || 0,
             created_at: vaga.created_at
           };
@@ -151,8 +186,8 @@ const DistribuicaoIAPage: React.FC = () => {
         </p>
       </div>
 
-      {/* Filtros */}
-      <div className="mb-6 flex gap-2">
+      {/* Filtros de Status */}
+      <div className="mb-4 flex gap-2 flex-wrap">
         <button
           onClick={() => setFiltroStatus('pendentes')}
           className={`px-4 py-2 rounded-lg font-medium transition-colors ${
@@ -193,6 +228,30 @@ const DistribuicaoIAPage: React.FC = () => {
         >
           📋 Todas
         </button>
+      </div>
+
+      {/* Filtro por Cliente */}
+      <div className="mb-6 flex items-center gap-3">
+        <label className="text-sm font-medium text-gray-700">
+          🏢 Cliente:
+        </label>
+        <select
+          value={filtroCliente || ''}
+          onChange={(e) => setFiltroCliente(e.target.value ? Number(e.target.value) : null)}
+          className="px-4 py-2 border border-gray-300 rounded-lg bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent min-w-[250px]"
+        >
+          <option value="">Todos os Clientes</option>
+          {clientes.map((cliente) => (
+            <option key={cliente.id} value={cliente.id}>
+              {cliente.razao_social_cliente}
+            </option>
+          ))}
+        </select>
+        
+        {/* Contador de vagas */}
+        <span className="text-sm text-gray-500 ml-4">
+          {vagas.length} {vagas.length === 1 ? 'vaga' : 'vagas'} encontrada{vagas.length !== 1 ? 's' : ''}
+        </span>
       </div>
 
       {/* Loading */}
