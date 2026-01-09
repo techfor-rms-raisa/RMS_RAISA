@@ -121,7 +121,7 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
 
     try {
       // Registrar decisão no log
-      await registrarDecisao({
+      const decisaoOk = await registrarDecisao({
         vaga_id: vagaId,
         analistas_sugeridos_ia: sugestaoAtual?.ranking_analistas.map(a => a.analista_id) || [],
         analistas_escolhidos: analistasSelecionados,
@@ -131,17 +131,31 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
         decidido_por: currentUserId || 0
       });
 
+      if (!decisaoOk) {
+        throw new Error('Falha ao registrar decisão no log');
+      }
+
       // Adicionar analistas à vaga
+      const errosAnalistas: string[] = [];
       for (const analistaId of analistasSelecionados) {
-        await adicionarAnalista(vagaId, analistaId, {}, currentUserId);
+        const resultado = await adicionarAnalista(vagaId, analistaId, {}, currentUserId);
+        if (!resultado) {
+          const analista = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === analistaId);
+          errosAnalistas.push(analista?.nome || `ID ${analistaId}`);
+        }
+      }
+
+      if (errosAnalistas.length > 0) {
+        alert(`⚠️ Erro ao adicionar analistas: ${errosAnalistas.join(', ')}\n\nVerifique as permissões no Supabase (RLS).`);
+        return;
       }
 
       alert('✅ Distribuição configurada com sucesso!');
       onDistribuicaoConfirmada?.();
       onClose?.();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro ao confirmar distribuição:', err);
-      alert('Erro ao configurar distribuição');
+      alert(`❌ Erro ao configurar distribuição:\n${err.message || 'Erro desconhecido'}`);
     }
   };
 
