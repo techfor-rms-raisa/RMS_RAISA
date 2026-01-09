@@ -210,7 +210,7 @@ export function useDistribuicaoIA() {
         .eq('analista_id', analistaId)
         .ilike('tecnologia', `%${tecnologia.split(',')[0].trim()}%`)
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (esp) {
         switch (esp.nivel_expertise) {
@@ -230,7 +230,7 @@ export function useDistribuicaoIA() {
         .select('nivel_relacionamento, taxa_aprovacao')
         .eq('analista_id', analistaId)
         .eq('cliente_id', clienteId)
-        .single();
+        .maybeSingle();
 
       if (cli) {
         switch (cli.nivel_relacionamento) {
@@ -383,12 +383,12 @@ export function useDistribuicaoIA() {
         tipo_decisao = 'manual_override';
       }
 
-      // Buscar ID da sugestão
+      // Buscar ID da sugestão (pode não existir ainda)
       const { data: sugestao } = await supabase
         .from('distribuicao_sugestao_ia')
         .select('id')
         .eq('vaga_id', decisao.vaga_id)
-        .single();
+        .maybeSingle();
 
       // Inserir log
       const { error: insertError } = await supabase

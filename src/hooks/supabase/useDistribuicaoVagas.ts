@@ -175,26 +175,26 @@ export function useDistribuicaoVagas() {
     setError(null);
 
     try {
-      // Verificar se já existe
+      // Verificar se já existe (usa maybeSingle pois pode não existir)
       const { data: existente } = await supabase
         .from('vaga_analista_distribuicao')
         .select('id')
         .eq('vaga_id', vagaId)
         .eq('analista_id', analistaId)
-        .single();
+        .maybeSingle();
 
       if (existente) {
         throw new Error('Este analista já está atribuído a esta vaga');
       }
 
-      // Buscar próxima ordem
+      // Buscar próxima ordem (usa maybeSingle pois pode ser o primeiro)
       const { data: maxOrdem } = await supabase
         .from('vaga_analista_distribuicao')
         .select('ordem_alternancia')
         .eq('vaga_id', vagaId)
         .order('ordem_alternancia', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       const novaOrdem = (maxOrdem?.ordem_alternancia || 0) + 1;
 
