@@ -111,7 +111,7 @@ export function useDistribuicaoVagas() {
         .from('vaga_analista_distribuicao')
         .select(`
           *,
-          analista:app_users(id, nome_usuario, email_usuario)
+          analista:app_users!vaga_analista_distribuicao_analista_id_fkey(id, nome_usuario, email_usuario)
         `)
         .eq('vaga_id', vagaId)
         .order('ordem_alternancia');
@@ -211,7 +211,7 @@ export function useDistribuicaoVagas() {
         })
         .select(`
           *,
-          analista:app_users(id, nome_usuario, email_usuario)
+          analista:app_users!vaga_analista_distribuicao_analista_id_fkey(id, nome_usuario, email_usuario)
         `)
         .single();
 
@@ -614,7 +614,7 @@ export function useDistribuicaoVagas() {
         .from('vaga_analista_distribuicao')
         .select(`
           analista_id,
-          analista:app_users(nome_usuario),
+          analista:app_users!vaga_analista_distribuicao_analista_id_fkey(nome_usuario),
           candidatos_atribuidos
         `)
         .eq('ativo', true);
