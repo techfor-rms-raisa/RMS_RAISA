@@ -58,7 +58,7 @@ async function classificarEmailComGemini(emailData: {
     
     const prompt = `Você é um assistente de RH especializado em analisar emails de processos seletivos.
 
-Analise o seguinte email e classifique-o:
+ANALISE CUIDADOSAMENTE o seguinte email:
 
 DE: ${emailData.from}
 PARA: ${emailData.to}
@@ -66,26 +66,32 @@ CC: ${emailData.cc || 'N/A'}
 ASSUNTO: ${emailData.subject}
 CORPO: ${emailData.body.substring(0, 2000)}
 
-Classifique o email em uma das categorias:
-1. "envio_cv" - Email enviando CV/currículo de candidato para cliente
-2. "resposta_cliente" - Resposta do cliente sobre candidato (aprovação, reprovação, agendamento)
-3. "outro" - Outros tipos de email
+REGRAS DE CLASSIFICAÇÃO (SIGA RIGOROSAMENTE):
 
-Extraia também:
-- Nome do candidato mencionado
-- Título ou código da vaga (ex: VTI-210)
-- Nome do cliente (se identificável)
-- Se for resposta_cliente, qual a decisão (aprovado/reprovado/agendamento/duvida)
+1. Se o ASSUNTO começa com "RE:", "RES:", "FW:", "ENC:" ou similar → É uma RESPOSTA, provavelmente "resposta_cliente"
 
-Responda APENAS em JSON válido:
+2. Se o CORPO contém palavras como "aprovado", "aprovada", "aprovamos", "aceito", "selecionado", "agendamento", "entrevista marcada" → É "resposta_cliente" com decisao correspondente
+
+3. Se o CORPO contém "reprovado", "reprovada", "não aprovado", "recusado", "não selecionado" → É "resposta_cliente" com decisao "reprovado"
+
+4. APENAS classifique como "envio_cv" se for um email ORIGINAL (não resposta) enviando currículo pela primeira vez
+
+5. Use "outro" apenas se não se encaixar em nenhum dos casos acima
+
+EXTRAIA:
+- Nome do candidato mencionado no assunto ou corpo
+- Código da vaga (ex: VTI-210, VGA-001)
+- Decisão do cliente se for resposta (aprovado/reprovado/agendamento/duvida)
+
+Responda APENAS em JSON válido (sem markdown):
 {
   "tipo_email": "envio_cv" | "resposta_cliente" | "outro",
-  "candidato_nome": "Nome do Candidato" | null,
+  "candidato_nome": "Nome Completo do Candidato" | null,
   "vaga_titulo": "Código ou título da vaga" | null,
   "cliente_nome": "Nome do cliente" | null,
   "decisao": "aprovado" | "reprovado" | "agendamento" | "duvida" | null,
   "confianca": 0-100,
-  "justificativa": "Breve explicação"
+  "justificativa": "Breve explicação da classificação"
 }`;
 
     const response = await gemini.models.generateContent({
@@ -805,35 +811,9 @@ async function processarRespostaCliente(
   const supabaseAdmin = getSupabaseAdmin();
   console.log('📬 [Webhook] Processando resposta do cliente...');
 
-  // Classificar a resposta com mais detalhes
-  const bodyText = emailData.text || stripHtml(emailData.html || '');
-  
-  const respostaResponse = await fetch(GEMINI_API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      action: 'classificar_resposta_cliente',
-      payload: {
-        from: emailData.from,
-        to: emailData.to?.join(', '),
-        cc: emailData.cc?.join(', '),
-        subject: emailData.subject,
-        body: bodyText,
-        candidato_nome: classificacao.candidato_nome,
-        vaga_titulo: classificacao.vaga_titulo,
-        cliente_nome: classificacao.cliente_nome
-      }
-    })
-  });
-
-  const respostaResult = await respostaResponse.json();
-  const resposta: ClassificacaoResposta = respostaResult.data;
-
-  if (!resposta.sucesso) {
-    throw new Error(resposta.erro || 'Erro ao classificar resposta');
-  }
-
-  console.log(`🤖 [Webhook] Tipo de resposta: ${resposta.tipo_resposta}`);
+  // 🆕 Usar a decisão que já veio da classificação (não precisa chamar Gemini novamente)
+  const tipoResposta = classificacao.decisao || 'duvida';
+  console.log(`🤖 [Webhook] Decisão detectada: ${tipoResposta}`);
 
   // Buscar envio relacionado
   const { data: envioExistente } = await supabaseAdmin
@@ -854,7 +834,7 @@ async function processarRespostaCliente(
     'duvida': 'aguardando_cliente'
   };
 
-  // 🆕 Mapear tipo de resposta para status_posicao da VAGA
+  // Mapear tipo de resposta para status_posicao da VAGA
   const statusPosicaoMap: Record<string, string> = {
     'visualizado': 'aguardando_cliente',
     'em_analise': 'aguardando_cliente',
@@ -864,16 +844,20 @@ async function processarRespostaCliente(
     'duvida': 'aguardando_cliente'
   };
 
-  const novoStatus = statusCandidaturaMap[resposta.tipo_resposta] || 'aguardando_cliente';
-  const novoStatusPosicao = statusPosicaoMap[resposta.tipo_resposta] || 'aguardando_cliente';
+  const novoStatus = statusCandidaturaMap[tipoResposta] || 'aguardando_cliente';
+  const novoStatusPosicao = statusPosicaoMap[tipoResposta] || 'aguardando_cliente';
+
+  console.log(`📝 [Webhook] Atualizando candidatura ${candidatura.id} para status: ${novoStatus}`);
+  console.log(`📝 [Webhook] Atualizando vaga ${candidatura.vaga_id} para status_posicao: ${novoStatusPosicao}`);
 
   // Atualizar status do envio (se existir)
   if (envioExistente) {
     await supabaseAdmin
       .from('candidatura_envios')
       .update({
-        status: resposta.tipo_resposta === 'visualizado' ? 'visualizado' : 'em_analise',
-        visualizado_em: new Date().toISOString()
+        status: tipoResposta === 'visualizado' ? 'visualizado' : 'respondido',
+        visualizado_em: new Date().toISOString(),
+        respondido_em: new Date().toISOString()
       })
       .eq('id', envioExistente.id);
   }
@@ -881,7 +865,9 @@ async function processarRespostaCliente(
   // Criar registro de aprovação/decisão
   let aprovacaoId = null;
   
-  if (['aprovado', 'reprovado', 'agendamento'].includes(resposta.tipo_resposta)) {
+  if (['aprovado', 'reprovado', 'agendamento'].includes(tipoResposta)) {
+    const bodyText = emailData.text || stripHtml(emailData.html || '');
+    
     const { data: aprovacao, error } = await supabaseAdmin
       .from('candidatura_aprovacoes')
       .insert({
@@ -889,14 +875,9 @@ async function processarRespostaCliente(
         candidatura_envio_id: envioExistente?.id,
         vaga_id: candidatura.vaga_id,
         cliente_id: candidatura.vagas?.cliente_id,
-        decisao: resposta.tipo_resposta === 'agendamento' ? 'agendado' : resposta.tipo_resposta,
+        decisao: tipoResposta === 'agendamento' ? 'agendado' : tipoResposta,
         decidido_em: new Date().toISOString(),
-        data_agendamento: resposta.agendamento?.data_sugerida 
-          ? `${resposta.agendamento.data_sugerida}T${resposta.agendamento.hora_sugerida || '00:00'}:00`
-          : null,
-        motivo_reprovacao: resposta.reprovacao?.motivo,
-        categoria_reprovacao: resposta.reprovacao?.categoria,
-        feedback_cliente: resposta.feedback_cliente,
+        feedback_cliente: bodyText.substring(0, 1000),
         email_message_id: emailData.email_id,
         email_resposta_texto: bodyText.substring(0, 2000),
         origem: 'webhook_resend'
@@ -904,42 +885,55 @@ async function processarRespostaCliente(
       .select('id')
       .single();
 
-    if (error) {
-      console.error('❌ [Webhook] Erro ao criar aprovação:', error);
-    } else {
-      aprovacaoId = aprovacao?.id;
+    if (!error && aprovacao) {
+      aprovacaoId = aprovacao.id;
+      console.log(`✅ [Webhook] Aprovação registrada: ID ${aprovacaoId}`);
+    } else if (error) {
+      console.error('❌ [Webhook] Erro ao registrar aprovação:', error);
     }
   }
 
-  // Atualizar status da candidatura
-  await supabaseAdmin
+  // ATUALIZAR STATUS DA CANDIDATURA
+  const { error: candError } = await supabaseAdmin
     .from('candidaturas')
     .update({
       status: novoStatus,
-      feedback_cliente: resposta.feedback_cliente,
-      data_feedback_cliente: new Date().toISOString(),
+      feedback_cliente: (emailData.text || '').substring(0, 500),
       atualizado_em: new Date().toISOString()
     })
     .eq('id', candidatura.id);
 
-  // 🆕 Atualizar status_posicao da VAGA
+  if (candError) {
+    console.error('❌ [Webhook] Erro ao atualizar candidatura:', candError);
+  } else {
+    console.log(`✅ [Webhook] Candidatura ${candidatura.id} atualizada para: ${novoStatus}`);
+  }
+
+  // ATUALIZAR STATUS_POSICAO DA VAGA
   if (candidatura.vaga_id) {
-    await supabaseAdmin
+    const { error: vagaError } = await supabaseAdmin
       .from('vagas')
       .update({
         status_posicao: novoStatusPosicao,
         atualizado_em: new Date().toISOString()
       })
       .eq('id', candidatura.vaga_id);
-    
-    console.log(`✅ [Webhook] status_posicao da vaga ${candidatura.vaga_id} atualizado para: ${novoStatusPosicao}`);
+
+    if (vagaError) {
+      console.error('❌ [Webhook] Erro ao atualizar vaga:', vagaError);
+    } else {
+      console.log(`✅ [Webhook] Vaga ${candidatura.vaga_id} atualizada para: ${novoStatusPosicao}`);
+    }
   }
 
-  console.log(`✅ [Webhook] Status candidatura atualizado para: ${novoStatus}`);
+  // Finalizar log
+  await finalizarLog(logId, 'sucesso', 'resposta_cliente_processada');
 
-  return { 
-    acao: `atualizou_status_${resposta.tipo_resposta}`, 
-    envio_id: envioExistente?.id,
+  return {
+    success: true,
+    tipo_resposta: tipoResposta,
+    candidatura_status: novoStatus,
+    vaga_status_posicao: novoStatusPosicao,
     aprovacao_id: aprovacaoId
   };
 }
