@@ -279,3 +279,4 @@ export const useCandidaturas = () => {
     getCandidaturasByPessoa
   };
 };
+
