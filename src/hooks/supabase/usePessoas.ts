@@ -95,7 +95,9 @@ export const usePessoas = () => {
         cv_processado_em: pessoa.cv_processado_em,
         resumo_profissional: pessoa.resumo_profissional,
         cv_texto_original: pessoa.cv_texto_original,
-        cv_arquivo_url: pessoa.cv_arquivo_url
+        cv_arquivo_url: pessoa.cv_arquivo_url,
+        // 🆕 Campo de origem (linkedin, importacao_cv, manual)
+        origem: pessoa.origem
       }));
 
       setPessoas(mappedPessoas);

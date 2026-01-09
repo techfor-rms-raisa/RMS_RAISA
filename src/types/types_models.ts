@@ -114,6 +114,8 @@ export interface Pessoa {
   resumo_profissional?: string;
   cv_texto_original?: string;
   cv_arquivo_url?: string;
+  // 🆕 Campo de origem (linkedin, importacao_cv, manual)
+  origem?: string;
 }
 
 // ============================================

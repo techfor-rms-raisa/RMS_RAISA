@@ -50,6 +50,8 @@ interface PessoaExpanded extends Pessoa {
     top_skills?: string[];
     total_skills?: number;
     total_experiencias?: number;
+    origem?: string;
+    linkedin_url?: string;
 }
 
 interface SkillInfo {
@@ -423,17 +425,33 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                                 {pessoa.titulo_profissional || 'Título não definido'}
                                             </p>
                                         </div>
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            {/* Badge de origem LinkedIn */}
+                                            {pessoa.origem === 'linkedin' && (
+                                                <a 
+                                                    href={pessoa.linkedin_url || '#'}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium hover:bg-blue-200 transition-colors"
+                                                    title="Importado do LinkedIn - Clique para ver perfil"
+                                                >
+                                                    <Linkedin size={12} />
+                                                    LinkedIn
+                                                </a>
+                                            )}
+                                            {/* Badge CV IA */}
                                             {pessoa.cv_processado ? (
                                                 <span className="flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-medium">
                                                     <CheckCircle size={12} />
                                                     CV IA
                                                 </span>
                                             ) : (
-                                                <span className="flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-500 rounded-full text-xs">
-                                                    <XCircle size={12} />
-                                                    Sem CV
-                                                </span>
+                                                !pessoa.origem && (
+                                                    <span className="flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-500 rounded-full text-xs">
+                                                        <XCircle size={12} />
+                                                        Sem CV
+                                                    </span>
+                                                )
                                             )}
                                         </div>
                                     </div>
@@ -477,7 +495,8 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                                 {pessoa.telefone}
                                             </span>
                                         )}
-                                        {pessoa.linkedin_url && (
+                                        {/* Link LinkedIn só aparece aqui se NÃO for origem linkedin (evita duplicação com badge) */}
+                                        {pessoa.linkedin_url && pessoa.origem !== 'linkedin' && (
                                             <a 
                                                 href={pessoa.linkedin_url} 
                                                 target="_blank" 
