@@ -79,6 +79,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await triagemCVGenerica(payload.curriculo_texto);
         break;
 
+      // ✅ NOVA ACTION: Classificar email de candidatura (webhook Resend)
+      case 'classificar_email_candidatura':
+        result = await classificarEmailCandidatura(payload);
+        break;
+
+      // ✅ NOVA ACTION: Classificar resposta do cliente (webhook Resend)
+      case 'classificar_resposta_cliente':
+        result = await classificarRespostaCliente(payload);
+        break;
+
       default:
         return res.status(400).json({ error: `Ação desconhecida: ${action}` });
     }
@@ -688,5 +698,183 @@ RESPONDA EM JSON:
   } catch (error: any) {
     console.error('❌ Erro na triagem:', error);
     return { sucesso: false, erro: error.message };
+  }
+}
+
+// ========================================
+// CLASSIFICAÇÃO DE EMAILS (WEBHOOK RESEND)
+// ========================================
+
+/**
+ * Classifica email recebido via webhook
+ * Identifica: tipo de email, candidato, vaga, cliente
+ */
+async function classificarEmailCandidatura(payload: any) {
+  console.log('🤖 [Gemini] Classificando email de candidatura...');
+
+  const { from, to, cc, subject, body } = payload;
+
+  const prompt = `Você é um especialista em análise de emails corporativos de RH/Recrutamento.
+
+ANALISE ESTE EMAIL e extraia informações sobre candidatura/vaga:
+
+**REMETENTE:** ${from}
+**DESTINATÁRIO:** ${to}
+**CC:** ${cc || 'Nenhum'}
+**ASSUNTO:** ${subject}
+**CORPO DO EMAIL:**
+${body?.substring(0, 3000) || '(vazio)'}
+
+CLASSIFIQUE O EMAIL:
+1. **tipo_email**: Qual é o propósito principal?
+   - "envio_cv" = Está enviando/encaminhando um CV para análise do cliente
+   - "resposta_cliente" = É uma resposta do cliente sobre um candidato (aprovação, reprovação, dúvida, agendamento)
+   - "outro" = Não se encaixa nas categorias acima
+
+2. **candidato_nome**: Nome COMPLETO do candidato mencionado (extraia do assunto ou corpo)
+3. **vaga_titulo**: Título/código da vaga (ex: "VTI-210 Product Owner Senior")
+4. **cliente_nome**: Nome da empresa cliente (se mencionado)
+5. **destinatario_email**: Email do destinatário principal
+
+RESPONDA APENAS EM JSON (sem markdown):
+{
+  "sucesso": true,
+  "tipo_email": "envio_cv|resposta_cliente|outro",
+  "candidato_nome": "Nome Completo do Candidato",
+  "candidato_nome_alternativas": ["Variação 1", "Variação 2"],
+  "vaga_titulo": "Código e Título da Vaga",
+  "vaga_titulo_alternativas": ["VTI-210", "Product Owner"],
+  "cliente_nome": "Nome do Cliente",
+  "cliente_nome_alternativas": [],
+  "destinatario_email": "email@destino.com",
+  "confianca": 85
+}`;
+
+  try {
+    const result = await ai.models.generateContent({ 
+      model: 'gemini-2.0-flash', 
+      contents: prompt 
+    });
+    
+    const text = result.text || '';
+    console.log('📧 [Gemini] Resposta classificação:', text.substring(0, 500));
+    
+    const jsonClean = text.replace(/^```json\n?/gi, '').replace(/```$/gi, '').trim();
+
+    try {
+      const parsed = JSON.parse(jsonClean);
+      return { ...parsed, sucesso: true };
+    } catch {
+      const jsonMatch = text.match(/{[\s\S]*}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return { ...parsed, sucesso: true };
+      }
+      throw new Error('Falha ao parsear resposta da IA');
+    }
+  } catch (error: any) {
+    console.error('❌ Erro na classificação de email:', error);
+    return { 
+      sucesso: false, 
+      tipo_email: 'outro',
+      confianca: 0,
+      erro: error.message 
+    };
+  }
+}
+
+/**
+ * Classifica resposta do cliente sobre um candidato
+ * Identifica: aprovação, reprovação, agendamento, dúvida, etc.
+ */
+async function classificarRespostaCliente(payload: any) {
+  console.log('🤖 [Gemini] Classificando resposta do cliente...');
+
+  const { from, to, cc, subject, body, candidato_nome, vaga_titulo, cliente_nome } = payload;
+
+  const prompt = `Você é um especialista em análise de emails de resposta de clientes sobre candidatos.
+
+CONTEXTO:
+- Candidato: ${candidato_nome || 'Não identificado'}
+- Vaga: ${vaga_titulo || 'Não identificada'}
+- Cliente: ${cliente_nome || 'Não identificado'}
+
+EMAIL DE RESPOSTA DO CLIENTE:
+**DE:** ${from}
+**PARA:** ${to}
+**CC:** ${cc || 'Nenhum'}
+**ASSUNTO:** ${subject}
+**CORPO:**
+${body?.substring(0, 3000) || '(vazio)'}
+
+CLASSIFIQUE A RESPOSTA DO CLIENTE:
+
+1. **tipo_resposta**: Qual é a decisão/status?
+   - "visualizado" = Cliente apenas confirmou recebimento, vai analisar
+   - "em_analise" = Cliente está avaliando, sem decisão ainda
+   - "agendamento" = Cliente quer agendar entrevista
+   - "aprovado" = Cliente APROVOU o candidato
+   - "reprovado" = Cliente REPROVOU o candidato
+   - "duvida" = Cliente tem dúvidas/perguntas
+   - "outro" = Não se encaixa
+
+2. **feedback_cliente**: Resumo do feedback do cliente (1-2 frases)
+
+3. **agendamento** (se tipo_resposta = "agendamento"):
+   - data_sugerida: "YYYY-MM-DD" (se mencionada)
+   - hora_sugerida: "HH:MM" (se mencionada)
+   - formato: "presencial|remoto|hibrido"
+
+4. **reprovacao** (se tipo_resposta = "reprovado"):
+   - motivo: Motivo da reprovação
+   - categoria: "perfil_tecnico|experiencia|pretensao_salarial|fit_cultural|disponibilidade|outro"
+
+RESPONDA APENAS EM JSON (sem markdown):
+{
+  "sucesso": true,
+  "tipo_resposta": "visualizado|em_analise|agendamento|aprovado|reprovado|duvida|outro",
+  "feedback_cliente": "Resumo do feedback",
+  "agendamento": {
+    "data_sugerida": null,
+    "hora_sugerida": null,
+    "formato": null
+  },
+  "reprovacao": {
+    "motivo": null,
+    "categoria": null
+  },
+  "confianca": 90
+}`;
+
+  try {
+    const result = await ai.models.generateContent({ 
+      model: 'gemini-2.0-flash', 
+      contents: prompt 
+    });
+    
+    const text = result.text || '';
+    console.log('📬 [Gemini] Resposta classificação cliente:', text.substring(0, 500));
+    
+    const jsonClean = text.replace(/^```json\n?/gi, '').replace(/```$/gi, '').trim();
+
+    try {
+      const parsed = JSON.parse(jsonClean);
+      return { ...parsed, sucesso: true };
+    } catch {
+      const jsonMatch = text.match(/{[\s\S]*}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return { ...parsed, sucesso: true };
+      }
+      throw new Error('Falha ao parsear resposta da IA');
+    }
+  } catch (error: any) {
+    console.error('❌ Erro na classificação de resposta:', error);
+    return { 
+      sucesso: false, 
+      tipo_resposta: 'outro',
+      confianca: 0,
+      erro: error.message 
+    };
   }
 }

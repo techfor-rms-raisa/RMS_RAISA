@@ -464,10 +464,12 @@ async function buscarCandidatura(classificacao: ClassificacaoEmail) {
 
 /**
  * 🆕 Busca candidatura por nome completo
+ * Busca em candidaturas.candidato_nome E também em pessoas.nome
  */
 async function buscarPorNome(nome: string) {
   const supabaseAdmin = getSupabaseAdmin();
   
+  // 1. Buscar diretamente em candidaturas.candidato_nome
   const { data: candidaturas } = await supabaseAdmin
     .from('candidaturas')
     .select(`
@@ -482,28 +484,67 @@ async function buscarPorNome(nome: string) {
     .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista'])
     .limit(10);
 
-  return candidaturas || [];
-}
+  if (candidaturas && candidaturas.length > 0) {
+    return candidaturas;
+  }
 
-/**
- * 🆕 Busca candidatura por nome anonimizado (parcial ou total)
- * Busca na tabela pessoas e depois relaciona com candidaturas
- */
-async function buscarPorNomeAnonimizado(nomeOuAnoni: string) {
-  const supabaseAdmin = getSupabaseAdmin();
+  // 2. Se não encontrou, buscar em pessoas.nome e retornar candidaturas vinculadas
+  console.log(`🔍 [Webhook] Buscando por pessoas.nome: ${nome}`);
   
-  // Primeiro, buscar pessoas pelo nome anonimizado
   const { data: pessoas } = await supabaseAdmin
     .from('pessoas')
-    .select('id, nome, nome_anoni_parcial, nome_anoni_total')
-    .or(`nome_anoni_parcial.ilike.%${nomeOuAnoni}%,nome_anoni_total.ilike.%${nomeOuAnoni}%`)
+    .select('id, nome')
+    .ilike('nome', `%${nome}%`)
     .limit(10);
 
   if (!pessoas || pessoas.length === 0) {
     return [];
   }
 
-  console.log(`✅ [Webhook] Encontradas ${pessoas.length} pessoas com nome anonimizado similar`);
+  const pessoaIds = pessoas.map((p: any) => p.id);
+  
+  const { data: candidaturasPessoa } = await supabaseAdmin
+    .from('candidaturas')
+    .select(`
+      id, 
+      candidato_nome, 
+      status,
+      vaga_id,
+      pessoa_id,
+      vagas!inner(id, titulo, cliente_id, status_posicao, clients(razao_social_cliente))
+    `)
+    .in('pessoa_id', pessoaIds)
+    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista'])
+    .limit(10);
+
+  return candidaturasPessoa || [];
+}
+
+/**
+ * 🆕 Busca candidatura por nome anonimizado (parcial ou total)
+ * Busca na tabela pessoas pelos campos: nome, nome_anoni_parcial, nome_anoni_total
+ * Depois relaciona com candidaturas via pessoa_id
+ */
+async function buscarPorNomeAnonimizado(nomeOuAnoni: string) {
+  const supabaseAdmin = getSupabaseAdmin();
+  
+  // Buscar pessoas por TODOS os campos de nome (incluindo anonimizados)
+  const { data: pessoas } = await supabaseAdmin
+    .from('pessoas')
+    .select('id, nome, nome_anoni_parcial, nome_anoni_total')
+    .or(`nome.ilike.%${nomeOuAnoni}%,nome_anoni_parcial.ilike.%${nomeOuAnoni}%,nome_anoni_total.ilike.%${nomeOuAnoni}%`)
+    .limit(10);
+
+  if (!pessoas || pessoas.length === 0) {
+    return [];
+  }
+
+  console.log(`✅ [Webhook] Encontradas ${pessoas.length} pessoas com nome/nome_anoni similar`);
+  
+  // Log para debug
+  pessoas.forEach((p: any) => {
+    console.log(`   - ID ${p.id}: nome="${p.nome}", parcial="${p.nome_anoni_parcial}", total="${p.nome_anoni_total}"`);
+  });
 
   // Buscar candidaturas dessas pessoas
   const pessoaIds = pessoas.map((p: any) => p.id);
@@ -516,7 +557,7 @@ async function buscarPorNomeAnonimizado(nomeOuAnoni: string) {
       status,
       vaga_id,
       pessoa_id,
-      vagas!inner(id, titulo, cliente_id, status_posicao)
+      vagas!inner(id, titulo, cliente_id, status_posicao, clients(razao_social_cliente))
     `)
     .in('pessoa_id', pessoaIds)
     .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista'])
@@ -754,6 +795,7 @@ async function enviarParaManual(
   motivo: string,
   logId: number | null
 ) {
+  const supabaseAdmin = getSupabaseAdmin();
   const bodyText = emailData.text || stripHtml(emailData.html || '');
 
   // Buscar candidaturas possíveis
@@ -820,6 +862,7 @@ async function finalizarLog(
 ) {
   if (!logId) return;
 
+  const supabaseAdmin = getSupabaseAdmin();
   await supabaseAdmin
     .from('email_processamento_log')
     .update({
