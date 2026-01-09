@@ -987,7 +987,7 @@ async function processarRespostaCliente(
     'visualizado': 'aguardando_cliente',
     'em_analise': 'aguardando_cliente',
     'agendamento': 'entrevista_cliente',
-    'aprovado': 'aprovado',           // 🆕 Candidato aprovado = posição preenchida
+    'aprovado': 'contratado',           // 🆕 Candidato aprovado = contratado (vaga preenchida)
     'reprovado': 'reprovado',
     'duvida': 'aguardando_cliente'
   };
