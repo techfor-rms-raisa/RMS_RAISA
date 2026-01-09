@@ -17,6 +17,9 @@ import {
   type DadosVagaAnalise
 } from '@/services/analiseAdequacaoService';
 
+// Re-export do tipo principal com alias para compatibilidade
+export type AnaliseAdequacaoResultado = AnaliseAdequacaoPerfil;
+
 // ============================================================
 // TIPOS
 // ============================================================
@@ -36,8 +39,9 @@ export interface UseAnaliseAdequacaoReturn {
   desqualificacao: ReturnType<typeof verificarDesqualificacao> | null;
   
   // Persistência
-  salvarAnalise: (candidaturaId: number) => Promise<boolean>;
-  carregarAnalise: (candidaturaId: number) => Promise<AnaliseAdequacaoPerfil | null>;
+  salvarAnalise: (candidaturaId?: number, pessoaId?: number, vagaId?: number, userId?: number) => Promise<{ success: boolean; analiseId?: number }>;
+  carregarAnalise: (candidaturaId?: number, pessoaId?: number, vagaId?: number) => Promise<AnaliseAdequacaoPerfil | null>;
+  buscarPerguntasEntrevista: (candidaturaId?: number, pessoaId?: number, vagaId?: number) => Promise<any[] | null>;
 }
 
 interface OpcoesHook {
@@ -90,52 +94,85 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
     setError(null);
   }, []);
 
-  // Salvar análise no banco de dados
-  const salvarAnalise = useCallback(async (candidaturaId: number): Promise<boolean> => {
+  // Salvar análise no banco de dados (tabela analise_adequacao)
+  const salvarAnalise = useCallback(async (
+    candidaturaId?: number,
+    pessoaId?: number,
+    vagaId?: number,
+    userId?: number
+  ): Promise<{ success: boolean; analiseId?: number }> => {
     if (!analise) {
       console.warn('[useAnaliseAdequacao] Nenhuma análise para salvar');
-      return false;
+      return { success: false };
     }
 
     try {
-      console.log(`💾 [useAnaliseAdequacao] Salvando análise para candidatura ${candidaturaId}...`);
+      console.log(`💾 [useAnaliseAdequacao] Salvando análise...`);
 
-      const { error: dbError } = await supabase
-        .from('candidatura_analises')
-        .upsert({
-          candidatura_id: candidaturaId,
-          tipo_analise: 'adequacao_perfil',
+      // Salvar na nova tabela analise_adequacao
+      const { data, error: dbError } = await supabase
+        .from('analise_adequacao')
+        .insert({
+          pessoa_id: pessoaId || null,
+          vaga_id: vagaId || null,
+          candidatura_id: candidaturaId || null,
           score_geral: analise.score_geral,
           nivel_adequacao: analise.nivel_adequacao_geral,
-          recomendacao: analise.avaliacao_final.recomendacao,
-          analise_completa: analise,
-          criado_em: new Date().toISOString(),
-          atualizado_em: new Date().toISOString()
-        }, {
-          onConflict: 'candidatura_id,tipo_analise'
-        });
+          confianca_analise: analise.confianca_analise,
+          recomendacao: analise.avaliacao_final?.recomendacao,
+          perguntas_entrevista: analise.perguntas_entrevista,
+          requisitos_analisados: [
+            ...(analise.requisitos_imprescindiveis || []),
+            ...(analise.requisitos_muito_desejaveis || []),
+            ...(analise.requisitos_desejaveis || [])
+          ],
+          resumo_executivo: analise.resumo_executivo,
+          avaliacao_final: analise.avaliacao_final,
+          resultado_completo: analise,
+          modelo_ia: (analise as any)._metadata?.modelo || 'gemini-2.0-flash',
+          tempo_processamento_ms: (analise as any)._metadata?.tempo_ms,
+          created_by: userId || null
+        })
+        .select('id')
+        .single();
 
       if (dbError) throw dbError;
 
-      console.log('✅ [useAnaliseAdequacao] Análise salva com sucesso');
-      return true;
+      console.log(`✅ [useAnaliseAdequacao] Análise salva com ID: ${data?.id}`);
+      return { success: true, analiseId: data?.id };
 
     } catch (err: any) {
       console.error('❌ [useAnaliseAdequacao] Erro ao salvar:', err.message);
-      return false;
+      return { success: false };
     }
   }, [analise]);
 
   // Carregar análise do banco de dados
-  const carregarAnalise = useCallback(async (candidaturaId: number): Promise<AnaliseAdequacaoPerfil | null> => {
+  const carregarAnalise = useCallback(async (
+    candidaturaId?: number,
+    pessoaId?: number,
+    vagaId?: number
+  ): Promise<AnaliseAdequacaoPerfil | null> => {
     try {
-      console.log(`📂 [useAnaliseAdequacao] Carregando análise da candidatura ${candidaturaId}...`);
+      console.log(`📂 [useAnaliseAdequacao] Carregando análise...`);
 
-      const { data, error: dbError } = await supabase
-        .from('candidatura_analises')
-        .select('analise_completa')
-        .eq('candidatura_id', candidaturaId)
-        .eq('tipo_analise', 'adequacao_perfil')
+      let query = supabase
+        .from('analise_adequacao')
+        .select('*');
+
+      // Buscar por candidatura OU por pessoa+vaga
+      if (candidaturaId) {
+        query = query.eq('candidatura_id', candidaturaId);
+      } else if (pessoaId && vagaId) {
+        query = query.eq('pessoa_id', pessoaId).eq('vaga_id', vagaId);
+      } else {
+        console.warn('[useAnaliseAdequacao] Precisa de candidaturaId ou pessoaId+vagaId');
+        return null;
+      }
+
+      const { data, error: dbError } = await query
+        .order('created_at', { ascending: false })
+        .limit(1)
         .single();
 
       if (dbError) {
@@ -146,7 +183,7 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
         throw dbError;
       }
 
-      const analiseCarregada = data?.analise_completa as AnaliseAdequacaoPerfil;
+      const analiseCarregada = data?.resultado_completo as AnaliseAdequacaoPerfil;
       
       if (analiseCarregada) {
         setAnalise(analiseCarregada);
@@ -165,6 +202,38 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
   const estatisticas = analise ? calcularEstatisticas(analise) : null;
   const desqualificacao = analise ? verificarDesqualificacao(analise) : null;
 
+  // Buscar perguntas de entrevista de uma análise salva
+  const buscarPerguntasEntrevista = useCallback(async (
+    candidaturaId?: number,
+    pessoaId?: number,
+    vagaId?: number
+  ): Promise<any[] | null> => {
+    try {
+      let query = supabase
+        .from('analise_adequacao')
+        .select('perguntas_entrevista, score_geral, recomendacao');
+
+      if (candidaturaId) {
+        query = query.eq('candidatura_id', candidaturaId);
+      } else if (pessoaId && vagaId) {
+        query = query.eq('pessoa_id', pessoaId).eq('vaga_id', vagaId);
+      } else {
+        return null;
+      }
+
+      const { data, error } = await query
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (error || !data) return null;
+
+      return data.perguntas_entrevista || [];
+    } catch {
+      return null;
+    }
+  }, []);
+
   return {
     // Estado
     analise,
@@ -181,7 +250,8 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
     
     // Persistência
     salvarAnalise,
-    carregarAnalise
+    carregarAnalise,
+    buscarPerguntasEntrevista
   };
 }
 
