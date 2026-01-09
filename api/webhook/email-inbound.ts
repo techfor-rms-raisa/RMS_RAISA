@@ -41,7 +41,53 @@ function getGeminiAI(): GoogleGenAI {
 
 // Configuração
 const RESEND_WEBHOOK_SECRET = process.env.RESEND_WEBHOOK_SECRET || '';
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const CONFIANCA_MINIMA = 70; // Abaixo disso vai para manual
+
+/**
+ * 🆕 Buscar email completo via API do Resend
+ * O webhook não envia o corpo, então precisamos buscar via API
+ */
+async function buscarEmailCompleto(emailId: string): Promise<{ text: string; html: string; subject: string } | null> {
+  if (!RESEND_API_KEY) {
+    console.warn('⚠️ [Webhook] RESEND_API_KEY não configurada, não é possível buscar email completo');
+    return null;
+  }
+
+  try {
+    console.log(`🔍 [Webhook] Buscando email completo via API: ${emailId}`);
+    
+    const response = await fetch(`https://api.resend.com/emails/${emailId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      console.error(`❌ [Webhook] Erro ao buscar email: ${response.status} ${response.statusText}`);
+      return null;
+    }
+
+    const emailData = await response.json();
+    
+    console.log(`✅ [Webhook] Email completo recebido:`, {
+      subject: emailData.subject,
+      text_length: emailData.text?.length || 0,
+      html_length: emailData.html?.length || 0
+    });
+
+    return {
+      text: emailData.text || '',
+      html: emailData.html || '',
+      subject: emailData.subject || ''
+    };
+  } catch (error: any) {
+    console.error(`❌ [Webhook] Erro ao buscar email completo:`, error.message);
+    return null;
+  }
+}
 
 /**
  * 🆕 Classificar email diretamente com Gemini (sem chamar outra função)
@@ -330,26 +376,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ============================================
-    // 5. CLASSIFICAR EMAIL COM GEMINI (DIRETO)
+    // 5. BUSCAR EMAIL COMPLETO VIA API (CORPO!)
     // ============================================
     
-    const bodyText = emailData.text || stripHtml(emailData.html || '');
+    // O webhook do Resend NÃO envia o corpo do email!
+    // Precisamos buscar via API usando o email_id
+    let bodyText = emailData.text || stripHtml(emailData.html || '');
+    let subjectCompleto = emailData.subject;
     
-    // 🆕 LOG DETALHADO para debug
+    if (!bodyText || bodyText.length < 10) {
+      console.log('📧 [Webhook] Corpo vazio no webhook, buscando via API...');
+      
+      const emailCompleto = await buscarEmailCompleto(emailMessageId);
+      
+      if (emailCompleto) {
+        bodyText = emailCompleto.text || stripHtml(emailCompleto.html || '');
+        subjectCompleto = emailCompleto.subject || emailData.subject;
+        
+        // Atualizar o log com o corpo real
+        if (logId && bodyText) {
+          await supabaseAdmin
+            .from('email_processamento_log')
+            .update({
+              email_body_preview: bodyText.substring(0, 500),
+              email_subject: subjectCompleto
+            })
+            .eq('id', logId);
+        }
+      }
+    }
+
+    // ============================================
+    // 6. CLASSIFICAR EMAIL COM GEMINI (DIRETO)
+    // ============================================
+    
     console.log(`🤖 [Webhook] Classificando email diretamente com Gemini...`);
-    console.log(`📧 [Webhook] Subject: ${emailData.subject}`);
+    console.log(`📧 [Webhook] Subject: ${subjectCompleto}`);
     console.log(`📧 [Webhook] Body length: ${bodyText.length} chars`);
     console.log(`📧 [Webhook] Body preview: ${bodyText.substring(0, 200)}...`);
     
     let classificacao: ClassificacaoEmail;
     
     try {
-      // 🆕 Chamada DIRETA à API Gemini (sem passar por outra função serverless)
+      // Chamada DIRETA à API Gemini
       classificacao = await classificarEmailComGemini({
         from: emailData.from,
         to: emailData.to?.join(', ') || '',
         cc: emailData.cc?.join(', '),
-        subject: emailData.subject,
+        subject: subjectCompleto,
         body: bodyText
       });
 
@@ -361,7 +435,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       
       // Fallback - classificar pelo subject
       console.log('⚠️ [Webhook] Usando classificação de fallback pelo subject');
-      classificacao = classificarPorSubject(emailData.subject, emailData.from, bodyText);
+      classificacao = classificarPorSubject(subjectCompleto, emailData.from, bodyText);
     }
 
     console.log(`🤖 [Webhook] Classificação: ${classificacao.tipo_email} (${classificacao.confianca}%)`);
