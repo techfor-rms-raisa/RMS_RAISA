@@ -390,7 +390,7 @@ export function useDistribuicaoIA() {
         .eq('vaga_id', decisao.vaga_id)
         .maybeSingle();
 
-      // Inserir log
+      // Inserir log completo para aprendizado da IA
       const { error: insertError } = await supabase
         .from('distribuicao_decisao_log')
         .insert({
@@ -402,7 +402,10 @@ export function useDistribuicaoIA() {
           justificativa: decisao.justificativa,
           motivo_override: decisao.motivo_override,
           decidido_por: decisao.decidido_por,
-          decidido_em: new Date().toISOString()
+          decidido_em: new Date().toISOString(),
+          // Campos adicionais para análise de aprendizado
+          qtd_sugeridos: decisao.analistas_sugeridos_ia.length,
+          qtd_escolhidos: decisao.analistas_escolhidos.length
         });
 
       if (insertError) throw insertError;

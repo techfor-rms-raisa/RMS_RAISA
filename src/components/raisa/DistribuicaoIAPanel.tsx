@@ -78,13 +78,14 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
     return !analistasSelecionados.every(id => topSugeridos.includes(id));
   };
 
-  // Toggle seleção de analista
+  // Toggle seleção de analista (máximo 3 para seleção manual)
   const toggleAnalista = (analistaId: number) => {
     setAnalistasSelecionados(prev => {
       if (prev.includes(analistaId)) {
         return prev.filter(id => id !== analistaId);
       }
-      if (prev.length >= 2) {
+      // Limite máximo de 3 analistas
+      if (prev.length >= 3) {
         return [...prev.slice(1), analistaId];
       }
       return [...prev, analistaId];
@@ -104,8 +105,13 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
 
   // Confirmar distribuição
   const confirmarDistribuicao = async () => {
-    if (analistasSelecionados.length < 2) {
-      alert('Selecione pelo menos 2 analistas');
+    // Validação: IA aceita = mínimo 2; Manual = mínimo 1
+    const minimoAnalistas = isOverride() ? 1 : 2;
+    
+    if (analistasSelecionados.length < minimoAnalistas) {
+      alert(isOverride() 
+        ? 'Selecione pelo menos 1 analista' 
+        : 'Para aceitar a sugestão da IA, selecione 2 analistas');
       return;
     }
 
@@ -367,7 +373,7 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
               <div>
                 <h3 className="font-bold text-yellow-800">Seleção Manual</h3>
                 <p className="text-sm text-yellow-600 mt-1">
-                  Selecione 2 analistas para conduzir esta vaga. 
+                  Selecione de 1 a 3 analistas para conduzir esta vaga. 
                   {isOverride() && (
                     <span className="text-yellow-700 font-medium">
                       {' '}Sua escolha difere da sugestão da IA - será necessário justificar.
@@ -421,9 +427,9 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
             {analistasSelecionados.length > 0 && (
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-2">
-                  Selecionados ({analistasSelecionados.length}/2):
+                  Selecionados ({analistasSelecionados.length}):
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   {analistasSelecionados.map(id => {
                     const analista = sugestaoAtual.ranking_analistas.find(a => a.analista_id === id);
                     return analista && (
@@ -448,8 +454,8 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
                 ← Voltar
               </button>
               <button
-                onClick={() => analistasSelecionados.length >= 2 && setEtapa('confirmacao')}
-                disabled={analistasSelecionados.length < 2}
+                onClick={() => analistasSelecionados.length >= 1 && setEtapa('confirmacao')}
+                disabled={analistasSelecionados.length < 1}
                 className="flex-1 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
               >
                 Continuar →
