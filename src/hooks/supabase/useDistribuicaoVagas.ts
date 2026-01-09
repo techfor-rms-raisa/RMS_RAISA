@@ -99,7 +99,7 @@ export function useDistribuicaoVagas() {
           id,
           titulo,
           status,
-          cliente:clientes(nome)
+          cliente:clients(nome)
         `)
         .eq('id', vagaId)
         .single();
