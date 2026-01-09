@@ -213,6 +213,50 @@ export function ConfiguracaoPriorizacaoDistribuicao() {
 
                 {/* Conteúdo */}
                 <div className="p-6">
+                    {/* Estado vazio - Priorização */}
+                    {abaSelecionada === 'priorizacao' && !configPriorizacao && (
+                        <div className="text-center py-12">
+                            <AlertCircle className="w-16 h-16 mx-auto text-yellow-500 mb-4" />
+                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                Configuração não encontrada
+                            </h3>
+                            <p className="text-gray-600 mb-4">
+                                As tabelas de configuração de priorização não foram criadas ou estão vazias.
+                            </p>
+                            <p className="text-sm text-gray-500 mb-6">
+                                Execute o script SQL <strong>CREATE_CONFIG_PRIORIZACAO_DISTRIBUICAO.sql</strong> no Supabase para criar as tabelas e dados iniciais.
+                            </p>
+                            <button
+                                onClick={() => carregarConfiguracoes()}
+                                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                            >
+                                Tentar Novamente
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Estado vazio - Distribuição */}
+                    {abaSelecionada === 'distribuicao' && !configDistribuicao && (
+                        <div className="text-center py-12">
+                            <AlertCircle className="w-16 h-16 mx-auto text-yellow-500 mb-4" />
+                            <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                                Configuração não encontrada
+                            </h3>
+                            <p className="text-gray-600 mb-4">
+                                As tabelas de configuração de distribuição não foram criadas ou estão vazias.
+                            </p>
+                            <p className="text-sm text-gray-500 mb-6">
+                                Execute o script SQL <strong>CREATE_CONFIG_PRIORIZACAO_DISTRIBUICAO.sql</strong> no Supabase para criar as tabelas e dados iniciais.
+                            </p>
+                            <button
+                                onClick={() => carregarConfiguracoes()}
+                                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                            >
+                                Tentar Novamente
+                            </button>
+                        </div>
+                    )}
+
                     {abaSelecionada === 'priorizacao' && configPriorizacao && (
                         <div className="space-y-6">
                             {/* Pesos dos Critérios */}
