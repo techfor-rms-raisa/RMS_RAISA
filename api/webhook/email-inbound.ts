@@ -64,32 +64,44 @@ DE: ${emailData.from}
 PARA: ${emailData.to}
 CC: ${emailData.cc || 'N/A'}
 ASSUNTO: ${emailData.subject}
-CORPO: ${emailData.body.substring(0, 2000)}
+CORPO: ${emailData.body.substring(0, 2000) || '[CORPO VAZIO - analise apenas pelo assunto]'}
 
-=== REGRAS DE CLASSIFICAÇÃO (SIGA RIGOROSAMENTE) ===
+=== CONTEXTO ===
+Este é um sistema de recrutamento. Emails podem ser:
+- Comunicação INTERNA da equipe informando decisões de clientes (ex: "Cliente aprovou candidato X")
+- Respostas diretas de clientes
+- Envios de CV para clientes
 
-REGRA 1 - RESPOSTAS:
-Se o ASSUNTO começa com "RE:", "RES:", "FW:", "ENC:", "Fwd:" → É uma RESPOSTA de cliente ("resposta_cliente")
+=== REGRAS DE CLASSIFICAÇÃO (ANALISE O CONTEÚDO!) ===
 
-REGRA 2 - APROVAÇÃO (tipo: "resposta_cliente", decisao: "aprovado"):
-Palavras que indicam APROVAÇÃO: "aprovado", "aprovada", "aprovamos", "aprovação", "aceito", "aceita", "selecionado", "selecionada", "seguir com", "vamos seguir", "prosseguir"
+REGRA 1 - APROVAÇÃO (tipo: "resposta_cliente", decisao: "aprovado"):
+Se o ASSUNTO ou CORPO contém: "aprovado", "aprovada", "aprovamos", "aprovação", "aceito", "aceita", "selecionado", "selecionada", "seguir com", "vamos seguir", "prosseguir", "ok para entrevista", "pode agendar", "cliente aprovou", "foi aprovado"
 
-REGRA 3 - REPROVAÇÃO (tipo: "resposta_cliente", decisao: "reprovado"):
-Palavras que indicam REPROVAÇÃO: "reprovado", "reprovada", "recusado", "recusada", "não aprovado", "não foi aprovado", "não seguiremos", "não vamos seguir", "não vamos prosseguir", "não selecionado", "declinou", "desistiu"
+REGRA 2 - REPROVAÇÃO (tipo: "resposta_cliente", decisao: "reprovado"):
+Se contém: "reprovado", "reprovada", "recusado", "recusada", "não aprovado", "não foi aprovado", "não seguiremos", "não vamos seguir", "não vamos prosseguir", "não selecionado", "declinou", "desistiu", "não atende", "perfil não adequado", "cliente recusou"
 
-REGRA 4 - AGENDAMENTO (tipo: "resposta_cliente", decisao: "agendamento"):
-Palavras que indicam AGENDAMENTO: "agendar", "agendado", "agendamento", "entrevista", "entrevistar", "marcar entrevista", "data da entrevista"
+REGRA 3 - AGENDAMENTO (tipo: "resposta_cliente", decisao: "agendamento"):
+Se contém: "agendar", "agendado", "agendamento", "entrevista", "entrevistar", "marcar entrevista", "data da entrevista", "disponibilidade para entrevista"
 
-REGRA 5 - ENVIO DE CV (tipo: "envio_cv"):
-APENAS classifique como "envio_cv" se for um email ORIGINAL (SEM "RE:" ou "RES:" no assunto) enviando currículo pela primeira vez. Palavras típicas: "segue cv", "segue currículo", "encaminho cv", "apresento candidato"
+REGRA 4 - ENVIO DE CV (tipo: "envio_cv"):
+Se contém: "segue cv", "segue currículo", "encaminho cv", "envio cv", "apresento candidato", "apresentando candidato", "segue perfil"
+E NÃO contém palavras de aprovação/reprovação/agendamento
 
-REGRA 6 - DÚVIDA (tipo: "resposta_cliente", decisao: "duvida"):
-Se houver perguntas ou pedidos de mais informações
+REGRA 5 - DÚVIDA (tipo: "resposta_cliente", decisao: "duvida"):
+Se há perguntas ou pedidos de mais informações sobre o candidato
+
+REGRA 6 - OUTRO:
+Use apenas se não se encaixar em nenhum dos casos acima
+
+=== IMPORTANTE ===
+- PRIORIZE a análise do CONTEÚDO (subject + body) sobre o remetente
+- Emails internos comunicando decisões de clientes devem ser tratados como "resposta_cliente"
+- Extraia SEMPRE o nome do candidato e código da vaga
 
 === EXTRAÇÃO DE DADOS ===
 - Nome COMPLETO do candidato (procure no assunto e no corpo)
 - Código da vaga (ex: VTI-210, VGA-001)
-- Decisão do cliente (aprovado/reprovado/agendamento/duvida)
+- Decisão (aprovado/reprovado/agendamento/duvida)
 
 Responda APENAS em JSON válido (sem markdown, sem backticks):
 {
@@ -261,6 +273,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log(`📧 [Webhook] Processando email: ${emailMessageId}`);
     console.log(`   From: ${emailData.from}`);
     console.log(`   Subject: ${emailData.subject}`);
+    
+    // 🆕 LOG COMPLETO para debug - ver o que o Resend está enviando
+    console.log(`📧 [Webhook] PAYLOAD COMPLETO:`, JSON.stringify({
+      subject: emailData.subject,
+      text_length: emailData.text?.length || 0,
+      html_length: emailData.html?.length || 0,
+      text_preview: emailData.text?.substring(0, 200) || '[VAZIO]',
+      html_preview: emailData.html?.substring(0, 200) || '[VAZIO]',
+      attachments: emailData.attachments?.length || 0
+    }));
 
     // ============================================
     // 3. VERIFICAR DUPLICAÇÃO
@@ -313,7 +335,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     const bodyText = emailData.text || stripHtml(emailData.html || '');
     
+    // 🆕 LOG DETALHADO para debug
     console.log(`🤖 [Webhook] Classificando email diretamente com Gemini...`);
+    console.log(`📧 [Webhook] Subject: ${emailData.subject}`);
+    console.log(`📧 [Webhook] Body length: ${bodyText.length} chars`);
+    console.log(`📧 [Webhook] Body preview: ${bodyText.substring(0, 200)}...`);
     
     let classificacao: ClassificacaoEmail;
     
@@ -521,14 +547,22 @@ function classificarPorSubject(subject: string, from: string, body: string): Cla
   const subjectLower = subject.toLowerCase();
   const bodyLower = body.toLowerCase();
   const combinedText = `${subjectLower} ${bodyLower}`;
+  const fromLower = from.toLowerCase();
+  
+  // Detectar se remetente é da TechForti
+  const isFromTechforti = fromLower.includes('techforti');
   
   // Extrair código da vaga do subject (ex: VTI-210)
-  const vagaMatch = subject.match(/VTI-\d+|vti-\d+/i);
-  const vagaTitulo = vagaMatch ? vagaMatch[0] : undefined;
+  const vagaMatch = subject.match(/VTI-\d+|vti-\d+|VGA-\d+|vga-\d+/i);
+  const vagaTitulo = vagaMatch ? vagaMatch[0].toUpperCase() : undefined;
   
   // Extrair nome do candidato do subject
   // Padrão: "VTI-210 | Product Owner | NOME DO CANDIDATO | Projeto"
-  const parts = subject.split('|').map(p => p.trim());
+  // ou: "VTI-210 I Product Owner I NOME DO CANDIDATO I Projeto" (com I maiúsculo)
+  const parts = subject.split(/\|/i).length > 1 
+    ? subject.split(/\|/i).map(p => p.trim())
+    : subject.split(' I ').map(p => p.trim()); // Fallback para separador " I "
+  
   let candidatoNome: string | undefined;
   if (parts.length >= 3) {
     // O nome geralmente está na posição 2 ou 3
@@ -537,29 +571,50 @@ function classificarPorSubject(subject: string, from: string, body: string): Cla
   
   // Detectar tipo de email
   let tipoEmail: 'envio_cv' | 'resposta_cliente' | 'outro' = 'outro';
+  let decisao: 'aprovado' | 'reprovado' | 'agendamento' | 'duvida' | undefined;
   let confianca = 50;
   
-  // Palavras-chave de aprovação
-  const palavrasAprovacao = ['aprovado', 'aprovada', 'aprovamos', 'aceito', 'aceita', 'aprovação', 'selecionado', 'selecionada'];
-  const palavrasReprovacao = ['reprovado', 'reprovada', 'não aprovado', 'nao aprovado', 'recusado', 'recusada', 'não selecionado'];
+  // Palavras-chave
+  const palavrasAprovacao = ['aprovado', 'aprovada', 'aprovamos', 'aceito', 'aceita', 'aprovação', 'selecionado', 'selecionada', 'seguir com', 'vamos seguir'];
+  const palavrasReprovacao = ['reprovado', 'reprovada', 'não aprovado', 'nao aprovado', 'recusado', 'recusada', 'não selecionado', 'não seguiremos', 'não vamos seguir'];
+  const palavrasAgendamento = ['agendar', 'agendado', 'agendamento', 'entrevista', 'entrevistar'];
   const palavrasEnvio = ['segue cv', 'segue currículo', 'encaminho cv', 'envio cv', 'apresento candidato', 'apresentando candidato'];
+  
+  // Verificar se é resposta (prefixo RE:/RES:)
+  const isResposta = /^(re:|res:|fwd?:|enc:)/i.test(subjectLower.trim());
   
   if (palavrasAprovacao.some(p => combinedText.includes(p))) {
     tipoEmail = 'resposta_cliente';
-    confianca = 80;
+    decisao = 'aprovado';
+    confianca = 85;
   } else if (palavrasReprovacao.some(p => combinedText.includes(p))) {
     tipoEmail = 'resposta_cliente';
+    decisao = 'reprovado';
+    confianca = 85;
+  } else if (palavrasAgendamento.some(p => combinedText.includes(p))) {
+    tipoEmail = 'resposta_cliente';
+    decisao = 'agendamento';
     confianca = 80;
   } else if (palavrasEnvio.some(p => combinedText.includes(p))) {
     tipoEmail = 'envio_cv';
     confianca = 75;
-  } else if (vagaTitulo && candidatoNome) {
-    // Se tem código de vaga e nome, provavelmente é resposta
+  } else if (isResposta) {
+    // É uma resposta mesmo sem palavras-chave específicas
     tipoEmail = 'resposta_cliente';
+    decisao = 'duvida';
+    confianca = 70;
+  } else if (!isFromTechforti && vagaTitulo && candidatoNome) {
+    // 🆕 Se remetente NÃO é da TechForti e menciona vaga/candidato → resposta
+    tipoEmail = 'resposta_cliente';
+    decisao = 'duvida';
+    confianca = 65;
+  } else if (vagaTitulo && candidatoNome) {
+    // Se tem código de vaga e nome, mas é da TechForti → envio
+    tipoEmail = 'envio_cv';
     confianca = 60;
   }
   
-  console.log(`📧 [Fallback] Classificação: tipo=${tipoEmail}, candidato=${candidatoNome}, vaga=${vagaTitulo}, confiança=${confianca}`);
+  console.log(`📧 [Fallback] Classificação: tipo=${tipoEmail}, decisao=${decisao}, candidato=${candidatoNome}, vaga=${vagaTitulo}, confiança=${confianca}, fromTechforti=${isFromTechforti}`);
   
   return {
     sucesso: true,
@@ -571,7 +626,8 @@ function classificarPorSubject(subject: string, from: string, body: string): Cla
     cliente_nome: undefined,
     cliente_nome_alternativas: [],
     destinatario_email: from,
-    confianca
+    confianca,
+    decisao
   };
 }
 
@@ -762,11 +818,12 @@ async function processarEnvioCV(
       candidatura_id: candidatura.id,
       vaga_id: candidatura.vaga_id,
       cliente_id: candidatura.vagas?.cliente_id,
-      analista_id: candidatura.analista_id, // 🆕 ADICIONADO
+      analista_id: candidatura.analista_id,
+      enviado_por: candidatura.analista_id, // 🆕 ADICIONADO - mesmo que analista_id
       enviado_em: new Date().toISOString(),
       meio_envio: 'email',
-      destinatario_email: classificacao.destinatario_email,
-      destinatario_nome: classificacao.cliente_nome,
+      destinatario_email: classificacao.destinatario_email || 'nao_informado@email.com',
+      destinatario_nome: classificacao.cliente_nome || 'Cliente',
       email_message_id: emailData.email_id,
       email_subject: emailData.subject,
       email_from: emailData.from,
