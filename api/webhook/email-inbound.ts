@@ -66,24 +66,32 @@ CC: ${emailData.cc || 'N/A'}
 ASSUNTO: ${emailData.subject}
 CORPO: ${emailData.body.substring(0, 2000)}
 
-REGRAS DE CLASSIFICAÇÃO (SIGA RIGOROSAMENTE):
+=== REGRAS DE CLASSIFICAÇÃO (SIGA RIGOROSAMENTE) ===
 
-1. Se o ASSUNTO começa com "RE:", "RES:", "FW:", "ENC:" ou similar → É uma RESPOSTA, provavelmente "resposta_cliente"
+REGRA 1 - RESPOSTAS:
+Se o ASSUNTO começa com "RE:", "RES:", "FW:", "ENC:", "Fwd:" → É uma RESPOSTA de cliente ("resposta_cliente")
 
-2. Se o CORPO contém palavras como "aprovado", "aprovada", "aprovamos", "aceito", "selecionado", "agendamento", "entrevista marcada" → É "resposta_cliente" com decisao correspondente
+REGRA 2 - APROVAÇÃO (tipo: "resposta_cliente", decisao: "aprovado"):
+Palavras que indicam APROVAÇÃO: "aprovado", "aprovada", "aprovamos", "aprovação", "aceito", "aceita", "selecionado", "selecionada", "seguir com", "vamos seguir", "prosseguir"
 
-3. Se o CORPO contém "reprovado", "reprovada", "não aprovado", "recusado", "não selecionado" → É "resposta_cliente" com decisao "reprovado"
+REGRA 3 - REPROVAÇÃO (tipo: "resposta_cliente", decisao: "reprovado"):
+Palavras que indicam REPROVAÇÃO: "reprovado", "reprovada", "recusado", "recusada", "não aprovado", "não foi aprovado", "não seguiremos", "não vamos seguir", "não vamos prosseguir", "não selecionado", "declinou", "desistiu"
 
-4. APENAS classifique como "envio_cv" se for um email ORIGINAL (não resposta) enviando currículo pela primeira vez
+REGRA 4 - AGENDAMENTO (tipo: "resposta_cliente", decisao: "agendamento"):
+Palavras que indicam AGENDAMENTO: "agendar", "agendado", "agendamento", "entrevista", "entrevistar", "marcar entrevista", "data da entrevista"
 
-5. Use "outro" apenas se não se encaixar em nenhum dos casos acima
+REGRA 5 - ENVIO DE CV (tipo: "envio_cv"):
+APENAS classifique como "envio_cv" se for um email ORIGINAL (SEM "RE:" ou "RES:" no assunto) enviando currículo pela primeira vez. Palavras típicas: "segue cv", "segue currículo", "encaminho cv", "apresento candidato"
 
-EXTRAIA:
-- Nome do candidato mencionado no assunto ou corpo
+REGRA 6 - DÚVIDA (tipo: "resposta_cliente", decisao: "duvida"):
+Se houver perguntas ou pedidos de mais informações
+
+=== EXTRAÇÃO DE DADOS ===
+- Nome COMPLETO do candidato (procure no assunto e no corpo)
 - Código da vaga (ex: VTI-210, VGA-001)
-- Decisão do cliente se for resposta (aprovado/reprovado/agendamento/duvida)
+- Decisão do cliente (aprovado/reprovado/agendamento/duvida)
 
-Responda APENAS em JSON válido (sem markdown):
+Responda APENAS em JSON válido (sem markdown, sem backticks):
 {
   "tipo_email": "envio_cv" | "resposta_cliente" | "outro",
   "candidato_nome": "Nome Completo do Candidato" | null,
@@ -642,10 +650,11 @@ async function buscarPorNome(nome: string) {
       status,
       vaga_id,
       pessoa_id,
+      analista_id,
       vagas!inner(id, titulo, cliente_id, status_posicao, clients(razao_social_cliente))
     `)
     .ilike('candidato_nome', `%${nome}%`)
-    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista'])
+    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista', 'em_andamento'])
     .limit(10);
 
   if (candidaturas && candidaturas.length > 0) {
@@ -675,10 +684,11 @@ async function buscarPorNome(nome: string) {
       status,
       vaga_id,
       pessoa_id,
+      analista_id,
       vagas!inner(id, titulo, cliente_id, status_posicao, clients(razao_social_cliente))
     `)
     .in('pessoa_id', pessoaIds)
-    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista'])
+    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista', 'em_andamento'])
     .limit(10);
 
   return candidaturasPessoa || [];
@@ -721,10 +731,11 @@ async function buscarPorNomeAnonimizado(nomeOuAnoni: string) {
       status,
       vaga_id,
       pessoa_id,
+      analista_id,
       vagas!inner(id, titulo, cliente_id, status_posicao, clients(razao_social_cliente))
     `)
     .in('pessoa_id', pessoaIds)
-    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista'])
+    .in('status', ['aprovado', 'enviado_cliente', 'aguardando_cliente', 'entrevista_cliente', 'triagem', 'entrevista', 'em_andamento'])
     .limit(10);
 
   return candidaturas || [];
@@ -742,6 +753,7 @@ async function processarEnvioCV(
 ) {
   const supabaseAdmin = getSupabaseAdmin();
   console.log('📤 [Webhook] Processando envio de CV...');
+  console.log(`📤 [Webhook] Candidatura ID: ${candidatura.id}, Analista ID: ${candidatura.analista_id}`);
 
   // Criar registro de envio
   const { data: envio, error } = await supabaseAdmin
@@ -750,6 +762,7 @@ async function processarEnvioCV(
       candidatura_id: candidatura.id,
       vaga_id: candidatura.vaga_id,
       cliente_id: candidatura.vagas?.cliente_id,
+      analista_id: candidatura.analista_id, // 🆕 ADICIONADO
       enviado_em: new Date().toISOString(),
       meio_envio: 'email',
       destinatario_email: classificacao.destinatario_email,
@@ -875,6 +888,7 @@ async function processarRespostaCliente(
         candidatura_envio_id: envioExistente?.id,
         vaga_id: candidatura.vaga_id,
         cliente_id: candidatura.vagas?.cliente_id,
+        analista_id: candidatura.analista_id, // 🆕 ADICIONADO
         decisao: tipoResposta === 'agendamento' ? 'agendado' : tipoResposta,
         decidido_em: new Date().toISOString(),
         feedback_cliente: bodyText.substring(0, 1000),
