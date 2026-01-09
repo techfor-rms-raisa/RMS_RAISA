@@ -58,6 +58,7 @@ export const useCandidaturas = () => {
 
   /**
    * Adiciona uma nova candidatura
+   * 🆕 v2.0: Atualiza automaticamente o status da vaga para 'em_andamento'
    */
   const addCandidatura = async (newCandidatura: Omit<Candidatura, 'id'>) => {
     try {
@@ -84,6 +85,32 @@ export const useCandidaturas = () => {
         .single();
 
       if (error) throw error;
+
+      // 🆕 ATUALIZAR STATUS DA VAGA PARA 'em_andamento'
+      if (newCandidatura.vaga_id) {
+        const { data: vagaAtual } = await supabase
+          .from('vagas')
+          .select('status')
+          .eq('id', newCandidatura.vaga_id)
+          .single();
+
+        // Só atualiza se a vaga estiver 'aberta'
+        if (vagaAtual?.status === 'aberta') {
+          const { error: vagaError } = await supabase
+            .from('vagas')
+            .update({ 
+              status: 'em_andamento',
+              atualizado_em: new Date().toISOString()
+            })
+            .eq('id', newCandidatura.vaga_id);
+
+          if (vagaError) {
+            console.warn('⚠️ Erro ao atualizar status da vaga:', vagaError);
+          } else {
+            console.log('✅ Status da vaga atualizado para em_andamento');
+          }
+        }
+      }
 
       const createdCandidatura: Candidatura = {
         id: String(data.id),
