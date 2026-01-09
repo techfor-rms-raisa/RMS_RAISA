@@ -47,6 +47,7 @@ const CONFIANCA_MINIMA = 70; // Abaixo disso vai para manual
 /**
  * 🆕 Buscar email completo via API do Resend
  * O webhook não envia o corpo, então precisamos buscar via API
+ * IMPORTANTE: Para emails RECEBIDOS, usar /emails/receiving/{id}
  */
 async function buscarEmailCompleto(emailId: string): Promise<{ text: string; html: string; subject: string } | null> {
   if (!RESEND_API_KEY) {
@@ -57,7 +58,8 @@ async function buscarEmailCompleto(emailId: string): Promise<{ text: string; htm
   try {
     console.log(`🔍 [Webhook] Buscando email completo via API: ${emailId}`);
     
-    const response = await fetch(`https://api.resend.com/emails/${emailId}`, {
+    // IMPORTANTE: Para emails RECEBIDOS (inbound), usar /emails/receiving/{id}
+    const response = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, {
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${RESEND_API_KEY}`,
@@ -66,7 +68,8 @@ async function buscarEmailCompleto(emailId: string): Promise<{ text: string; htm
     });
 
     if (!response.ok) {
-      console.error(`❌ [Webhook] Erro ao buscar email: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error(`❌ [Webhook] Erro ao buscar email: ${response.status} ${response.statusText} - ${errorText}`);
       return null;
     }
 
@@ -75,7 +78,8 @@ async function buscarEmailCompleto(emailId: string): Promise<{ text: string; htm
     console.log(`✅ [Webhook] Email completo recebido:`, {
       subject: emailData.subject,
       text_length: emailData.text?.length || 0,
-      html_length: emailData.html?.length || 0
+      html_length: emailData.html?.length || 0,
+      text_preview: emailData.text?.substring(0, 100) || '[vazio]'
     });
 
     return {
