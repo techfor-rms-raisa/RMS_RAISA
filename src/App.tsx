@@ -47,7 +47,7 @@ import DashboardPerformanceIA from './components/raisa/DashboardPerformanceIA';
 import DashboardRaisaMetrics from './components/raisa/DashboardRaisaMetrics';
 // ✅ NOVO: Imports de Configuração e Distribuição (28/12/2024)
 import { ConfiguracaoPriorizacaoDistribuicao } from './components/ConfiguracaoPriorizacaoDistribuicao';
-import DistribuicaoIAPanel from './components/raisa/DistribuicaoIAPanel';
+import DistribuicaoIAPage from './components/raisa/DistribuicaoIAPage';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -335,7 +335,7 @@ const App: React.FC = () => {
       case 'configuracao_priorizacao':
           return <ConfiguracaoPriorizacaoDistribuicao />;
       case 'distribuicao_ia':
-          return <DistribuicaoIAPanel />;
+          return <DistribuicaoIAPage />;
 
       case 'dashboard':
       default:
