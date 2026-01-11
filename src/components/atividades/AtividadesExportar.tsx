@@ -40,6 +40,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
     const [selectedClient, setSelectedClient] = useState<string>('all');
     const [selectedMonth, setSelectedMonth] = useState<string>('all');
     const [selectedConsultant, setSelectedConsultant] = useState<string>('all');
+    const [selectedGestaoPessoas, setSelectedGestaoPessoas] = useState<string>('all');  // 🆕 v57.1
     const [selectedFormat, setSelectedFormat] = useState<'csv' | 'pdf'>('csv');
     const [loadingReports, setLoadingReports] = useState(false);
     const [consultantsWithReports, setConsultantsWithReports] = useState<Consultant[]>([]);
@@ -251,10 +252,23 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
 
     // ===== CLIENTES ÚNICOS =====
     const uniqueClients = useMemo(() => {
-        return clients
-            .filter(c => c.ativo_cliente)
-            .sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente));
-    }, [clients]);
+        let filtered = clients.filter(c => c.ativo_cliente);
+        
+        // 🆕 v57.1: Filtrar por Gestão de Pessoas selecionada
+        if (selectedGestaoPessoas !== 'all') {
+            const gestaoPessoasId = parseInt(selectedGestaoPessoas);
+            filtered = filtered.filter(c => (c as any).id_gestao_de_pessoas === gestaoPessoasId);
+        }
+        
+        return filtered.sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente));
+    }, [clients, selectedGestaoPessoas]);
+
+    // 🆕 v57.1: Lista de usuários Gestão de Pessoas
+    const gestaoPessoasList = useMemo(() => {
+        return users
+            .filter(u => u.tipo_usuario === 'Gestão de Pessoas' && u.ativo_usuario)
+            .sort((a, b) => a.nome_usuario.localeCompare(b.nome_usuario));
+    }, [users]);
 
     // ===== CONSULTORES FILTRADOS POR CLIENTE =====
     const consultantsForFilter = useMemo(() => {
@@ -290,6 +304,17 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
         // Filtrar por ano
         reports = reports.filter(r => r.year === selectedYear);
 
+        // 🆕 v57.1: Filtrar por Gestão de Pessoas
+        if (selectedGestaoPessoas !== 'all') {
+            const gestaoPessoasId = parseInt(selectedGestaoPessoas);
+            reports = reports.filter(r => {
+                const gestorImediato = usuariosCliente.find(u => u.id === r.consultant.gestor_imediato_id);
+                if (!gestorImediato) return false;
+                const client = clients.find(c => c.id === gestorImediato.id_cliente);
+                return client && (client as any).id_gestao_de_pessoas === gestaoPessoasId;
+            });
+        }
+
         // Filtrar por cliente
         if (selectedClient !== 'all') {
             reports = reports.filter(r => getClientName(r.consultant) === selectedClient);
@@ -311,7 +336,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
             const dateB = new Date(b.createdAt || b.created_at || 0).getTime();
             return dateB - dateA;
         });
-    }, [consultantsWithReports, selectedYear, selectedClient, selectedMonth, selectedConsultant]);
+    }, [consultantsWithReports, selectedYear, selectedClient, selectedMonth, selectedConsultant, selectedGestaoPessoas, usuariosCliente, clients]);
 
     // ===== ESTATÍSTICAS =====
     const statistics = useMemo(() => {
@@ -387,9 +412,10 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
             doc.setFont('helvetica', 'bold');
             doc.text('TECH FOR TI - Gestão de Pessoas', margin, 15);
             
+            // 🆕 v57.1: Título centralizado
             doc.setFontSize(12);
             doc.setFont('helvetica', 'normal');
-            doc.text('Relatório de Atividades', margin, 25);
+            doc.text('Relatório de Atividades - Acompanhamento de Consultor', pageWidth / 2, 25, { align: 'center' });
             
             // Data de geração
             doc.setFontSize(10);
@@ -570,7 +596,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                 doc.setPage(i);
                 doc.setFontSize(8);
                 doc.setTextColor(150, 150, 150);
-                doc.text(`RMS-RAISA.ai - Powered by Gemini-2.5-flash/Claude Opus 4.5 - Página ${i} de ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
+                doc.text(`RMS - Risk Management Systems - Powered by Gemini-2.5-flash/Claude Opus 4.5 - Página ${i} de ${totalPages}`, pageWidth / 2, pageHeight - 10, { align: 'center' });
             }
 
             // ===== SALVAR =====
@@ -613,7 +639,7 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
             )}
 
             {/* ===== FILTROS ===== */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
                 {/* Ano */}
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Ano</label>
@@ -624,6 +650,27 @@ const AtividadesExportar: React.FC<AtividadesExportarProps> = ({
                     >
                         {availableYears.map(y => (
                             <option key={y} value={y}>{y}</option>
+                        ))}
+                    </select>
+                </div>
+
+                {/* 🆕 v57.1: Gestão de Pessoas */}
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Gestão de Pessoas</label>
+                    <select
+                        value={selectedGestaoPessoas}
+                        onChange={(e) => {
+                            setSelectedGestaoPessoas(e.target.value);
+                            setSelectedClient('all'); // Reset cliente ao mudar Gestão
+                            setSelectedConsultant('all'); // Reset consultor
+                        }}
+                        className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    >
+                        <option value="all">Todas</option>
+                        {gestaoPessoasList.map(gp => (
+                            <option key={gp.id} value={gp.id}>
+                                {gp.nome_usuario}
+                            </option>
                         ))}
                     </select>
                 </div>
