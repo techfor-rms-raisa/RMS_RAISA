@@ -131,12 +131,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
             icon: 'fa-solid fa-bullhorn', 
             roles: ['Administrador', 'Gestão de R&S', 'Gestão de Pessoas', 'Gestão Comercial', 'Consulta'] 
         },
-        // Usuários - Apenas Admin e Gestão de R&S
+        // Usuários - Todos os perfis (cada um vê conforme sua permissão)
+        // 🆕 v57.1: Analista, Gestão de Pessoas, Gestão Comercial e Consulta veem só próprio perfil
         { 
             view: 'users', 
             label: 'Usuários', 
             icon: 'fa-solid fa-user-gear', 
-            roles: ['Administrador', 'Gestão de R&S'] 
+            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão de Pessoas', 'Gestão Comercial', 'Consulta'] 
         },
         // Exportação - RMS Total
         { 
