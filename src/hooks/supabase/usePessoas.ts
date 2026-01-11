@@ -88,13 +88,10 @@ export const usePessoas = () => {
     try {
       setLoading(true);
       
-      // 🔧 v57.2: JOIN com FK correta (fk_pessoas_analista_rs)
+      // v57.2: Removido JOIN com app_users (FK não existe no banco)
       let query = supabase
         .from('pessoas')
-        .select(`
-          *,
-          analista:app_users!fk_pessoas_analista_rs(id, nome_usuario, email_usuario)
-        `)
+        .select('*')
         .eq('ativo', true)
         .order('created_at', { ascending: false });
 
@@ -104,14 +101,14 @@ export const usePessoas = () => {
       if (modo === 'meus' && analistaLogadoId) {
         query = query.eq('id_analista_rs', analistaLogadoId);
       } else if (modo === 'disponiveis') {
-        query = query.or(\`id_analista_rs.is.null,data_final_exclusividade.lt.\${agora}\`);
+        query = query.or('id_analista_rs.is.null,data_final_exclusividade.lt.' + agora);
       } else if (modo === 'todos') {
         const papeisPermitidos = ['Admin', 'Gestão de R&S'];
         if (!papelUsuario || !papeisPermitidos.includes(papelUsuario)) {
           if (analistaLogadoId) {
-            query = query.or(\`id_analista_rs.eq.\${analistaLogadoId},id_analista_rs.is.null,data_final_exclusividade.lt.\${agora}\`);
+            query = query.or('id_analista_rs.eq.' + analistaLogadoId + ',id_analista_rs.is.null,data_final_exclusividade.lt.' + agora);
           } else {
-            query = query.or(\`id_analista_rs.is.null,data_final_exclusividade.lt.\${agora}\`);
+            query = query.or('id_analista_rs.is.null,data_final_exclusividade.lt.' + agora);
           }
         }
       }
@@ -174,8 +171,7 @@ export const usePessoas = () => {
           data_final_exclusividade: pessoa.data_final_exclusividade,
           qtd_renovacoes: pessoa.qtd_renovacoes,
           max_renovacoes: pessoa.max_renovacoes,
-          // 🔧 v57.2: Nome do analista via JOIN com FK
-          analista_nome: pessoa.analista?.nome_usuario,
+          analista_nome: undefined, // v57.2: Removido JOIN
           status_exclusividade: statusExclusividade,
           dias_restantes: diasRestantes,
           pode_renovar: (pessoa.qtd_renovacoes || 0) < (pessoa.max_renovacoes || 2)
@@ -553,14 +549,10 @@ export const usePessoas = () => {
     limite: number = 50
   ): Promise<LogExclusividade[]> => {
     try {
+      // v57.2: Removidos JOINs - FKs podem não existir
       let query = supabase
         .from('log_exclusividade')
-        .select(\`
-          *,
-          analista_anterior:app_users!analista_anterior_id(nome_usuario),
-          analista_novo:app_users!analista_novo_id(nome_usuario),
-          realizado:app_users!realizado_por(nome_usuario)
-        \`)
+        .select('*')
         .order('criado_em', { ascending: false })
         .limit(limite);
 
@@ -569,7 +561,7 @@ export const usePessoas = () => {
       }
 
       if (analistaId) {
-        query = query.or(\`analista_anterior_id.eq.\${analistaId},analista_novo_id.eq.\${analistaId}\`);
+        query = query.or('analista_anterior_id.eq.' + analistaId + ',analista_novo_id.eq.' + analistaId);
       }
 
       const { data, error } = await query;
@@ -578,9 +570,9 @@ export const usePessoas = () => {
 
       return (data || []).map((log: any) => ({
         ...log,
-        analista_anterior_nome: log.analista_anterior?.nome_usuario,
-        analista_novo_nome: log.analista_novo?.nome_usuario,
-        realizado_por_nome: log.realizado?.nome_usuario
+        analista_anterior_nome: undefined,
+        analista_novo_nome: undefined,
+        realizado_por_nome: undefined
       }));
     } catch (err: any) {
       console.error('❌ Erro ao buscar log:', err);
