@@ -47,6 +47,8 @@ interface LinkedInData {
   skills?: string[];
   certificacoes?: string[];
   idiomas?: Array<{ idioma: string; nivel: string }>;
+  // 🆕 v56.0: ID do analista logado (obrigatório)
+  analista_id?: number;
 }
 
 // Calcular anos de experiência baseado nas experiências
@@ -151,6 +153,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    // 🆕 v56.0: Validar analista_id
+    if (!data.analista_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'Analista não identificado. Faça login no sistema antes de importar.'
+      });
+    }
+
+    // 🆕 v56.0: Buscar configuração de exclusividade
+    const { data: configExclusividade } = await supabase
+      .from('config_exclusividade')
+      .select('*')
+      .eq('ativa', true)
+      .single();
+
+    const periodoExclusividade = configExclusividade?.periodo_exclusividade_default || 60;
+    const maxRenovacoes = configExclusividade?.max_renovacoes || 2;
+
     // Calcular dados derivados
     const anosExperiencia = calcularAnosExperiencia(data.experiencias);
     const senioridade = estimarSenioridade(anosExperiencia);
@@ -160,6 +180,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const ultimaExp = data.experiencias?.[0];
     const ultimoCargo = ultimaExp?.cargo || data.headline || '';
     const ultimaEmpresa = ultimaExp?.empresa || '';
+
+    // 🆕 v56.0: Calcular datas de exclusividade
+    const dataInicio = new Date();
+    const dataFinal = new Date(dataInicio.getTime() + periodoExclusividade * 24 * 60 * 60 * 1000);
 
     // ============================================
     // VERIFICAR SE JÁ EXISTE (por LinkedIn URL ou email)
@@ -206,7 +230,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ativo: true,
       origem: 'linkedin',
       importado_em: new Date().toISOString(),
-      atualizado_em: new Date().toISOString()
+      atualizado_em: new Date().toISOString(),
+      // 🆕 v56.0: Campos de Exclusividade
+      id_analista_rs: data.analista_id,
+      periodo_exclusividade: periodoExclusividade,
+      data_inicio_exclusividade: dataInicio.toISOString(),
+      data_final_exclusividade: dataFinal.toISOString(),
+      qtd_renovacoes: 0,
+      max_renovacoes: maxRenovacoes
     };
 
     let pessoa_id: number;
@@ -241,6 +272,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       pessoa_id = inserted.id;
       console.log(`✅ Pessoa INSERIDA: ${data.nome} (ID: ${pessoa_id})`);
     }
+
+    // 🆕 v56.0: Registrar no log de exclusividade
+    await supabase.from('log_exclusividade').insert({
+      pessoa_id: pessoa_id,
+      acao: atualizado ? 'atribuicao' : 'atribuicao',
+      analista_novo_id: data.analista_id,
+      realizado_por: data.analista_id,
+      motivo: atualizado 
+        ? 'Atualização via importação LinkedIn' 
+        : 'Cadastro inicial via importação LinkedIn',
+      data_exclusividade_nova: dataFinal.toISOString(),
+      qtd_renovacoes_nova: 0
+    });
 
     // ============================================
     // SALVAR SKILLS
@@ -361,6 +405,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         senioridade,
         skills_count: data.skills?.length || 0,
         experiencias_count: data.experiencias?.length || 0
+      },
+      // 🆕 v56.0: Info de Exclusividade
+      exclusividade: {
+        analista_id: data.analista_id,
+        periodo_dias: periodoExclusividade,
+        data_inicio: dataInicio.toISOString(),
+        data_final: dataFinal.toISOString(),
+        max_renovacoes: maxRenovacoes
       }
     });
 

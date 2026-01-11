@@ -116,7 +116,73 @@ export interface Pessoa {
   cv_arquivo_url?: string;
   // 🆕 Campo de origem (linkedin, importacao_cv, manual)
   origem?: string;
+  // 🆕 v56.0: Campos de Exclusividade
+  id_analista_rs?: number | null;
+  periodo_exclusividade?: number;         // Default 60 dias
+  data_inicio_exclusividade?: string;
+  data_final_exclusividade?: string;
+  qtd_renovacoes?: number;                // Default 0
+  max_renovacoes?: number;                // Default 2
+  // Campos calculados (da view)
+  analista_nome?: string;
+  status_exclusividade?: 'sem_exclusividade' | 'ativa' | 'expirando_breve' | 'expirando_urgente' | 'expirada';
+  dias_restantes?: number;
+  pode_renovar?: boolean;
 }
+
+// 🆕 v56.0: Tipo para Configuração de Exclusividade
+export interface ConfigExclusividade {
+  id?: number;
+  nome_config: string;
+  periodo_exclusividade_default: number;  // Default 60
+  periodo_renovacao: number;              // Default 30
+  max_renovacoes: number;                 // Default 2
+  dias_aviso_vencimento: number;          // Default 15
+  dias_aviso_urgente: number;             // Default 5
+  permitir_auto_renovacao: boolean;
+  ativa: boolean;
+  atualizado_em?: string;
+  atualizado_por?: number;
+}
+
+// 🆕 v56.0: Tipo para Log de Exclusividade
+export interface LogExclusividade {
+  id: number;
+  pessoa_id: number;
+  acao: 'atribuicao' | 'renovacao' | 'liberacao' | 'vencimento' | 'transferencia';
+  analista_anterior_id?: number;
+  analista_novo_id?: number;
+  realizado_por: number;
+  motivo?: string;
+  data_exclusividade_anterior?: string;
+  data_exclusividade_nova?: string;
+  qtd_renovacoes_anterior?: number;
+  qtd_renovacoes_nova?: number;
+  criado_em: string;
+  // Joins
+  analista_anterior_nome?: string;
+  analista_novo_nome?: string;
+  realizado_por_nome?: string;
+}
+
+// 🆕 v56.0: Tipo para Notificação de Exclusividade
+export interface NotificacaoExclusividade {
+  id: number;
+  pessoa_id: number;
+  analista_id: number;
+  tipo: 'aviso_15_dias' | 'aviso_5_dias' | 'vencimento' | 'renovacao_disponivel';
+  titulo: string;
+  mensagem: string;
+  lida: boolean;
+  lida_em?: string;
+  acao_tomada?: 'renovado' | 'liberado' | 'ignorado';
+  criado_em: string;
+  // Joins
+  pessoa_nome?: string;
+}
+
+// 🆕 v56.0: Papéis do Sistema
+export type PapelUsuario = 'Admin' | 'Supervisor de R&S' | 'Analista de R&S' | 'Gestão de Pessoas' | 'Consulta';
 
 // ============================================
 // CANDIDATURAS (RAISA)

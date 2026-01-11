@@ -341,3 +341,139 @@ export function validarConfigDistribuicao(config: Partial<ConfigDistribuicao>): 
         erros
     };
 }
+
+// ============================================
+// 🆕 v56.0: CONFIGURAÇÃO DE EXCLUSIVIDADE
+// ============================================
+
+export interface ConfigExclusividade {
+    id?: number;
+    nome_config: string;
+    periodo_exclusividade_default: number;  // Default 60
+    periodo_renovacao: number;              // Default 30
+    max_renovacoes: number;                 // Default 2
+    dias_aviso_vencimento: number;          // Default 15
+    dias_aviso_urgente: number;             // Default 5
+    permitir_auto_renovacao: boolean;
+    ativa: boolean;
+    atualizado_em?: string;
+    atualizado_por?: number;
+}
+
+/**
+ * Busca configuração ativa de exclusividade
+ */
+export async function buscarConfigExclusividadeAtiva(): Promise<ConfigExclusividade | null> {
+    try {
+        const { data, error } = await supabase
+            .from('config_exclusividade')
+            .select('*')
+            .eq('ativa', true)
+            .order('id', { ascending: false })
+            .limit(1)
+            .single();
+
+        if (error) throw error;
+        return data;
+    } catch (error) {
+        console.error('Erro ao buscar configuração de exclusividade:', error);
+        return null;
+    }
+}
+
+/**
+ * Atualiza configuração de exclusividade
+ */
+export async function atualizarConfigExclusividade(
+    config: Partial<ConfigExclusividade>,
+    usuarioId: number
+): Promise<ConfigExclusividade | null> {
+    try {
+        // Validações
+        const validacao = validarConfigExclusividade(config);
+        if (!validacao.valido) {
+            throw new Error(validacao.erros.join(', '));
+        }
+
+        // Buscar configuração atual
+        const configAtual = await buscarConfigExclusividadeAtiva();
+        if (!configAtual) {
+            throw new Error('Configuração ativa não encontrada');
+        }
+
+        // Atualizar
+        const { data, error } = await supabase
+            .from('config_exclusividade')
+            .update({
+                ...config,
+                atualizado_em: new Date().toISOString(),
+                atualizado_por: usuarioId
+            })
+            .eq('id', configAtual.id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return data;
+    } catch (error) {
+        console.error('Erro ao atualizar configuração de exclusividade:', error);
+        throw error;
+    }
+}
+
+/**
+ * Valida configuração de exclusividade
+ */
+export function validarConfigExclusividade(config: Partial<ConfigExclusividade>): {
+    valido: boolean;
+    erros: string[];
+} {
+    const erros: string[] = [];
+
+    // Validar período de exclusividade (30-90 dias)
+    if (config.periodo_exclusividade_default !== undefined) {
+        if (config.periodo_exclusividade_default < 30 || config.periodo_exclusividade_default > 90) {
+            erros.push('Período de exclusividade deve ser entre 30 e 90 dias');
+        }
+    }
+
+    // Validar período de renovação (15-60 dias)
+    if (config.periodo_renovacao !== undefined) {
+        if (config.periodo_renovacao < 15 || config.periodo_renovacao > 60) {
+            erros.push('Período de renovação deve ser entre 15 e 60 dias');
+        }
+    }
+
+    // Validar máximo de renovações (1-3)
+    if (config.max_renovacoes !== undefined) {
+        if (config.max_renovacoes < 1 || config.max_renovacoes > 3) {
+            erros.push('Máximo de renovações deve ser entre 1 e 3');
+        }
+    }
+
+    // Validar dias de aviso (5-30 dias)
+    if (config.dias_aviso_vencimento !== undefined) {
+        if (config.dias_aviso_vencimento < 5 || config.dias_aviso_vencimento > 30) {
+            erros.push('Dias de aviso de vencimento deve ser entre 5 e 30');
+        }
+    }
+
+    // Validar dias de aviso urgente (1-15 dias)
+    if (config.dias_aviso_urgente !== undefined) {
+        if (config.dias_aviso_urgente < 1 || config.dias_aviso_urgente > 15) {
+            erros.push('Dias de aviso urgente deve ser entre 1 e 15');
+        }
+    }
+
+    // Validar coerência entre avisos
+    if (config.dias_aviso_vencimento !== undefined && config.dias_aviso_urgente !== undefined) {
+        if (config.dias_aviso_urgente >= config.dias_aviso_vencimento) {
+            erros.push('Dias de aviso urgente deve ser menor que dias de aviso de vencimento');
+        }
+    }
+
+    return {
+        valido: erros.length === 0,
+        erros
+    };
+}

@@ -73,3 +73,17 @@ export { useAnaliseCandidato } from './useAnaliseCandidato';
 // Hook de Análise de CV com IA (Integração RAISA)
 export { useCandidaturaAnaliseIA } from './useCandidaturaAnaliseIA';
 export type { AnaliseCV, FatorRisco, SkillsMatch } from './useCandidaturaAnaliseIA';
+
+// ============================================
+// HOOKS ADICIONADOS EM 11/01/2026
+// ============================================
+
+// Hook de Exclusividade de Candidatos
+export { useExclusividade } from './useExclusividade';
+
+// Hook de Pessoas do LinkedIn
+export { useLinkedInPessoas } from './useLinkedInPessoas';
+export type { PessoaLinkedIn, EstatisticasOrigem, FiltrosPessoas } from './useLinkedInPessoas';
+
+// Hook de Análise de Adequação de Perfil
+export { useAnaliseAdequacao } from './useAnaliseAdequacao';
