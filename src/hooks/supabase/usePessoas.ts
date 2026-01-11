@@ -88,11 +88,12 @@ export const usePessoas = () => {
     try {
       setLoading(true);
       
+      // 🔧 v57.2: JOIN com FK correta (fk_pessoas_analista_rs)
       let query = supabase
         .from('pessoas')
         .select(`
           *,
-          analista:app_users!id_analista_rs(id, nome_usuario, email)
+          analista:app_users!fk_pessoas_analista_rs(id, nome_usuario, email_usuario)
         `)
         .eq('ativo', true)
         .order('created_at', { ascending: false });
@@ -103,14 +104,14 @@ export const usePessoas = () => {
       if (modo === 'meus' && analistaLogadoId) {
         query = query.eq('id_analista_rs', analistaLogadoId);
       } else if (modo === 'disponiveis') {
-        query = query.or(`id_analista_rs.is.null,data_final_exclusividade.lt.${agora}`);
+        query = query.or(\`id_analista_rs.is.null,data_final_exclusividade.lt.\${agora}\`);
       } else if (modo === 'todos') {
         const papeisPermitidos = ['Admin', 'Gestão de R&S'];
         if (!papelUsuario || !papeisPermitidos.includes(papelUsuario)) {
           if (analistaLogadoId) {
-            query = query.or(`id_analista_rs.eq.${analistaLogadoId},id_analista_rs.is.null,data_final_exclusividade.lt.${agora}`);
+            query = query.or(\`id_analista_rs.eq.\${analistaLogadoId},id_analista_rs.is.null,data_final_exclusividade.lt.\${agora}\`);
           } else {
-            query = query.or(`id_analista_rs.is.null,data_final_exclusividade.lt.${agora}`);
+            query = query.or(\`id_analista_rs.is.null,data_final_exclusividade.lt.\${agora}\`);
           }
         }
       }
@@ -173,6 +174,7 @@ export const usePessoas = () => {
           data_final_exclusividade: pessoa.data_final_exclusividade,
           qtd_renovacoes: pessoa.qtd_renovacoes,
           max_renovacoes: pessoa.max_renovacoes,
+          // 🔧 v57.2: Nome do analista via JOIN com FK
           analista_nome: pessoa.analista?.nome_usuario,
           status_exclusividade: statusExclusividade,
           dias_restantes: diasRestantes,
@@ -181,7 +183,7 @@ export const usePessoas = () => {
       });
 
       setPessoas(mappedPessoas);
-      console.log(`✅ ${mappedPessoas.length} pessoas carregadas (modo: ${modo})`);
+      console.log(\`✅ \${mappedPessoas.length} pessoas carregadas (modo: \${modo})\`);
       return mappedPessoas;
     } catch (err: any) {
       console.error('❌ Erro ao carregar pessoas:', err);
@@ -270,7 +272,7 @@ export const usePessoas = () => {
           acao: 'atribuicao',
           analista_novo_id: analistaId,
           realizado_por: analistaId,
-          motivo: `Cadastro inicial via ${newPessoa.origem || 'manual'}`,
+          motivo: \`Cadastro inicial via \${newPessoa.origem || 'manual'}\`,
           data_exclusividade_nova: dataFinal?.toISOString(),
           qtd_renovacoes_nova: 0
         });
@@ -305,7 +307,7 @@ export const usePessoas = () => {
       return createdPessoa;
     } catch (err: any) {
       console.error('❌ Erro ao criar pessoa:', err);
-      alert(`Erro ao criar pessoa: ${err.message}`);
+      alert(\`Erro ao criar pessoa: \${err.message}\`);
       throw err;
     }
   };
@@ -413,7 +415,7 @@ export const usePessoas = () => {
       return updatedPessoa;
     } catch (err: any) {
       console.error('❌ Erro ao atualizar pessoa:', err);
-      alert(`Erro ao atualizar pessoa: ${err.message}`);
+      alert(\`Erro ao atualizar pessoa: \${err.message}\`);
       throw err;
     }
   };
@@ -454,7 +456,7 @@ export const usePessoas = () => {
       return {
         sucesso: data.sucesso,
         mensagem: data.sucesso 
-          ? `Exclusividade renovada! Nova data: ${new Date(data.nova_data).toLocaleDateString('pt-BR')}` 
+          ? \`Exclusividade renovada! Nova data: \${new Date(data.nova_data).toLocaleDateString('pt-BR')}\` 
           : data.erro,
         novaData: data.nova_data
       };
@@ -553,12 +555,12 @@ export const usePessoas = () => {
     try {
       let query = supabase
         .from('log_exclusividade')
-        .select(`
+        .select(\`
           *,
           analista_anterior:app_users!analista_anterior_id(nome_usuario),
           analista_novo:app_users!analista_novo_id(nome_usuario),
           realizado:app_users!realizado_por(nome_usuario)
-        `)
+        \`)
         .order('criado_em', { ascending: false })
         .limit(limite);
 
@@ -567,7 +569,7 @@ export const usePessoas = () => {
       }
 
       if (analistaId) {
-        query = query.or(`analista_anterior_id.eq.${analistaId},analista_novo_id.eq.${analistaId}`);
+        query = query.or(\`analista_anterior_id.eq.\${analistaId},analista_novo_id.eq.\${analistaId}\`);
       }
 
       const { data, error } = await query;
@@ -638,7 +640,7 @@ export const usePessoas = () => {
       const { data, error } = await supabase
         .from('pessoas')
         .select('*')
-        .or(`nome.ilike.%${termoBusca}%,nome_anoni_parcial.ilike.%${termoBusca}%,nome_anoni_total.ilike.%${termoBusca}%`)
+        .or(\`nome.ilike.%\${termoBusca}%,nome_anoni_parcial.ilike.%\${termoBusca}%,nome_anoni_total.ilike.%\${termoBusca}%\`)
         .limit(10);
       
       if (error) {
@@ -696,7 +698,7 @@ export const usePessoas = () => {
       return true;
     } catch (err: any) {
       console.error('❌ Erro ao excluir pessoa:', err);
-      alert(`Erro ao excluir pessoa: ${err.message}`);
+      alert(\`Erro ao excluir pessoa: \${err.message}\`);
       throw err;
     }
   };
