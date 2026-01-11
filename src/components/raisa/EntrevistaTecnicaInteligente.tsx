@@ -153,7 +153,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   );
 
   const vagaAtual = useMemo(() => 
-    vagas.find(v => v.id === candidaturaAtual?.vaga_id),
+    vagas.find(v => String(v.id) === String(candidaturaAtual?.vaga_id)),
     [vagas, candidaturaAtual]
   );
 
@@ -174,8 +174,9 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   
   useEffect(() => {
     // Enriquecer candidaturas com dados da vaga
+    // Usar String() para garantir comparação correta de tipos
     const enriched = candidaturas.map(c => {
-      const vaga = vagas.find(v => v.id === c.vaga_id);
+      const vaga = vagas.find(v => String(v.id) === String(c.vaga_id));
       return { ...c, vaga };
     });
     setCandidaturasComVaga(enriched);
