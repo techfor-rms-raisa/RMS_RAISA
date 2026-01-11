@@ -268,7 +268,7 @@ export const usePessoas = () => {
           acao: 'atribuicao',
           analista_novo_id: analistaId,
           realizado_por: analistaId,
-          motivo: \`Cadastro inicial via \${newPessoa.origem || 'manual'}\`,
+          motivo: 'Cadastro inicial via ' + (newPessoa.origem || 'manual'),
           data_exclusividade_nova: dataFinal?.toISOString(),
           qtd_renovacoes_nova: 0
         });
@@ -303,7 +303,7 @@ export const usePessoas = () => {
       return createdPessoa;
     } catch (err: any) {
       console.error('❌ Erro ao criar pessoa:', err);
-      alert(\`Erro ao criar pessoa: \${err.message}\`);
+      alert('Erro ao criar pessoa: ' + err.message);
       throw err;
     }
   };
@@ -411,7 +411,7 @@ export const usePessoas = () => {
       return updatedPessoa;
     } catch (err: any) {
       console.error('❌ Erro ao atualizar pessoa:', err);
-      alert(\`Erro ao atualizar pessoa: \${err.message}\`);
+      alert('Erro ao atualizar pessoa: ' + err.message);
       throw err;
     }
   };
@@ -452,7 +452,7 @@ export const usePessoas = () => {
       return {
         sucesso: data.sucesso,
         mensagem: data.sucesso 
-          ? \`Exclusividade renovada! Nova data: \${new Date(data.nova_data).toLocaleDateString('pt-BR')}\` 
+          ? 'Exclusividade renovada! Nova data: ' + new Date(data.nova_data).toLocaleDateString('pt-BR')
           : data.erro,
         novaData: data.nova_data
       };
@@ -632,7 +632,7 @@ export const usePessoas = () => {
       const { data, error } = await supabase
         .from('pessoas')
         .select('*')
-        .or(\`nome.ilike.%\${termoBusca}%,nome_anoni_parcial.ilike.%\${termoBusca}%,nome_anoni_total.ilike.%\${termoBusca}%\`)
+        .or('nome.ilike.%' + termoBusca + '%,nome_anoni_parcial.ilike.%' + termoBusca + '%,nome_anoni_total.ilike.%' + termoBusca + '%')
         .limit(10);
       
       if (error) {
@@ -690,7 +690,7 @@ export const usePessoas = () => {
       return true;
     } catch (err: any) {
       console.error('❌ Erro ao excluir pessoa:', err);
-      alert(\`Erro ao excluir pessoa: \${err.message}\`);
+      alert('Erro ao excluir pessoa: ' + err.message);
       throw err;
     }
   };
