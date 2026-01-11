@@ -42,6 +42,15 @@ import { useCVTemplates } from '@/hooks/supabase/useCVTemplates';
 interface CVGeneratorV2Props {
   candidaturaId: number;
   candidatoNome: string;
+  // 🆕 v57.2: Dados de anonimização e contato da pessoa
+  pessoaDados?: {
+    nome_anoni_parcial?: string;  // Ex: José S.X.
+    nome_anoni_total?: string;    // Ex: J.S.X.
+    email?: string;
+    telefone?: string;
+    cidade?: string;
+    estado?: string;
+  };
   vagaInfo?: {
     id: number;
     titulo: string;
@@ -57,12 +66,16 @@ interface CVGeneratorV2Props {
   currentUserId?: number;
 }
 
+// 🆕 v57.2: Tipos para configuração de nome
+type TipoNomeCV = 'completo' | 'parcial' | 'anonimo';
+
 type EtapaGeracao = 'template' | 'dados' | 'requisitos' | 'parecer' | 'preview' | 'finalizado';
 type TemplateType = 'techfor' | 'tsystems';
 
 const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
   candidaturaId,
   candidatoNome,
+  pessoaDados,  // 🆕 v57.2: Dados de anonimização
   vagaInfo,
   cvOriginalTexto,
   onClose,
@@ -93,10 +106,29 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
   const [error, setError] = useState<string | null>(null);
   const [cvSalvoId, setCvSalvoId] = useState<number | null>(null);
   
+  // 🆕 v57.2: Estados para configuração de nome e contato
+  const [tipoNome, setTipoNome] = useState<TipoNomeCV>('completo');
+  const [exibirContato, setExibirContato] = useState<boolean>(true);
+  
+  // 🆕 v57.2: Nome a ser usado no CV baseado na seleção
+  const nomeParaCV = (): string => {
+    switch (tipoNome) {
+      case 'parcial':
+        return pessoaDados?.nome_anoni_parcial || candidatoNome;
+      case 'anonimo':
+        return pessoaDados?.nome_anoni_total || candidatoNome;
+      default:
+        return candidatoNome;
+    }
+  };
+  
   // Dados do candidato
   const [dados, setDados] = useState<DadosCandidatoTechfor>({
     nome: candidatoNome,
-    email: '',
+    email: pessoaDados?.email || '',
+    telefone: pessoaDados?.telefone || '',
+    cidade: pessoaDados?.cidade || '',
+    estado: pessoaDados?.estado || '',
     titulo_vaga: vagaInfo?.titulo,
     codigo_vaga: vagaInfo?.codigo,
     cliente_destino: vagaInfo?.cliente,
@@ -108,6 +140,19 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
     hard_skills_tabela: [],
     idiomas: []
   });
+  
+  // 🆕 v57.2: Atualizar nome quando tipo muda
+  useEffect(() => {
+    setDados(prev => ({
+      ...prev,
+      nome: nomeParaCV(),
+      // Se não exibir contato, limpar os campos
+      email: (tipoNome === 'completo' && exibirContato) ? (pessoaDados?.email || '') : '',
+      telefone: (tipoNome === 'completo' && exibirContato) ? (pessoaDados?.telefone || '') : '',
+      cidade: (tipoNome === 'completo' && exibirContato) ? (pessoaDados?.cidade || '') : '',
+      estado: (tipoNome === 'completo' && exibirContato) ? (pessoaDados?.estado || '') : ''
+    }));
+  }, [tipoNome, exibirContato]);
 
   // ✅ NOVO: Carregar CV existente e templates ao montar
   useEffect(() => {
@@ -456,6 +501,113 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
                     <span className="text-xs bg-pink-100 text-pink-700 px-2 py-1 rounded">Hard Skills</span>
                     <span className="text-xs bg-pink-100 text-pink-700 px-2 py-1 rounded">Protocolo</span>
                   </div>
+                </div>
+              </div>
+
+              {/* 🆕 v57.2: Configuração de Nome e Privacidade */}
+              <div className="max-w-2xl mx-auto mt-8 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
+                  🔒 Configuração de Privacidade do Candidato
+                </h4>
+                
+                {/* Seletor de Tipo de Nome */}
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Como o nome será exibido no CV?
+                  </label>
+                  <div className="grid grid-cols-3 gap-3">
+                    {/* Nome Completo */}
+                    <div
+                      onClick={() => setTipoNome('completo')}
+                      className={`border-2 rounded-lg p-3 cursor-pointer transition-all text-center ${
+                        tipoNome === 'completo'
+                          ? 'border-green-500 bg-green-50'
+                          : 'border-gray-200 hover:border-green-300'
+                      }`}
+                    >
+                      <div className="text-2xl mb-1">👤</div>
+                      <div className="font-medium text-sm">Nome Completo</div>
+                      <div className="text-xs text-gray-500 mt-1">{candidatoNome}</div>
+                    </div>
+                    
+                    {/* Nome Parcial */}
+                    <div
+                      onClick={() => setTipoNome('parcial')}
+                      className={`border-2 rounded-lg p-3 cursor-pointer transition-all text-center ${
+                        tipoNome === 'parcial'
+                          ? 'border-yellow-500 bg-yellow-50'
+                          : 'border-gray-200 hover:border-yellow-300'
+                      }`}
+                    >
+                      <div className="text-2xl mb-1">🔓</div>
+                      <div className="font-medium text-sm">Parcialmente Anônimo</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {pessoaDados?.nome_anoni_parcial || 'Primeiro nome + iniciais'}
+                      </div>
+                    </div>
+                    
+                    {/* Nome Totalmente Anônimo */}
+                    <div
+                      onClick={() => setTipoNome('anonimo')}
+                      className={`border-2 rounded-lg p-3 cursor-pointer transition-all text-center ${
+                        tipoNome === 'anonimo'
+                          ? 'border-red-500 bg-red-50'
+                          : 'border-gray-200 hover:border-red-300'
+                      }`}
+                    >
+                      <div className="text-2xl mb-1">🔒</div>
+                      <div className="font-medium text-sm">Totalmente Anônimo</div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {pessoaDados?.nome_anoni_total || 'Apenas iniciais'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Checkbox de Contato - só aparece se nome completo */}
+                {tipoNome === 'completo' && (
+                  <div className="mt-4 p-3 bg-white rounded-lg border border-gray-200">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={exibirContato}
+                        onChange={(e) => setExibirContato(e.target.checked)}
+                        className="w-5 h-5 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                      />
+                      <div>
+                        <span className="font-medium text-gray-800">Exibir dados de contato</span>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Inclui: celular, email, cidade e estado
+                        </p>
+                      </div>
+                    </label>
+                    
+                    {exibirContato && (
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-600 bg-gray-50 p-2 rounded">
+                        <div>📧 {pessoaDados?.email || 'Não informado'}</div>
+                        <div>📱 {pessoaDados?.telefone || 'Não informado'}</div>
+                        <div>📍 {pessoaDados?.cidade || 'Não informado'}</div>
+                        <div>🗺️ {pessoaDados?.estado || 'Não informado'}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Aviso para nomes anonimizados */}
+                {tipoNome !== 'completo' && (
+                  <div className="mt-4 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                    <p className="text-sm text-amber-800">
+                      ⚠️ <strong>Dados de contato ocultados</strong>: Ao selecionar nome parcial ou anônimo, 
+                      os dados de contato (email, telefone, cidade, estado) não serão exibidos no CV.
+                    </p>
+                  </div>
+                )}
+
+                {/* Preview do nome selecionado */}
+                <div className="mt-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                  <p className="text-sm text-blue-800">
+                    <strong>Nome no CV:</strong> {nomeParaCV()}
+                  </p>
                 </div>
               </div>
             </div>

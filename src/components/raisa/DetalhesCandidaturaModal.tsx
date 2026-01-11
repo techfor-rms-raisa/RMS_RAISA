@@ -27,7 +27,7 @@ import {
   CheckCircle, XCircle, Clock, Send, FileText, 
   ChevronRight, AlertTriangle, MessageSquare, History,
   ExternalLink, Loader2, Star, Award, UserCheck, Building2,
-  Brain, Target, RefreshCw
+  Brain, Target, RefreshCw, FileOutput, Download
 } from 'lucide-react';
 import { supabase } from '@/config/supabase';
 import { Candidatura, Vaga, Pessoa } from '@/types';
@@ -36,6 +36,7 @@ import { useAnaliseAdequacao } from '@/hooks/supabase/useAnaliseAdequacao';
 import AnaliseCVPanel from './AnaliseCVPanel';
 import { AnaliseAdequacaoPanel } from './AnaliseAdequacaoPanel';
 import { AnaliseAdequacaoBadge } from './AnaliseAdequacaoBadge';
+import CVGeneratorV2 from './CVGeneratorV2';  // 🆕 v57.2: Gerador de CV Padronizado
 import type { DadosCandidatoAnalise, DadosVagaAnalise } from '@/services/analiseAdequacaoService';
 
 // ============================================
@@ -236,6 +237,9 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
   const [motivoOutro, setMotivoOutro] = useState<string>('');
   const [observacao, setObservacao] = useState<string>('');
   const [showConfirmacao, setShowConfirmacao] = useState(false);
+
+  // 🆕 v57.2: Estado para modal de Geração de CV Padronizado
+  const [showCVGenerator, setShowCVGenerator] = useState(false);
 
   // Estado para expandir/recolher análise de adequação
   const [mostrarAnaliseAdequacao, setMostrarAnaliseAdequacao] = useState(false);
@@ -1055,6 +1059,29 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
           {/* ABA: AÇÕES */}
           {abaAtiva === 'acoes' && (
             <div className="space-y-6">
+              
+              {/* 🆕 v57.2: Geração de CV Padronizado */}
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-5 border border-blue-200">
+                <h3 className="font-semibold text-gray-800 mb-4 flex items-center gap-2">
+                  <FileOutput className="w-5 h-5 text-blue-600" />
+                  Geração de CV Padronizado
+                </h3>
+                <p className="text-sm text-gray-600 mb-4">
+                  Gere um CV formatado para envio ao cliente. Escolha entre templates Techfor ou T-Systems, 
+                  com opção de anonimizar o nome do candidato.
+                </p>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowCVGenerator(true)}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                  >
+                    <FileText className="w-4 h-4" />
+                    Gerar CV Padronizado
+                  </button>
+                  {/* TODO: Mostrar status se já existe CV gerado */}
+                </div>
+              </div>
+
               {/* Próximo passo sugerido */}
               {statusAtual.proximosStatus.length > 0 && (
                 <div>
@@ -1253,6 +1280,40 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* 🆕 v57.2: Modal de Geração de CV Padronizado */}
+      {showCVGenerator && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4">
+          <CVGeneratorV2
+            candidaturaId={Number(candidatura.id)}
+            candidatoNome={candidatura.candidato_nome || pessoa?.nome || 'Candidato'}
+            pessoaDados={{
+              nome_anoni_parcial: pessoa?.nome_anoni_parcial,
+              nome_anoni_total: pessoa?.nome_anoni_total,
+              email: pessoa?.email,
+              telefone: pessoa?.telefone,
+              cidade: pessoa?.cidade,
+              estado: pessoa?.estado
+            }}
+            vagaInfo={vaga ? {
+              id: Number(vaga.id),
+              titulo: vaga.titulo || '',
+              codigo: vaga.codigo || '',
+              cliente: vaga.cliente_nome || '',
+              gestor: '',
+              requisitos: typeof vaga.requisitos === 'string' ? vaga.requisitos : JSON.stringify(vaga.requisitos || ''),
+              stack_tecnologica: vaga.stack_tecnologica
+            } : undefined}
+            cvOriginalTexto={pessoa?.cv_texto_original}
+            onClose={() => setShowCVGenerator(false)}
+            onCVGerado={(cvId) => {
+              console.log('✅ CV gerado com ID:', cvId);
+              // Aqui pode adicionar lógica para atualizar o status ou recarregar dados
+            }}
+            currentUserId={currentUserId}
+          />
+        </div>
+      )}
     </div>
   );
 };
