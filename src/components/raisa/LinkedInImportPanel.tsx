@@ -11,18 +11,41 @@
  * - Comparar origens (LinkedIn vs CV vs Manual)
  * - Instruções de uso da extensão Chrome
  * 
- * Versão: 3.0
- * Data: 09/01/2026
+ * 🆕 v57.0: Controle de acesso por permissão
+ * 
+ * Versão: 3.1
+ * Data: 11/01/2026
  */
 
 import React, { useState, useEffect } from 'react';
 import { useLinkedInPessoas, PessoaLinkedIn } from '@/hooks/supabase/useLinkedInPessoas';
+import { useAuth } from '../../contexts/AuthContext';
+import { podeUsarLinkedIn } from '../../utils/permissions';
 
 interface LinkedInImportPanelProps {
   userId?: number;
 }
 
 const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => {
+  // 🆕 v57.0: Verificar permissão de acesso
+  const { user } = useAuth();
+  
+  // Se não tem permissão, mostrar mensagem de acesso restrito
+  if (!user || !podeUsarLinkedIn(user.tipo_usuario)) {
+    return (
+      <div className="p-8 text-center bg-white rounded-lg shadow-md">
+        <div className="text-6xl mb-4">🔒</div>
+        <h2 className="text-xl font-bold text-gray-700 mb-2">Acesso Restrito</h2>
+        <p className="text-gray-500 mb-4">
+          Você não tem permissão para acessar a importação do LinkedIn.
+        </p>
+        <p className="text-sm text-gray-400">
+          Esta funcionalidade está disponível para: Administrador, Gestão de R&S e Analista de R&S.
+        </p>
+      </div>
+    );
+  }
+
   const {
     loading,
     pessoas,

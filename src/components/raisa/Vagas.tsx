@@ -1,6 +1,10 @@
 /**
- * Vagas.tsx - RMS RAISA v56.3
+ * Vagas.tsx - RMS RAISA v57.0
  * Componente de Gestão de Vagas
+ * 
+ * 🆕 v57.0: Controle de permissões
+ *        - Botão "Nova Vaga" condicionado por permissão
+ *        - Modo read-only para Gestão Comercial
  * 
  * v56.3: Fix erro "Cannot read properties of undefined (reading 'titulo')"
  *        - Corrigido: updateVaga(editingVaga.id, vagaData) 
@@ -23,7 +27,9 @@ import { Vaga, Client, UsuarioCliente, User } from '../../types/types_index';
 import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 import CVMatchingPanel from './CVMatchingPanel';
 import VagaSugestoesIA from './VagaSugestoesIA';
-import { Wand2, Loader2, Plus, X, ChevronDown, ChevronUp } from 'lucide-react';
+import { Wand2, Loader2, Plus, X, ChevronDown, ChevronUp, Eye } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { podeInserirVagas, isReadOnly } from '../../utils/permissions';
 
 interface VagasProps {
     vagas: Vaga[];
@@ -101,6 +107,11 @@ const Vagas: React.FC<VagasProps> = ({
     deleteVaga,
     currentUserId = 1
 }) => {
+    // 🆕 v57.0: Verificar permissões
+    const { user } = useAuth();
+    const podeInserir = user ? podeInserirVagas(user.tipo_usuario) : false;
+    const apenasLeitura = user ? isReadOnly(user.tipo_usuario, 'raisa') : true;
+
     // Estados do modal
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingVaga, setEditingVaga] = useState<Vaga | null>(null);
@@ -552,13 +563,20 @@ const Vagas: React.FC<VagasProps> = ({
                         </div>
                     )}
 
-                    {/* Botão Nova Vaga */}
-                    <button 
-                        onClick={() => openModal()} 
-                        className="bg-orange-600 text-white px-6 py-2 rounded-lg hover:bg-orange-700 font-semibold flex items-center gap-2 shadow-md"
-                    >
-                        <Plus size={18} /> Nova Vaga
-                    </button>
+                    {/* Botão Nova Vaga - 🆕 v57.0: Condicionado por permissão */}
+                    {podeInserir ? (
+                        <button 
+                            onClick={() => openModal()} 
+                            className="bg-orange-600 text-white px-6 py-2 rounded-lg hover:bg-orange-700 font-semibold flex items-center gap-2 shadow-md"
+                        >
+                            <Plus size={18} /> Nova Vaga
+                        </button>
+                    ) : apenasLeitura ? (
+                        <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm">
+                            <Eye size={16} />
+                            Modo Visualização
+                        </div>
+                    ) : null}
                 </div>
 
                 {/* Info do filtro */}
@@ -663,8 +681,13 @@ const Vagas: React.FC<VagasProps> = ({
                                         >
                                             🎯 Priorizar
                                         </button>
-                                        <button onClick={() => openModal(vaga)} className="text-blue-600 hover:underline text-sm">Editar</button>
-                                        <button onClick={() => deleteVaga(vaga.id)} className="text-red-600 hover:underline text-sm">Excluir</button>
+                                        {/* 🆕 v57.0: Botões de edição apenas para quem pode */}
+                                        {!apenasLeitura && (
+                                            <>
+                                                <button onClick={() => openModal(vaga)} className="text-blue-600 hover:underline text-sm">Editar</button>
+                                                <button onClick={() => deleteVaga(vaga.id)} className="text-red-600 hover:underline text-sm">Excluir</button>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
                             </div>

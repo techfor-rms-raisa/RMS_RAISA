@@ -1,5 +1,25 @@
-import React, { useState } from 'react';
+/**
+ * ManageUsers.tsx - Gerenciamento de Usuários
+ * 
+ * 🆕 v57.0: Sistema de Permissões Implementado
+ * - Filtro de usuários visíveis baseado no perfil logado
+ * - Controle de CRUD por perfil
+ * - Gestão de R&S não vê Admin nem Gestão Comercial
+ * - Perfis básicos só veem/editam próprio cadastro
+ * 
+ * Data: 11/01/2026
+ */
+
+import React, { useState, useMemo } from 'react';
 import { User, UserRole } from '@/types';
+import { 
+    getPerfisPodeVer, 
+    getPerfisPodeCriar, 
+    podeAdicionarUsuarios,
+    podeEditarUsuario,
+    podeAlterarTipoUsuario,
+    podeAlterarStatusUsuario
+} from '../utils/permissions';
 
 // Tipo do resultado da migração
 interface MigrationResult {
@@ -43,7 +63,21 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
         analista_rs_id: null as number | null
     });
 
-    const userRoles: UserRole[] = [
+    // ============================================
+    // PERMISSÕES
+    // ============================================
+
+    // Perfis que o usuário logado pode VER
+    const perfisVisiveis = useMemo(() => getPerfisPodeVer(currentUser.tipo_usuario), [currentUser.tipo_usuario]);
+    
+    // Perfis que o usuário logado pode CRIAR
+    const perfisCriaveis = useMemo(() => getPerfisPodeCriar(currentUser.tipo_usuario), [currentUser.tipo_usuario]);
+    
+    // Pode adicionar novos usuários?
+    const podeAdicionar = useMemo(() => podeAdicionarUsuarios(currentUser.tipo_usuario), [currentUser.tipo_usuario]);
+
+    // Lista completa de roles para exibição
+    const allUserRoles: UserRole[] = [
         'Administrador',
         'Gestão de R&S',
         'Gestão Comercial',
@@ -53,12 +87,24 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
         'Cliente'
     ];
 
+    // Roles visíveis no filtro (apenas as que pode ver)
+    const userRolesVisiveis = useMemo(() => 
+        allUserRoles.filter(role => perfisVisiveis.includes(role)),
+        [perfisVisiveis]
+    );
+
+    // Roles disponíveis para criar/editar
+    const userRolesCriaveis = useMemo(() => 
+        allUserRoles.filter(role => perfisCriaveis.includes(role)),
+        [perfisCriaveis]
+    );
+
     const resetForm = () => {
         setFormData({
             nome_usuario: '',
             email_usuario: '',
             senha_usuario: '',
-            tipo_usuario: 'Consulta',
+            tipo_usuario: userRolesCriaveis[0] || 'Consulta',
             ativo_usuario: true,
             receber_alertas_email: true,
             analista_rs_id: null
@@ -78,6 +124,12 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
             return;
         }
 
+        // Verificar se pode criar esse tipo de usuário
+        if (!perfisCriaveis.includes(formData.tipo_usuario)) {
+            alert('Você não tem permissão para criar usuários deste tipo.');
+            return;
+        }
+
         addUser(formData);
         resetForm();
         setIsAddModalOpen(false);
@@ -89,6 +141,12 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
 
         if (!formData.nome_usuario || !formData.email_usuario) {
             alert('Por favor, preencha todos os campos obrigatórios.');
+            return;
+        }
+
+        // Verificar se pode editar esse usuário
+        if (!podeEditarUsuario(currentUser.tipo_usuario, selectedUser.tipo_usuario, currentUser.id, selectedUser.id)) {
+            alert('Você não tem permissão para editar este usuário.');
             return;
         }
 
@@ -105,11 +163,15 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
         const updates: Partial<User> = {
             nome_usuario: formData.nome_usuario,
             email_usuario: formData.email_usuario,
-            tipo_usuario: formData.tipo_usuario,
-            ativo_usuario: formData.ativo_usuario,
             receber_alertas_email: formData.receber_alertas_email,
             analista_rs_id: formData.analista_rs_id
         };
+
+        // Só pode alterar tipo se tiver permissão E não for o próprio usuário
+        if (podeAlterarTipoUsuario(currentUser.tipo_usuario, currentUser.id, selectedUser.id)) {
+            updates.tipo_usuario = formData.tipo_usuario;
+            updates.ativo_usuario = formData.ativo_usuario;
+        }
 
         // Só atualiza a senha se foi preenchida
         if (formData.senha_usuario) {
@@ -124,11 +186,17 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
     };
 
     const openEditModal = (user: User) => {
+        // Verificar se pode editar
+        if (!podeEditarUsuario(currentUser.tipo_usuario, user.tipo_usuario, currentUser.id, user.id)) {
+            alert('Você não tem permissão para editar este usuário.');
+            return;
+        }
+
         setSelectedUser(user);
         setFormData({
             nome_usuario: user.nome_usuario,
             email_usuario: user.email_usuario,
-            senha_usuario: '', // Não preenche a senha por segurança
+            senha_usuario: '',
             tipo_usuario: user.tipo_usuario,
             ativo_usuario: user.ativo_usuario,
             receber_alertas_email: user.receber_alertas_email,
@@ -138,22 +206,53 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
     };
 
     const toggleUserStatus = (user: User) => {
+        // Verificar se pode alterar status
+        if (!podeAlterarStatusUsuario(currentUser.tipo_usuario, user.tipo_usuario, currentUser.id, user.id)) {
+            alert('Você não tem permissão para alterar o status deste usuário.');
+            return;
+        }
+
         const newStatus = !user.ativo_usuario;
         updateUser(user.id, { ativo_usuario: newStatus });
         alert(`Usuário ${newStatus ? 'ativado' : 'desativado'} com sucesso!`);
     };
 
-    // Filtros
-    const filteredUsers = users.filter(user => {
-        const matchesSearch = user.nome_usuario.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            user.email_usuario.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesRole = filterRole === 'Todos' || user.tipo_usuario === filterRole;
-        const matchesStatus = filterStatus === 'Todos' || 
-                            (filterStatus === 'Ativo' && user.ativo_usuario) ||
-                            (filterStatus === 'Inativo' && !user.ativo_usuario);
-        
-        return matchesSearch && matchesRole && matchesStatus;
-    });
+    // ============================================
+    // FILTROS - Aplica permissões de visibilidade
+    // ============================================
+
+    const filteredUsers = useMemo(() => {
+        return users.filter(user => {
+            // 🔒 PRIMEIRO: Filtrar por permissão de visibilidade
+            // Se não for Admin ou Gestão de R&S, só vê o próprio usuário
+            if (!podeAdicionar && user.id !== currentUser.id) {
+                return false;
+            }
+
+            // Se for Admin ou Gestão de R&S, aplica filtro de perfis visíveis
+            if (podeAdicionar && !perfisVisiveis.includes(user.tipo_usuario)) {
+                return false;
+            }
+
+            // Filtros normais
+            const matchesSearch = user.nome_usuario.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                                user.email_usuario.toLowerCase().includes(searchTerm.toLowerCase());
+            const matchesRole = filterRole === 'Todos' || user.tipo_usuario === filterRole;
+            const matchesStatus = filterStatus === 'Todos' || 
+                                (filterStatus === 'Ativo' && user.ativo_usuario) ||
+                                (filterStatus === 'Inativo' && !user.ativo_usuario);
+            
+            return matchesSearch && matchesRole && matchesStatus;
+        });
+    }, [users, currentUser, podeAdicionar, perfisVisiveis, searchTerm, filterRole, filterStatus]);
+
+    // Estatísticas filtradas por permissão
+    const usersVisiveis = useMemo(() => {
+        if (!podeAdicionar) {
+            return users.filter(u => u.id === currentUser.id);
+        }
+        return users.filter(u => perfisVisiveis.includes(u.tipo_usuario));
+    }, [users, currentUser, podeAdicionar, perfisVisiveis]);
 
     const getRoleColor = (role: UserRole) => {
         const colors: Record<UserRole, string> = {
@@ -194,10 +293,22 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
         }
     };
 
+    // Verificar se pode editar tipo de usuário no modal
+    const podeEditarTipo = selectedUser 
+        ? podeAlterarTipoUsuario(currentUser.tipo_usuario, currentUser.id, selectedUser.id)
+        : false;
+
     return (
         <div className="p-6">
             <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-[#4D5253]">Gerenciamento de Usuários</h2>
+                <div>
+                    <h2 className="text-2xl font-bold text-[#4D5253]">Gerenciamento de Usuários</h2>
+                    {!podeAdicionar && (
+                        <p className="text-sm text-gray-500 mt-1">
+                            Você pode visualizar e editar apenas seu próprio cadastro.
+                        </p>
+                    )}
+                </div>
                 <div className="flex gap-3">
                     {/* Botão Migração Anual - Apenas Administrador */}
                     {currentUser.tipo_usuario === 'Administrador' && (
@@ -223,75 +334,82 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
                             )}
                         </button>
                     )}
-                    <button
-                        onClick={() => setIsAddModalOpen(true)}
-                        className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
-                    >
-                        <span>+</span> Novo Usuário
-                    </button>
+                    {/* Botão Novo Usuário - Apenas quem pode adicionar */}
+                    {podeAdicionar && (
+                        <button
+                            onClick={() => setIsAddModalOpen(true)}
+                            className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center gap-2"
+                        >
+                            <span>+</span> Novo Usuário
+                        </button>
+                    )}
                 </div>
             </div>
 
-            {/* Filtros */}
-            <div className="bg-white p-4 rounded-lg shadow mb-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Buscar</label>
-                        <input
-                            type="text"
-                            placeholder="Nome ou email..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-500"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Usuário</label>
-                        <select
-                            value={filterRole}
-                            onChange={(e) => setFilterRole(e.target.value as UserRole | 'Todos')}
-                            className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-500"
-                        >
-                            <option value="Todos">Todos</option>
-                            {userRoles.map(role => (
-                                <option key={role} value={role}>{role}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
-                        <select
-                            value={filterStatus}
-                            onChange={(e) => setFilterStatus(e.target.value as 'Todos' | 'Ativo' | 'Inativo')}
-                            className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-500"
-                        >
-                            <option value="Todos">Todos</option>
-                            <option value="Ativo">Ativos</option>
-                            <option value="Inativo">Inativos</option>
-                        </select>
+            {/* Filtros - Ocultos se não pode adicionar (só vê próprio usuário) */}
+            {podeAdicionar && (
+                <div className="bg-white p-4 rounded-lg shadow mb-6">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Buscar</label>
+                            <input
+                                type="text"
+                                placeholder="Nome ou email..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Tipo de Usuário</label>
+                            <select
+                                value={filterRole}
+                                onChange={(e) => setFilterRole(e.target.value as UserRole | 'Todos')}
+                                className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="Todos">Todos</option>
+                                {userRolesVisiveis.map(role => (
+                                    <option key={role} value={role}>{role}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                            <select
+                                value={filterStatus}
+                                onChange={(e) => setFilterStatus(e.target.value as 'Todos' | 'Ativo' | 'Inativo')}
+                                className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                            >
+                                <option value="Todos">Todos</option>
+                                <option value="Ativo">Ativos</option>
+                                <option value="Inativo">Inativos</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
-            </div>
+            )}
 
-            {/* Estatísticas */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                <div className="bg-white p-4 rounded-lg shadow">
-                    <div className="text-sm text-gray-600">Total de Usuários</div>
-                    <div className="text-2xl font-bold text-gray-800">{users.length}</div>
+            {/* Estatísticas - Ajustadas por permissão */}
+            {podeAdicionar && (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div className="bg-white p-4 rounded-lg shadow">
+                        <div className="text-sm text-gray-600">Total Visível</div>
+                        <div className="text-2xl font-bold text-gray-800">{usersVisiveis.length}</div>
+                    </div>
+                    <div className="bg-white p-4 rounded-lg shadow">
+                        <div className="text-sm text-gray-600">Usuários Ativos</div>
+                        <div className="text-2xl font-bold text-green-600">{usersVisiveis.filter(u => u.ativo_usuario).length}</div>
+                    </div>
+                    <div className="bg-white p-4 rounded-lg shadow">
+                        <div className="text-sm text-gray-600">Usuários Inativos</div>
+                        <div className="text-2xl font-bold text-red-600">{usersVisiveis.filter(u => !u.ativo_usuario).length}</div>
+                    </div>
+                    <div className="bg-white p-4 rounded-lg shadow">
+                        <div className="text-sm text-gray-600">Resultados Filtrados</div>
+                        <div className="text-2xl font-bold text-blue-600">{filteredUsers.length}</div>
+                    </div>
                 </div>
-                <div className="bg-white p-4 rounded-lg shadow">
-                    <div className="text-sm text-gray-600">Usuários Ativos</div>
-                    <div className="text-2xl font-bold text-green-600">{users.filter(u => u.ativo_usuario).length}</div>
-                </div>
-                <div className="bg-white p-4 rounded-lg shadow">
-                    <div className="text-sm text-gray-600">Usuários Inativos</div>
-                    <div className="text-2xl font-bold text-red-600">{users.filter(u => !u.ativo_usuario).length}</div>
-                </div>
-                <div className="bg-white p-4 rounded-lg shadow">
-                    <div className="text-sm text-gray-600">Resultados Filtrados</div>
-                    <div className="text-2xl font-bold text-blue-600">{filteredUsers.length}</div>
-                </div>
-            </div>
+            )}
 
             {/* Tabela de Usuários */}
             <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -312,46 +430,64 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
                             {filteredUsers.length === 0 ? (
                                 <tr>
                                     <td colSpan={7} className="px-6 py-8 text-center text-gray-500">
-                                        Nenhum usuário encontrado com os filtros aplicados.
+                                        {!podeAdicionar 
+                                            ? 'Seu cadastro será exibido aqui.'
+                                            : 'Nenhum usuário encontrado com os filtros aplicados.'
+                                        }
                                     </td>
                                 </tr>
                             ) : (
-                                filteredUsers.map(user => (
-                                    <tr key={user.id} className="hover:bg-gray-50">
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{user.id}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{user.nome_usuario}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{user.email_usuario}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`px-2 py-1 text-xs font-semibold rounded ${getRoleColor(user.tipo_usuario)}`}>
-                                                {user.tipo_usuario}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap">
-                                            <span className={`px-2 py-1 text-xs font-semibold rounded ${user.ativo_usuario ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                                {user.ativo_usuario ? 'Ativo' : 'Inativo'}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                                            {user.receber_alertas_email ? '✅ Sim' : '❌ Não'}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
-                                            <button
-                                                onClick={() => openEditModal(user)}
-                                                className="text-blue-600 hover:text-blue-900 mr-3"
-                                                title="Editar"
-                                            >
-                                                ✏️
-                                            </button>
-                                            <button
-                                                onClick={() => toggleUserStatus(user)}
-                                                className={`${user.ativo_usuario ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
-                                                title={user.ativo_usuario ? 'Desativar' : 'Ativar'}
-                                            >
-                                                {user.ativo_usuario ? '🔒' : '🔓'}
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))
+                                filteredUsers.map(user => {
+                                    const podeEditar = podeEditarUsuario(currentUser.tipo_usuario, user.tipo_usuario, currentUser.id, user.id);
+                                    const podeAlterarStatus = podeAlterarStatusUsuario(currentUser.tipo_usuario, user.tipo_usuario, currentUser.id, user.id);
+                                    
+                                    return (
+                                        <tr key={user.id} className={`hover:bg-gray-50 ${user.id === currentUser.id ? 'bg-blue-50' : ''}`}>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                {user.id}
+                                                {user.id === currentUser.id && <span className="ml-2 text-xs text-blue-600">(você)</span>}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{user.nome_usuario}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{user.email_usuario}</td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span className={`px-2 py-1 text-xs font-semibold rounded ${getRoleColor(user.tipo_usuario)}`}>
+                                                    {user.tipo_usuario}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span className={`px-2 py-1 text-xs font-semibold rounded ${user.ativo_usuario ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                                    {user.ativo_usuario ? 'Ativo' : 'Inativo'}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                                                {user.receber_alertas_email ? '✅ Sim' : '❌ Não'}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
+                                                {podeEditar && (
+                                                    <button
+                                                        onClick={() => openEditModal(user)}
+                                                        className="text-blue-600 hover:text-blue-900 mr-3"
+                                                        title="Editar"
+                                                    >
+                                                        ✏️
+                                                    </button>
+                                                )}
+                                                {podeAlterarStatus && (
+                                                    <button
+                                                        onClick={() => toggleUserStatus(user)}
+                                                        className={`${user.ativo_usuario ? 'text-red-600 hover:text-red-900' : 'text-green-600 hover:text-green-900'}`}
+                                                        title={user.ativo_usuario ? 'Desativar' : 'Ativar'}
+                                                    >
+                                                        {user.ativo_usuario ? '🔒' : '🔓'}
+                                                    </button>
+                                                )}
+                                                {!podeEditar && !podeAlterarStatus && (
+                                                    <span className="text-gray-400 text-xs">-</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })
                             )}
                         </tbody>
                     </table>
@@ -406,10 +542,15 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
                                         onChange={(e) => setFormData({...formData, tipo_usuario: e.target.value as UserRole})}
                                         className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-500"
                                     >
-                                        {userRoles.map(role => (
+                                        {userRolesCriaveis.map(role => (
                                             <option key={role} value={role}>{role}</option>
                                         ))}
                                     </select>
+                                    {currentUser.tipo_usuario === 'Gestão de R&S' && (
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            Você não pode criar perfis Administrador ou Gestão Comercial.
+                                        </p>
+                                    )}
                                 </div>
 
                                 <div className="flex items-center">
@@ -466,7 +607,9 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                     <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
                         <div className="p-6">
-                            <h3 className="text-xl font-bold text-gray-900 mb-4">Editar Usuário</h3>
+                            <h3 className="text-xl font-bold text-gray-900 mb-4">
+                                {selectedUser.id === currentUser.id ? 'Editar Meu Perfil' : 'Editar Usuário'}
+                            </h3>
                             
                             <div className="space-y-4">
                                 <div>
@@ -500,28 +643,41 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
                                     />
                                 </div>
 
+                                {/* Tipo de Usuário - Apenas se pode alterar */}
                                 <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Usuário *</label>
                                     <select
                                         value={formData.tipo_usuario}
                                         onChange={(e) => setFormData({...formData, tipo_usuario: e.target.value as UserRole})}
-                                        className="w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-500"
+                                        className={`w-full border border-gray-300 rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 ${!podeEditarTipo ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                                        disabled={!podeEditarTipo}
                                     >
-                                        {userRoles.map(role => (
-                                            <option key={role} value={role}>{role}</option>
-                                        ))}
+                                        {podeEditarTipo ? (
+                                            userRolesCriaveis.map(role => (
+                                                <option key={role} value={role}>{role}</option>
+                                            ))
+                                        ) : (
+                                            <option value={formData.tipo_usuario}>{formData.tipo_usuario}</option>
+                                        )}
                                     </select>
+                                    {!podeEditarTipo && (
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            Você não pode alterar o tipo de usuário.
+                                        </p>
+                                    )}
                                 </div>
 
+                                {/* Status Ativo - Apenas se pode alterar */}
                                 <div className="flex items-center">
                                     <input
                                         type="checkbox"
                                         id="edit-ativo"
                                         checked={formData.ativo_usuario}
                                         onChange={(e) => setFormData({...formData, ativo_usuario: e.target.checked})}
-                                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                        className={`h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded ${!podeEditarTipo ? 'cursor-not-allowed' : ''}`}
+                                        disabled={!podeEditarTipo}
                                     />
-                                    <label htmlFor="edit-ativo" className="ml-2 block text-sm text-gray-700">
+                                    <label htmlFor="edit-ativo" className={`ml-2 block text-sm ${!podeEditarTipo ? 'text-gray-400' : 'text-gray-700'}`}>
                                         Usuário Ativo
                                     </label>
                                 </div>
