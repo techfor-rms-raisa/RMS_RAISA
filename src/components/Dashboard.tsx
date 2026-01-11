@@ -15,6 +15,7 @@ interface DashboardProps {
   loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
   onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
   getRHActionsByConsultant?: (consultantId: number) => Promise<RHAction[]>;  // ✅ v3.2
+  rhActions?: RHAction[];  // 🆕 v57.0: Lista de ações para verificar existência
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ 
@@ -26,7 +27,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   users,
   loadConsultantReports,
   onNavigateToAtividades,
-  getRHActionsByConsultant  // ✅ v3.2
+  getRHActionsByConsultant,  // ✅ v3.2
+  rhActions = []  // 🆕 v57.0: Lista de ações para verificar existência
 }) => {
   
   const [selectedClient, setSelectedClient] = useState<string>('all');
@@ -519,8 +521,8 @@ const Dashboard: React.FC<DashboardProps> = ({
                                     </svg>
                                     Atividade
                                   </button>
-                                  {/* ✅ v3.2: Botão Resoluções */}
-                                  {getRHActionsByConsultant && (
+                                  {/* ✅ v3.2: Botão Resoluções - 🆕 v57.0: Só exibe se tiver ações */}
+                                  {getRHActionsByConsultant && rhActions.some(a => a.consultantId === consultant.id) && (
                                     <button
                                       onClick={() => handleOpenResolucoes(consultant)}
                                       disabled={loadingResolucoes}

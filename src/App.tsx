@@ -349,6 +349,7 @@ const App: React.FC = () => {
           loadConsultantReports={loadConsultantReports} 
           onNavigateToAtividades={handleNavigateToAtividades}
           getRHActionsByConsultant={getRHActionsByConsultant}
+          rhActions={rhActions}
         />;
     }
   };
