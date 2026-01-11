@@ -105,7 +105,7 @@ export const usePessoas = () => {
       } else if (modo === 'disponiveis') {
         query = query.or(`id_analista_rs.is.null,data_final_exclusividade.lt.${agora}`);
       } else if (modo === 'todos') {
-        const papeisPermitidos = ['Admin', 'Supervisor de R&S'];
+        const papeisPermitidos = ['Admin', 'Gestão de R&S'];
         if (!papelUsuario || !papeisPermitidos.includes(papelUsuario)) {
           if (analistaLogadoId) {
             query = query.or(`id_analista_rs.eq.${analistaLogadoId},id_analista_rs.is.null,data_final_exclusividade.lt.${agora}`);

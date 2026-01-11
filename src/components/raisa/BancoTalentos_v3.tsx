@@ -400,7 +400,7 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                         Disponíveis
                     </button>
                     {/* Mostrar "Todos" apenas para Supervisor/Admin */}
-                    {(user?.tipo_usuario === 'Administrador' || user?.tipo_usuario === 'Supervisor de R&S') && (
+                    {(user?.tipo_usuario === 'Administrador' || user?.tipo_usuario === 'Gestão de R&S') && (
                         <button
                             onClick={() => setFiltroExclusividade('todos')}
                             className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${

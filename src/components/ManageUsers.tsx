@@ -45,6 +45,7 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
 
     const userRoles: UserRole[] = [
         'Administrador',
+        'Gestão de R&S',
         'Gestão Comercial',
         'Gestão de Pessoas',
         'Analista de R&S',
@@ -157,6 +158,7 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
     const getRoleColor = (role: UserRole) => {
         const colors: Record<UserRole, string> = {
             'Administrador': 'bg-red-100 text-red-800',
+            'Gestão de R&S': 'bg-orange-100 text-orange-800',
             'Gestão Comercial': 'bg-blue-100 text-blue-800',
             'Gestão de Pessoas': 'bg-green-100 text-green-800',
             'Analista de R&S': 'bg-purple-100 text-purple-800',

@@ -182,7 +182,7 @@ export interface NotificacaoExclusividade {
 }
 
 // 🆕 v56.0: Papéis do Sistema
-export type PapelUsuario = 'Admin' | 'Supervisor de R&S' | 'Analista de R&S' | 'Gestão de Pessoas' | 'Consulta';
+export type PapelUsuario = 'Admin' | 'Gestão de R&S' | 'Analista de R&S' | 'Gestão de Pessoas' | 'Consulta';
 
 // ============================================
 // CANDIDATURAS (RAISA)

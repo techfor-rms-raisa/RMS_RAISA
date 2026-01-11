@@ -4,6 +4,7 @@
 
 export type UserRole = 
   | 'Administrador' 
+  | 'Gestão de R&S'
   | 'Gestão Comercial' 
   | 'Gestão de Pessoas' 
   | 'Analista de R&S' 
