@@ -11,6 +11,7 @@
 
 import React, { useState, useRef } from 'react';
 import { supabase } from '../../config/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { 
   Upload, Sparkles, Check, X, AlertCircle, AlertTriangle,
   User, Briefcase, GraduationCap,
@@ -242,6 +243,9 @@ REGRAS:
 // ============================================
 
 const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) => {
+  // 🆕 v56.0: Obter usuário logado para exclusividade
+  const { user } = useAuth();
+  
   const [etapaAtual, setEtapaAtual] = useState<1 | 2 | 3 | 4>(1);
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [textoCV, setTextoCV] = useState<string>('');
@@ -523,6 +527,13 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       const emailFinal = dadosExtraidos.email || 
         `${dadosExtraidos.nome.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.')}@pendente.cadastro`;
 
+      // 🆕 v56.0: Calcular datas de exclusividade
+      const periodoExclusividade = 60; // Período padrão
+      const dataInicio = new Date();
+      const dataFinal = user?.id 
+        ? new Date(dataInicio.getTime() + periodoExclusividade * 24 * 60 * 60 * 1000)
+        : null;
+
       const { data: pessoa, error: erroPessoa } = await supabase
         .from('pessoas')
         .insert({
@@ -539,9 +550,17 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           pretensao_salarial: dadosExtraidos.pretensao_salarial,
           resumo_profissional: dadosExtraidos.resumo_profissional,
           cv_texto_original: dadosExtraidos.cv_texto_original,
-          cv_arquivo_url: cvArquivoUrl, // ✅ NOVO: URL do PDF no Storage
+          cv_arquivo_url: cvArquivoUrl,
           cv_processado: true,
-          cv_processado_em: new Date().toISOString()
+          cv_processado_em: new Date().toISOString(),
+          origem: 'importacao_cv',
+          // 🆕 v56.0: Campos de Exclusividade
+          id_analista_rs: user?.id || null,
+          periodo_exclusividade: periodoExclusividade,
+          data_inicio_exclusividade: user?.id ? dataInicio.toISOString() : null,
+          data_final_exclusividade: dataFinal?.toISOString() || null,
+          qtd_renovacoes: 0,
+          max_renovacoes: 2
         })
         .select()
         .single();
@@ -549,6 +568,20 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       if (erroPessoa) throw erroPessoa;
 
       pessoaId = pessoa.id; // Atribuição aqui
+
+      // 🆕 v56.0: Registrar no log de exclusividade
+      if (user?.id) {
+        await supabase.from('log_exclusividade').insert({
+          pessoa_id: pessoaId,
+          acao: 'atribuicao',
+          analista_novo_id: user.id,
+          realizado_por: user.id,
+          motivo: 'Cadastro inicial via importação de CV',
+          data_exclusividade_nova: dataFinal?.toISOString(),
+          qtd_renovacoes_nova: 0
+        });
+        console.log('✅ Exclusividade registrada para analista:', user.nome_usuario);
+      }
 
       // Salvar Skills (com tratamento robusto)
       if (dadosExtraidos.skills.length > 0) {
