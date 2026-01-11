@@ -13,11 +13,10 @@
  * Data: 27/12/2024
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Pessoa } from '../../types/types_models';
 import { supabase } from '../../config/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { podeInserirCandidatos, isReadOnly } from '../../utils/permissions';
 import CVImportIA from './CVImportIA';
 import { 
   Plus, Upload, Search, Filter, User, Briefcase, 
@@ -103,17 +102,13 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     // 🆕 v56.0: Obter usuário logado
     const { user } = useAuth();
     
-    // 🆕 v57.0: Verificar permissões
-    const podeInserir = user ? podeInserirCandidatos(user.tipo_usuario) : false;
-    const apenasLeitura = user ? isReadOnly(user.tipo_usuario, 'raisa') : true;
-    
     // Estados de filtro
     const [searchTerm, setSearchTerm] = useState('');
     const [filtroSenioridade, setFiltroSenioridade] = useState<string>('');
     const [filtroDisponibilidade, setFiltroDisponibilidade] = useState<string>('');
     const [filtroCVProcessado, setFiltroCVProcessado] = useState<string>('');
     const [filtroSkill, setFiltroSkill] = useState<string>('');
-    // 🆕 v56.0: Filtro de exclusividade
+    // 🆕 v57.2: Filtro de exclusividade - Admin/Gestão de R&S veem todos por padrão
     const [filtroExclusividade, setFiltroExclusividade] = useState<'meus' | 'disponiveis' | 'todos'>('meus');
     
     // Estados de modal
@@ -144,6 +139,13 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
         cidade: '',
         estado: ''
     });
+
+    // 🆕 v57.2: Ajustar filtro inicial quando usuário carregar
+    useEffect(() => {
+        if (user?.tipo_usuario === 'Administrador' || user?.tipo_usuario === 'Gestão de R&S') {
+            setFiltroExclusividade('todos');
+        }
+    }, [user?.tipo_usuario]);
 
     // ============================================
     // FILTROS
@@ -335,30 +337,23 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                         </p>
                     </div>
                     
-                    {/* Botões de ação - 🆕 v57.0: Condicionado por permissão */}
-                    {podeInserir ? (
-                        <div className="flex gap-3">
-                            <button 
-                                onClick={() => setIsImportIAOpen(true)}
-                                className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 shadow-md font-medium"
-                            >
-                                <Sparkles size={18} />
-                                Importar CV com IA
-                            </button>
-                            <button 
-                                onClick={() => openModal()} 
-                                className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md font-medium"
-                            >
-                                <Plus size={18} />
-                                Cadastro Manual
-                            </button>
-                        </div>
-                    ) : apenasLeitura ? (
-                        <div className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm">
-                            <Eye size={16} />
-                            Modo Visualização
-                        </div>
-                    ) : null}
+                    {/* Botões de ação */}
+                    <div className="flex gap-3">
+                        <button 
+                            onClick={() => setIsImportIAOpen(true)}
+                            className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-lg hover:from-purple-700 hover:to-blue-700 shadow-md font-medium"
+                        >
+                            <Sparkles size={18} />
+                            Importar CV com IA
+                        </button>
+                        <button 
+                            onClick={() => openModal()} 
+                            className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-md font-medium"
+                        >
+                            <Plus size={18} />
+                            Cadastro Manual
+                        </button>
+                    </div>
                 </div>
 
                 {/* Cards de estatísticas */}
@@ -662,25 +657,20 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                         >
                                             <Eye size={18} />
                                         </button>
-                                        {/* 🆕 v57.0: Botões de edição apenas para quem pode */}
-                                        {!apenasLeitura && (
-                                            <>
-                                                <button
-                                                    onClick={() => openModal(pessoa)}
-                                                    className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
-                                                    title="Editar"
-                                                >
-                                                    <Edit3 size={18} />
-                                                </button>
-                                                <button
-                                                    onClick={() => handleDelete(pessoa)}
-                                                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
-                                                    title="Excluir"
-                                                >
-                                                    <Trash2 size={18} />
-                                                </button>
-                                            </>
-                                        )}
+                                        <button
+                                            onClick={() => openModal(pessoa)}
+                                            className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg"
+                                            title="Editar"
+                                        >
+                                            <Edit3 size={18} />
+                                        </button>
+                                        <button
+                                            onClick={() => handleDelete(pessoa)}
+                                            className="p-2 text-red-600 hover:bg-red-50 rounded-lg"
+                                            title="Excluir"
+                                        >
+                                            <Trash2 size={18} />
+                                        </button>
                                     </div>
                                 </div>
                             </div>
