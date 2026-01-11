@@ -179,7 +179,7 @@ export const usePessoas = () => {
       });
 
       setPessoas(mappedPessoas);
-      console.log(\`✅ \${mappedPessoas.length} pessoas carregadas (modo: \${modo})\`);
+      console.log('✅ ' + mappedPessoas.length + ' pessoas carregadas (modo: ' + modo + ')');
       return mappedPessoas;
     } catch (err: any) {
       console.error('❌ Erro ao carregar pessoas:', err);
