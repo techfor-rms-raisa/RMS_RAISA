@@ -16,12 +16,14 @@
 import React, { useState, useMemo } from 'react';
 import { Pessoa } from '../../types/types_models';
 import { supabase } from '../../config/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import CVImportIA from './CVImportIA';
 import { 
   Plus, Upload, Search, Filter, User, Briefcase, 
   GraduationCap, Code, Eye, Edit3, Trash2, 
   CheckCircle, XCircle, ChevronDown, ChevronUp,
-  Sparkles, FileText, Globe, Phone, Mail, Linkedin
+  Sparkles, FileText, Globe, Phone, Mail, Linkedin,
+  Lock, Clock, Users
 } from 'lucide-react';
 
 // ============================================
@@ -97,12 +99,17 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     deletePessoa,
     onRefresh 
 }) => {
+    // 🆕 v56.0: Obter usuário logado
+    const { user } = useAuth();
+    
     // Estados de filtro
     const [searchTerm, setSearchTerm] = useState('');
     const [filtroSenioridade, setFiltroSenioridade] = useState<string>('');
     const [filtroDisponibilidade, setFiltroDisponibilidade] = useState<string>('');
     const [filtroCVProcessado, setFiltroCVProcessado] = useState<string>('');
     const [filtroSkill, setFiltroSkill] = useState<string>('');
+    // 🆕 v56.0: Filtro de exclusividade
+    const [filtroExclusividade, setFiltroExclusividade] = useState<'meus' | 'disponiveis' | 'todos'>('meus');
     
     // Estados de modal
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -140,6 +147,19 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     const pessoasFiltradas = useMemo(() => {
         return (pessoas || []).filter(p => {
             const pessoa = p as PessoaExpanded;
+            const agora = new Date();
+            
+            // 🆕 v56.0: Filtro de exclusividade
+            let matchExclusividade = true;
+            if (filtroExclusividade === 'meus' && user?.id) {
+                // Apenas candidatos do analista logado
+                matchExclusividade = pessoa.id_analista_rs === user.id;
+            } else if (filtroExclusividade === 'disponiveis') {
+                // Candidatos sem exclusividade OU com exclusividade expirada
+                const dataFinal = pessoa.data_final_exclusividade ? new Date(pessoa.data_final_exclusividade) : null;
+                matchExclusividade = !pessoa.id_analista_rs || (dataFinal !== null && dataFinal < agora);
+            }
+            // 'todos' - não filtra (apenas para Supervisor/Admin)
             
             // Filtro de busca
             const matchSearch = !searchTerm || 
@@ -160,9 +180,9 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 (filtroCVProcessado === 'sim' && pessoa.cv_processado) ||
                 (filtroCVProcessado === 'nao' && !pessoa.cv_processado);
             
-            return matchSearch && matchSenioridade && matchDisponibilidade && matchCV;
+            return matchExclusividade && matchSearch && matchSenioridade && matchDisponibilidade && matchCV;
         });
-    }, [pessoas, searchTerm, filtroSenioridade, filtroDisponibilidade, filtroCVProcessado]);
+    }, [pessoas, searchTerm, filtroSenioridade, filtroDisponibilidade, filtroCVProcessado, filtroExclusividade, user?.id]);
 
     // Estatísticas
     const stats = useMemo(() => {
@@ -350,6 +370,52 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 </div>
             </div>
 
+            {/* 🆕 v56.0: Filtro de Exclusividade (Tabs) */}
+            <div className="bg-white rounded-lg shadow-sm p-4 mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                    <Lock size={16} className="text-blue-600" />
+                    <span className="font-medium text-gray-700">Visualização:</span>
+                </div>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => setFiltroExclusividade('meus')}
+                        className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${
+                            filtroExclusividade === 'meus'
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                    >
+                        <User size={16} />
+                        Meus Candidatos
+                    </button>
+                    <button
+                        onClick={() => setFiltroExclusividade('disponiveis')}
+                        className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${
+                            filtroExclusividade === 'disponiveis'
+                                ? 'bg-green-600 text-white'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                    >
+                        <Users size={16} />
+                        Disponíveis
+                    </button>
+                    {/* Mostrar "Todos" apenas para Supervisor/Admin */}
+                    {(user?.tipo_usuario === 'Administrador' || user?.tipo_usuario === 'Supervisor de R&S') && (
+                        <button
+                            onClick={() => setFiltroExclusividade('todos')}
+                            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-all ${
+                                filtroExclusividade === 'todos'
+                                    ? 'bg-purple-600 text-white'
+                                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                        >
+                            <Globe size={16} />
+                            Todos
+                        </button>
+                    )}
+                </div>
+            </div>
+
             {/* Filtros */}
             <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -471,6 +537,44 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                             }`}>
                                                 {pessoa.disponibilidade.replace('_', ' ')}
                                             </span>
+                                        )}
+                                        {/* 🆕 v56.0: Badge de Exclusividade */}
+                                        {pessoa.id_analista_rs && (
+                                            (() => {
+                                                const dataFinal = pessoa.data_final_exclusividade ? new Date(pessoa.data_final_exclusividade) : null;
+                                                const agora = new Date();
+                                                const diasRestantes = dataFinal ? Math.ceil((dataFinal.getTime() - agora.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                                                
+                                                if (!dataFinal || diasRestantes <= 0) {
+                                                    return (
+                                                        <span className="px-2 py-0.5 bg-gray-100 text-gray-500 rounded text-xs flex items-center gap-1">
+                                                            <Clock size={10} />
+                                                            Expirado
+                                                        </span>
+                                                    );
+                                                } else if (diasRestantes <= 5) {
+                                                    return (
+                                                        <span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs flex items-center gap-1 animate-pulse">
+                                                            <Lock size={10} />
+                                                            {diasRestantes}d ⚠️
+                                                        </span>
+                                                    );
+                                                } else if (diasRestantes <= 15) {
+                                                    return (
+                                                        <span className="px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded text-xs flex items-center gap-1">
+                                                            <Lock size={10} />
+                                                            {diasRestantes}d
+                                                        </span>
+                                                    );
+                                                } else {
+                                                    return (
+                                                        <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs flex items-center gap-1">
+                                                            <Lock size={10} />
+                                                            {pessoa.id_analista_rs === user?.id ? 'Meu' : 'Exclusivo'}
+                                                        </span>
+                                                    );
+                                                }
+                                            })()
                                         )}
                                         {pessoa.modalidade_preferida && (
                                             <span className="px-2 py-0.5 bg-purple-50 text-purple-700 rounded text-xs capitalize">
