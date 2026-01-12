@@ -602,7 +602,7 @@ const Vagas: React.FC<VagasProps> = ({
                         const stackArray = ensureStackArray(vaga.stack_tecnologica);
                         
                         return (
-                            <div key={vaga.id} className="bg-white rounded-xl shadow-md p-6 border-l-4 border-orange-500 hover:shadow-lg transition-shadow">
+                            <div key={vaga.id} className="bg-white rounded-xl shadow-md p-6 hover:shadow-lg transition-shadow border border-gray-100">
                                 <div className="flex justify-between items-start mb-2">
                                     <h3 className="font-bold text-lg text-gray-800">{vaga.titulo}</h3>
                                     <div className="flex gap-1">
@@ -667,13 +667,6 @@ const Vagas: React.FC<VagasProps> = ({
                                             title="Analisar e melhorar vaga com IA"
                                         >
                                             🤖 IA
-                                        </button>
-                                        <button 
-                                            onClick={() => handleBuscarCVs(vaga)} 
-                                            className="text-green-600 hover:text-green-800 hover:underline text-sm font-semibold"
-                                            title="Buscar candidatos aderentes"
-                                        >
-                                            🔍 CVs
                                         </button>
                                         <button 
                                             onClick={() => { setPriorizacaoVagaId(vaga.id); setPriorizacaoVagaTitulo(vaga.titulo); }} 
