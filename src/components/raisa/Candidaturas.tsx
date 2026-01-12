@@ -23,11 +23,12 @@ import React, { useState, useMemo } from 'react';
 import { 
   Plus, Filter, Search, RefreshCw, 
   User, Mail, Calendar, ChevronDown,
-  FileText, Briefcase, Eye, Building2
+  FileText, Briefcase, Eye, Building2, Download
 } from 'lucide-react';
 import { Candidatura, Vaga, Pessoa } from '@/types';
 import NovaCandidaturaModal from './NovaCandidaturaModal';
 import DetalhesCandidaturaModal from './DetalhesCandidaturaModal';
+import ExportarCandidaturasModal from './ExportarCandidaturasModal';
 
 // ============================================
 // TIPOS
@@ -40,11 +41,19 @@ interface ClienteInfo {
     nome?: string; // Fallback
 }
 
+// Tipo para usuários (analistas)
+interface UserInfo {
+    id: number | string;
+    nome_usuario?: string;
+    nome?: string;
+}
+
 interface CandidaturasProps {
     candidaturas: Candidatura[];
     vagas: Vaga[];
     pessoas: Pessoa[];
-    clientes?: ClienteInfo[]; // 🆕 Lista de clientes (opcional)
+    clientes?: ClienteInfo[]; // Lista de clientes
+    usuarios?: UserInfo[];    // 🆕 Lista de usuários (para exportação)
     updateStatus: (id: string, status: any) => void;
     onReload?: () => void;
     currentUserId?: number;
@@ -59,7 +68,8 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     candidaturas = [], 
     vagas = [], 
     pessoas = [],
-    clientes = [], // 🆕 
+    clientes = [],
+    usuarios = [],  // 🆕 Lista de usuários
     updateStatus,
     onReload,
     currentUserId = 1,
@@ -68,9 +78,10 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     // Estados
     const [filterVaga, setFilterVaga] = useState<string>('all');
     const [filterStatus, setFilterStatus] = useState<string>('all');
-    const [filterCliente, setFilterCliente] = useState<string>('all'); // 🆕 Filtro por cliente
+    const [filterCliente, setFilterCliente] = useState<string>('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isExportModalOpen, setIsExportModalOpen] = useState(false); // 🆕 Modal de exportação
     
     // Estado para modal de detalhes
     const [candidaturaSelecionada, setCandidaturaSelecionada] = useState<Candidatura | null>(null);
@@ -81,6 +92,7 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     const safeVagas = Array.isArray(vagas) ? vagas : [];
     const safePessoas = Array.isArray(pessoas) ? pessoas : [];
     const safeClientes = Array.isArray(clientes) ? clientes : [];
+    const safeUsuarios = Array.isArray(usuarios) ? usuarios : []; // 🆕
 
     // ============================================
     // 🆕 EXTRAIR CLIENTES ÚNICOS DAS VAGAS
@@ -431,13 +443,23 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                     </p>
                 </div>
                 
-                <button
-                    onClick={() => setIsModalOpen(true)}
-                    className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2"
-                >
-                    <Plus className="w-5 h-5" />
-                    Nova Candidatura
-                </button>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={() => setIsExportModalOpen(true)}
+                        className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-5 py-3 rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2"
+                        title="Exportar candidaturas para Excel"
+                    >
+                        <Download className="w-5 h-5" />
+                        Exportar
+                    </button>
+                    <button
+                        onClick={() => setIsModalOpen(true)}
+                        className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2"
+                    >
+                        <Plus className="w-5 h-5" />
+                        Nova Candidatura
+                    </button>
+                </div>
             </div>
 
             {/* ============================================ */}
@@ -771,6 +793,18 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                     currentUserName={currentUserName}
                 />
             )}
+
+            {/* ============================================ */}
+            {/* MODAL EXPORTAR CANDIDATURAS */}
+            {/* ============================================ */}
+            <ExportarCandidaturasModal
+                isOpen={isExportModalOpen}
+                onClose={() => setIsExportModalOpen(false)}
+                candidaturas={safeCandidaturas}
+                vagas={safeVagas}
+                clientes={safeClientes}
+                usuarios={safeUsuarios}
+            />
         </div>
     );
 };
