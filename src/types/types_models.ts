@@ -195,8 +195,10 @@ export interface Candidatura {
   candidato_nome?: string;
   candidato_email?: string;
   status: 'triagem' | 'entrevista' | 'teste_tecnico' | 'aprovado' | 'reprovado' 
+    | 'indicacao_aprovada'  // ← NOVO: aprovação direta de indicação
     | 'enviado_cliente' | 'aguardando_cliente' | 'aprovado_cliente' 
-    | 'reprovado_cliente' | 'aprovado_interno' | 'reprovado_interno';
+    | 'reprovado_cliente' | 'aprovado_interno' | 'reprovado_interno'
+    | 'contratado';  // ← ADICIONADO
   curriculo_texto?: string;
   observacoes?: string;
   createdAt?: string;
@@ -209,6 +211,15 @@ export interface Candidatura {
   data_envio_cliente?: string;
   enviado_ao_cliente?: boolean;
   criado_em?: string;
+  
+  // ============================================
+  // CAMPOS DE INDICAÇÃO (NOVO)
+  // ============================================
+  origem?: 'aquisicao' | 'indicacao_cliente';
+  indicado_por_nome?: string;
+  indicado_por_cargo?: string;
+  indicacao_data?: string;
+  indicacao_observacoes?: string;
 }
 
 // ============================================

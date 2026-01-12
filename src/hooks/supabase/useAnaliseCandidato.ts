@@ -257,10 +257,22 @@ export const useAnaliseCandidato = () => {
     analista_id: number,
     dados_extraidos: DadosExtraidosCV,
     textoCV: string,
-    observacoes?: string
+    observacoes?: string,
+    // Campos de indicação (NOVO)
+    dadosIndicacao?: {
+      origem?: 'aquisicao' | 'indicacao_cliente';
+      indicado_por_nome?: string;
+      indicado_por_cargo?: string;
+      indicacao_observacoes?: string;
+    }
   ): Promise<Candidatura | null> => {
     try {
       console.log('📝 Criando candidatura...');
+
+      // Determinar status inicial baseado na origem
+      const statusInicial = dadosIndicacao?.origem === 'indicacao_cliente' 
+        ? 'indicacao_aprovada'  // Indicações vão direto para aprovação
+        : 'triagem';           // Aquisições passam por triagem normal
 
       const candidaturaData = {
         vaga_id: parseInt(vaga_id),
@@ -269,10 +281,16 @@ export const useAnaliseCandidato = () => {
         candidato_email: dados_extraidos.email,
         candidato_cpf: dados_extraidos.cpf,
         analista_id,
-        status: 'triagem',
+        status: statusInicial,
         curriculo_texto: textoCV,
         observacoes: observacoes || 'Candidatura criada via importação de CV',
-        criado_em: new Date().toISOString()
+        criado_em: new Date().toISOString(),
+        // Campos de indicação
+        origem: dadosIndicacao?.origem || 'aquisicao',
+        indicado_por_nome: dadosIndicacao?.indicado_por_nome || null,
+        indicado_por_cargo: dadosIndicacao?.indicado_por_cargo || null,
+        indicacao_data: dadosIndicacao?.origem === 'indicacao_cliente' ? new Date().toISOString().split('T')[0] : null,
+        indicacao_observacoes: dadosIndicacao?.indicacao_observacoes || null
       };
 
       const { data, error } = await supabase
@@ -283,7 +301,7 @@ export const useAnaliseCandidato = () => {
 
       if (error) throw error;
 
-      console.log(`✅ Candidatura criada: ID ${data.id}`);
+      console.log(`✅ Candidatura criada: ID ${data.id} (${dadosIndicacao?.origem === 'indicacao_cliente' ? 'INDICAÇÃO' : 'AQUISIÇÃO'})`);
 
       return {
         id: String(data.id),
@@ -296,7 +314,12 @@ export const useAnaliseCandidato = () => {
         status: data.status,
         curriculo_texto: data.curriculo_texto,
         observacoes: data.observacoes,
-        criado_em: data.criado_em
+        criado_em: data.criado_em,
+        origem: data.origem,
+        indicado_por_nome: data.indicado_por_nome,
+        indicado_por_cargo: data.indicado_por_cargo,
+        indicacao_data: data.indicacao_data,
+        indicacao_observacoes: data.indicacao_observacoes
       };
 
     } catch (err: any) {

@@ -41,7 +41,13 @@ export const useCandidaturas = () => {
         data_envio_cliente: candidatura.data_envio_cliente,
         enviado_ao_cliente: candidatura.enviado_ao_cliente,
         criado_em: candidatura.criado_em,
-        atualizado_em: candidatura.atualizado_em
+        atualizado_em: candidatura.atualizado_em,
+        // Campos de indicação (NOVO)
+        origem: candidatura.origem || 'aquisicao',
+        indicado_por_nome: candidatura.indicado_por_nome,
+        indicado_por_cargo: candidatura.indicado_por_cargo,
+        indicacao_data: candidatura.indicacao_data,
+        indicacao_observacoes: candidatura.indicacao_observacoes
       }));
 
       setCandidaturas(mappedCandidaturas);
@@ -79,7 +85,13 @@ export const useCandidaturas = () => {
           observacoes: newCandidatura.observacoes,
           feedback_cliente: newCandidatura.feedback_cliente,
           data_envio_cliente: newCandidatura.data_envio_cliente,
-          enviado_ao_cliente: newCandidatura.enviado_ao_cliente || false
+          enviado_ao_cliente: newCandidatura.enviado_ao_cliente || false,
+          // Campos de indicação (NOVO)
+          origem: newCandidatura.origem || 'aquisicao',
+          indicado_por_nome: newCandidatura.indicado_por_nome,
+          indicado_por_cargo: newCandidatura.indicado_por_cargo,
+          indicacao_data: newCandidatura.indicacao_data,
+          indicacao_observacoes: newCandidatura.indicacao_observacoes
         }])
         .select()
         .single();
@@ -128,7 +140,13 @@ export const useCandidaturas = () => {
         data_envio_cliente: data.data_envio_cliente,
         enviado_ao_cliente: data.enviado_ao_cliente,
         criado_em: data.criado_em,
-        atualizado_em: data.atualizado_em
+        atualizado_em: data.atualizado_em,
+        // Campos de indicação (NOVO)
+        origem: data.origem || 'aquisicao',
+        indicado_por_nome: data.indicado_por_nome,
+        indicado_por_cargo: data.indicado_por_cargo,
+        indicacao_data: data.indicacao_data,
+        indicacao_observacoes: data.indicacao_observacoes
       };
 
       setCandidaturas(prev => [createdCandidatura, ...prev]);
@@ -177,7 +195,13 @@ export const useCandidaturas = () => {
         data_envio_cliente: data.data_envio_cliente,
         enviado_ao_cliente: data.enviado_ao_cliente,
         criado_em: data.criado_em,
-        atualizado_em: data.atualizado_em
+        atualizado_em: data.atualizado_em,
+        // Campos de indicação
+        origem: data.origem || 'aquisicao',
+        indicado_por_nome: data.indicado_por_nome,
+        indicado_por_cargo: data.indicado_por_cargo,
+        indicacao_data: data.indicacao_data,
+        indicacao_observacoes: data.indicacao_observacoes
       };
 
       setCandidaturas(prev => prev.map(c => c.id === id ? updatedCandidatura : c));
@@ -214,6 +238,12 @@ export const useCandidaturas = () => {
           feedback_cliente: updates.feedback_cliente,
           data_envio_cliente: updates.data_envio_cliente,
           enviado_ao_cliente: updates.enviado_ao_cliente,
+          // Campos de indicação (NOVO)
+          origem: updates.origem,
+          indicado_por_nome: updates.indicado_por_nome,
+          indicado_por_cargo: updates.indicado_por_cargo,
+          indicacao_data: updates.indicacao_data,
+          indicacao_observacoes: updates.indicacao_observacoes,
           atualizado_em: new Date().toISOString()
         })
         .eq('id', parseInt(id))
@@ -238,7 +268,13 @@ export const useCandidaturas = () => {
         data_envio_cliente: data.data_envio_cliente,
         enviado_ao_cliente: data.enviado_ao_cliente,
         criado_em: data.criado_em,
-        atualizado_em: data.atualizado_em
+        atualizado_em: data.atualizado_em,
+        // Campos de indicação
+        origem: data.origem || 'aquisicao',
+        indicado_por_nome: data.indicado_por_nome,
+        indicado_por_cargo: data.indicado_por_cargo,
+        indicacao_data: data.indicacao_data,
+        indicacao_observacoes: data.indicacao_observacoes
       };
 
       setCandidaturas(prev => prev.map(c => c.id === id ? updatedCandidatura : c));

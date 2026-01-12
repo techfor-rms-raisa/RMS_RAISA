@@ -61,6 +61,12 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   const [observacoes, setObservacoes] = useState('');
   const [etapaModal, setEtapaModal] = useState<'input' | 'analise' | 'resultado'>('input');
   
+  // Estados de Origem/Indicação (NOVO)
+  const [origem, setOrigem] = useState<'aquisicao' | 'indicacao_cliente'>('aquisicao');
+  const [indicadoPorNome, setIndicadoPorNome] = useState('');
+  const [indicadoPorCargo, setIndicadoPorCargo] = useState('');
+  const [indicacaoObservacoes, setIndicacaoObservacoes] = useState('');
+  
   // Estados de Upload de Arquivo
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -120,6 +126,11 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       setUploadProgress(0);
       setBuscaBancoRealizada(false); // 🆕 Reset busca banco
       setFiltroScoreMin(0); // 🆕 Reset filtro
+      // Reset campos de indicação
+      setOrigem('aquisicao');
+      setIndicadoPorNome('');
+      setIndicadoPorCargo('');
+      setIndicacaoObservacoes('');
       resetar();
     }
   }, [isOpen, resetar]);
@@ -268,17 +279,29 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       return;
     }
 
+    // Preparar dados de indicação
+    const dadosIndicacao = origem === 'indicacao_cliente' ? {
+      origem: 'indicacao_cliente' as const,
+      indicado_por_nome: indicadoPorNome || undefined,
+      indicado_por_cargo: indicadoPorCargo || undefined,
+      indicacao_observacoes: indicacaoObservacoes || undefined
+    } : {
+      origem: 'aquisicao' as const
+    };
+
     const candidatura = await criarCandidatura(
       vagaSelecionada.id,
       estado.pessoa_id,
       currentUserId,
       dadosExtraidos,
       textoCV,
-      observacoes
+      observacoes,
+      dadosIndicacao
     );
 
     if (candidatura) {
-      alert(`✅ Candidatura criada com sucesso!\nCandidato: ${dadosExtraidos.nome}\nVaga: ${vagaSelecionada.titulo}`);
+      const tipoMsg = origem === 'indicacao_cliente' ? '📋 INDICAÇÃO' : '🔍 AQUISIÇÃO';
+      alert(`✅ Candidatura criada com sucesso!\n${tipoMsg}\nCandidato: ${dadosExtraidos.nome}\nVaga: ${vagaSelecionada.titulo}`);
       
       if (onCandidaturaCriada) {
         onCandidaturaCriada(parseInt(candidatura.id));
@@ -951,6 +974,91 @@ HABILIDADES
                   candidatoNome={dadosExtraidos.nome}
                 />
               )}
+
+              {/* ORIGEM DO CANDIDATO (NOVO) */}
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+                <label className="block text-sm font-semibold text-gray-700 mb-3">
+                  🎯 Origem do Candidato
+                </label>
+                <div className="flex flex-wrap gap-3">
+                  <label className={`flex items-center px-4 py-2 rounded-lg cursor-pointer transition-all ${
+                    origem === 'aquisicao' 
+                      ? 'bg-blue-100 border-2 border-blue-500 text-blue-700' 
+                      : 'bg-white border-2 border-gray-200 text-gray-600 hover:border-gray-300'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="origem"
+                      value="aquisicao"
+                      checked={origem === 'aquisicao'}
+                      onChange={() => setOrigem('aquisicao')}
+                      className="sr-only"
+                    />
+                    <Search className="w-4 h-4 mr-2" />
+                    <span className="text-sm font-medium">Aquisição Própria</span>
+                  </label>
+                  <label className={`flex items-center px-4 py-2 rounded-lg cursor-pointer transition-all ${
+                    origem === 'indicacao_cliente' 
+                      ? 'bg-amber-100 border-2 border-amber-500 text-amber-700' 
+                      : 'bg-white border-2 border-gray-200 text-gray-600 hover:border-gray-300'
+                  }`}>
+                    <input
+                      type="radio"
+                      name="origem"
+                      value="indicacao_cliente"
+                      checked={origem === 'indicacao_cliente'}
+                      onChange={() => setOrigem('indicacao_cliente')}
+                      className="sr-only"
+                    />
+                    <User className="w-4 h-4 mr-2" />
+                    <span className="text-sm font-medium">Indicação do Cliente</span>
+                  </label>
+                </div>
+
+                {/* Campos de Indicação (exibe apenas se indicação) */}
+                {origem === 'indicacao_cliente' && (
+                  <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <h4 className="text-sm font-semibold text-amber-800 mb-3 flex items-center gap-2">
+                      <User className="w-4 h-4" />
+                      Dados da Indicação
+                    </h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Indicado por (nome)</label>
+                        <input
+                          type="text"
+                          value={indicadoPorNome}
+                          onChange={e => setIndicadoPorNome(e.target.value)}
+                          placeholder="Nome de quem indicou"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">Cargo de quem indicou</label>
+                        <input
+                          type="text"
+                          value={indicadoPorCargo}
+                          onChange={e => setIndicadoPorCargo(e.target.value)}
+                          placeholder="Ex: Gerente de TI"
+                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <label className="block text-xs text-gray-600 mb-1">Observações da indicação</label>
+                      <textarea
+                        value={indicacaoObservacoes}
+                        onChange={e => setIndicacaoObservacoes(e.target.value)}
+                        placeholder="Contexto da indicação, relacionamento com o candidato..."
+                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-16"
+                      />
+                    </div>
+                    <div className="mt-3 p-2 bg-amber-100 rounded text-xs text-amber-700">
+                      ⚠️ Candidatos indicados <strong>não contam</strong> na performance do analista e podem ser aprovados diretamente.
+                    </div>
+                  </div>
+                )}
+              </div>
 
               {/* Observações */}
               <div>

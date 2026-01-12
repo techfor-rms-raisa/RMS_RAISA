@@ -41,6 +41,7 @@ import DashboardPerformanceAnalista from './components/raisa/DashboardPerformanc
 import DashboardPerformanceGeral from './components/raisa/DashboardPerformanceGeral';
 import DashboardPerformanceCliente from './components/raisa/DashboardPerformanceCliente';
 import DashboardAnaliseTempo from './components/raisa/DashboardAnaliseTempo';
+import DashboardIndicacoes from './components/raisa/DashboardIndicacoes'; // 🆕 Dashboard de Indicações
 // ✅ NOVO: Imports dos componentes faltantes (28/12/2024)
 import LinkedInImportPanel from './components/raisa/LinkedInImportPanel';
 import DashboardMLLearning from './components/raisa/DashboardMLLearning';
@@ -321,6 +322,8 @@ const App: React.FC = () => {
           return <DashboardPerformanceCliente />;
       case 'dashboard_tempo':
           return <DashboardAnaliseTempo />;
+      case 'dashboard_indicacoes':  // 🆕 Dashboard de Indicações
+          return <DashboardIndicacoes />;
       
       // ✅ NOVO (28/12/2024): Rotas que faltavam
       case 'linkedin_import':

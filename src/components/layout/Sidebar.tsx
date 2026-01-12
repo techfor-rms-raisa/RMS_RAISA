@@ -275,6 +275,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
             roles: ['Administrador', 'Gestão de R&S'] 
         },
         { 
+            view: 'dashboard_indicacoes', 
+            label: 'Indicações Cliente', 
+            icon: 'fa-solid fa-user-plus', 
+            roles: ['Administrador', 'Gestão de R&S'] 
+        },
+        { 
             view: 'dashboard_geral', 
             label: 'Performance Geral', 
             icon: 'fa-solid fa-chart-pie', 

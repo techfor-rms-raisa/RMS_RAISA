@@ -301,3 +301,194 @@ export async function buscarAnaliseTempo(): Promise<DadosAnaliseTempo[]> {
     return [];
   }
 }
+
+// ============================================
+// INDICAÇÕES - NOVAS INTERFACES E FUNÇÕES
+// ============================================
+
+export interface DadosIndicacoesResumo {
+  periodo: string;
+  periodo_formatado: string;
+  total_indicacoes: number;
+  indicacoes_aprovadas: number;
+  indicacoes_reprovadas: number;
+  indicacoes_em_andamento: number;
+  taxa_conversao_indicacao: number;
+}
+
+export interface DadosIndicacoesPorCliente {
+  cliente_id: number;
+  cliente_nome: string;
+  total_indicacoes: number;
+  indicacoes_contratadas: number;
+  indicacoes_reprovadas: number;
+  taxa_sucesso_indicacao: number;
+}
+
+export interface DadosKPIsIndicacoes {
+  total_indicacoes: number;
+  indicacoes_contratadas: number;
+  indicacoes_reprovadas: number;
+  indicacoes_em_andamento: number;
+  taxa_conversao_indicacoes: number;
+  analistas_com_indicacoes: number;
+  clientes_que_indicaram: number;
+}
+
+export interface DadosPerformancePorOrigem {
+  analista_id: number;
+  analista_nome: string;
+  origem: 'aquisicao' | 'indicacao_cliente';
+  total_candidaturas: number;
+  total_envios: number;
+  total_aprovacoes: number;
+  total_reprovacoes: number;
+  taxa_aprovacao: number;
+}
+
+export interface DadosPerformanceComparativo {
+  analista_id: number;
+  analista_nome: string;
+  total_aquisicao: number;
+  aprovacoes_aquisicao: number;
+  taxa_real: number;
+  total_indicacoes: number;
+  aprovacoes_indicacao: number;
+  total_geral: number;
+  aprovacoes_total: number;
+  taxa_com_indicacoes: number;
+  diferenca_taxa: number;
+}
+
+/**
+ * Busca resumo de indicações por mês
+ */
+export async function buscarIndicacoesResumo(): Promise<DadosIndicacoesResumo[]> {
+  try {
+    const { data, error } = await supabase
+      .from('vw_raisa_indicacoes_resumo')
+      .select('*')
+      .order('periodo', { ascending: false })
+      .limit(12);
+
+    if (error) {
+      console.error('Erro ao buscar indicações resumo:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Erro ao buscar indicações resumo:', error);
+    return [];
+  }
+}
+
+/**
+ * Busca indicações agrupadas por cliente
+ */
+export async function buscarIndicacoesPorCliente(): Promise<DadosIndicacoesPorCliente[]> {
+  try {
+    const { data, error } = await supabase
+      .from('vw_raisa_indicacoes_por_cliente')
+      .select('*')
+      .order('total_indicacoes', { ascending: false });
+
+    if (error) {
+      console.error('Erro ao buscar indicações por cliente:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Erro ao buscar indicações por cliente:', error);
+    return [];
+  }
+}
+
+/**
+ * Busca KPIs gerais de indicações
+ */
+export async function buscarKPIsIndicacoes(): Promise<DadosKPIsIndicacoes | null> {
+  try {
+    const { data, error } = await supabase
+      .from('vw_raisa_kpis_indicacoes')
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('Erro ao buscar KPIs de indicações:', error);
+      return null;
+    }
+
+    return data;
+  } catch (error) {
+    console.error('Erro ao buscar KPIs de indicações:', error);
+    return null;
+  }
+}
+
+/**
+ * Busca performance REAL do analista (apenas aquisições, sem indicações)
+ */
+export async function buscarPerformanceAnalistaReal(): Promise<DadosPerformanceAnalista[]> {
+  try {
+    const { data, error } = await supabase
+      .from('vw_raisa_performance_analista_real')
+      .select('*')
+      .order('taxa_aprovacao', { ascending: false });
+
+    if (error) {
+      console.error('Erro ao buscar performance real de analistas:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Erro ao buscar performance real de analistas:', error);
+    return [];
+  }
+}
+
+/**
+ * Busca performance por origem (aquisição vs indicação)
+ */
+export async function buscarPerformancePorOrigem(): Promise<DadosPerformancePorOrigem[]> {
+  try {
+    const { data, error } = await supabase
+      .from('vw_raisa_performance_analista_por_origem')
+      .select('*')
+      .order('analista_nome', { ascending: true });
+
+    if (error) {
+      console.error('Erro ao buscar performance por origem:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Erro ao buscar performance por origem:', error);
+    return [];
+  }
+}
+
+/**
+ * Busca comparativo de performance (Real vs Com Indicações)
+ */
+export async function buscarPerformanceComparativo(): Promise<DadosPerformanceComparativo[]> {
+  try {
+    const { data, error } = await supabase
+      .from('vw_raisa_performance_comparativo')
+      .select('*')
+      .order('taxa_real', { ascending: false });
+
+    if (error) {
+      console.error('Erro ao buscar performance comparativo:', error);
+      return [];
+    }
+
+    return data || [];
+  } catch (error) {
+    console.error('Erro ao buscar performance comparativo:', error);
+    return [];
+  }
+}
