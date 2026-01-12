@@ -225,6 +225,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 async function transcribeAudioFromUrl(audioUrl: string, mimeType: string): Promise<TranscriptionResult> {
   console.log('🎙️ [transcribeAudioFromUrl] Iniciando transcrição via URL...');
+  console.log(`📎 URL: ${audioUrl}`);
   console.log(`📎 MIME Type: ${mimeType}`);
   
   try {
@@ -239,35 +240,12 @@ async function transcribeAudioFromUrl(audioUrl: string, mimeType: string): Promi
     const audioBuffer = await response.arrayBuffer();
     const audioSizeMB = audioBuffer.byteLength / (1024 * 1024);
     console.log(`📊 Tamanho do arquivo: ${audioSizeMB.toFixed(2)}MB`);
+
+    // 2. Converter para base64 e usar inlineData (mais confiável)
+    const audioBase64 = Buffer.from(audioBuffer).toString('base64');
+    console.log(`📊 Base64 gerado: ${(audioBase64.length / 1024 / 1024).toFixed(2)}MB`);
     
-    // 2. Upload para Gemini File API
-    console.log('☁️ Fazendo upload para Gemini...');
-    
-    // Converter ArrayBuffer para Blob
-    const audioBlob = new Blob([audioBuffer], { type: mimeType });
-    
-    // Usar File API do Gemini
-    const uploadResult = await ai.files.upload({
-      file: audioBlob,
-      config: { mimeType }
-    });
-    
-    console.log(`✅ Upload concluído. URI: ${uploadResult.file?.uri}`);
-    
-    // 3. Aguardar processamento do arquivo
-    let file = uploadResult.file;
-    while (file?.state === 'PROCESSING') {
-      console.log('⏳ Aguardando processamento do arquivo...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      const fileStatus = await ai.files.get({ name: file.name! });
-      file = fileStatus.file;
-    }
-    
-    if (file?.state === 'FAILED') {
-      throw new Error('Falha no processamento do arquivo pelo Gemini');
-    }
-    
-    // 4. Transcrever usando o arquivo
+    // 3. Transcrever usando inlineData
     console.log('🎤 Transcrevendo...');
     
     const prompt = `Você é um transcritor profissional. Transcreva o áudio COMPLETAMENTE, palavra por palavra.
@@ -288,7 +266,12 @@ Retorne APENAS a transcrição, sem comentários adicionais.`;
         {
           role: 'user',
           parts: [
-            { fileData: { fileUri: file!.uri!, mimeType } },
+            { 
+              inlineData: { 
+                mimeType: mimeType || 'audio/mpeg', 
+                data: audioBase64 
+              } 
+            },
             { text: prompt }
           ]
         }
@@ -296,14 +279,6 @@ Retorne APENAS a transcrição, sem comentários adicionais.`;
     });
 
     const transcricao = result.text || '';
-    
-    // 5. Limpar arquivo do Gemini (opcional, expira em 48h)
-    try {
-      await ai.files.delete({ name: file!.name! });
-      console.log('🗑️ Arquivo removido do Gemini');
-    } catch (deleteError) {
-      console.warn('⚠️ Não foi possível remover arquivo:', deleteError);
-    }
     
     console.log(`✅ Transcrição concluída: ${transcricao.length} caracteres`);
     
@@ -489,3 +464,4 @@ Responda APENAS com o JSON, sem texto adicional.`;
     };
   }
 }
+
