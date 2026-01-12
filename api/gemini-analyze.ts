@@ -912,23 +912,24 @@ async function generateInterviewQuestions(payload: {
 
   const { vaga, candidato } = payload;
 
-  // Formatar requisitos
-  const requisitosObrigatorios = Array.isArray(vaga.requisitos_obrigatorios) 
-    ? vaga.requisitos_obrigatorios.join(', ')
-    : vaga.requisitos_obrigatorios || 'Não especificados';
-  
-  const requisitosDesejaveis = Array.isArray(vaga.requisitos_desejaveis)
-    ? vaga.requisitos_desejaveis.join(', ')
-    : vaga.requisitos_desejaveis || '';
+  // Função helper para formatar arrays ou strings
+  const formatarLista = (valor: string | string[] | undefined | null, fallback: string = ''): string => {
+    if (!valor) return fallback;
+    if (Array.isArray(valor)) return valor.join(', ');
+    return String(valor);
+  };
 
-  const stackTecnologica = vaga.stack_tecnologica?.join(', ') || 'Não especificada';
+  // Formatar requisitos
+  const requisitosObrigatorios = formatarLista(vaga.requisitos_obrigatorios, 'Não especificados');
+  const requisitosDesejaveis = formatarLista(vaga.requisitos_desejaveis, '');
+  const stackTecnologica = formatarLista(vaga.stack_tecnologica, 'Não especificada');
 
   // Informações do candidato
   const cvResumo = candidato.cv_texto 
     ? candidato.cv_texto.substring(0, 3000) // Limitar para não exceder tokens
     : candidato.resumo_profissional || 'Não disponível';
 
-  const skillsCandidato = candidato.skills?.join(', ') || candidato.experiencias?.join(', ') || '';
+  const skillsCandidato = formatarLista(candidato.skills) || formatarLista(candidato.experiencias) || '';
 
   const prompt = `Você é um **Recrutador Técnico Sênior** especializado em validar experiências de candidatos em entrevistas.
 
