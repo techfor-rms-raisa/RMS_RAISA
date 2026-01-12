@@ -71,8 +71,8 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   const [criandoCandidatura, setCriandoCandidatura] = useState<number | null>(null);
   const [filtroScoreMin, setFiltroScoreMin] = useState<number>(0);
 
-  // Vaga selecionada
-  const vagaSelecionada = vagas.find(v => v.id === vagaSelecionadaId);
+  // Vaga selecionada (comparação como string para evitar problemas de tipo)
+  const vagaSelecionada = vagas.find(v => String(v.id) === String(vagaSelecionadaId));
 
   // Pré-selecionar vaga se fornecida
   useEffect(() => {
@@ -104,10 +104,20 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   };
 
   const handleBuscarCandidatos = async () => {
+    console.log('🔍 handleBuscarCandidatos chamado');
+    console.log('vagaSelecionadaId:', vagaSelecionadaId);
+    console.log('vagaSelecionada:', vagaSelecionada);
+    
     if (vagaSelecionada) {
+      console.log('✅ Vaga encontrada, iniciando busca...');
+      console.log('Stack tecnológica:', vagaSelecionada.stack_tecnologica);
       setBuscaBancoRealizada(false);
       await buscarParaVaga(vagaSelecionada);
       setBuscaBancoRealizada(true);
+      console.log('✅ Busca concluída, matches:', matches);
+    } else {
+      console.error('❌ Vaga não encontrada! vagaSelecionadaId:', vagaSelecionadaId);
+      console.log('Vagas disponíveis:', vagas.map(v => ({ id: v.id, tipo: typeof v.id })));
     }
   };
 
@@ -556,9 +566,9 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                                     </p>
 
                                     {/* Skills */}
-                                    {match.skills_matched && match.skills_matched.length > 0 && (
+                                    {match.skills_match && match.skills_match.length > 0 && (
                                       <div className="flex flex-wrap gap-1 mb-2">
-                                        {match.skills_matched.slice(0, 6).map((skill, idx) => (
+                                        {match.skills_match.slice(0, 6).map((skill, idx) => (
                                           <span 
                                             key={idx}
                                             className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-medium"
@@ -566,9 +576,9 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                                             ✓ {skill}
                                           </span>
                                         ))}
-                                        {match.skills_matched.length > 6 && (
+                                        {match.skills_match.length > 6 && (
                                           <span className="text-xs text-gray-400">
-                                            +{match.skills_matched.length - 6} mais
+                                            +{match.skills_match.length - 6} mais
                                           </span>
                                         )}
                                       </div>
