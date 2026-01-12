@@ -2,9 +2,13 @@
 // API DE TRANSCRIÇÃO E ANÁLISE DE ÁUDIO - GEMINI
 // Endpoint: /api/gemini-audio-transcription
 // ============================================================
-// Suporta transcrição de áudio de entrevistas e análise das respostas
-// Versão: 2.0 - Corrigida para @google/genai v0.6+
+// Versão: 3.0 - Usando Gemini File API (suporta até 2GB)
 // Data: 12/01/2026
+// ============================================================
+// MUDANÇA IMPORTANTE:
+// - Não usa mais base64 (ineficiente para arquivos grandes)
+// - Recebe URL do arquivo no Supabase Storage
+// - Faz download e upload direto para Gemini File API
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -78,23 +82,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  if (!apiKey) {
-    return res.status(500).json({
-      success: false,
-      error: '❌ Erro na API Gemini: API_KEY não configurada',
-      tipo: 'CONFIG_ERROR',
-      acao: 'Configure a variável API_KEY no Vercel'
-    });
+    return res.status(405).json({ success: false, error: 'Método não permitido' });
   }
 
   try {
-    const { action, audioBase64, audioMimeType, transcricao, perguntas, vaga, candidato } = req.body;
+    const { 
+      action, 
+      // Novos parâmetros (URL-based)
+      audioUrl,
+      audioMimeType,
+      // Parâmetros legados (base64) - mantidos para compatibilidade
+      audioBase64,
+      // Parâmetros de análise
+      transcricao, 
+      perguntas, 
+      vaga, 
+      candidato 
+    } = req.body;
 
     if (!action) {
-      return res.status(400).json({ success: false, error: 'action é obrigatório' });
+      return res.status(400).json({ success: false, error: 'Ação não especificada' });
     }
 
     console.log(`🎙️ [Gemini Audio] Ação: ${action}`);
@@ -102,11 +109,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let result;
 
     switch (action) {
+      // ✅ NOVO: Transcrição via URL (recomendado para arquivos grandes)
+      case 'transcribe_url':
+        if (!audioUrl) {
+          return res.status(400).json({ success: false, error: 'audioUrl é obrigatório' });
+        }
+        console.log(`📥 Processando áudio via URL: ${audioUrl.substring(0, 100)}...`);
+        result = await transcribeAudioFromUrl(audioUrl, audioMimeType || 'audio/mpeg');
+        return res.status(200).json({
+          success: true,
+          ...result
+        });
+
+      // 🔄 LEGADO: Transcrição via base64 (para arquivos pequenos < 3MB)
       case 'transcribe':
         if (!audioBase64) {
           return res.status(400).json({ success: false, error: 'audioBase64 é obrigatório para transcrição' });
         }
-        result = await transcribeAudio(audioBase64, audioMimeType || 'audio/mp3');
+        // Verificar tamanho do base64 (~1.33x do original)
+        const base64SizeMB = (audioBase64.length * 0.75) / (1024 * 1024);
+        console.log(`📊 Tamanho do áudio: ~${base64SizeMB.toFixed(2)}MB`);
+        
+        if (base64SizeMB > 15) {
+          return res.status(400).json({ 
+            success: false, 
+            error: 'Arquivo muito grande para base64. Use action: transcribe_url',
+            sugestao: 'Faça upload para Supabase Storage e envie a URL pública'
+          });
+        }
+        
+        result = await transcribeAudioBase64(audioBase64, audioMimeType || 'audio/mp3');
         return res.status(200).json({
           success: true,
           ...result
@@ -123,10 +155,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
 
       case 'transcribe_and_analyze':
-        if (!audioBase64) {
-          return res.status(400).json({ success: false, error: 'audioBase64 é obrigatório' });
+        let transcriptionResult: TranscriptionResult;
+        
+        if (audioUrl) {
+          transcriptionResult = await transcribeAudioFromUrl(audioUrl, audioMimeType || 'audio/mpeg');
+        } else if (audioBase64) {
+          transcriptionResult = await transcribeAudioBase64(audioBase64, audioMimeType || 'audio/mp3');
+        } else {
+          return res.status(400).json({ success: false, error: 'audioUrl ou audioBase64 é obrigatório' });
         }
-        const transcriptionResult = await transcribeAudio(audioBase64, audioMimeType || 'audio/mp3');
+        
         if (transcriptionResult.transcricao) {
           const analysisResult = await analyzeTranscription(
             transcriptionResult.transcricao,
@@ -160,125 +198,177 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (errorStatus === 401 || errorStatus === 403) {
       return res.status(500).json({
         success: false,
-        error: '❌ Erro na API Gemini (gemini-2.0-flash): Chave de API inválida',
-        tipo: 'AUTH_ERROR',
-        acao: 'Atualize a API_KEY no Vercel'
+        error: '❌ Erro na API Gemini: Chave de API inválida',
+        tipo: 'AUTH_ERROR'
       });
     }
     
     if (errorStatus === 429) {
       return res.status(500).json({
         success: false,
-        error: '❌ Erro na API Gemini (gemini-2.0-flash): Limite de requisições',
-        tipo: 'QUOTA_ERROR',
-        acao: 'Aguarde alguns minutos'
+        error: '❌ Erro na API Gemini: Limite de requisições',
+        tipo: 'QUOTA_ERROR'
       });
     }
     
     return res.status(500).json({
       success: false,
       error: `❌ Erro na API Gemini: ${errorMessage}`,
-      tipo: 'SERVER_ERROR'
+      tipo: 'GEMINI_ERROR'
     });
   }
 }
 
 // ============================================================
-// TRANSCRIÇÃO DE ÁUDIO
+// TRANSCRIÇÃO VIA URL (RECOMENDADO)
 // ============================================================
 
-async function transcribeAudio(audioBase64: string, mimeType: string): Promise<TranscriptionResult> {
-  console.log(`🎙️ Iniciando transcrição... (${(audioBase64.length / 1024).toFixed(0)}KB)`);
-  const startTime = Date.now();
-
-  const prompt = `Você é um transcritor profissional. Transcreva o áudio a seguir para texto em português brasileiro.
-
-INSTRUÇÕES:
-1. Transcreva FIELMENTE o que foi dito, sem resumir ou interpretar
-2. Mantenha as pausas como "..." quando houver hesitação
-3. Preserve expressões como "né", "tipo", "então" etc
-4. Se houver múltiplas vozes, indique como [Entrevistador] e [Candidato]
-5. Se algo não for audível, marque como [inaudível]
-
-FORMATO DE RESPOSTA (JSON):
-{
-  "transcricao": "texto completo da transcrição",
-  "idioma": "pt-BR",
-  "confianca": 0-100,
-  "observacoes": "qualquer observação relevante sobre o áudio"
-}
-
-Responda APENAS com o JSON, sem texto adicional.`;
-
+async function transcribeAudioFromUrl(audioUrl: string, mimeType: string): Promise<TranscriptionResult> {
+  console.log('🎙️ [transcribeAudioFromUrl] Iniciando transcrição via URL...');
+  console.log(`📎 MIME Type: ${mimeType}`);
+  
   try {
-    // ✅ SINTAXE CORRETA para @google/genai v0.6+
-    // Usando array de parts para conteúdo multimodal
-    const contents = [
-      {
-        inlineData: {
-          mimeType: mimeType,
-          data: audioBase64
-        }
-      },
-      {
-        text: prompt
-      }
-    ];
+    // 1. Baixar o arquivo da URL
+    console.log('📥 Baixando arquivo...');
+    const response = await fetch(audioUrl);
+    
+    if (!response.ok) {
+      throw new Error(`Falha ao baixar áudio: ${response.status} ${response.statusText}`);
+    }
+    
+    const audioBuffer = await response.arrayBuffer();
+    const audioSizeMB = audioBuffer.byteLength / (1024 * 1024);
+    console.log(`📊 Tamanho do arquivo: ${audioSizeMB.toFixed(2)}MB`);
+    
+    // 2. Upload para Gemini File API
+    console.log('☁️ Fazendo upload para Gemini...');
+    
+    // Converter ArrayBuffer para Blob
+    const audioBlob = new Blob([audioBuffer], { type: mimeType });
+    
+    // Usar File API do Gemini
+    const uploadResult = await ai.files.upload({
+      file: audioBlob,
+      config: { mimeType }
+    });
+    
+    console.log(`✅ Upload concluído. URI: ${uploadResult.file?.uri}`);
+    
+    // 3. Aguardar processamento do arquivo
+    let file = uploadResult.file;
+    while (file?.state === 'PROCESSING') {
+      console.log('⏳ Aguardando processamento do arquivo...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      const fileStatus = await ai.files.get({ name: file.name! });
+      file = fileStatus.file;
+    }
+    
+    if (file?.state === 'FAILED') {
+      throw new Error('Falha no processamento do arquivo pelo Gemini');
+    }
+    
+    // 4. Transcrever usando o arquivo
+    console.log('🎤 Transcrevendo...');
+    
+    const prompt = `Você é um transcritor profissional. Transcreva o áudio COMPLETAMENTE, palavra por palavra.
+
+REGRAS IMPORTANTES:
+1. Transcreva TUDO que for dito, sem resumir ou omitir
+2. Identifique os diferentes falantes quando possível (Entrevistador:, Candidato:)
+3. Mantenha pausas significativas como [pausa]
+4. Se algo estiver inaudível, marque como [inaudível]
+5. Mantenha o idioma original (provavelmente português brasileiro)
+6. Preserve expressões, gírias e hesitações naturais da fala
+
+Retorne APENAS a transcrição, sem comentários adicionais.`;
 
     const result = await ai.models.generateContent({
       model: GEMINI_MODEL,
-      contents: contents
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { fileData: { fileUri: file!.uri!, mimeType } },
+            { text: prompt }
+          ]
+        }
+      ]
     });
 
-    const responseText = result.text || '';
+    const transcricao = result.text || '';
     
-    // Parsear JSON
-    const cleanedText = responseText
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
-    
-    let parsedResult;
+    // 5. Limpar arquivo do Gemini (opcional, expira em 48h)
     try {
-      parsedResult = JSON.parse(cleanedText);
-    } catch {
-      // Se falhar, tentar extrair JSON do texto
-      const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        parsedResult = JSON.parse(jsonMatch[0]);
-      } else {
-        // Fallback: usar o texto como transcrição
-        parsedResult = {
-          transcricao: cleanedText,
-          idioma: 'pt-BR',
-          confianca: 70
-        };
-      }
+      await ai.files.delete({ name: file!.name! });
+      console.log('🗑️ Arquivo removido do Gemini');
+    } catch (deleteError) {
+      console.warn('⚠️ Não foi possível remover arquivo:', deleteError);
     }
     
-    const tempoMs = Date.now() - startTime;
-    console.log(`✅ Transcrição concluída em ${tempoMs}ms`);
-
+    console.log(`✅ Transcrição concluída: ${transcricao.length} caracteres`);
+    
     return {
-      transcricao: parsedResult.transcricao || cleanedText,
-      idioma: parsedResult.idioma || 'pt-BR',
-      confianca: parsedResult.confianca || 85
+      transcricao,
+      idioma: 'pt-BR',
+      confianca: 90,
+      duracao_estimada: Math.round(audioSizeMB * 60) // Estimativa grosseira
     };
-
+    
   } catch (error: any) {
-    console.error('❌ Erro na transcrição:', error);
-    
-    // Tratar erro específico de tipo de mídia não suportado
-    if (error.message?.includes('unsupported') || error.message?.includes('MIME')) {
-      throw new Error(`Formato de áudio não suportado: ${mimeType}. Use MP3, WAV, M4A, WebM ou OGG.`);
-    }
-    
+    console.error('❌ Erro na transcrição via URL:', error);
     throw error;
   }
 }
 
 // ============================================================
-// ANÁLISE DE TRANSCRIÇÃO
+// TRANSCRIÇÃO VIA BASE64 (LEGADO - ARQUIVOS PEQUENOS)
+// ============================================================
+
+async function transcribeAudioBase64(audioBase64: string, mimeType: string): Promise<TranscriptionResult> {
+  console.log('🎙️ [transcribeAudioBase64] Iniciando transcrição via base64...');
+  
+  const prompt = `Você é um transcritor profissional. Transcreva o áudio COMPLETAMENTE, palavra por palavra.
+
+REGRAS:
+1. Transcreva TUDO que for dito
+2. Identifique falantes (Entrevistador:, Candidato:)
+3. Marque pausas como [pausa]
+4. Marque trechos inaudíveis como [inaudível]
+5. Mantenha o idioma original
+
+Retorne APENAS a transcrição.`;
+
+  try {
+    const result = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType, data: audioBase64 } },
+            { text: prompt }
+          ]
+        }
+      ]
+    });
+
+    const transcricao = result.text || '';
+    
+    return {
+      transcricao,
+      idioma: 'pt-BR',
+      confianca: 85,
+      duracao_estimada: undefined
+    };
+    
+  } catch (error: any) {
+    console.error('❌ Erro na transcrição base64:', error);
+    throw error;
+  }
+}
+
+// ============================================================
+// ANÁLISE DA TRANSCRIÇÃO
 // ============================================================
 
 async function analyzeTranscription(
@@ -287,31 +377,26 @@ async function analyzeTranscription(
   vaga?: any,
   candidato?: any
 ): Promise<AnalysisResult> {
-  console.log(`🔍 Iniciando análise da transcrição...`);
-  const startTime = Date.now();
-
-  const perguntasFormatadas = perguntas && perguntas.length > 0
-    ? perguntas.map((p, i) => `${i + 1}. ${p.pergunta} (Categoria: ${p.categoria || 'Geral'}, Peso: ${p.peso || 1})`).join('\n')
-    : 'Não foram fornecidas perguntas específicas. Analise o conteúdo geral da entrevista.';
-
-  const vagaInfo = vaga
-    ? `
+  console.log('🧠 [analyzeTranscription] Analisando entrevista...');
+  
+  const perguntasFormatadas = perguntas?.map((p, i) => 
+    `${i + 1}. [${p.categoria || 'Geral'}] ${p.pergunta}`
+  ).join('\n') || 'Não especificadas';
+  
+  const vagaInfo = vaga ? `
 **Vaga:** ${vaga.titulo || 'Não especificada'}
-**Requisitos:** ${vaga.requisitos_obrigatorios || vaga.requisitos || 'Não especificados'}
+**Requisitos:** ${Array.isArray(vaga.requisitos_obrigatorios) ? vaga.requisitos_obrigatorios.join(', ') : vaga.requisitos_obrigatorios || 'Não especificados'}
 **Stack:** ${Array.isArray(vaga.stack_tecnologica) ? vaga.stack_tecnologica.join(', ') : vaga.stack_tecnologica || 'Não especificada'}
-`
-    : 'Informações da vaga não disponíveis.';
+` : '';
+  
+  const candidatoInfo = candidato ? `
+**Candidato:** ${candidato.nome || 'Não identificado'}
+` : '';
 
-  const candidatoInfo = candidato
-    ? `**Candidato:** ${candidato.nome || 'Não identificado'}`
-    : '';
+  const prompt = `Você é um **Analista de R&S Sênior** especializado em avaliar entrevistas técnicas.
 
-  const prompt = `Você é um especialista em recrutamento analisando uma transcrição de entrevista técnica.
-
-## CONTEXTO DA VAGA
+## CONTEXTO
 ${vagaInfo}
-
-## CANDIDATO
 ${candidatoInfo}
 
 ## PERGUNTAS ESPERADAS NA ENTREVISTA
@@ -324,55 +409,47 @@ ${transcricao}
 
 ## SUA TAREFA
 
-Analise a transcrição da entrevista e avalie:
-
-1. **Identificação de Respostas**: Para cada pergunta esperada, identifique se foi respondida e extraia a resposta
-2. **Qualidade Técnica**: Avalie a profundidade e precisão das respostas técnicas
-3. **Comunicação**: Avalie clareza, objetividade e articulação
-4. **Red Flags**: Identifique inconsistências, evasões ou sinais de alerta
-5. **Pontos Fortes**: Destaque o que o candidato demonstrou de positivo
-
-Retorne um JSON com esta estrutura EXATA:
+Analise a entrevista e retorne um JSON com esta estrutura EXATA:
 
 {
-  "resumo": "Resumo geral da entrevista em 2-3 frases",
-  
-  "pontos_fortes": [
-    "Ponto forte 1 com contexto",
-    "Ponto forte 2 com contexto"
-  ],
-  
-  "pontos_atencao": [
-    "Ponto que precisa ser verificado"
-  ],
-  
-  "red_flags": [
-    "Sinal de alerta identificado (se houver)"
-  ],
-  
+  "resumo": "Resumo executivo da entrevista (2-3 frases)",
   "respostas_identificadas": [
     {
       "pergunta_relacionada": "Pergunta que foi respondida",
-      "resposta_extraida": "Resumo da resposta dada",
+      "resposta_extraida": "Resumo da resposta do candidato",
       "qualidade": "excelente|boa|regular|fraca|nao_respondeu",
       "score": 0-100,
-      "observacao": "Observação sobre a resposta"
+      "observacao": "Análise crítica da resposta"
     }
   ],
-  
+  "pontos_fortes": ["Ponto forte 1", "Ponto forte 2"],
+  "pontos_atencao": ["Ponto de atenção 1"],
+  "red_flags": ["Red flag identificado, se houver"],
   "score_tecnico": 0-100,
   "score_comunicacao": 0-100,
   "score_geral": 0-100,
-  
   "recomendacao": "APROVAR|REPROVAR|REAVALIAR",
   "justificativa": "Justificativa detalhada da recomendação"
 }
 
-## CRITÉRIOS DE AVALIAÇÃO:
+### CRITÉRIOS DE AVALIAÇÃO:
 
-- **APROVAR** (score >= 70): Candidato demonstrou competência técnica e boa comunicação
-- **REAVALIAR** (score 50-69): Alguns pontos precisam ser melhor investigados
-- **REPROVAR** (score < 50): Gaps críticos ou red flags significativos
+**Score Técnico (0-100):**
+- 90-100: Demonstrou domínio excepcional, com exemplos práticos detalhados
+- 70-89: Bom conhecimento, com algumas lacunas menores
+- 50-69: Conhecimento básico, falta profundidade
+- 30-49: Conhecimento superficial, muitas lacunas
+- 0-29: Não demonstrou conhecimento adequado
+
+**Score Comunicação (0-100):**
+- Clareza e objetividade nas respostas
+- Capacidade de estruturar o pensamento
+- Uso adequado de exemplos
+
+**Recomendação:**
+- APROVAR: Score geral ≥ 70 e sem red flags críticos
+- REAVALIAR: Score entre 50-69 ou com dúvidas a esclarecer
+- REPROVAR: Score < 50 ou red flags críticos
 
 Responda APENAS com o JSON, sem texto adicional.`;
 
@@ -382,33 +459,33 @@ Responda APENAS com o JSON, sem texto adicional.`;
       contents: prompt
     });
 
-    const responseText = result.text || '';
-    
-    const cleanedText = responseText
-      .replace(/```json\n?/g, '')
-      .replace(/```\n?/g, '')
-      .trim();
-    
-    let parsedResult;
+    const text = result.text || '';
+    const jsonClean = text.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').trim();
+
     try {
-      parsedResult = JSON.parse(cleanedText);
+      return JSON.parse(jsonClean);
     } catch {
-      // Se falhar, tentar extrair JSON do texto
-      const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+      const jsonMatch = jsonClean.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        parsedResult = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('Falha ao parsear resposta da análise');
+        return JSON.parse(jsonMatch[0]);
       }
+      throw new Error('Falha ao parsear análise');
     }
-    
-    const tempoMs = Date.now() - startTime;
-    console.log(`✅ Análise concluída em ${tempoMs}ms - Score: ${parsedResult.score_geral}%`);
-
-    return parsedResult;
-
   } catch (error: any) {
     console.error('❌ Erro na análise:', error);
-    throw error;
+    
+    // Retornar análise padrão em caso de erro
+    return {
+      resumo: 'Erro ao analisar entrevista',
+      pontos_fortes: [],
+      pontos_atencao: ['Não foi possível analisar automaticamente'],
+      red_flags: [],
+      respostas_identificadas: [],
+      score_tecnico: 0,
+      score_comunicacao: 0,
+      score_geral: 0,
+      recomendacao: 'REAVALIAR',
+      justificativa: `Erro na análise automática: ${error.message}`
+    };
   }
 }

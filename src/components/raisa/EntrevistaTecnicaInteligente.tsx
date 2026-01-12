@@ -379,10 +379,8 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // HANDLERS DE ÁUDIO
   // ============================================
   
-  // Constantes para controle de tamanho
-  const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB total
-  const CHUNK_SIZE = 45 * 1024 * 1024; // 45MB por parte (margem de segurança)
-  const MAX_CHUNKS = 4;
+  // Constante para tamanho máximo (Gemini File API suporta até 2GB)
+  const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB (margem de segurança)
 
   const handleAudioSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -395,17 +393,13 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       return;
     }
 
-    // Validar tamanho (máx 200MB = 4 partes de 50MB)
+    // Validar tamanho (máx 500MB - Gemini File API suporta até 2GB)
     if (file.size > MAX_FILE_SIZE) {
-      setError(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(0)}MB). Máximo permitido: 200MB.`);
+      setError(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(0)}MB). Máximo permitido: 500MB.`);
       return;
     }
 
-    // Calcular quantas partes serão necessárias
-    const numParts = Math.ceil(file.size / CHUNK_SIZE);
-    if (numParts > 1) {
-      console.log(`📁 Arquivo grande detectado: ${(file.size / 1024 / 1024).toFixed(1)}MB - será dividido em ${numParts} partes`);
-    }
+    console.log(`📁 Arquivo selecionado: ${file.name} (${(file.size / 1024 / 1024).toFixed(1)}MB)`);
 
     setAudioFile(file);
     setError(null);
@@ -442,57 +436,18 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // PROCESSAMENTO
   // ============================================
   
-  // Função auxiliar para dividir arquivo em partes
-  const dividirArquivoEmPartes = async (file: File, chunkSize: number): Promise<Blob[]> => {
-    const chunks: Blob[] = [];
-    let offset = 0;
-    
-    while (offset < file.size) {
-      const end = Math.min(offset + chunkSize, file.size);
-      chunks.push(file.slice(offset, end, file.type));
-      offset = end;
-    }
-    
-    return chunks;
-  };
-
-  // Função auxiliar para converter Blob para base64
-  const blobToBase64 = (blob: Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(blob);
-      reader.onload = () => {
-        const result = reader.result as string;
-        const base64 = result.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = error => reject(error);
-    });
-  };
-
-  // Função para transcrever uma parte do áudio
-  const transcreverParte = async (blob: Blob, parteNum: number, totalPartes: number, mimeType: string): Promise<string> => {
-    setProgressMessage(`Transcrevendo parte ${parteNum}/${totalPartes}...`);
-    
-    const base64 = await blobToBase64(blob);
-    
-    const response = await fetch('/api/gemini-audio-transcription', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'transcribe',
-        audioBase64: base64,
-        audioMimeType: mimeType || 'audio/mp3'
-      })
-    });
-
-    const result = await response.json();
-    
-    if (!result.success || !result.transcricao) {
-      throw new Error(`Erro na transcrição da parte ${parteNum}: ${result.error || 'Falha desconhecida'}`);
-    }
-    
-    return result.transcricao;
+  // Função auxiliar para obter MIME type correto
+  const getMimeType = (file: File): string => {
+    // Mapear extensões para MIME types corretos
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const mimeMap: Record<string, string> = {
+      'mp3': 'audio/mpeg',
+      'wav': 'audio/wav',
+      'm4a': 'audio/mp4',
+      'webm': 'audio/webm',
+      'ogg': 'audio/ogg'
+    };
+    return mimeMap[ext || ''] || file.type || 'audio/mpeg';
   };
 
   const processarEntrevista = async () => {
@@ -503,37 +458,55 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     setProgressMessage('');
 
     try {
-      // 1. Upload do áudio (arquivo completo)
+      // 1. Upload do áudio para Supabase Storage
       setUploading(true);
-      setProgressMessage('Preparando upload...');
+      setProgressMessage('Enviando áudio para o servidor...');
       setProgress(5);
 
       const timestamp = Date.now();
       const ext = audioFile.name.split('.').pop() || 'mp3';
       const filename = `entrevistas/${candidaturaAtual.vaga_id}/${candidaturaAtual.id}/${timestamp}.${ext}`;
 
-      // Tentar upload (pode falhar se bucket não existir)
-      let audioPath: string | null = null;
-      try {
-        const { data: uploadData } = await supabase.storage
-          .from('entrevistas-audio')
-          .upload(filename, audioFile);
-        audioPath = uploadData?.path || null;
-      } catch (uploadErr) {
-        console.warn('Storage não configurado:', uploadErr);
+      console.log(`📤 Fazendo upload: ${filename} (${(audioFile.size / 1024 / 1024).toFixed(2)}MB)`);
+
+      // Upload para Supabase Storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('entrevistas-audio')
+        .upload(filename, audioFile, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error('❌ Erro no upload:', uploadError);
+        throw new Error(`Erro ao fazer upload do áudio: ${uploadError.message}. Verifique se o bucket 'entrevistas-audio' existe.`);
       }
 
-      setProgress(15);
-      setUploading(false);
+      setProgress(20);
+      setProgressMessage('Upload concluído! Gerando URL...');
 
-      // 2. Criar registro da entrevista
+      // 2. Obter URL pública do arquivo
+      const { data: urlData } = supabase.storage
+        .from('entrevistas-audio')
+        .getPublicUrl(filename);
+
+      const audioPublicUrl = urlData?.publicUrl;
+      
+      if (!audioPublicUrl) {
+        throw new Error('Não foi possível obter URL do áudio. Verifique as configurações do bucket.');
+      }
+
+      console.log(`✅ URL pública: ${audioPublicUrl}`);
+      setProgress(25);
+
+      // 3. Criar registro da entrevista
       setProgressMessage('Registrando entrevista...');
       const { data: entrevista, error: entrevistaError } = await supabase
         .from('entrevista_tecnica')
         .insert({
           candidatura_id: parseInt(candidaturaAtual.id),
           status: 'transcrevendo',
-          audio_url: audioPath,
+          audio_url: audioPublicUrl,
           audio_duracao_segundos: Math.round(audioDuration),
           audio_tamanho_bytes: audioFile.size,
           audio_formato: ext,
@@ -544,83 +517,44 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
 
       if (entrevistaError) {
         console.error('Erro ao criar entrevista:', entrevistaError);
+        // Continuar mesmo com erro (tabela pode não existir ainda)
       } else {
         setEntrevistaId(entrevista?.id);
       }
 
-      setProgress(20);
+      setProgress(30);
+      setUploading(false);
 
-      // 3. TRANSCRIÇÃO - Com suporte a arquivos grandes (divisão automática)
+      // 4. TRANSCRIÇÃO via URL (Gemini File API - suporta até 2GB!)
       setTranscribing(true);
+      setProgressMessage('Transcrevendo áudio com IA (pode levar alguns minutos)...');
       
-      let transcricaoCompleta = '';
-      const CHUNK_SIZE_TRANSCRICAO = 45 * 1024 * 1024; // 45MB por parte
-      
-      // Verificar se precisa dividir o arquivo
-      if (audioFile.size > CHUNK_SIZE_TRANSCRICAO) {
-        // Arquivo grande - dividir em partes
-        setProgressMessage('Arquivo grande detectado. Dividindo em partes...');
-        const partes = await dividirArquivoEmPartes(audioFile, CHUNK_SIZE_TRANSCRICAO);
-        const totalPartes = partes.length;
-        
-        console.log(`🎙️ Processando ${totalPartes} partes de áudio...`);
-        
-        const transcricoes: string[] = [];
-        
-        for (let i = 0; i < partes.length; i++) {
-          const parteNum = i + 1;
-          
-          // Calcular progresso (20% a 65% para transcrição)
-          const progressoParte = 20 + Math.round((45 * parteNum) / totalPartes);
-          setProgress(progressoParte);
-          
-          try {
-            const transcricaoParte = await transcreverParte(
-              partes[i], 
-              parteNum, 
-              totalPartes, 
-              audioFile.type
-            );
-            transcricoes.push(transcricaoParte);
-            console.log(`✅ Parte ${parteNum}/${totalPartes} transcrita`);
-          } catch (err: any) {
-            console.error(`❌ Erro na parte ${parteNum}:`, err);
-            // Continuar com as outras partes mesmo se uma falhar
-            transcricoes.push(`[Parte ${parteNum} não transcrita: ${err.message}]`);
-          }
-        }
-        
-        // Concatenar todas as transcrições
-        transcricaoCompleta = transcricoes.join('\n\n---\n\n');
-        setProgressMessage('Todas as partes transcritas!');
-        
-      } else {
-        // Arquivo pequeno - transcrição única
-        setProgressMessage('Transcrevendo áudio...');
-        const base64 = await fileToBase64(audioFile);
+      const mimeType = getMimeType(audioFile);
+      console.log(`🎙️ Iniciando transcrição via URL. MIME: ${mimeType}`);
 
-        const transcribeResponse = await fetch('/api/gemini-audio-transcription', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'transcribe',
-            audioBase64: base64,
-            audioMimeType: audioFile.type || 'audio/mp3'
-          })
-        });
+      const transcribeResponse = await fetch('/api/gemini-audio-transcription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'transcribe_url',
+          audioUrl: audioPublicUrl,
+          audioMimeType: mimeType
+        })
+      });
 
-        const transcribeResult = await transcribeResponse.json();
+      const transcribeResult = await transcribeResponse.json();
 
-        if (!transcribeResult.success || !transcribeResult.transcricao) {
-          throw new Error(transcribeResult.error || 'Erro na transcrição');
-        }
-        
-        transcricaoCompleta = transcribeResult.transcricao;
+      if (!transcribeResult.success || !transcribeResult.transcricao) {
+        throw new Error(transcribeResult.error || 'Erro na transcrição');
       }
 
+      const transcricaoCompleta = transcribeResult.transcricao;
       setTranscricao(transcricaoCompleta);
       setProgress(70);
       setTranscribing(false);
+      setProgressMessage('Transcrição concluída!');
+
+      console.log(`✅ Transcrição: ${transcricaoCompleta.length} caracteres`);
 
       // Atualizar registro com transcrição
       if (entrevista?.id) {
@@ -629,12 +563,12 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           .update({
             status: 'analisando',
             transcricao_texto: transcricaoCompleta,
-            transcricao_confianca: 85 // Confiança média para múltiplas partes
+            transcricao_confianca: transcribeResult.confianca || 90
           })
           .eq('id', entrevista.id);
       }
 
-      // 4. Análise
+      // 5. Análise
       setAnalyzing(true);
       setProgressMessage('Analisando respostas com IA...');
       setProgress(80);
@@ -944,10 +878,6 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // ============================================
   
   const renderStep3 = () => {
-    // Calcular se arquivo será dividido
-    const seraaDividido = audioFile && audioFile.size > 45 * 1024 * 1024;
-    const numPartes = audioFile ? Math.ceil(audioFile.size / (45 * 1024 * 1024)) : 0;
-    
     return (
     <div className="space-y-6">
       {/* Header */}
@@ -963,10 +893,10 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           <li>Conduza a entrevista usando as perguntas do passo anterior</li>
           <li>Grave toda a conversa em áudio (MP3, WAV, M4A, WebM ou OGG)</li>
           <li>O áudio deve ter boa qualidade para transcrição</li>
-          <li><strong>Tamanho máximo: 200MB</strong> (entrevistas de até ~40 min)</li>
+          <li><strong>Tamanho máximo: 500MB</strong> (entrevistas de até ~2 horas)</li>
         </ul>
         <p className="text-xs text-yellow-600 mt-2 italic">
-          💡 Arquivos grandes são automaticamente divididos em partes para processamento
+          💡 Powered by Gemini File API - processamento direto sem necessidade de divisão
         </p>
       </div>
 
@@ -979,7 +909,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             <p className="mb-2 text-sm text-gray-500">
               <span className="font-semibold">Clique para enviar</span> ou arraste o arquivo
             </p>
-            <p className="text-xs text-gray-500">MP3, WAV, M4A, WebM, OGG (máx. 200MB)</p>
+            <p className="text-xs text-gray-500">MP3, WAV, M4A, WebM, OGG (máx. 500MB)</p>
           </div>
           <input 
             type="file" 
@@ -1019,19 +949,6 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             className="w-full"
             controls
           />
-          
-          {/* Aviso de arquivo grande */}
-          {seraaDividido && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <p className="text-sm text-blue-700 flex items-center gap-2">
-                <FileAudio size={18} />
-                <span>
-                  <strong>Arquivo grande:</strong> Será dividido em {numPartes} partes para transcrição.
-                  Isso pode levar alguns minutos.
-                </span>
-              </p>
-            </div>
-          )}
         </div>
       )}
 
@@ -1112,9 +1029,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         <StepIndicator 
           done={progress > 65} 
           active={transcribing} 
-          label={audioFile && audioFile.size > 45 * 1024 * 1024 
-            ? `Transcrição (arquivo grande - múltiplas partes)` 
-            : "Transcrição"} 
+          label="Transcrição (Gemini File API)"
         />
         <StepIndicator 
           done={progress >= 100} 
