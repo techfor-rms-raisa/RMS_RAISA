@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { 
-    calcularPrioridadeVaga, 
-    recomendarAnalistasParaVaga, 
     buscarPrioridadeVaga,
     buscarRecomendacoesAnalistas,
     atribuirAnalistaVaga
@@ -42,18 +40,41 @@ const VagaPriorizacaoManager: React.FC<VagaPriorizacaoManagerProps> = ({ vagaId,
         }
     };
 
+    // ============================================
+    // CALCULAR PRIORIDADE VIA API (BACKEND)
+    // ============================================
     const handleCalcularPrioridade = async () => {
         setCalculando(true);
         try {
-            const novaPrioridade = await calcularPrioridadeVaga(vagaId);
+            // Chamar API no backend (onde a API_KEY está disponível)
+            const response = await fetch('/api/vaga-prioridade', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ vagaId })
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Erro ao calcular prioridade');
+            }
+
+            const { prioridade: novaPrioridade } = await response.json();
             setPrioridade(novaPrioridade);
 
-            // Automaticamente calcular recomendações
-            const novasRecomendacoes = await recomendarAnalistasParaVaga(vagaId);
-            setRecomendacoes(novasRecomendacoes);
-        } catch (error) {
+            // Buscar recomendações de analistas via API
+            const responseAnalistas = await fetch('/api/vaga-analistas-recomendados', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ vagaId })
+            });
+
+            if (responseAnalistas.ok) {
+                const { recomendacoes: novasRecomendacoes } = await responseAnalistas.json();
+                setRecomendacoes(novasRecomendacoes || []);
+            }
+        } catch (error: any) {
             console.error('Erro ao calcular prioridade:', error);
-            alert('Erro ao calcular prioridade. Verifique o console.');
+            alert(`Erro ao calcular prioridade: ${error.message}`);
         } finally {
             setCalculando(false);
         }
