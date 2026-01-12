@@ -102,6 +102,15 @@ const STATUS_CONFIG: Record<string, {
     etapa: 1,
     descricao: 'Análise inicial do currículo'
   },
+  'indicacao_aprovada': { 
+    label: 'Indicação Aprovada', 
+    cor: 'text-amber-700', 
+    bgCor: 'bg-amber-100',
+    icon: UserCheck,
+    proximosStatus: ['aguardando_cliente'],
+    etapa: 4,
+    descricao: 'Candidato indicado pelo cliente - aguardando confirmação formal'
+  },
   'entrevista': { 
     label: 'Entrevista', 
     cor: 'text-blue-700', 
