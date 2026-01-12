@@ -3,6 +3,8 @@
 // Endpoint: /api/gemini-audio-transcription
 // ============================================================
 // Suporta transcrição de áudio de entrevistas e análise das respostas
+// Versão: 2.0 - Corrigida para @google/genai v0.6+
+// Data: 12/01/2026
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -32,13 +34,6 @@ interface TranscriptionResult {
   idioma: string;
   confianca: number;
   duracao_estimada?: number;
-  segmentos?: TranscriptionSegment[];
-}
-
-interface TranscriptionSegment {
-  inicio_segundos: number;
-  fim_segundos: number;
-  texto: string;
 }
 
 interface AnalysisResult {
@@ -88,6 +83,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   if (!apiKey) {
     return res.status(500).json({
+      success: false,
       error: '❌ Erro na API Gemini: API_KEY não configurada',
       tipo: 'CONFIG_ERROR',
       acao: 'Configure a variável API_KEY no Vercel'
@@ -98,7 +94,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { action, audioBase64, audioMimeType, transcricao, perguntas, vaga, candidato } = req.body;
 
     if (!action) {
-      return res.status(400).json({ error: 'action é obrigatório' });
+      return res.status(400).json({ success: false, error: 'action é obrigatório' });
     }
 
     console.log(`🎙️ [Gemini Audio] Ação: ${action}`);
@@ -108,23 +104,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     switch (action) {
       case 'transcribe':
         if (!audioBase64) {
-          return res.status(400).json({ error: 'audioBase64 é obrigatório para transcrição' });
+          return res.status(400).json({ success: false, error: 'audioBase64 é obrigatório para transcrição' });
         }
-        result = await transcribeAudio(audioBase64, audioMimeType);
-        break;
+        result = await transcribeAudio(audioBase64, audioMimeType || 'audio/mp3');
+        return res.status(200).json({
+          success: true,
+          ...result
+        });
 
       case 'analyze':
         if (!transcricao) {
-          return res.status(400).json({ error: 'transcricao é obrigatória para análise' });
+          return res.status(400).json({ success: false, error: 'transcricao é obrigatória para análise' });
         }
         result = await analyzeTranscription(transcricao, perguntas, vaga, candidato);
-        break;
+        return res.status(200).json({
+          success: true,
+          ...result
+        });
 
       case 'transcribe_and_analyze':
         if (!audioBase64) {
-          return res.status(400).json({ error: 'audioBase64 é obrigatório' });
+          return res.status(400).json({ success: false, error: 'audioBase64 é obrigatório' });
         }
-        const transcriptionResult = await transcribeAudio(audioBase64, audioMimeType);
+        const transcriptionResult = await transcribeAudio(audioBase64, audioMimeType || 'audio/mp3');
         if (transcriptionResult.transcricao) {
           const analysisResult = await analyzeTranscription(
             transcriptionResult.transcricao,
@@ -132,32 +134,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             vaga,
             candidato
           );
-          result = {
+          return res.status(200).json({
+            success: true,
             transcricao: transcriptionResult,
             analise: analysisResult
-          };
+          });
         } else {
-          result = { transcricao: transcriptionResult, analise: null };
+          return res.status(200).json({
+            success: true,
+            transcricao: transcriptionResult,
+            analise: null
+          });
         }
-        break;
 
       default:
-        return res.status(400).json({ error: `Ação desconhecida: ${action}` });
+        return res.status(400).json({ success: false, error: `Ação desconhecida: ${action}` });
     }
-
-    return res.status(200).json({
-      success: true,
-      ...result
-    });
 
   } catch (error: any) {
     console.error('❌ [Gemini Audio] Erro:', error);
     
-    const errorMessage = error.message || '';
+    const errorMessage = error.message || 'Erro desconhecido';
     const errorStatus = error.status || 500;
     
     if (errorStatus === 401 || errorStatus === 403) {
       return res.status(500).json({
+        success: false,
         error: '❌ Erro na API Gemini (gemini-2.0-flash): Chave de API inválida',
         tipo: 'AUTH_ERROR',
         acao: 'Atualize a API_KEY no Vercel'
@@ -166,6 +168,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     if (errorStatus === 429) {
       return res.status(500).json({
+        success: false,
         error: '❌ Erro na API Gemini (gemini-2.0-flash): Limite de requisições',
         tipo: 'QUOTA_ERROR',
         acao: 'Aguarde alguns minutos'
@@ -173,6 +176,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     
     return res.status(500).json({
+      success: false,
       error: `❌ Erro na API Gemini: ${errorMessage}`,
       tipo: 'SERVER_ERROR'
     });
@@ -183,7 +187,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 // TRANSCRIÇÃO DE ÁUDIO
 // ============================================================
 
-async function transcribeAudio(audioBase64: string, mimeType: string = 'audio/mp3'): Promise<TranscriptionResult> {
+async function transcribeAudio(audioBase64: string, mimeType: string): Promise<TranscriptionResult> {
   console.log(`🎙️ Iniciando transcrição... (${(audioBase64.length / 1024).toFixed(0)}KB)`);
   const startTime = Date.now();
 
@@ -207,29 +211,26 @@ FORMATO DE RESPOSTA (JSON):
 Responda APENAS com o JSON, sem texto adicional.`;
 
   try {
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: audioBase64
-              }
-            },
-            { text: prompt }
-          ]
+    // ✅ SINTAXE CORRETA para @google/genai v0.6+
+    // Usando array de parts para conteúdo multimodal
+    const contents = [
+      {
+        inlineData: {
+          mimeType: mimeType,
+          data: audioBase64
         }
-      ],
-      config: {
-        temperature: 0.1,
-        maxOutputTokens: 8192,
+      },
+      {
+        text: prompt
       }
+    ];
+
+    const result = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: contents
     });
 
-    const responseText = response.text || '';
+    const responseText = result.text || '';
     
     // Parsear JSON
     const cleanedText = responseText
@@ -237,19 +238,41 @@ Responda APENAS com o JSON, sem texto adicional.`;
       .replace(/```\n?/g, '')
       .trim();
     
-    const result = JSON.parse(cleanedText);
+    let parsedResult;
+    try {
+      parsedResult = JSON.parse(cleanedText);
+    } catch {
+      // Se falhar, tentar extrair JSON do texto
+      const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsedResult = JSON.parse(jsonMatch[0]);
+      } else {
+        // Fallback: usar o texto como transcrição
+        parsedResult = {
+          transcricao: cleanedText,
+          idioma: 'pt-BR',
+          confianca: 70
+        };
+      }
+    }
     
     const tempoMs = Date.now() - startTime;
     console.log(`✅ Transcrição concluída em ${tempoMs}ms`);
 
     return {
-      transcricao: result.transcricao,
-      idioma: result.idioma || 'pt-BR',
-      confianca: result.confianca || 85
+      transcricao: parsedResult.transcricao || cleanedText,
+      idioma: parsedResult.idioma || 'pt-BR',
+      confianca: parsedResult.confianca || 85
     };
 
   } catch (error: any) {
     console.error('❌ Erro na transcrição:', error);
+    
+    // Tratar erro específico de tipo de mídia não suportado
+    if (error.message?.includes('unsupported') || error.message?.includes('MIME')) {
+      throw new Error(`Formato de áudio não suportado: ${mimeType}. Use MP3, WAV, M4A, WebM ou OGG.`);
+    }
+    
     throw error;
   }
 }
@@ -354,33 +377,35 @@ Retorne um JSON com esta estrutura EXATA:
 Responda APENAS com o JSON, sem texto adicional.`;
 
   try {
-    const response = await ai.models.generateContent({
+    const result = await ai.models.generateContent({
       model: GEMINI_MODEL,
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: prompt }]
-        }
-      ],
-      config: {
-        temperature: 0.3,
-        maxOutputTokens: 4096,
-      }
+      contents: prompt
     });
 
-    const responseText = response.text || '';
+    const responseText = result.text || '';
     
     const cleanedText = responseText
       .replace(/```json\n?/g, '')
       .replace(/```\n?/g, '')
       .trim();
     
-    const result = JSON.parse(cleanedText);
+    let parsedResult;
+    try {
+      parsedResult = JSON.parse(cleanedText);
+    } catch {
+      // Se falhar, tentar extrair JSON do texto
+      const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        parsedResult = JSON.parse(jsonMatch[0]);
+      } else {
+        throw new Error('Falha ao parsear resposta da análise');
+      }
+    }
     
     const tempoMs = Date.now() - startTime;
-    console.log(`✅ Análise concluída em ${tempoMs}ms - Score: ${result.score_geral}%`);
+    console.log(`✅ Análise concluída em ${tempoMs}ms - Score: ${parsedResult.score_geral}%`);
 
-    return result;
+    return parsedResult;
 
   } catch (error: any) {
     console.error('❌ Erro na análise:', error);

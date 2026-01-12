@@ -30,6 +30,7 @@ import Pipeline from './components/raisa/Pipeline';
 import BancoTalentos from './components/raisa/BancoTalentos_v3';
 import ControleEnvios from './components/raisa/ControleEnvios'; 
 import EntrevistaTecnica from './components/raisa/EntrevistaTecnica';
+import EntrevistaTecnicaInteligente from './components/raisa/EntrevistaTecnicaInteligente';
 // ✅ NOVO: Componente de Sugestões IA para Vagas
 import VagaSugestoesIA from './components/raisa/VagaSugestoesIA';
 
@@ -298,9 +299,9 @@ const App: React.FC = () => {
       case 'controle_envios':
           return <ControleEnvios currentUser={currentUser!} />;
       
-      // ✅ ATUALIZADO: EntrevistaTecnica com props corretas (integrado Supabase)
+      // ✅ ATUALIZADO: EntrevistaTecnicaInteligente com upload de áudio e transcrição IA
       case 'entrevista_tecnica':
-          return <EntrevistaTecnica 
+          return <EntrevistaTecnicaInteligente 
             candidaturas={candidaturas}
             vagas={vagas}
             currentUserId={currentUser?.id || 1}
