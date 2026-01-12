@@ -445,19 +445,19 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                 
                 <div className="flex items-center gap-3">
                     <button
+                        onClick={() => setIsModalOpen(true)}
+                        className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2"
+                    >
+                        <Plus className="w-5 h-5" />
+                        Nova Candidatura
+                    </button>
+                    <button
                         onClick={() => setIsExportModalOpen(true)}
                         className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-5 py-3 rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2"
                         title="Exportar candidaturas para Excel"
                     >
                         <Download className="w-5 h-5" />
                         Exportar
-                    </button>
-                    <button
-                        onClick={() => setIsModalOpen(true)}
-                        className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-6 py-3 rounded-xl font-semibold hover:shadow-lg transition-all flex items-center gap-2"
-                    >
-                        <Plus className="w-5 h-5" />
-                        Nova Candidatura
                     </button>
                 </div>
             </div>
