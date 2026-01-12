@@ -154,11 +154,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       'aguardando_resposta': 'aguardando_cliente'
     };
 
-    // 🆕 Mapear decisão para status geral da VAGA (só muda quando aprovado)
+    // 🆕 CORRIGIDO: Mapear decisão para status geral da VAGA (Pipeline usa este campo!)
     const statusGeralVagaMap: { [key: string]: string | null } = {
       'aprovado': 'finalizada',            // Vaga preenchida!
       'reprovado': null,                   // Não muda - outros podem concorrer
-      'agendado': null,                    // Não muda
+      'agendado': 'em_selecao',            // 🆕 CORRIGIDO: Entrevista = Em Seleção no Pipeline
       'em_analise': null,                  // Não muda
       'aguardando_resposta': null          // Não muda
     };
@@ -236,4 +236,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
-

@@ -122,12 +122,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`✅ [registrar-manual] Candidatura ${candidatura_id} atualizada para: enviado_cliente`);
     }
 
-    // 🆕 CORRIGIDO: Atualizar status_posicao da VAGA para 'em_andamento'
+    // 🆕 CORRIGIDO: Atualizar status_posicao E status da VAGA para 'em_andamento'
     if (vagaIdFinal) {
       const { error: vagaError } = await supabaseAdmin
         .from('vagas')
         .update({ 
-          status_posicao: 'em_andamento',
+          status: 'em_andamento',           // 🆕 Atualiza status geral (Pipeline usa este)
+          status_posicao: 'em_andamento',   // Atualiza status_posicao também
           atualizado_em: new Date().toISOString()
         })
         .eq('id', vagaIdFinal);
@@ -135,7 +136,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (vagaError) {
         console.error('❌ [registrar-manual] Erro ao atualizar vaga:', vagaError);
       } else {
-        console.log(`✅ [registrar-manual] Vaga ${vagaIdFinal} atualizada para status_posicao: em_andamento`);
+        console.log(`✅ [registrar-manual] Vaga ${vagaIdFinal} atualizada para status: em_andamento`);
       }
     }
 
@@ -153,4 +154,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
-

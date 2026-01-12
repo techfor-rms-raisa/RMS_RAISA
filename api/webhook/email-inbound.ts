@@ -928,17 +928,18 @@ async function processarEnvioCV(
     })
     .eq('id', candidatura.id);
 
-  // 🆕 Atualizar status_posicao da VAGA
+  // 🆕 CORRIGIDO: Atualizar status E status_posicao da VAGA
   if (candidatura.vaga_id) {
     await supabaseAdmin
       .from('vagas')
       .update({
+        status: 'em_andamento',           // 🆕 Atualiza status geral (Pipeline usa este!)
         status_posicao: 'enviado_cliente',
         atualizado_em: new Date().toISOString()
       })
       .eq('id', candidatura.vaga_id);
     
-    console.log(`✅ [Webhook] status_posicao da vaga ${candidatura.vaga_id} atualizado para: enviado_cliente`);
+    console.log(`✅ [Webhook] Vaga ${candidatura.vaga_id} atualizada - status: em_andamento, status_posicao: enviado_cliente`);
   }
 
   console.log(`✅ [Webhook] Envio registrado: ID ${envio?.id}`);
@@ -992,11 +993,11 @@ async function processarRespostaCliente(
     'duvida': 'aguardando_cliente'
   };
 
-  // 🆕 Mapear tipo de resposta para status da VAGA (só muda quando aprovado)
+  // 🆕 CORRIGIDO: Mapear tipo de resposta para status da VAGA (Pipeline usa este!)
   const statusVagaMap: Record<string, string | null> = {
     'visualizado': null,              // Não muda
     'em_analise': null,               // Não muda
-    'agendamento': null,              // Não muda - continua em andamento
+    'agendamento': 'em_selecao',      // 🆕 CORRIGIDO: Entrevista = Em Seleção no Pipeline
     'aprovado': 'finalizada',         // 🆕 Vaga finalizada com sucesso!
     'reprovado': null,                // Não muda - outros candidatos podem concorrer
     'duvida': null                    // Não muda
