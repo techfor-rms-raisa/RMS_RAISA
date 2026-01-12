@@ -323,10 +323,20 @@ export const useControleEnvios = () => {
     setError(null);
 
     try {
+      // 🆕 CORRIGIDO: Mapear pendente_id para email_pendente_id que a API espera
+      const { pendente_id, observacao_resolucao, resolvido_por, ...resto } = dados;
+      
+      const payload = {
+        ...resto,
+        email_pendente_id: pendente_id,
+        observacao: observacao_resolucao,
+        classificado_por: resolvido_por
+      };
+
       const response = await fetch('/api/envios/classificar-manual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(dados)
+        body: JSON.stringify(payload)
       });
 
       const result = await response.json();
