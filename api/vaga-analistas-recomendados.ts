@@ -77,7 +77,7 @@ async function coletarDadosVaga(supabase: SupabaseClient, vagaId: string) {
     let clienteVip = false;
     if (vaga.cliente_id) {
         const { data: cliente } = await supabase
-            .from('clientes')
+            .from('clients')
             .select('razao_social_cliente, vip')
             .eq('id', vaga.cliente_id)
             .single();

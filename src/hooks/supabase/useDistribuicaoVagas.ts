@@ -108,7 +108,7 @@ export function useDistribuicaoVagas() {
       let clienteNome = '';
       if (vaga.cliente_id) {
         const { data: cliente } = await supabase
-          .from('clientes')
+          .from('clients')
           .select('razao_social_cliente')
           .eq('id', vaga.cliente_id)
           .maybeSingle();
