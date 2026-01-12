@@ -143,16 +143,28 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
 
       // Adicionar analistas à vaga
       const errosAnalistas: string[] = [];
+      const analistasJaAtribuidos: string[] = [];
+      const analistasAdicionados: string[] = [];
+      
       for (const analistaId of analistasSelecionados) {
         const resultado = await adicionarAnalista(vagaId, analistaId, {}, currentUserId);
         if (!resultado) {
           const analista = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === analistaId);
-          errosAnalistas.push(analista?.nome || `ID ${analistaId}`);
+          const nomeAnalista = analista?.nome || `ID ${analistaId}`;
+          // Verificar se o erro é porque já está atribuído
+          // (o hook retorna null mas não sabemos exatamente o motivo aqui)
+          errosAnalistas.push(nomeAnalista);
+        } else {
+          const analista = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === analistaId);
+          analistasAdicionados.push(analista?.nome || `ID ${analistaId}`);
         }
       }
 
-      if (errosAnalistas.length > 0) {
-        alert(`⚠️ Erro ao adicionar analistas: ${errosAnalistas.join(', ')}\n\nVerifique as permissões no Supabase (RLS).`);
+      // Se alguns foram adicionados e outros deram erro
+      if (analistasAdicionados.length > 0 && errosAnalistas.length > 0) {
+        alert(`⚠️ Distribuição parcial:\n\n✅ Adicionados: ${analistasAdicionados.join(', ')}\n\n❌ Erro (já atribuídos?): ${errosAnalistas.join(', ')}`);
+      } else if (errosAnalistas.length > 0 && analistasAdicionados.length === 0) {
+        alert(`⚠️ Erro ao adicionar analistas: ${errosAnalistas.join(', ')}\n\nPossíveis causas:\n• Analista já está atribuído a esta vaga\n• Problema de permissão no banco`);
         return;
       }
 
@@ -238,6 +250,23 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
         {/* Etapa 1: Ranking IA */}
         {etapa === 'ranking' && sugestaoAtual && (
           <div className="space-y-6">
+            {/* Verificar se há analistas disponíveis */}
+            {sugestaoAtual.ranking_analistas.length === 0 ? (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
+                <div className="text-4xl mb-3">✅</div>
+                <h3 className="font-bold text-yellow-800 mb-2">Todos os analistas já estão atribuídos</h3>
+                <p className="text-sm text-yellow-600">
+                  Esta vaga já possui analistas configurados. Não há novos analistas disponíveis para adicionar.
+                </p>
+                <button
+                  onClick={onClose}
+                  className="mt-4 px-6 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition"
+                >
+                  Fechar
+                </button>
+              </div>
+            ) : (
+              <>
             {/* Info Box */}
             <div className="bg-purple-50 rounded-lg p-4 flex items-start gap-3">
               <div className="text-2xl">🤖</div>
@@ -362,6 +391,8 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
                 ✏️ Escolher Manualmente
               </button>
             </div>
+              </>
+            )}
           </div>
         )}
 

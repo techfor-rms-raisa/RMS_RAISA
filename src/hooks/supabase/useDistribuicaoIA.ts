@@ -112,6 +112,15 @@ export function useDistribuicaoIA() {
 
       if (vagaError) throw vagaError;
 
+      // 🆕 Buscar analistas já atribuídos a esta vaga
+      const { data: analistasJaAtribuidos } = await supabase
+        .from('vaga_analista_distribuicao')
+        .select('analista_id')
+        .eq('vaga_id', vagaId)
+        .eq('ativo', true);
+
+      const idsJaAtribuidos = new Set((analistasJaAtribuidos || []).map(a => a.analista_id));
+
       // Buscar analistas de R&S ativos
       const { data: analistas, error: analistasError } = await supabase
         .from('app_users')
@@ -121,9 +130,12 @@ export function useDistribuicaoIA() {
 
       if (analistasError) throw analistasError;
 
+      // 🆕 Filtrar analistas que já estão atribuídos
+      const analistasDisponiveis = (analistas || []).filter(a => !idsJaAtribuidos.has(a.id));
+
       // Calcular score de cada analista
       const ranking: AnalistaScore[] = await Promise.all(
-        (analistas || []).map(async (analista) => {
+        analistasDisponiveis.map(async (analista) => {
           const score = await calcularScoreAnalista(
             analista.id,
             vagaId,
