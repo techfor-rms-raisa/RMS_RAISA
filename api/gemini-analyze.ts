@@ -89,6 +89,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await classificarRespostaCliente(payload);
         break;
 
+      // ✅ NOVA ACTION (12/01/2026): Gerar perguntas técnicas personalizadas para entrevista
+      case 'generateInterviewQuestions':
+        result = await generateInterviewQuestions(payload);
+        break;
+
       default:
         return res.status(400).json({ error: `Ação desconhecida: ${action}` });
     }
@@ -879,3 +884,186 @@ RESPONDA APENAS EM JSON (sem markdown):
   }
 }
 
+// ============================================================
+// 🆕 GERAR PERGUNTAS TÉCNICAS PERSONALIZADAS PARA ENTREVISTA
+// Versão: 1.0 - 12/01/2026
+// ============================================================
+
+async function generateInterviewQuestions(payload: {
+  vaga: {
+    titulo: string;
+    requisitos_obrigatorios?: string | string[];
+    requisitos_desejaveis?: string | string[];
+    stack_tecnologica?: string[];
+    descricao?: string;
+    nivel_senioridade?: string;
+  };
+  candidato: {
+    nome: string;
+    titulo_profissional?: string;
+    senioridade?: string;
+    resumo_profissional?: string;
+    cv_texto?: string;
+    experiencias?: string[];
+    skills?: string[];
+  };
+}) {
+  console.log('🎯 [generateInterviewQuestions] Gerando perguntas personalizadas...');
+
+  const { vaga, candidato } = payload;
+
+  // Formatar requisitos
+  const requisitosObrigatorios = Array.isArray(vaga.requisitos_obrigatorios) 
+    ? vaga.requisitos_obrigatorios.join(', ')
+    : vaga.requisitos_obrigatorios || 'Não especificados';
+  
+  const requisitosDesejaveis = Array.isArray(vaga.requisitos_desejaveis)
+    ? vaga.requisitos_desejaveis.join(', ')
+    : vaga.requisitos_desejaveis || '';
+
+  const stackTecnologica = vaga.stack_tecnologica?.join(', ') || 'Não especificada';
+
+  // Informações do candidato
+  const cvResumo = candidato.cv_texto 
+    ? candidato.cv_texto.substring(0, 3000) // Limitar para não exceder tokens
+    : candidato.resumo_profissional || 'Não disponível';
+
+  const skillsCandidato = candidato.skills?.join(', ') || candidato.experiencias?.join(', ') || '';
+
+  const prompt = `Você é um **Recrutador Técnico Sênior** especializado em validar experiências de candidatos em entrevistas.
+
+## CONTEXTO DA VAGA
+
+**Título:** ${vaga.titulo}
+**Nível:** ${vaga.nivel_senioridade || 'Não especificado'}
+**Requisitos Obrigatórios:** ${requisitosObrigatorios}
+**Requisitos Desejáveis:** ${requisitosDesejaveis}
+**Stack Tecnológica:** ${stackTecnologica}
+**Descrição:** ${vaga.descricao || 'Não disponível'}
+
+## PERFIL DO CANDIDATO
+
+**Nome:** ${candidato.nome}
+**Título:** ${candidato.titulo_profissional || 'Não informado'}
+**Senioridade declarada:** ${candidato.senioridade || 'Não informada'}
+**Skills declaradas:** ${skillsCandidato}
+
+**Resumo/CV do Candidato:**
+${cvResumo}
+
+---
+
+## SUA TAREFA
+
+Gere perguntas técnicas PERSONALIZADAS para validar se o candidato realmente possui as experiências que declara ter. 
+
+### REGRAS IMPORTANTES:
+1. **NÃO faça perguntas genéricas** como "conte sobre você" ou "por que quer trabalhar aqui"
+2. **CADA pergunta deve validar um requisito OBRIGATÓRIO da vaga** mencionado no CV do candidato
+3. **Perguntas devem ser TÉCNICAS e ESPECÍFICAS** que apenas quem realmente trabalhou consegue responder
+4. **Identifique GAPS** - tecnologias exigidas que o candidato NÃO menciona no CV
+5. **Verifique CONGRUÊNCIA** - se tempo de experiência declarado é compatível com profundidade esperada
+6. **Inclua RED FLAGS** que indicam que o candidato está mentindo ou exagerando
+
+### ESTRUTURA DE CADA PERGUNTA:
+- Deve ser relacionada a um requisito OBRIGATÓRIO da vaga
+- Deve validar uma experiência declarada pelo candidato
+- Deve ter critérios claros de avaliação
+- Deve incluir sinais de alerta (red flags)
+
+Retorne um JSON com esta estrutura EXATA:
+
+{
+  "analise_previa": {
+    "gaps_identificados": ["Gap 1 - tecnologia exigida que candidato não menciona", "Gap 2"],
+    "pontos_validar": ["Experiência X declarada - precisa validar profundidade", "Tempo em Y"],
+    "alertas": ["Possível inconsistência entre X e Y"]
+  },
+  "perguntas": [
+    {
+      "categoria": "Requisito Obrigatório - [Nome da tecnologia/skill]",
+      "icone": "💻",
+      "perguntas": [
+        {
+          "pergunta": "Pergunta técnica específica aqui",
+          "objetivo": "O que essa pergunta valida",
+          "requisito_validado": "Qual requisito obrigatório está sendo validado",
+          "o_que_avaliar": ["Critério 1", "Critério 2", "Critério 3"],
+          "resposta_esperada_nivel_senior": "O que um profissional sênior responderia",
+          "red_flags": ["Sinal de alerta 1", "Sinal de alerta 2"]
+        }
+      ]
+    },
+    {
+      "categoria": "GAP Identificado - [Tecnologia que falta]",
+      "icone": "⚠️",
+      "perguntas": [
+        {
+          "pergunta": "Pergunta para entender o gap",
+          "objetivo": "Avaliar se é um gap crítico ou se há experiência não documentada",
+          "requisito_validado": "Requisito obrigatório relacionado",
+          "o_que_avaliar": ["Critério 1", "Critério 2"],
+          "resposta_esperada_nivel_senior": "O que esperamos ouvir",
+          "red_flags": ["Sinais de que não tem a experiência"]
+        }
+      ]
+    }
+  ],
+  "recomendacao_foco": "Resumo do que o entrevistador deve focar na entrevista"
+}
+
+### QUANTIDADE DE PERGUNTAS:
+- Mínimo 5, máximo 10 perguntas
+- Pelo menos 1 pergunta por requisito obrigatório principal
+- Pelo menos 1 pergunta sobre cada gap identificado
+
+Responda APENAS com o JSON, sem texto adicional.`;
+
+  try {
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt
+    });
+
+    const text = result.text || '';
+    const jsonClean = text.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').trim();
+
+    try {
+      const parsed = JSON.parse(jsonClean);
+      console.log(`✅ Perguntas geradas: ${parsed.perguntas?.length || 0} categorias`);
+      return {
+        sucesso: true,
+        ...parsed
+      };
+    } catch {
+      const jsonMatch = jsonClean.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return { sucesso: true, ...parsed };
+      }
+      throw new Error('Falha ao parsear perguntas');
+    }
+  } catch (error: any) {
+    console.error('❌ Erro ao gerar perguntas:', error);
+    
+    // Fallback: retornar perguntas mínimas baseadas nos requisitos
+    return {
+      sucesso: false,
+      erro: error.message,
+      perguntas: [{
+        categoria: `Validação Técnica - ${vaga.titulo}`,
+        icone: '💻',
+        perguntas: [
+          {
+            pergunta: `Descreva em detalhes um projeto onde você utilizou ${stackTecnologica}. Qual foi seu papel específico e quais decisões técnicas você tomou?`,
+            objetivo: 'Validar experiência prática com a stack',
+            requisito_validado: stackTecnologica,
+            o_que_avaliar: ['Profundidade técnica', 'Decisões de arquitetura', 'Resultados mensuráveis'],
+            resposta_esperada_nivel_senior: 'Detalhes específicos sobre implementação, trade-offs considerados, métricas de sucesso',
+            red_flags: ['Respostas vagas', 'Não cita tecnologias específicas', 'Não menciona desafios superados']
+          }
+        ]
+      }]
+    };
+  }
+}

@@ -239,9 +239,10 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     }
   }, [candidaturaAtual]);
 
-  // Gerar perguntas padrão quando não há análise prévia
+  // Gerar perguntas PERSONALIZADAS quando não há análise prévia
+  // Busca dados do candidato e da vaga para criar perguntas específicas
   const gerarPerguntasPadrao = async () => {
-    if (!vagaAtual) {
+    if (!vagaAtual || !candidaturaAtual) {
       setPerguntas([{
         categoria: 'Geral',
         icone: '💼',
@@ -255,44 +256,109 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       return;
     }
 
-    // Gerar perguntas baseadas na vaga via API
     try {
+      // 1. Buscar dados completos da pessoa/candidato
+      let dadosCandidato: any = {
+        nome: candidaturaAtual.candidato_nome || 'Candidato'
+      };
+
+      if (candidaturaAtual.pessoa_id) {
+        console.log(`📋 Buscando dados da pessoa ID: ${candidaturaAtual.pessoa_id}...`);
+        const { data: pessoa, error: pessoaError } = await supabase
+          .from('pessoas')
+          .select('nome, titulo_profissional, senioridade, resumo_profissional, cv_texto_original')
+          .eq('id', candidaturaAtual.pessoa_id)
+          .single();
+
+        if (!pessoaError && pessoa) {
+          dadosCandidato = {
+            nome: pessoa.nome || candidaturaAtual.candidato_nome,
+            titulo_profissional: pessoa.titulo_profissional,
+            senioridade: pessoa.senioridade,
+            resumo_profissional: pessoa.resumo_profissional,
+            cv_texto: pessoa.cv_texto_original
+          };
+          console.log(`✅ Dados do candidato carregados: ${dadosCandidato.titulo_profissional || 'Sem título'}`);
+        }
+      }
+
+      // 2. Formatar dados da vaga
+      const dadosVaga = {
+        titulo: vagaAtual.titulo,
+        requisitos_obrigatorios: vagaAtual.requisitos_obrigatorios,
+        requisitos_desejaveis: vagaAtual.requisitos_desejaveis,
+        stack_tecnologica: vagaAtual.stack_tecnologica,
+        descricao: vagaAtual.descricao,
+        nivel_senioridade: vagaAtual.senioridade
+      };
+
+      console.log(`🎯 Gerando perguntas personalizadas para: ${dadosVaga.titulo}`);
+
+      // 3. Chamar API para gerar perguntas personalizadas
       const response = await fetch('/api/gemini-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'generateInterviewQuestions',
           payload: {
-            vaga: {
-              titulo: vagaAtual.titulo,
-              requisitos: vagaAtual.requisitos_obrigatorios,
-              stack: vagaAtual.stack_tecnologica
-            }
+            vaga: dadosVaga,
+            candidato: dadosCandidato
           }
         })
       });
 
       const result = await response.json();
-      if (result.perguntas) {
-        setPerguntas(result.perguntas);
+      
+      if (result.success && result.data?.perguntas) {
+        console.log(`✅ ${result.data.perguntas.length} categorias de perguntas geradas`);
+        
+        // Mostrar análise prévia se disponível
+        if (result.data.analise_previa) {
+          console.log('📊 Análise prévia:', result.data.analise_previa);
+        }
+        
+        setPerguntas(result.data.perguntas);
+        return;
       }
-    } catch {
-      // Fallback para perguntas genéricas
+      
+      // Se falhou, tentar extrair perguntas do resultado
+      if (result.data?.perguntas) {
+        setPerguntas(result.data.perguntas);
+        return;
+      }
+
+      throw new Error(result.error || 'Falha ao gerar perguntas');
+
+    } catch (err: any) {
+      console.error('❌ Erro ao gerar perguntas personalizadas:', err);
+      
+      // Fallback: perguntas baseadas na stack da vaga
+      const stack = vagaAtual.stack_tecnologica?.join(', ') || 'as tecnologias';
+      const requisitos = Array.isArray(vagaAtual.requisitos_obrigatorios) 
+        ? vagaAtual.requisitos_obrigatorios.slice(0, 3).join(', ')
+        : vagaAtual.requisitos_obrigatorios || 'os requisitos';
+
       setPerguntas([{
-        categoria: 'Técnico',
+        categoria: `Validação Técnica - ${vagaAtual.titulo}`,
         icone: '💻',
         perguntas: [
           {
-            pergunta: `Descreva sua experiência com as tecnologias mencionadas na vaga de ${vagaAtual.titulo}.`,
-            objetivo: 'Avaliar conhecimento técnico',
-            o_que_avaliar: ['Profundidade', 'Exemplos práticos'],
-            red_flags: ['Conhecimento superficial', 'Sem exemplos concretos']
+            pergunta: `Descreva em detalhes um projeto onde você utilizou ${stack}. Qual foi seu papel específico e quais decisões técnicas você tomou?`,
+            objetivo: 'Validar experiência prática com a stack exigida',
+            o_que_avaliar: ['Profundidade técnica', 'Decisões de arquitetura', 'Resultados mensuráveis'],
+            red_flags: ['Respostas vagas', 'Não cita tecnologias específicas', 'Não menciona desafios']
           },
           {
-            pergunta: 'Conte sobre um desafio técnico que você enfrentou e como resolveu.',
-            objetivo: 'Avaliar resolução de problemas',
-            o_que_avaliar: ['Processo de análise', 'Solução implementada'],
-            red_flags: ['Não detalha o processo', 'Respostas genéricas']
+            pergunta: `Você mencionou experiência com ${requisitos}. Descreva um desafio complexo que enfrentou e como resolveu tecnicamente.`,
+            objetivo: 'Validar profundidade de conhecimento nos requisitos obrigatórios',
+            o_que_avaliar: ['Processo de análise', 'Solução implementada', 'Lições aprendidas'],
+            red_flags: ['Não detalha o problema', 'Solução superficial', 'Não menciona resultados']
+          },
+          {
+            pergunta: 'Qual foi a arquitetura mais complexa que você desenhou ou contribuiu significativamente? Explique as decisões de design.',
+            objetivo: 'Avaliar capacidade de arquitetura e senioridade real',
+            o_que_avaliar: ['Visão sistêmica', 'Trade-offs considerados', 'Escalabilidade'],
+            red_flags: ['Não sabe explicar decisões', 'Respostas genéricas', 'Confusão conceitual']
           }
         ]
       }]);
@@ -668,28 +734,47 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
 
         {perguntas.length === 0 && !loadingPerguntas ? (
           <p className="text-gray-500 text-center py-8">
-            Nenhuma pergunta carregada. Clique em "Gerar Perguntas" abaixo.
+            Nenhuma pergunta carregada. Clique em "Atualizar Perguntas" abaixo.
           </p>
         ) : (
-          <div className="space-y-4 max-h-96 overflow-y-auto">
+          <div className="space-y-4 max-h-[500px] overflow-y-auto">
             {perguntas.map((categoria, catIdx) => (
               <div key={catIdx} className="border rounded-lg overflow-hidden">
-                <div className="bg-gray-100 px-4 py-2 font-medium flex items-center gap-2">
+                <div className={`px-4 py-2 font-medium flex items-center gap-2 ${
+                  categoria.categoria?.includes('GAP') ? 'bg-amber-100 text-amber-800' : 'bg-gray-100'
+                }`}>
                   <span>{categoria.icone}</span>
                   {categoria.categoria}
                 </div>
                 <div className="divide-y">
-                  {categoria.perguntas.map((p, pIdx) => (
-                    <div key={pIdx} className="p-4">
-                      <p className="font-medium text-gray-900 mb-2">
+                  {categoria.perguntas.map((p: any, pIdx: number) => (
+                    <div key={pIdx} className="p-4 hover:bg-gray-50">
+                      <p className="font-medium text-gray-900 mb-3">
                         {catIdx + 1}.{pIdx + 1}. {p.pergunta}
                       </p>
-                      <div className="text-xs text-gray-500 space-y-1">
-                        <p><span className="font-medium">Objetivo:</span> {p.objetivo}</p>
-                        <p><span className="font-medium">Avaliar:</span> {p.o_que_avaliar.join(', ')}</p>
-                        {p.red_flags.length > 0 && (
-                          <p className="text-red-600">
-                            <span className="font-medium">⚠️ Red Flags:</span> {p.red_flags.join(', ')}
+                      <div className="text-xs space-y-2">
+                        {p.requisito_validado && (
+                          <p className="text-blue-600">
+                            <span className="font-semibold">🎯 Requisito:</span> {p.requisito_validado}
+                          </p>
+                        )}
+                        <p className="text-gray-600">
+                          <span className="font-semibold">Objetivo:</span> {p.objetivo}
+                        </p>
+                        <p className="text-gray-600">
+                          <span className="font-semibold">✅ Avaliar:</span> {Array.isArray(p.o_que_avaliar) ? p.o_que_avaliar.join(' • ') : p.o_que_avaliar}
+                        </p>
+                        {p.resposta_esperada_nivel_senior && (
+                          <details className="text-green-700 bg-green-50 rounded p-2">
+                            <summary className="cursor-pointer font-semibold">
+                              💡 Resposta esperada (Senior)
+                            </summary>
+                            <p className="mt-1 text-xs">{p.resposta_esperada_nivel_senior}</p>
+                          </details>
+                        )}
+                        {p.red_flags && p.red_flags.length > 0 && (
+                          <p className="text-red-600 bg-red-50 rounded p-2">
+                            <span className="font-semibold">⚠️ Red Flags:</span> {Array.isArray(p.red_flags) ? p.red_flags.join(' • ') : p.red_flags}
                           </p>
                         )}
                       </div>
