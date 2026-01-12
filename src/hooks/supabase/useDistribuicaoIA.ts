@@ -284,31 +284,39 @@ export function useDistribuicaoIA() {
       const trintaDiasAtras = new Date();
       trintaDiasAtras.setDate(trintaDiasAtras.getDate() - 30);
       
+      // Buscar candidaturas processadas do analista (criado_em → atualizado_em)
       const { data: candidaturasProcessadas } = await supabase
         .from('candidaturas')
-        .select('enviado_em, decidido_em')
-        .eq('analista_id', analistaId)
-        .not('decidido_em', 'is', null)
-        .gte('decidido_em', trintaDiasAtras.toISOString())
+        .select('criado_em, atualizado_em, status')
+        .eq('analista_responsavel_id', analistaId)
+        .in('status', ['aprovado', 'reprovado', 'aprovado_cliente', 'contratado'])
+        .gte('atualizado_em', trintaDiasAtras.toISOString())
         .limit(50);
 
       if (candidaturasProcessadas && candidaturasProcessadas.length >= 5) {
         // Calcular tempo médio de processamento em dias
-        const temposProcessamento = candidaturasProcessadas.map(c => {
-          const inicio = new Date(c.enviado_em).getTime();
-          const fim = new Date(c.decidido_em).getTime();
-          return (fim - inicio) / (1000 * 60 * 60 * 24); // dias
-        });
+        const temposProcessamento = candidaturasProcessadas
+          .filter(c => c.criado_em && c.atualizado_em)
+          .map(c => {
+            const inicio = new Date(c.criado_em).getTime();
+            const fim = new Date(c.atualizado_em).getTime();
+            return (fim - inicio) / (1000 * 60 * 60 * 24); // dias
+          })
+          .filter(t => t > 0 && t < 90); // Filtrar valores inválidos
         
-        const mediaTempoProcessamento = temposProcessamento.reduce((a, b) => a + b, 0) / temposProcessamento.length;
-        
-        // Quanto menor o tempo, maior o score (invertido)
-        // < 2 dias = 10 pontos, > 10 dias = 2 pontos
-        if (mediaTempoProcessamento <= 2) scoreVelocidade = 10;
-        else if (mediaTempoProcessamento <= 4) scoreVelocidade = 8;
-        else if (mediaTempoProcessamento <= 6) scoreVelocidade = 6;
-        else if (mediaTempoProcessamento <= 8) scoreVelocidade = 4;
-        else scoreVelocidade = 2;
+        if (temposProcessamento.length >= 3) {
+          const mediaTempoProcessamento = temposProcessamento.reduce((a, b) => a + b, 0) / temposProcessamento.length;
+          
+          // Quanto menor o tempo, maior o score (invertido)
+          // < 2 dias = 10 pontos, > 10 dias = 2 pontos
+          if (mediaTempoProcessamento <= 2) scoreVelocidade = 10;
+          else if (mediaTempoProcessamento <= 4) scoreVelocidade = 8;
+          else if (mediaTempoProcessamento <= 6) scoreVelocidade = 6;
+          else if (mediaTempoProcessamento <= 8) scoreVelocidade = 4;
+          else scoreVelocidade = 2;
+        } else {
+          scoreVelocidade = 5;
+        }
       } else {
         // Sem histórico suficiente, usar score neutro
         scoreVelocidade = 5;
