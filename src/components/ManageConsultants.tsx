@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantStatus, TerminationReason } from '@/types';
-import { Mail, Phone, Search, Building2, Calendar, CreditCard, User as UserIcon, Briefcase, DollarSign, AlertTriangle, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { Mail, Phone, Search, Building2, Calendar, CreditCard, User as UserIcon, Briefcase, DollarSign, AlertTriangle, ChevronDown, ChevronUp, RefreshCw, Lock } from 'lucide-react';
 import InclusionImport from './InclusionImport';
+
+// ✅ NOVO: Ano atual e anos disponíveis para filtro
+const ANO_ATUAL = new Date().getFullYear();
+const ANOS_DISPONIVEIS = [2024, 2025, 2026]; // Anos disponíveis no dropdown
 
 interface ManageConsultantsProps {
     consultants: Consultant[];
@@ -70,7 +74,12 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
     const [selectedClientFilter, setSelectedClientFilter] = useState<string>('all');
     const [selectedConsultantFilter, setSelectedConsultantFilter] = useState<string>('all');
     const [searchQuery, setSearchQuery] = useState<string>('');
-
+    
+    // ✅ NOVO: Filtro de ano de vigência (padrão: ano atual)
+    const [selectedYearFilter, setSelectedYearFilter] = useState<number>(ANO_ATUAL);
+    
+    // ✅ NOVO: Verificar se o ano selecionado permite edição (apenas ano atual)
+    const isYearReadOnly = selectedYearFilter < ANO_ATUAL;
     const [formData, setFormData] = useState({
         ano_vigencia: new Date().getFullYear(),
         nome_consultores: '',
@@ -272,8 +281,11 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
         return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     };
 
-    // Filtros - SEM filtro de ano (mostra todos os consultores)
+    // Filtros - COM filtro de ano de vigência
     const filteredConsultants = consultants.filter(c => {
+        // ✅ NOVO: Filtrar pelo ano de vigência
+        const matchesYear = c.ano_vigencia === selectedYearFilter;
+        
         const clientName = getClientName(c);
         const matchesClient = selectedClientFilter === 'all' || clientName === selectedClientFilter;
         const matchesConsultant = selectedConsultantFilter === 'all' || c.nome_consultores === selectedConsultantFilter;
@@ -281,7 +293,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             c.nome_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             c.cargo_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
             clientName?.toLowerCase().includes(searchQuery.toLowerCase());
-        return matchesClient && matchesConsultant && matchesSearch;
+        return matchesYear && matchesClient && matchesConsultant && matchesSearch;
     });
 
     const uniqueClients = [...new Set(consultants.map(c => getClientName(c)))].filter(Boolean).sort();
@@ -292,7 +304,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
 
             <div className="flex justify-between items-center mb-8">
                 <h2 className="text-3xl font-bold text-gray-900">Gerenciar Consultores</h2>
-                {!isReadOnly && (
+                {!isReadOnly && !isYearReadOnly && (
                     <button
                         onClick={() => { setEditingConsultant(null); setIsFormOpen(true); }}
                         className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm flex items-center gap-2"
@@ -304,7 +316,24 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             </div>
 
             {/* Filtros */}
-            <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+                {/* ✅ NOVO: Dropdown de Ano de Vigência */}
+                <select
+                    value={selectedYearFilter}
+                    onChange={(e) => setSelectedYearFilter(Number(e.target.value))}
+                    className={`px-4 py-2 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-medium ${
+                        isYearReadOnly 
+                            ? 'bg-amber-50 border-amber-300 text-amber-700' 
+                            : 'border-gray-300'
+                    }`}
+                >
+                    {ANOS_DISPONIVEIS.map(ano => (
+                        <option key={ano} value={ano}>
+                            {ano} {ano === ANO_ATUAL ? '(Atual)' : ano < ANO_ATUAL ? '(Histórico)' : ''}
+                        </option>
+                    ))}
+                </select>
+                
                 <div className="relative">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                     <input
@@ -329,6 +358,17 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                     {filteredConsultants.length} consultor(es) encontrado(s)
                 </div>
             </div>
+            
+            {/* ✅ NOVO: Aviso de modo somente leitura para anos anteriores */}
+            {isYearReadOnly && (
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
+                    <Lock className="w-5 h-5 text-amber-600" />
+                    <div>
+                        <p className="text-amber-800 font-medium">Modo Histórico - Somente Leitura</p>
+                        <p className="text-amber-600 text-sm">Registros de {selectedYearFilter} não podem ser alterados. Selecione o ano atual para editar.</p>
+                    </div>
+                </div>
+            )}
 
             {/* Formulário Modal */}
             {isFormOpen && (
@@ -853,13 +893,19 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                 </div>
                                 
                                 <div className="flex items-center gap-2">
-                                    {!isReadOnly && (
+                                    {!isReadOnly && !isYearReadOnly && (
                                         <button
                                             onClick={() => { setEditingConsultant(consultant); setIsFormOpen(true); }}
                                             className="px-3 py-1.5 text-sm bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors"
                                         >
                                             Editar
                                         </button>
+                                    )}
+                                    {isYearReadOnly && (
+                                        <span className="px-3 py-1.5 text-sm bg-gray-100 text-gray-500 rounded-lg flex items-center gap-1">
+                                            <Lock className="w-3 h-3" />
+                                            Histórico
+                                        </span>
                                     )}
                                     <button
                                         onClick={() => toggleCardExpanded(consultant.id)}
