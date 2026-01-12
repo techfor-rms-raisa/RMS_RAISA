@@ -108,9 +108,10 @@ export function useDistribuicaoIA() {
         .from('vagas')
         .select('id, titulo, cliente_id, stack_tecnologica')
         .eq('id', vagaId)
-        .single();
+        .maybeSingle();
 
       if (vagaError) throw vagaError;
+      if (!vaga) throw new Error('Vaga não encontrada');
 
       // 🆕 Buscar analistas já atribuídos a esta vaga
       const { data: analistasJaAtribuidos } = await supabase
@@ -179,11 +180,11 @@ export function useDistribuicaoIA() {
           onConflict: 'vaga_id'
         })
         .select()
-        .single();
+        .maybeSingle();
 
       if (saveError) {
         console.warn('Aviso ao salvar sugestão:', saveError);
-      } else {
+      } else if (sugestaoSalva) {
         sugestao.id = sugestaoSalva.id;
       }
 

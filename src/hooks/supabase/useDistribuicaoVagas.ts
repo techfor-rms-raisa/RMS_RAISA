@@ -95,28 +95,61 @@ export function useDistribuicaoVagas() {
       // Buscar dados da vaga
       const { data: vaga, error: vagaError } = await supabase
         .from('vagas')
-        .select(`
-          id,
-          titulo,
-          status,
-          cliente:clients(nome)
-        `)
+        .select('id, titulo, status, cliente_id')
         .eq('id', vagaId)
-        .single();
+        .maybeSingle();
 
       if (vagaError) throw vagaError;
+      if (!vaga) {
+        throw new Error('Vaga não encontrada');
+      }
+
+      // Buscar nome do cliente separadamente (se tiver cliente_id)
+      let clienteNome = '';
+      if (vaga.cliente_id) {
+        const { data: cliente } = await supabase
+          .from('clientes')
+          .select('razao_social_cliente')
+          .eq('id', vaga.cliente_id)
+          .maybeSingle();
+        
+        clienteNome = cliente?.razao_social_cliente || '';
+      }
 
       // Buscar analistas da distribuição
       const { data: analistas, error: analistasError } = await supabase
         .from('vaga_analista_distribuicao')
-        .select(`
-          *,
-          analista:app_users!vaga_analista_distribuicao_analista_id_fkey(id, nome_usuario, email_usuario)
-        `)
+        .select('*')
         .eq('vaga_id', vagaId)
         .order('ordem_alternancia');
 
       if (analistasError) throw analistasError;
+
+      // Buscar nomes dos analistas
+      const analistasComNomes = await Promise.all(
+        (analistas || []).map(async (a) => {
+          const { data: usuario } = await supabase
+            .from('app_users')
+            .select('nome_usuario, email_usuario')
+            .eq('id', a.analista_id)
+            .maybeSingle();
+
+          return {
+            id: a.id,
+            vaga_id: a.vaga_id,
+            analista_id: a.analista_id,
+            analista_nome: usuario?.nome_usuario || `Analista #${a.analista_id}`,
+            analista_email: usuario?.email_usuario || '',
+            ativo: a.ativo,
+            percentual_distribuicao: a.percentual_distribuicao,
+            max_candidatos: a.max_candidatos,
+            candidatos_atribuidos: a.candidatos_atribuidos,
+            ordem_alternancia: a.ordem_alternancia,
+            ultimo_candidato_em: a.ultimo_candidato_em,
+            criado_em: a.criado_em
+          };
+        })
+      );
 
       // Contar total de candidatos
       const { count: totalCandidatos } = await supabase
@@ -129,22 +162,9 @@ export function useDistribuicaoVagas() {
         vaga_id: vaga.id,
         vaga_titulo: vaga.titulo,
         vaga_status: vaga.status,
-        cliente_nome: vaga.cliente?.nome || '',
+        cliente_nome: clienteNome,
         total_candidatos: totalCandidatos || 0,
-        analistas: (analistas || []).map(a => ({
-          id: a.id,
-          vaga_id: a.vaga_id,
-          analista_id: a.analista_id,
-          analista_nome: a.analista?.nome_usuario,
-          analista_email: a.analista?.email_usuario,
-          ativo: a.ativo,
-          percentual_distribuicao: a.percentual_distribuicao,
-          max_candidatos: a.max_candidatos,
-          candidatos_atribuidos: a.candidatos_atribuidos,
-          ordem_alternancia: a.ordem_alternancia,
-          ultimo_candidato_em: a.ultimo_candidato_em,
-          criado_em: a.criado_em
-        }))
+        analistas: analistasComNomes
       };
 
       setDistribuicaoAtual(distribuicao);
@@ -209,13 +229,17 @@ export function useDistribuicaoVagas() {
           ordem_alternancia: novaOrdem,
           criado_por: userId || null
         })
-        .select(`
-          *,
-          analista:app_users!vaga_analista_distribuicao_analista_id_fkey(id, nome_usuario, email_usuario)
-        `)
+        .select('*')
         .single();
 
       if (insertError) throw insertError;
+
+      // Buscar nome do analista
+      const { data: usuario } = await supabase
+        .from('app_users')
+        .select('nome_usuario, email_usuario')
+        .eq('id', analistaId)
+        .maybeSingle();
 
       // Recalcular percentuais se necessário
       await recalcularPercentuais(vagaId);
@@ -229,8 +253,8 @@ export function useDistribuicaoVagas() {
         id: data.id,
         vaga_id: data.vaga_id,
         analista_id: data.analista_id,
-        analista_nome: data.analista?.nome_usuario,
-        analista_email: data.analista?.email_usuario,
+        analista_nome: usuario?.nome_usuario || `Analista #${analistaId}`,
+        analista_email: usuario?.email_usuario || '',
         ativo: data.ativo,
         percentual_distribuicao: data.percentual_distribuicao,
         max_candidatos: data.max_candidatos,
@@ -345,7 +369,7 @@ export function useDistribuicaoVagas() {
         .from('candidaturas')
         .select('analista_responsavel_id, vaga_id')
         .eq('id', candidaturaId)
-        .single();
+        .maybeSingle();
 
       if (!candidatura) throw new Error('Candidatura não encontrada');
 
@@ -536,11 +560,7 @@ export function useDistribuicaoVagas() {
     try {
       let query = supabase
         .from('distribuicao_candidato_historico')
-        .select(`
-          *,
-          analista:app_users!distribuicao_candidato_historico_analista_id_fkey(nome_usuario),
-          analista_anterior:app_users!distribuicao_candidato_historico_analista_anterior_id_fkey(nome_usuario)
-        `)
+        .select('*')
         .order('atribuido_em', { ascending: false });
 
       if (filtros?.vagaId) query = query.eq('vaga_id', filtros.vagaId);
@@ -552,16 +572,30 @@ export function useDistribuicaoVagas() {
 
       if (error) throw error;
 
+      // Buscar nomes dos analistas
+      const analistaIds = new Set<number>();
+      (data || []).forEach(h => {
+        if (h.analista_id) analistaIds.add(h.analista_id);
+        if (h.analista_anterior_id) analistaIds.add(h.analista_anterior_id);
+      });
+
+      const { data: usuarios } = await supabase
+        .from('app_users')
+        .select('id, nome_usuario')
+        .in('id', Array.from(analistaIds));
+
+      const usuariosMap = new Map((usuarios || []).map(u => [u.id, u.nome_usuario]));
+
       const historico = (data || []).map(h => ({
         id: h.id,
         candidatura_id: h.candidatura_id,
         vaga_id: h.vaga_id,
         analista_id: h.analista_id,
-        analista_nome: h.analista?.nome_usuario,
+        analista_nome: usuariosMap.get(h.analista_id) || `Analista #${h.analista_id}`,
         tipo_atribuicao: h.tipo_atribuicao,
         motivo_redistribuicao: h.motivo_redistribuicao,
         analista_anterior_id: h.analista_anterior_id,
-        analista_anterior_nome: h.analista_anterior?.nome_usuario,
+        analista_anterior_nome: h.analista_anterior_id ? (usuariosMap.get(h.analista_anterior_id) || `Analista #${h.analista_anterior_id}`) : undefined,
         atribuido_em: h.atribuido_em,
         atribuido_por: h.atribuido_por
       }));
@@ -612,12 +646,17 @@ export function useDistribuicaoVagas() {
       // Balanceamento por analista
       const { data: balanceamento } = await supabase
         .from('vaga_analista_distribuicao')
-        .select(`
-          analista_id,
-          analista:app_users!vaga_analista_distribuicao_analista_id_fkey(nome_usuario),
-          candidatos_atribuidos
-        `)
+        .select('analista_id, candidatos_atribuidos')
         .eq('ativo', true);
+
+      // Buscar nomes dos analistas
+      const analistaIdsBalance = [...new Set((balanceamento || []).map(b => b.analista_id))];
+      const { data: usuariosBalance } = await supabase
+        .from('app_users')
+        .select('id, nome_usuario')
+        .in('id', analistaIdsBalance);
+
+      const usuariosBalanceMap = new Map((usuariosBalance || []).map(u => [u.id, u.nome_usuario]));
 
       const stats: EstatisticasDistribuicao = {
         total_vagas_com_distribuicao: totalVagas || 0,
@@ -626,7 +665,7 @@ export function useDistribuicaoVagas() {
         candidatos_distribuidos_semana: distribuidosSemana || 0,
         balanceamento: (balanceamento || []).map(b => ({
           analista_id: b.analista_id,
-          analista_nome: b.analista?.nome_usuario || '',
+          analista_nome: usuariosBalanceMap.get(b.analista_id) || `Analista #${b.analista_id}`,
           total_candidatos: b.candidatos_atribuidos,
           candidatos_pendentes: 0 // TODO: calcular pendentes
         }))
