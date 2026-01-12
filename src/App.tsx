@@ -84,6 +84,24 @@ const App: React.FC = () => {
   useEffect(() => {
       console.log("ORBIT.ai V2.0 + RAISA Integrado Loaded");
   }, []);
+
+  // 🆕 Expor userId no window para o Plugin LinkedIn Chrome
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if (currentUser) {
+        (window as any).__RMS_USER_ID__ = currentUser.id;
+        (window as any).__RMS_USER_NAME__ = currentUser.nome_usuario;
+        console.log('🔗 [Plugin Support] User ID exposed:', currentUser.id);
+      } else {
+        // Tentar recuperar do localStorage
+        const storedUserId = localStorage.getItem('userId');
+        if (storedUserId) {
+          (window as any).__RMS_USER_ID__ = parseInt(storedUserId);
+          console.log('🔗 [Plugin Support] User ID recovered from localStorage:', storedUserId);
+        }
+      }
+    }
+  }, [currentUser]);
   
   const { 
     clients, consultants, users, usuariosCliente, coordenadoresCliente,
@@ -115,11 +133,25 @@ const App: React.FC = () => {
     setCurrentView('dashboard');
     // ✅ Carregar dados APÓS autenticação bem-sucedida
     loadAllData();
+    
+    // 🆕 Expor userId no window para o Plugin LinkedIn Chrome
+    if (typeof window !== 'undefined') {
+      (window as any).__RMS_USER_ID__ = user.id;
+      (window as any).__RMS_USER_NAME__ = user.nome_usuario;
+      console.log('🔗 [Plugin Support] User ID exposed:', user.id);
+    }
   };
   
   const handleLogout = () => {
     setCurrentUser(null);
     setSimulatedToken(null);
+    
+    // 🆕 Limpar userId do window ao fazer logout
+    if (typeof window !== 'undefined') {
+      delete (window as any).__RMS_USER_ID__;
+      delete (window as any).__RMS_USER_NAME__;
+      console.log('🔗 [Plugin Support] User ID cleared');
+    }
   };
 
   const handleNavigateToAtividades = (clientName?: string, consultantName?: string) => {
