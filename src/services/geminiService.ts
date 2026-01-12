@@ -13,6 +13,40 @@ if (!apiKey) {
 
 const ai = new GoogleGenAI({ apiKey });
 
+// ============================================
+// HELPER: Normalizar stack_tecnologica
+// ============================================
+/**
+ * Converte stack_tecnologica para string, independente se é array ou string JSON
+ */
+function normalizeStackToString(stack: any): string {
+    if (!stack) return 'Não informado';
+    
+    // Se já é array, faz join
+    if (Array.isArray(stack)) {
+        return stack.join(', ');
+    }
+    
+    // Se é string, tenta fazer parse como JSON
+    if (typeof stack === 'string') {
+        const trimmed = stack.trim();
+        if (trimmed.startsWith('[')) {
+            try {
+                const parsed = JSON.parse(trimmed);
+                if (Array.isArray(parsed)) {
+                    return parsed.join(', ');
+                }
+            } catch (e) {
+                // Se falhar o parse, retorna a string original
+                return trimmed;
+            }
+        }
+        return trimmed;
+    }
+    
+    return String(stack);
+}
+
 // Existing Schema for Full Analysis (Legacy/Fallback)
     // Schema removed for compatibility with @google/generative-ai
 
@@ -237,7 +271,7 @@ export async function generateFinalAssessment(
         Título: ${jobDescription.titulo}
         Descrição: ${jobDescription.descricao}
         Requisitos Obrigatórios: ${jobDescription.requisitos_obrigatorios?.join(', ') || 'N/A'}
-        Stack Tecnológica: ${jobDescription.stack_tecnologica.join(', ')}
+        Stack Tecnológica: ${normalizeStackToString(jobDescription.stack_tecnologica)}
 
         **2. Dados do Candidato (CV):**
         Texto do Currículo (Análise Prévia): ${candidateData.curriculo_texto || 'N/A'}
@@ -294,7 +328,7 @@ export async function calculateVagaPriority(dados: any): Promise<any> {
         - Cliente: ${dados.cliente_nome} ${dados.cliente_vip ? '(VIP)' : ''}
         - Prazo de Fechamento: ${dados.prazo_fechamento || 'Não definido'}
         - Faturamento Estimado: R$ ${dados.faturamento_estimado || 'Não informado'}
-        - Stack Tecnológica: ${dados.stack_tecnologica.join(', ')}
+        - Stack Tecnológica: ${normalizeStackToString(dados.stack_tecnologica)}
         - Senioridade: ${dados.senioridade}
         - Dias em Aberto: ${dados.dias_vaga_aberta}
         - Média de Fechamento (vagas similares): ${dados.media_dias_vagas_similares || 'Sem histórico'} dias
@@ -355,7 +389,7 @@ export async function recommendAnalyst(dados: any): Promise<any> {
         **VAGA A SER PREENCHIDA:**
         - Título: ${dados.vaga.titulo_vaga}
         - Cliente: ${dados.vaga.cliente_nome}
-        - Stack Necessária: ${dados.vaga.stack_tecnologica.join(', ')}
+        - Stack Necessária: ${normalizeStackToString(dados.vaga.stack_tecnologica)}
         - Senioridade: ${dados.vaga.senioridade}
         - Prioridade: ${dados.prioridade_vaga.nivel_prioridade} (Score: ${dados.prioridade_vaga.score_prioridade})
         - SLA Sugerido: ${dados.prioridade_vaga.sla_dias} dias
@@ -614,7 +648,7 @@ export async function recommendQuestionsForVaga(dados: {
         **VAGA:**
         - Título: ${dados.vaga.titulo}
         - Descrição: ${dados.vaga.descricao}
-        - Stack Tecnológica: ${dados.vaga.stack_tecnologica.join(', ')}
+        - Stack Tecnológica: ${normalizeStackToString(dados.vaga.stack_tecnologica)}
         - Senioridade: ${dados.vaga.nivel_senioridade}
         - Requisitos Obrigatórios: ${dados.vaga.requisitos_obrigatorios?.join(', ') || 'N/A'}
         
@@ -704,7 +738,7 @@ export async function recommendCandidateDecision(dados: {
         
         **VAGA:**
         - Título: ${dados.vaga.titulo}
-        - Stack: ${dados.vaga.stack_tecnologica?.join(', ')}
+        - Stack: ${normalizeStackToString(dados.vaga.stack_tecnologica)}
         - Requisitos: ${dados.vaga.requisitos_obrigatorios?.join(', ')}
         
         **CANDIDATO:**

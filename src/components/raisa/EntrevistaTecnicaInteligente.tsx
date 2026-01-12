@@ -334,9 +334,24 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       console.error('❌ Erro ao gerar perguntas personalizadas:', err);
       
       // Fallback: perguntas baseadas na stack da vaga
-      const stack = Array.isArray(vagaAtual.stack_tecnologica) 
-        ? vagaAtual.stack_tecnologica.join(', ') 
-        : (vagaAtual.stack_tecnologica || 'as tecnologias');
+      // Normalizar stack_tecnologica (pode ser array ou string JSON)
+      let stackArray: string[] = [];
+      if (Array.isArray(vagaAtual.stack_tecnologica)) {
+        stackArray = vagaAtual.stack_tecnologica;
+      } else if (typeof vagaAtual.stack_tecnologica === 'string') {
+        const trimmed = vagaAtual.stack_tecnologica.trim();
+        if (trimmed.startsWith('[')) {
+          try {
+            stackArray = JSON.parse(trimmed);
+          } catch (e) {
+            stackArray = [trimmed];
+          }
+        } else {
+          stackArray = [trimmed];
+        }
+      }
+      const stack = stackArray.length > 0 ? stackArray.join(', ') : 'as tecnologias';
+      
       const requisitos = Array.isArray(vagaAtual.requisitos_obrigatorios) 
         ? vagaAtual.requisitos_obrigatorios.slice(0, 3).join(', ')
         : vagaAtual.requisitos_obrigatorios || 'os requisitos';

@@ -3,6 +3,25 @@ import { AI_MODEL_NAME } from '../constants';
 import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '@/types';
 
 /**
+ * Helper: Normalizar stack_tecnologica para string
+ */
+function normalizeStackToString(stack: any): string {
+  if (!stack) return 'Não informado';
+  if (Array.isArray(stack)) return stack.join(', ');
+  if (typeof stack === 'string') {
+    const trimmed = stack.trim();
+    if (trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.join(', ');
+      } catch (e) { /* ignore */ }
+    }
+    return trimmed;
+  }
+  return String(stack);
+}
+
+/**
  * Configuração do cliente Gemini
  * Recupera API_KEY das variáveis de ambiente
  */
@@ -79,7 +98,7 @@ Você é um especialista em recrutamento técnico de TI. Gere perguntas técnica
 **CONTEXTO DA VAGA:**
 - Título: ${vaga.titulo}
 - Senioridade: ${vaga.senioridade}
-- Stack: ${vaga.stack_tecnologica?.join(', ')}
+- Stack: ${normalizeStackToString(vaga.stack_tecnologica)}
 - Requisitos Obrigatórios: ${vaga.requisitos_obrigatorios?.join(', ')}
 - Requisitos Desejáveis: ${vaga.requisitos_desejaveis?.join(', ')}
 
@@ -152,7 +171,7 @@ Você é um especialista em avaliação técnica de candidatos. Analise o candid
 **VAGA:**
 - Título: ${vaga.titulo}
 - Senioridade: ${vaga.senioridade}
-- Stack: ${vaga.stack_tecnologica?.join(', ')}
+- Stack: ${normalizeStackToString(vaga.stack_tecnologica)}
 
 **CANDIDATO:**
 - Nome: ${candidatoNome}
