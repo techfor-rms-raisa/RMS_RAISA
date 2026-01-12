@@ -379,8 +379,8 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // HANDLERS DE ÁUDIO
   // ============================================
   
-  // Constante para tamanho máximo (Gemini File API suporta até 2GB)
-  const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB (margem de segurança)
+  // Limite de 100MB (API com FormData suporta arquivos maiores)
+  const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
   const handleAudioSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -393,9 +393,9 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       return;
     }
 
-    // Validar tamanho (máx 500MB - Gemini File API suporta até 2GB)
+    // Validar tamanho (máx 100MB)
     if (file.size > MAX_FILE_SIZE) {
-      setError(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(0)}MB). Máximo permitido: 500MB.`);
+      setError(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(0)}MB). Máximo permitido: 100MB.`);
       return;
     }
 
@@ -458,46 +458,59 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     setProgressMessage('');
 
     try {
-      // 1. Upload do áudio para Supabase Storage
+      // 1. Obter Signed URL para upload direto ao Supabase
       setUploading(true);
-      setProgressMessage('Enviando áudio para o servidor...');
+      setProgressMessage('Preparando upload...');
       setProgress(5);
 
-      const timestamp = Date.now();
       const ext = audioFile.name.split('.').pop() || 'mp3';
-      const filename = `entrevistas/${candidaturaAtual.vaga_id}/${candidaturaAtual.id}/${timestamp}.${ext}`;
+      const mimeType = getMimeType(audioFile);
 
-      console.log(`📤 Fazendo upload: ${filename} (${(audioFile.size / 1024 / 1024).toFixed(2)}MB)`);
+      console.log(`📤 Iniciando upload: ${audioFile.name} (${(audioFile.size / 1024 / 1024).toFixed(2)}MB)`);
 
-      // Upload para Supabase Storage
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('entrevistas-audio')
-        .upload(filename, audioFile, {
-          cacheControl: '3600',
-          upsert: false
-        });
+      // Obter signed URL do backend
+      const signedUrlResponse = await fetch('/api/upload-audio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'getSignedUrl',
+          filename: audioFile.name,
+          vagaId: candidaturaAtual.vaga_id,
+          candidaturaId: candidaturaAtual.id,
+          contentType: mimeType
+        })
+      });
 
-      if (uploadError) {
-        console.error('❌ Erro no upload:', uploadError);
-        throw new Error(`Erro ao fazer upload do áudio: ${uploadError.message}. Verifique se o bucket 'entrevistas-audio' existe.`);
+      const signedUrlResult = await signedUrlResponse.json();
+
+      if (!signedUrlResult.success) {
+        throw new Error(signedUrlResult.error || 'Erro ao obter URL de upload');
       }
 
-      setProgress(20);
-      setProgressMessage('Upload concluído! Gerando URL...');
+      setProgress(10);
+      setProgressMessage('Enviando áudio para o servidor...');
 
-      // 2. Obter URL pública do arquivo
-      const { data: urlData } = supabase.storage
-        .from('entrevistas-audio')
-        .getPublicUrl(filename);
-
-      const audioPublicUrl = urlData?.publicUrl;
+      // 2. Upload direto para Supabase usando Signed URL
+      console.log(`🔗 Fazendo upload via signed URL...`);
       
-      if (!audioPublicUrl) {
-        throw new Error('Não foi possível obter URL do áudio. Verifique as configurações do bucket.');
+      const uploadResponse = await fetch(signedUrlResult.signedUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': mimeType
+        },
+        body: audioFile
+      });
+
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text();
+        throw new Error(`Erro no upload: ${uploadResponse.status} - ${errorText}`);
       }
 
-      console.log(`✅ URL pública: ${audioPublicUrl}`);
+      const audioPublicUrl = signedUrlResult.publicUrl;
+      console.log(`✅ Upload concluído! URL: ${audioPublicUrl}`);
+
       setProgress(25);
+      setProgressMessage('Upload concluído!');
 
       // 3. Criar registro da entrevista
       setProgressMessage('Registrando entrevista...');
@@ -529,7 +542,6 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       setTranscribing(true);
       setProgressMessage('Transcrevendo áudio com IA (pode levar alguns minutos)...');
       
-      const mimeType = getMimeType(audioFile);
       console.log(`🎙️ Iniciando transcrição via URL. MIME: ${mimeType}`);
 
       const transcribeResponse = await fetch('/api/gemini-audio-transcription', {
@@ -893,7 +905,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           <li>Conduza a entrevista usando as perguntas do passo anterior</li>
           <li>Grave toda a conversa em áudio (MP3, WAV, M4A, WebM ou OGG)</li>
           <li>O áudio deve ter boa qualidade para transcrição</li>
-          <li><strong>Tamanho máximo: 500MB</strong> (entrevistas de até ~2 horas)</li>
+          <li><strong>Tamanho máximo: 100MB</strong> (entrevistas de até ~1 hora)</li>
         </ul>
         <p className="text-xs text-yellow-600 mt-2 italic">
           💡 Powered by Gemini File API - processamento direto sem necessidade de divisão
@@ -909,7 +921,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             <p className="mb-2 text-sm text-gray-500">
               <span className="font-semibold">Clique para enviar</span> ou arraste o arquivo
             </p>
-            <p className="text-xs text-gray-500">MP3, WAV, M4A, WebM, OGG (máx. 500MB)</p>
+            <p className="text-xs text-gray-500">MP3, WAV, M4A, WebM, OGG (máx. 100MB)</p>
           </div>
           <input 
             type="file" 
@@ -1285,20 +1297,5 @@ const StepIndicator: React.FC<{ done: boolean; active: boolean; label: string }>
     </span>
   </div>
 );
-
-// Helper para converter File para base64
-const fileToBase64 = (file: File): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onload = () => {
-      const result = reader.result as string;
-      // Remove o prefixo data:audio/...;base64,
-      const base64 = result.split(',')[1];
-      resolve(base64);
-    };
-    reader.onerror = error => reject(error);
-  });
-};
 
 export default EntrevistaTecnicaInteligente;
