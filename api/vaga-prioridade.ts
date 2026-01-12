@@ -7,7 +7,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from "@google/genai";
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // ============================================
 // CONFIGURAÇÃO
@@ -15,16 +15,29 @@ import { createClient } from '@supabase/supabase-js';
 
 const AI_MODEL_NAME = 'gemini-2.5-flash-preview-04-17';
 
-const apiKey = process.env.API_KEY || '';
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-
-if (!apiKey) {
-    console.error('❌ API_KEY não configurada no ambiente');
+// Função para obter clientes (lazy initialization)
+function getApiKey(): string {
+    return process.env.API_KEY || '';
 }
 
-const ai = new GoogleGenAI({ apiKey });
-const supabase = createClient(supabaseUrl, supabaseKey);
+function getSupabaseClient(): SupabaseClient {
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+    
+    if (!supabaseUrl || !supabaseKey) {
+        throw new Error('Supabase URL ou Key não configurados');
+    }
+    
+    return createClient(supabaseUrl, supabaseKey);
+}
+
+function getAI(): GoogleGenAI {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+        throw new Error('API_KEY não configurada');
+    }
+    return new GoogleGenAI({ apiKey });
+}
 
 // ============================================
 // HELPER: Normalizar stack_tecnologica
@@ -50,7 +63,7 @@ function normalizeStackToString(stack: any): string {
 // COLETA DE DADOS DA VAGA
 // ============================================
 
-async function coletarDadosVaga(vagaId: string) {
+async function coletarDadosVaga(supabase: SupabaseClient, vagaId: string) {
     // Buscar vaga
     const { data: vaga, error: vagaError } = await supabase
         .from('vagas')
@@ -101,7 +114,7 @@ async function coletarDadosVaga(vagaId: string) {
 // CALCULAR PRIORIDADE COM IA
 // ============================================
 
-async function calculateVagaPriority(dados: any): Promise<any> {
+async function calculateVagaPriority(ai: GoogleGenAI, dados: any): Promise<any> {
     const prompt = `
         Você é um **Especialista em Gestão de Recrutamento e Seleção**.
         
@@ -194,20 +207,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json({ error: 'vagaId é obrigatório' });
         }
 
+        // Verificar API Key
+        const apiKey = getApiKey();
         if (!apiKey) {
             return res.status(500).json({ error: 'API_KEY não configurada no servidor' });
         }
 
+        // Inicializar clientes
+        const supabase = getSupabaseClient();
+        const ai = getAI();
+
         console.log(`📊 Calculando prioridade para vaga ${vagaId}...`);
 
         // 1. Coletar dados da vaga
-        const dadosVaga = await coletarDadosVaga(vagaId);
+        const dadosVaga = await coletarDadosVaga(supabase, vagaId);
         if (!dadosVaga) {
             return res.status(404).json({ error: 'Vaga não encontrada' });
         }
 
         // 2. Calcular prioridade com IA
-        const resultado = await calculateVagaPriority(dadosVaga);
+        const resultado = await calculateVagaPriority(ai, dadosVaga);
 
         // 3. Montar objeto completo
         const prioridade = {

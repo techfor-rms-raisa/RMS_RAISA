@@ -7,7 +7,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from "@google/genai";
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 // ============================================
 // CONFIGURAÇÃO
@@ -15,16 +15,29 @@ import { createClient } from '@supabase/supabase-js';
 
 const AI_MODEL_NAME = 'gemini-2.5-flash-preview-04-17';
 
-const apiKey = process.env.API_KEY || '';
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-
-if (!apiKey) {
-    console.error('❌ API_KEY não configurada no ambiente');
+// Função para obter clientes (lazy initialization)
+function getApiKey(): string {
+    return process.env.API_KEY || '';
 }
 
-const ai = new GoogleGenAI({ apiKey });
-const supabase = createClient(supabaseUrl, supabaseKey);
+function getSupabaseClient(): SupabaseClient {
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+    
+    if (!supabaseUrl || !supabaseKey) {
+        throw new Error('Supabase URL ou Key não configurados');
+    }
+    
+    return createClient(supabaseUrl, supabaseKey);
+}
+
+function getAI(): GoogleGenAI {
+    const apiKey = getApiKey();
+    if (!apiKey) {
+        throw new Error('API_KEY não configurada');
+    }
+    return new GoogleGenAI({ apiKey });
+}
 
 // ============================================
 // HELPER: Normalizar stack_tecnologica
@@ -50,7 +63,7 @@ function normalizeStackToString(stack: any): string {
 // COLETA DE DADOS
 // ============================================
 
-async function coletarDadosVaga(vagaId: string) {
+async function coletarDadosVaga(supabase: SupabaseClient, vagaId: string) {
     const { data: vaga, error } = await supabase
         .from('vagas')
         .select('*')
@@ -85,7 +98,7 @@ async function coletarDadosVaga(vagaId: string) {
     };
 }
 
-async function coletarAnalistasDisponiveis() {
+async function coletarAnalistasDisponiveis(supabase: SupabaseClient) {
     const { data: analistas, error } = await supabase
         .from('users')
         .select('id, nome_usuario, tipo_usuario')
@@ -118,7 +131,7 @@ async function coletarAnalistasDisponiveis() {
     return analistasComMetricas;
 }
 
-async function buscarPrioridadeVaga(vagaId: string) {
+async function buscarPrioridadeVaga(supabase: SupabaseClient, vagaId: string) {
     const { data } = await supabase
         .from('vaga_priorizacao')
         .select('*')
@@ -134,7 +147,7 @@ async function buscarPrioridadeVaga(vagaId: string) {
 // RECOMENDAR ANALISTAS COM IA
 // ============================================
 
-async function recommendAnalyst(dados: any): Promise<any[]> {
+async function recommendAnalyst(ai: GoogleGenAI, dados: any): Promise<any[]> {
     const analistasDesc = dados.analistas_disponiveis.map((a: any) => `
         - **${a.nome}** (ID: ${a.id})
           - Stack de Experiência: ${a.stack_experiencia.join(', ')}
@@ -235,18 +248,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json({ error: 'vagaId é obrigatório' });
         }
 
+        // Verificar API Key
+        const apiKey = getApiKey();
         if (!apiKey) {
             return res.status(500).json({ error: 'API_KEY não configurada no servidor' });
         }
 
+        // Inicializar clientes
+        const supabase = getSupabaseClient();
+        const ai = getAI();
+
         console.log(`👥 Recomendando analistas para vaga ${vagaId}...`);
 
         // 1. Buscar prioridade da vaga
-        const prioridade = await buscarPrioridadeVaga(vagaId);
+        const prioridade = await buscarPrioridadeVaga(supabase, vagaId);
 
         // 2. Coletar dados da vaga e analistas
-        const dadosVaga = await coletarDadosVaga(vagaId);
-        const analistas = await coletarAnalistasDisponiveis();
+        const dadosVaga = await coletarDadosVaga(supabase, vagaId);
+        const analistas = await coletarAnalistasDisponiveis(supabase);
 
         if (!dadosVaga) {
             return res.status(404).json({ error: 'Vaga não encontrada' });
@@ -257,7 +276,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 3. Chamar IA para recomendar
-        const resultados = await recommendAnalyst({
+        const resultados = await recommendAnalyst(ai, {
             vaga: dadosVaga,
             analistas_disponiveis: analistas,
             prioridade_vaga: prioridade
