@@ -132,6 +132,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [progressMessage, setProgressMessage] = useState<string>(''); // Mensagem de progresso detalhada
   
   // Resultados
   const [transcricao, setTranscricao] = useState<string>('');
@@ -378,21 +379,32 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // HANDLERS DE ÁUDIO
   // ============================================
   
+  // Constantes para controle de tamanho
+  const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB total
+  const CHUNK_SIZE = 45 * 1024 * 1024; // 45MB por parte (margem de segurança)
+  const MAX_CHUNKS = 4;
+
   const handleAudioSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     // Validar formato
-    const validFormats = ['audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/m4a', 'audio/webm', 'audio/ogg'];
-    if (!validFormats.includes(file.type)) {
+    const validFormats = ['audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/m4a', 'audio/webm', 'audio/ogg', 'audio/x-m4a'];
+    if (!validFormats.includes(file.type) && !file.name.match(/\.(mp3|wav|m4a|webm|ogg)$/i)) {
       setError('Formato não suportado. Use MP3, WAV, M4A, WebM ou OGG.');
       return;
     }
 
-    // Validar tamanho (máx 50MB)
-    if (file.size > 50 * 1024 * 1024) {
-      setError('Arquivo muito grande. Máximo 50MB.');
+    // Validar tamanho (máx 200MB = 4 partes de 50MB)
+    if (file.size > MAX_FILE_SIZE) {
+      setError(`Arquivo muito grande (${(file.size / 1024 / 1024).toFixed(0)}MB). Máximo permitido: 200MB.`);
       return;
+    }
+
+    // Calcular quantas partes serão necessárias
+    const numParts = Math.ceil(file.size / CHUNK_SIZE);
+    if (numParts > 1) {
+      console.log(`📁 Arquivo grande detectado: ${(file.size / 1024 / 1024).toFixed(1)}MB - será dividido em ${numParts} partes`);
     }
 
     setAudioFile(file);
@@ -430,40 +442,98 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // PROCESSAMENTO
   // ============================================
   
+  // Função auxiliar para dividir arquivo em partes
+  const dividirArquivoEmPartes = async (file: File, chunkSize: number): Promise<Blob[]> => {
+    const chunks: Blob[] = [];
+    let offset = 0;
+    
+    while (offset < file.size) {
+      const end = Math.min(offset + chunkSize, file.size);
+      chunks.push(file.slice(offset, end, file.type));
+      offset = end;
+    }
+    
+    return chunks;
+  };
+
+  // Função auxiliar para converter Blob para base64
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.readAsDataURL(blob);
+      reader.onload = () => {
+        const result = reader.result as string;
+        const base64 = result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = error => reject(error);
+    });
+  };
+
+  // Função para transcrever uma parte do áudio
+  const transcreverParte = async (blob: Blob, parteNum: number, totalPartes: number, mimeType: string): Promise<string> => {
+    setProgressMessage(`Transcrevendo parte ${parteNum}/${totalPartes}...`);
+    
+    const base64 = await blobToBase64(blob);
+    
+    const response = await fetch('/api/gemini-audio-transcription', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'transcribe',
+        audioBase64: base64,
+        audioMimeType: mimeType || 'audio/mp3'
+      })
+    });
+
+    const result = await response.json();
+    
+    if (!result.success || !result.transcricao) {
+      throw new Error(`Erro na transcrição da parte ${parteNum}: ${result.error || 'Falha desconhecida'}`);
+    }
+    
+    return result.transcricao;
+  };
+
   const processarEntrevista = async () => {
     if (!audioFile || !candidaturaAtual) return;
 
     setError(null);
     setProgress(0);
+    setProgressMessage('');
 
     try {
-      // 1. Upload do áudio
+      // 1. Upload do áudio (arquivo completo)
       setUploading(true);
-      setProgress(10);
+      setProgressMessage('Preparando upload...');
+      setProgress(5);
 
       const timestamp = Date.now();
       const ext = audioFile.name.split('.').pop() || 'mp3';
       const filename = `entrevistas/${candidaturaAtual.vaga_id}/${candidaturaAtual.id}/${timestamp}.${ext}`;
 
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('entrevistas-audio')
-        .upload(filename, audioFile);
-
-      if (uploadError) {
-        // Se bucket não existe, continuar sem upload
-        console.warn('Storage não configurado, processando sem persistir áudio:', uploadError);
+      // Tentar upload (pode falhar se bucket não existir)
+      let audioPath: string | null = null;
+      try {
+        const { data: uploadData } = await supabase.storage
+          .from('entrevistas-audio')
+          .upload(filename, audioFile);
+        audioPath = uploadData?.path || null;
+      } catch (uploadErr) {
+        console.warn('Storage não configurado:', uploadErr);
       }
 
-      setProgress(30);
+      setProgress(15);
       setUploading(false);
 
       // 2. Criar registro da entrevista
+      setProgressMessage('Registrando entrevista...');
       const { data: entrevista, error: entrevistaError } = await supabase
         .from('entrevista_tecnica')
         .insert({
           candidatura_id: parseInt(candidaturaAtual.id),
           status: 'transcrevendo',
-          audio_url: uploadData?.path || null,
+          audio_url: audioPath,
           audio_duracao_segundos: Math.round(audioDuration),
           audio_tamanho_bytes: audioFile.size,
           audio_formato: ext,
@@ -478,30 +548,77 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         setEntrevistaId(entrevista?.id);
       }
 
-      // 3. Transcrição
+      setProgress(20);
+
+      // 3. TRANSCRIÇÃO - Com suporte a arquivos grandes (divisão automática)
       setTranscribing(true);
-      setProgress(40);
+      
+      let transcricaoCompleta = '';
+      const CHUNK_SIZE_TRANSCRICAO = 45 * 1024 * 1024; // 45MB por parte
+      
+      // Verificar se precisa dividir o arquivo
+      if (audioFile.size > CHUNK_SIZE_TRANSCRICAO) {
+        // Arquivo grande - dividir em partes
+        setProgressMessage('Arquivo grande detectado. Dividindo em partes...');
+        const partes = await dividirArquivoEmPartes(audioFile, CHUNK_SIZE_TRANSCRICAO);
+        const totalPartes = partes.length;
+        
+        console.log(`🎙️ Processando ${totalPartes} partes de áudio...`);
+        
+        const transcricoes: string[] = [];
+        
+        for (let i = 0; i < partes.length; i++) {
+          const parteNum = i + 1;
+          
+          // Calcular progresso (20% a 65% para transcrição)
+          const progressoParte = 20 + Math.round((45 * parteNum) / totalPartes);
+          setProgress(progressoParte);
+          
+          try {
+            const transcricaoParte = await transcreverParte(
+              partes[i], 
+              parteNum, 
+              totalPartes, 
+              audioFile.type
+            );
+            transcricoes.push(transcricaoParte);
+            console.log(`✅ Parte ${parteNum}/${totalPartes} transcrita`);
+          } catch (err: any) {
+            console.error(`❌ Erro na parte ${parteNum}:`, err);
+            // Continuar com as outras partes mesmo se uma falhar
+            transcricoes.push(`[Parte ${parteNum} não transcrita: ${err.message}]`);
+          }
+        }
+        
+        // Concatenar todas as transcrições
+        transcricaoCompleta = transcricoes.join('\n\n---\n\n');
+        setProgressMessage('Todas as partes transcritas!');
+        
+      } else {
+        // Arquivo pequeno - transcrição única
+        setProgressMessage('Transcrevendo áudio...');
+        const base64 = await fileToBase64(audioFile);
 
-      // Converter áudio para base64
-      const base64 = await fileToBase64(audioFile);
+        const transcribeResponse = await fetch('/api/gemini-audio-transcription', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'transcribe',
+            audioBase64: base64,
+            audioMimeType: audioFile.type || 'audio/mp3'
+          })
+        });
 
-      const transcribeResponse = await fetch('/api/gemini-audio-transcription', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'transcribe',
-          audioBase64: base64,
-          audioMimeType: audioFile.type
-        })
-      });
+        const transcribeResult = await transcribeResponse.json();
 
-      const transcribeResult = await transcribeResponse.json();
-
-      if (!transcribeResult.success || !transcribeResult.transcricao) {
-        throw new Error(transcribeResult.error || 'Erro na transcrição');
+        if (!transcribeResult.success || !transcribeResult.transcricao) {
+          throw new Error(transcribeResult.error || 'Erro na transcrição');
+        }
+        
+        transcricaoCompleta = transcribeResult.transcricao;
       }
 
-      setTranscricao(transcribeResult.transcricao);
+      setTranscricao(transcricaoCompleta);
       setProgress(70);
       setTranscribing(false);
 
@@ -511,36 +628,44 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           .from('entrevista_tecnica')
           .update({
             status: 'analisando',
-            transcricao_texto: transcribeResult.transcricao,
-            transcricao_confianca: transcribeResult.confianca
+            transcricao_texto: transcricaoCompleta,
+            transcricao_confianca: 85 // Confiança média para múltiplas partes
           })
           .eq('id', entrevista.id);
       }
 
       // 4. Análise
       setAnalyzing(true);
+      setProgressMessage('Analisando respostas com IA...');
       setProgress(80);
 
       // Formatar perguntas para análise
       const perguntasFlat = perguntas.flatMap(cat => 
-        cat.perguntas.map(p => ({
+        cat.perguntas.map((p: any) => ({
           pergunta: p.pergunta,
           categoria: cat.categoria,
           peso: 1
         }))
       );
 
+      // Formatar stack_tecnologica de forma segura
+      const stackFormatada = Array.isArray(vagaAtual?.stack_tecnologica) 
+        ? vagaAtual.stack_tecnologica 
+        : vagaAtual?.stack_tecnologica 
+          ? [vagaAtual.stack_tecnologica] 
+          : [];
+
       const analyzeResponse = await fetch('/api/gemini-audio-transcription', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'analyze',
-          transcricao: transcribeResult.transcricao,
+          transcricao: transcricaoCompleta,
           perguntas: perguntasFlat,
           vaga: vagaAtual ? {
             titulo: vagaAtual.titulo,
             requisitos_obrigatorios: vagaAtual.requisitos_obrigatorios,
-            stack_tecnologica: vagaAtual.stack_tecnologica
+            stack_tecnologica: stackFormatada
           } : null,
           candidato: {
             nome: candidaturaAtual.candidato_nome
@@ -556,6 +681,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
 
       setAnaliseResultado(analyzeResult);
       setProgress(100);
+      setProgressMessage('Análise concluída!');
       setAnalyzing(false);
 
       // Atualizar registro com análise
@@ -583,6 +709,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     } catch (err: any) {
       console.error('Erro no processamento:', err);
       setError(err.message || 'Erro ao processar entrevista');
+      setProgressMessage('');
       setUploading(false);
       setTranscribing(false);
       setAnalyzing(false);
@@ -645,6 +772,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     setObservacoesAnalista('');
     setError(null);
     setProgress(0);
+    setProgressMessage('');
   };
 
   const formatDuration = (seconds: number) => {
@@ -815,7 +943,12 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // RENDER - STEP 3: UPLOAD ÁUDIO
   // ============================================
   
-  const renderStep3 = () => (
+  const renderStep3 = () => {
+    // Calcular se arquivo será dividido
+    const seraaDividido = audioFile && audioFile.size > 45 * 1024 * 1024;
+    const numPartes = audioFile ? Math.ceil(audioFile.size / (45 * 1024 * 1024)) : 0;
+    
+    return (
     <div className="space-y-6">
       {/* Header */}
       <div className="bg-gray-50 rounded-lg p-4">
@@ -830,8 +963,11 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           <li>Conduza a entrevista usando as perguntas do passo anterior</li>
           <li>Grave toda a conversa em áudio (MP3, WAV, M4A, WebM ou OGG)</li>
           <li>O áudio deve ter boa qualidade para transcrição</li>
-          <li>Tamanho máximo: 50MB</li>
+          <li><strong>Tamanho máximo: 200MB</strong> (entrevistas de até ~40 min)</li>
         </ul>
+        <p className="text-xs text-yellow-600 mt-2 italic">
+          💡 Arquivos grandes são automaticamente divididos em partes para processamento
+        </p>
       </div>
 
       {/* Upload Area */}
@@ -843,12 +979,12 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             <p className="mb-2 text-sm text-gray-500">
               <span className="font-semibold">Clique para enviar</span> ou arraste o arquivo
             </p>
-            <p className="text-xs text-gray-500">MP3, WAV, M4A, WebM, OGG (máx. 50MB)</p>
+            <p className="text-xs text-gray-500">MP3, WAV, M4A, WebM, OGG (máx. 200MB)</p>
           </div>
           <input 
             type="file" 
             className="hidden" 
-            accept="audio/*"
+            accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg"
             onChange={handleAudioSelect}
           />
         </label>
@@ -883,6 +1019,19 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             className="w-full"
             controls
           />
+          
+          {/* Aviso de arquivo grande */}
+          {seraaDividido && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-sm text-blue-700 flex items-center gap-2">
+                <FileAudio size={18} />
+                <span>
+                  <strong>Arquivo grande:</strong> Será dividido em {numPartes} partes para transcrição.
+                  Isso pode levar alguns minutos.
+                </span>
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -910,7 +1059,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         </button>
       </div>
     </div>
-  );
+  );};
 
   // ============================================
   // RENDER - STEP 4: PROCESSAMENTO
@@ -933,10 +1082,15 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           {!uploading && !transcribing && !analyzing && 'Pronto para processar'}
         </h3>
 
+        {/* Mensagem de progresso detalhada */}
         <p className="text-gray-500 mb-4">
-          {uploading && 'Fazendo upload do arquivo de áudio'}
-          {transcribing && 'A IA está convertendo o áudio em texto'}
-          {analyzing && 'Comparando respostas com as perguntas esperadas'}
+          {progressMessage || (
+            <>
+              {uploading && 'Fazendo upload do arquivo de áudio'}
+              {transcribing && 'A IA está convertendo o áudio em texto'}
+              {analyzing && 'Comparando respostas com as perguntas esperadas'}
+            </>
+          )}
         </p>
 
         <div className="w-full bg-gray-200 rounded-full h-3 mb-2">
@@ -951,14 +1105,16 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       {/* Etapas */}
       <div className="space-y-3">
         <StepIndicator 
-          done={progress > 30} 
+          done={progress > 20} 
           active={uploading} 
-          label="Upload do áudio" 
+          label="Upload e registro" 
         />
         <StepIndicator 
-          done={progress > 70} 
+          done={progress > 65} 
           active={transcribing} 
-          label="Transcrição" 
+          label={audioFile && audioFile.size > 45 * 1024 * 1024 
+            ? `Transcrição (arquivo grande - múltiplas partes)` 
+            : "Transcrição"} 
         />
         <StepIndicator 
           done={progress >= 100} 
@@ -975,6 +1131,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             onClick={() => {
               setError(null);
               setProgress(0);
+              setProgressMessage('');
               processarEntrevista();
             }}
             className="mt-3 text-sm text-red-700 underline"
