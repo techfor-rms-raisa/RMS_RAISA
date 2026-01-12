@@ -701,10 +701,16 @@ export const useRaisaCVSearch = () => {
    * Cria uma candidatura a partir de um match selecionado
    */
   const criarCandidaturaDoMatch = useCallback(async (
-    vagaId: number,
     pessoaId: number,
-    analistaId: number
-  ): Promise<number | null> => {
+    vagaId: string,
+    analistaId: number,
+    dadosIndicacao?: {
+      origem?: 'aquisicao' | 'indicacao_cliente';
+      indicado_por_nome?: string;
+      indicado_por_cargo?: string;
+      indicacao_observacoes?: string;
+    }
+  ): Promise<{ id: string } | null> => {
     try {
       setLoading(true);
       console.log('📝 Criando candidatura do match...');
@@ -718,19 +724,32 @@ export const useRaisaCVSearch = () => {
 
       if (pessoaError) throw pessoaError;
 
+      // Determinar status inicial baseado na origem
+      const statusInicial = dadosIndicacao?.origem === 'indicacao_cliente' 
+        ? 'indicacao_aprovada'  // Indicações vão direto para aprovação
+        : 'triagem';           // Aquisições passam por triagem normal
+
       // Criar candidatura
       const candidaturaData = {
-        vaga_id: vagaId,
+        vaga_id: parseInt(vagaId),
         pessoa_id: pessoaId,
         candidato_nome: pessoa.nome,
         candidato_email: pessoa.email,
         candidato_cpf: pessoa.cpf,
         analista_id: analistaId,
-        status: 'triagem',
+        status: statusInicial,
         cv_url: pessoa.curriculo_url,
         curriculo_texto: pessoa.cv_texto_completo,
-        observacoes: 'Candidatura criada via busca inteligente de CVs',
-        criado_em: new Date().toISOString()
+        observacoes: dadosIndicacao?.origem === 'indicacao_cliente' 
+          ? 'Candidatura criada via indicação do cliente' 
+          : 'Candidatura criada via busca inteligente de CVs',
+        criado_em: new Date().toISOString(),
+        // Campos de indicação
+        origem: dadosIndicacao?.origem || 'aquisicao',
+        indicado_por_nome: dadosIndicacao?.indicado_por_nome || null,
+        indicado_por_cargo: dadosIndicacao?.indicado_por_cargo || null,
+        indicacao_data: dadosIndicacao?.origem === 'indicacao_cliente' ? new Date().toISOString().split('T')[0] : null,
+        indicacao_observacoes: dadosIndicacao?.indicacao_observacoes || null
       };
 
       const { data: candidatura, error: candidaturaError } = await supabase
@@ -748,11 +767,11 @@ export const useRaisaCVSearch = () => {
           status: 'candidatura_criada',
           candidatura_id: candidatura.id
         })
-        .eq('vaga_id', vagaId)
+        .eq('vaga_id', parseInt(vagaId))
         .eq('pessoa_id', pessoaId);
 
-      console.log(`✅ Candidatura criada: ID ${candidatura.id}`);
-      return candidatura.id;
+      console.log(`✅ Candidatura criada: ID ${candidatura.id} (${dadosIndicacao?.origem === 'indicacao_cliente' ? 'INDICAÇÃO' : 'AQUISIÇÃO'})`);
+      return { id: String(candidatura.id) };
     } catch (err: any) {
       console.error('❌ Erro ao criar candidatura:', err);
       setError(err.message);
