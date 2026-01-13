@@ -13,7 +13,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 // CONFIGURAÇÃO
 // ============================================
 
-const AI_MODEL_NAME = 'gemini-2.5-flash-preview-04-17';
+const AI_MODEL_NAME = 'gemini-2.0-flash';
 
 // Função para obter clientes (lazy initialization)
 function getApiKey(): string {
@@ -210,11 +210,21 @@ async function recommendAnalyst(ai: GoogleGenAI, dados: any): Promise<any[]> {
             contents: prompt 
         });
         
-        const text = result.text
-            .replace(/^```json/i, '')
-            .replace(/^```/i, '')
-            .replace(/```$/i, '')
+        const text = (result.text || '')
+            .replace(/^```json\n?/gi, '')
+            .replace(/^```\n?/gi, '')
+            .replace(/```$/gi, '')
             .trim();
+        
+        if (!text) {
+            throw new Error('Resposta vazia da IA');
+        }
+        
+        // Tentar extrair JSON da resposta
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            return JSON.parse(jsonMatch[0]);
+        }
         
         return JSON.parse(text);
     } catch (error) {
