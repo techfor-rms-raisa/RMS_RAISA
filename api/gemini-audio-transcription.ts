@@ -15,19 +15,30 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
 // ============================================================
-// CONFIGURAÇÃO
+// CONFIGURAÇÃO - Lazy Initialization
 // ============================================================
 
-const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
-
-if (!apiKey) {
-  console.error('❌ API_KEY (Gemini) não encontrada!');
-} else {
-  console.log('✅ API_KEY (Gemini) carregada');
-}
-
-const ai = new GoogleGenAI({ apiKey });
 const GEMINI_MODEL = 'gemini-2.0-flash';
+
+// Lazy initialization para garantir que a variável de ambiente esteja disponível
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    
+    if (!apiKey) {
+      console.error('❌ API_KEY (Gemini) não encontrada!');
+      throw new Error('API_KEY não configurada. Configure a variável de ambiente API_KEY.');
+    }
+    
+    console.log('✅ API_KEY (Gemini) carregada, iniciando GoogleGenAI...');
+    console.log(`🔑 API_KEY preview: ${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 4)}`);
+    
+    aiInstance = new GoogleGenAI({ apiKey });
+  }
+  return aiInstance;
+}
 
 // ============================================================
 // TIPOS
@@ -260,7 +271,7 @@ REGRAS IMPORTANTES:
 
 Retorne APENAS a transcrição, sem comentários adicionais.`;
 
-    const result = await ai.models.generateContent({
+    const result = await getAI().models.generateContent({
       model: GEMINI_MODEL,
       contents: [
         {
@@ -314,7 +325,7 @@ REGRAS:
 Retorne APENAS a transcrição.`;
 
   try {
-    const result = await ai.models.generateContent({
+    const result = await getAI().models.generateContent({
       model: GEMINI_MODEL,
       contents: [
         {
@@ -429,7 +440,7 @@ Analise a entrevista e retorne um JSON com esta estrutura EXATA:
 Responda APENAS com o JSON, sem texto adicional.`;
 
   try {
-    const result = await ai.models.generateContent({
+    const result = await getAI().models.generateContent({
       model: GEMINI_MODEL,
       contents: prompt
     });

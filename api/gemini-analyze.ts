@@ -1,16 +1,29 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
-// Usar API_KEY do ambiente Vercel (backend)
-const apiKey = process.env.API_KEY || '';
+// ============================================================
+// CONFIGURAÇÃO - Lazy Initialization
+// ============================================================
 
-if (!apiKey) {
-  console.error('❌ API_KEY não encontrada no ambiente Vercel!');
-} else {
-  console.log('✅ API_KEY carregada com sucesso');
+// Lazy initialization para garantir que a variável de ambiente esteja disponível
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = process.env.API_KEY || '';
+    
+    if (!apiKey) {
+      console.error('❌ API_KEY não encontrada no ambiente Vercel!');
+      throw new Error('API_KEY não configurada. Configure a variável de ambiente API_KEY.');
+    }
+    
+    console.log('✅ API_KEY carregada com sucesso');
+    console.log(`🔑 API_KEY preview: ${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 4)}`);
+    
+    aiInstance = new GoogleGenAI({ apiKey });
+  }
+  return aiInstance;
 }
-
-const ai = new GoogleGenAI({ apiKey });
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
@@ -35,10 +48,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log(`🤖 [Gemini API] Ação: ${action}`);
 
-    // Verificar se API key está disponível
-    if (!apiKey) {
-      throw new Error('API key is missing. Please configure API_KEY in Vercel environment variables.');
-    }
+    // A verificação de API_KEY é feita no getAI()
 
     let result;
 
@@ -140,7 +150,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -195,7 +205,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -209,7 +219,7 @@ ${reportText}
 }
 
 async function generateContent(model: string, prompt: string) {
-  const result = await ai.models.generateContent({ model: model || 'gemini-2.0-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: model || 'gemini-2.0-flash', contents: prompt });
   const text = result.text || '';
 
   return { text };
@@ -249,7 +259,7 @@ Analise a seguinte vaga e sugira melhorias para torná-la mais atrativa e eficaz
 }
 `;
 
-  const result = await ai.models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -300,7 +310,7 @@ RESPONDA EM JSON:
 }`;
 
   try {
-    const result = await ai.models.generateContent({ 
+    const result = await getAI().models.generateContent({ 
       model: 'gemini-2.0-flash', 
       contents: prompt 
     });
@@ -427,7 +437,7 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
       console.log('📄 ETAPA 1: Extraindo texto do PDF...');
       
       try {
-        const resultTexto = await ai.models.generateContent({
+        const resultTexto = await getAI().models.generateContent({
           model: 'gemini-2.0-flash',
           contents: [{
             role: 'user',
@@ -628,7 +638,7 @@ RESPONDA EM JSON:
 }`;
 
   try {
-    const result = await ai.models.generateContent({ 
+    const result = await getAI().models.generateContent({ 
       model: 'gemini-2.0-flash', 
       contents: prompt 
     });
@@ -683,7 +693,7 @@ RESPONDA EM JSON:
 }`;
 
   try {
-    const result = await ai.models.generateContent({ 
+    const result = await getAI().models.generateContent({ 
       model: 'gemini-2.0-flash', 
       contents: prompt 
     });
@@ -756,7 +766,7 @@ RESPONDA APENAS EM JSON (sem markdown):
 }`;
 
   try {
-    const result = await ai.models.generateContent({ 
+    const result = await getAI().models.generateContent({ 
       model: 'gemini-2.0-flash', 
       contents: prompt 
     });
@@ -852,7 +862,7 @@ RESPONDA APENAS EM JSON (sem markdown):
 }`;
 
   try {
-    const result = await ai.models.generateContent({ 
+    const result = await getAI().models.generateContent({ 
       model: 'gemini-2.0-flash', 
       contents: prompt 
     });
@@ -1021,7 +1031,7 @@ Retorne um JSON com esta estrutura EXATA:
 Responda APENAS com o JSON, sem texto adicional.`;
 
   try {
-    const result = await ai.models.generateContent({
+    const result = await getAI().models.generateContent({
       model: 'gemini-2.0-flash',
       contents: prompt
     });
