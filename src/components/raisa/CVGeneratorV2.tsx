@@ -329,6 +329,51 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
     }
   };
 
+  // 🆕 Função para baixar/imprimir PDF
+  const handleBaixarPDF = () => {
+    if (!htmlPreview) {
+      alert('Nenhum CV gerado para baixar.');
+      return;
+    }
+
+    // Criar HTML completo com estilos de impressão
+    const htmlCompleto = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>CV - ${dados.nome || candidatoNome}</title>
+          <style>
+            @media print {
+              body { margin: 0; padding: 0; }
+              @page { size: A4; margin: 10mm; }
+            }
+          </style>
+        </head>
+        <body>
+          ${htmlCapa ? htmlCapa + '<div style="page-break-after: always;"></div>' : ''}
+          ${htmlPreview}
+        </body>
+      </html>
+    `;
+
+    // Abrir em nova janela e imprimir
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(htmlCompleto);
+      printWindow.document.close();
+      
+      // Aguardar carregamento e abrir diálogo de impressão
+      printWindow.onload = () => {
+        setTimeout(() => {
+          printWindow.print();
+        }, 500);
+      };
+    } else {
+      alert('Popup bloqueado. Por favor, permita popups para este site.');
+    }
+  };
+
   // Adicionar experiência
   const addExperiencia = () => {
     const nova: ExperienciaCV = {
@@ -973,6 +1018,12 @@ Recomendamos o(a) [NOME]..."
                       📄 Ver Capa
                     </button>
                   )}
+                  <button 
+                    onClick={handleBaixarPDF}
+                    className="text-green-600 hover:underline text-sm"
+                  >
+                    🖨️ Imprimir/PDF
+                  </button>
                   <button onClick={() => setEtapa('parecer')} className="text-blue-600 hover:underline text-sm">
                     ← Voltar e editar
                   </button>
@@ -1011,7 +1062,10 @@ Recomendamos o(a) [NOME]..."
               )}
 
               <div className="flex justify-center gap-4 flex-wrap">
-                <button className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                <button 
+                  onClick={handleBaixarPDF}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
                   📥 Baixar PDF
                 </button>
                 <button 
