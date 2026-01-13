@@ -10,9 +10,27 @@
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
-const genAI = new GoogleGenerativeAI(process.env.API_KEY || process.env.GEMINI_API_KEY || '');
+// Lazy initialization para garantir que a variável de ambiente esteja disponível
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    
+    if (!apiKey) {
+      console.error('❌ API_KEY (Gemini) não encontrada!');
+      throw new Error('API_KEY não configurada.');
+    }
+    
+    console.log('✅ API_KEY carregada para CV Generator');
+    aiInstance = new GoogleGenAI({ apiKey });
+  }
+  return aiInstance;
+}
+
+const GEMINI_MODEL = 'gemini-2.0-flash';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -53,8 +71,6 @@ async function extrairDados(req: VercelRequest, res: VercelResponse) {
   if (!texto_cv) {
     return res.status(400).json({ error: 'texto_cv is required' });
   }
-
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
 
   const prompt = `Você é um especialista em análise de currículos para a consultoria Techfor.
 
@@ -156,9 +172,11 @@ REGRAS:
 6. Se não encontrar, use null ou []`;
 
   try {
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    let text = response.text().replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+    const result = await getAI().models.generateContent({ 
+      model: GEMINI_MODEL, 
+      contents: prompt 
+    });
+    let text = (result.text || '').replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
 
     let dados;
     try {
@@ -180,8 +198,6 @@ REGRAS:
  */
 async function gerarParecer(req: VercelRequest, res: VercelResponse) {
   const { dados, vaga_info } = req.body;
-
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
 
   const prompt = `Você é um recrutador sênior da Techfor escrevendo um parecer de seleção.
 
@@ -210,8 +226,11 @@ Use linguagem formal e profissional. O parecer deve ter 3-4 parágrafos.
 Retorne APENAS o texto do parecer, sem formatação JSON.`;
 
   try {
-    const result = await model.generateContent(prompt);
-    const parecer = result.response.text();
+    const result = await getAI().models.generateContent({ 
+      model: GEMINI_MODEL, 
+      contents: prompt 
+    });
+    const parecer = result.text || '';
 
     return res.status(200).json({ parecer });
   } catch (error: any) {

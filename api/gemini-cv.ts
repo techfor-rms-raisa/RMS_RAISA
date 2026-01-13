@@ -5,20 +5,32 @@
  * - extrair_texto: Extrai texto de PDF/DOCX
  * - processar_cv: Analisa CV e extrai dados estruturados
  * 
- * Versão: 1.0
- * Data: 26/12/2024
+ * Versão: 1.1 - Atualizado para @google/genai
+ * Data: 13/01/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 
-// Inicializar Gemini
-// Suporta API_KEY (Vercel) ou GEMINI_API_KEY (fallback)
-const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
-if (!apiKey) {
-  console.error('❌ API_KEY (Gemini) não configurada!');
+// Lazy initialization para garantir que a variável de ambiente esteja disponível
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    
+    if (!apiKey) {
+      console.error('❌ API_KEY (Gemini) não configurada!');
+      throw new Error('API_KEY não configurada.');
+    }
+    
+    console.log('✅ API_KEY carregada para CV');
+    aiInstance = new GoogleGenAI({ apiKey });
+  }
+  return aiInstance;
 }
-const genAI = new GoogleGenerativeAI(apiKey);
+
+const GEMINI_MODEL = 'gemini-2.0-flash';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
@@ -77,27 +89,33 @@ async function extrairTexto(
       return res.status(400).json({ error: 'arquivo_base64 is required' });
     }
 
-    // Para PDFs, usar Gemini Vision para extrair texto
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
-
     const extensao = nome?.split('.').pop()?.toLowerCase();
 
     if (extensao === 'pdf') {
       // Usar Gemini com documento PDF
-      const result = await model.generateContent([
-        {
-          inlineData: {
-            mimeType: 'application/pdf',
-            data: base64
+      const result = await getAI().models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: 'application/pdf',
+                  data: base64
+                }
+              },
+              {
+                text: `Extraia todo o texto deste documento PDF de currículo. 
+                 Retorne APENAS o texto extraído, sem formatação adicional, 
+                 mantendo a estrutura de parágrafos e seções.`
+              }
+            ]
           }
-        },
-        `Extraia todo o texto deste documento PDF de currículo. 
-         Retorne APENAS o texto extraído, sem formatação adicional, 
-         mantendo a estrutura de parágrafos e seções.`
-      ]);
+        ]
+      });
 
-      const response = await result.response;
-      const texto = response.text();
+      const texto = result.text || '';
 
       return res.status(200).json({
         sucesso: true,
@@ -114,20 +132,28 @@ async function extrairTexto(
       texto = buffer.toString('utf-8');
     } else {
       // Para DOCX, usar Gemini como fallback
-      // Em produção, usar mammoth.js
-      const result = await model.generateContent([
-        {
-          inlineData: {
-            mimeType: tipo || 'application/octet-stream',
-            data: base64
+      const result = await getAI().models.generateContent({
+        model: GEMINI_MODEL,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: tipo || 'application/octet-stream',
+                  data: base64
+                }
+              },
+              {
+                text: `Extraia todo o texto deste documento. 
+                 Retorne APENAS o texto extraído, sem formatação adicional.`
+              }
+            ]
           }
-        },
-        `Extraia todo o texto deste documento. 
-         Retorne APENAS o texto extraído, sem formatação adicional.`
-      ]);
+        ]
+      });
 
-      const response = await result.response;
-      texto = response.text();
+      texto = result.text || '';
     }
 
     return res.status(200).json({
@@ -158,8 +184,6 @@ async function processarCV(
     if (!textoCV) {
       return res.status(400).json({ error: 'texto_cv is required' });
     }
-
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
 
     const prompt = `Você é um especialista em análise de currículos de TI.
     
@@ -220,9 +244,11 @@ REGRAS:
 5. O resumo deve ser em português
 6. Retorne APENAS o JSON, sem texto adicional antes ou depois`;
 
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    let responseText = response.text();
+    const result = await getAI().models.generateContent({ 
+      model: GEMINI_MODEL, 
+      contents: prompt 
+    });
+    let responseText = result.text || '';
 
     // Limpar resposta - remover markdown se presente
     responseText = responseText
