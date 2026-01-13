@@ -521,9 +521,9 @@ Retorne APENAS este JSON:
 
     // Executar em PARALELO
     const [resultPessoais, resultSkills, resultExperiencias] = await Promise.all([
-      ai.models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptPessoais) }),
-      ai.models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptSkills) }),
-      ai.models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptExperiencias) })
+      getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptPessoais) }),
+      getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptSkills) }),
+      getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptExperiencias) })
     ]);
 
     const tempoProcessamento = Date.now() - startTime;
@@ -678,18 +678,20 @@ async function triagemCVGenerica(curriculo_texto: string) {
 CV:
 ${curriculo_texto.substring(0, 8000)}
 
-RESPONDA EM JSON:
+RESPONDA EM JSON (sem markdown, sem backticks):
 {
   "sucesso": true,
   "score_geral": 75,
   "nivel_risco": "Baixo|Médio|Alto|Crítico",
   "recomendacao": "banco_talentos|analisar_mais|descartar",
-  "justificativa": "Resumo",
-  "pontos_fortes": ["Ponto 1"],
-  "pontos_fracos": ["Fraco 1"],
-  "skills_detectadas": ["Skill1", "Skill2"],
+  "justificativa": "Resumo explicando a recomendação",
+  "pontos_fortes": ["Ponto forte 1", "Ponto forte 2"],
+  "pontos_fracos": ["Ponto fraco 1", "Ponto fraco 2"],
+  "fatores_risco": [{"tipo": "job_hopping|gap_emprego|skills_desatualizadas|experiencia_insuficiente", "nivel": "Baixo|Médio|Alto", "descricao": "Descrição do risco", "evidencia": "Evidência no CV"}],
+  "skills_detectadas": ["Skill1", "Skill2", "Skill3"],
   "experiencia_anos": 5,
-  "senioridade_estimada": "Pleno"
+  "senioridade_estimada": "Junior|Pleno|Senior|Especialista",
+  "areas_atuacao": ["Backend", "DevOps", "Cloud"]
 }`;
 
   try {
