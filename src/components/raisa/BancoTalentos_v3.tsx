@@ -8,9 +8,10 @@
  * - Filtros avançados (senioridade, skills, disponibilidade)
  * - Indicador de CV processado
  * - Cards com informações completas
+ * - 🆕 v57.0: Campo de Analista de R&S no modal para atribuir exclusividade
  * 
- * Versão: 3.0
- * Data: 27/12/2024
+ * Versão: 3.1 (Plano B - Exclusividade Manual)
+ * Data: 13/01/2026
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
@@ -137,7 +138,8 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
         modalidade_preferida: '',
         pretensao_salarial: undefined,
         cidade: '',
-        estado: ''
+        estado: '',
+        id_analista_rs: undefined  // 🆕 v57.0: Campo de analista para exclusividade
     });
 
     // 🆕 v57.2: Ajustar filtro inicial quando usuário carregar
@@ -219,7 +221,8 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 modalidade_preferida: p.modalidade_preferida || '',
                 pretensao_salarial: p.pretensao_salarial,
                 cidade: p.cidade || '',
-                estado: p.estado || ''
+                estado: p.estado || '',
+                id_analista_rs: p.id_analista_rs || undefined  // 🆕 v57.0: Manter analista existente
             });
         } else {
             setEditingPessoa(null);
@@ -227,7 +230,8 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 nome: '', email: '', telefone: '', cpf: '', linkedin_url: '',
                 titulo_profissional: '', senioridade: '', disponibilidade: '',
                 modalidade_preferida: '', pretensao_salarial: undefined,
-                cidade: '', estado: ''
+                cidade: '', estado: '',
+                id_analista_rs: user?.id  // 🆕 v57.0: Novo cadastro usa analista logado
             });
         }
         setIsModalOpen(true);
@@ -829,6 +833,52 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                             value={formData.estado} 
                                             onChange={e => setFormData({...formData, estado: e.target.value.toUpperCase()})} 
                                         />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* 🆕 v57.0: Exclusividade/Analista */}
+                            <div className="border-t pt-4">
+                                <h4 className="font-medium text-gray-700 mb-3 flex items-center gap-2">
+                                    <Lock size={16} />
+                                    Exclusividade
+                                </h4>
+                                <div className="grid grid-cols-1 gap-4">
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700">
+                                            Analista de R&S Responsável
+                                        </label>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <input 
+                                                type="number"
+                                                className="w-full border p-2 rounded" 
+                                                placeholder="ID do Analista"
+                                                value={formData.id_analista_rs || ''} 
+                                                onChange={e => setFormData({
+                                                    ...formData, 
+                                                    id_analista_rs: e.target.value ? Number(e.target.value) : undefined
+                                                })} 
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => setFormData({...formData, id_analista_rs: user?.id})}
+                                                className="px-3 py-2 bg-blue-100 text-blue-700 rounded hover:bg-blue-200 whitespace-nowrap text-sm font-medium"
+                                                title="Atribuir a mim"
+                                            >
+                                                👤 Eu ({user?.id})
+                                            </button>
+                                        </div>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            O candidato ficará exclusivo para este analista por 60 dias.
+                                            {!formData.id_analista_rs && (
+                                                <span className="text-orange-600 font-medium"> ⚠️ Sem analista = sem exclusividade</span>
+                                            )}
+                                        </p>
+                                        {editingPessoa?.data_final_exclusividade && (
+                                            <p className="text-xs text-blue-600 mt-1">
+                                                📅 Exclusividade atual até: {new Date(editingPessoa.data_final_exclusividade).toLocaleDateString('pt-BR')}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
                             </div>

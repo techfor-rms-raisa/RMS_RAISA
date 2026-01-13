@@ -4,7 +4,10 @@
  * Endpoint para receber dados do LinkedIn (via extensão Chrome)
  * e salvar diretamente na tabela PESSOAS (Banco de Talentos)
  * 
- * Data: 09/01/2026
+ * 🆕 v57.0: PLANO B - Removida validação obrigatória de analista_id
+ * O analista será atribuído posteriormente via CRUD do Banco de Talentos
+ * 
+ * Data: 13/01/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -47,7 +50,7 @@ interface LinkedInData {
   skills?: string[];
   certificacoes?: string[];
   idiomas?: Array<{ idioma: string; nivel: string }>;
-  // 🆕 v56.0: ID do analista logado (obrigatório)
+  // 🆕 v57.0: analista_id agora é OPCIONAL
   analista_id?: number;
 }
 
@@ -153,15 +156,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // 🆕 v56.0: Validar analista_id
-    if (!data.analista_id) {
-      return res.status(400).json({
-        success: false,
-        error: 'Analista não identificado. Faça login no sistema antes de importar.'
-      });
-    }
+    // 🆕 v57.0: REMOVIDA validação obrigatória de analista_id
+    // Se tiver analista_id, usa. Se não tiver, deixa null (será atribuído depois via CRUD)
+    const analistaId = data.analista_id || null;
 
-    // 🆕 v56.0: Buscar configuração de exclusividade
+    // Buscar configuração de exclusividade
     const { data: configExclusividade } = await supabase
       .from('config_exclusividade')
       .select('*')
@@ -181,9 +180,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const ultimoCargo = ultimaExp?.cargo || data.headline || '';
     const ultimaEmpresa = ultimaExp?.empresa || '';
 
-    // 🆕 v56.0: Calcular datas de exclusividade
-    const dataInicio = new Date();
-    const dataFinal = new Date(dataInicio.getTime() + periodoExclusividade * 24 * 60 * 60 * 1000);
+    // 🆕 v57.0: Só calcula datas de exclusividade se tiver analista_id
+    const dataInicio = analistaId ? new Date() : null;
+    const dataFinal = analistaId 
+      ? new Date(new Date().getTime() + periodoExclusividade * 24 * 60 * 60 * 1000)
+      : null;
 
     // ============================================
     // VERIFICAR SE JÁ EXISTE (por LinkedIn URL ou email)
@@ -215,7 +216,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // INSERIR OU ATUALIZAR PESSOA
     // ============================================
     
-    const pessoaData = {
+    const pessoaData: any = {
       nome: data.nome,
       email: data.email || null,
       telefone: data.telefone || null,
@@ -231,14 +232,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       origem: 'linkedin',
       importado_em: new Date().toISOString(),
       atualizado_em: new Date().toISOString(),
-      // 🆕 v56.0: Campos de Exclusividade
-      id_analista_rs: data.analista_id,
+      // 🆕 v57.0: Campos de Exclusividade - só seta se tiver analista_id
       periodo_exclusividade: periodoExclusividade,
-      data_inicio_exclusividade: dataInicio.toISOString(),
-      data_final_exclusividade: dataFinal.toISOString(),
-      qtd_renovacoes: 0,
-      max_renovacoes: maxRenovacoes
+      max_renovacoes: maxRenovacoes,
+      qtd_renovacoes: 0
     };
+
+    // 🆕 v57.0: Só adiciona campos de exclusividade se tiver analista_id
+    if (analistaId) {
+      pessoaData.id_analista_rs = analistaId;
+      pessoaData.data_inicio_exclusividade = dataInicio?.toISOString();
+      pessoaData.data_final_exclusividade = dataFinal?.toISOString();
+    }
 
     let pessoa_id: number;
     let atualizado = false;
@@ -273,18 +278,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`✅ Pessoa INSERIDA: ${data.nome} (ID: ${pessoa_id})`);
     }
 
-    // 🆕 v56.0: Registrar no log de exclusividade
-    await supabase.from('log_exclusividade').insert({
-      pessoa_id: pessoa_id,
-      acao: atualizado ? 'atribuicao' : 'atribuicao',
-      analista_novo_id: data.analista_id,
-      realizado_por: data.analista_id,
-      motivo: atualizado 
-        ? 'Atualização via importação LinkedIn' 
-        : 'Cadastro inicial via importação LinkedIn',
-      data_exclusividade_nova: dataFinal.toISOString(),
-      qtd_renovacoes_nova: 0
-    });
+    // 🆕 v57.0: Só registra log de exclusividade se tiver analista_id
+    if (analistaId) {
+      await supabase.from('log_exclusividade').insert({
+        pessoa_id: pessoa_id,
+        acao: 'atribuicao',
+        analista_novo_id: analistaId,
+        realizado_por: analistaId,
+        motivo: atualizado 
+          ? 'Atualização via importação LinkedIn' 
+          : 'Cadastro inicial via importação LinkedIn',
+        data_exclusividade_nova: dataFinal?.toISOString(),
+        qtd_renovacoes_nova: 0
+      });
+    }
 
     // ============================================
     // SALVAR SKILLS
@@ -393,25 +400,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // RESPOSTA DE SUCESSO
     // ============================================
     
+    // 🆕 v57.0: Mensagem diferente se não tiver analista
+    const mensagemExtra = !analistaId 
+      ? ' ⚠️ Abra o cadastro e atribua um Analista de R&S para ativar exclusividade.'
+      : '';
+    
     return res.status(200).json({
       success: true,
       pessoa_id,
       atualizado,
       message: atualizado 
-        ? `Perfil de ${data.nome} atualizado com sucesso!`
-        : `${data.nome} adicionado ao Banco de Talentos!`,
+        ? `Perfil de ${data.nome} atualizado com sucesso!${mensagemExtra}`
+        : `${data.nome} adicionado ao Banco de Talentos!${mensagemExtra}`,
       dados: {
         nome: data.nome,
         senioridade,
         skills_count: data.skills?.length || 0,
         experiencias_count: data.experiencias?.length || 0
       },
-      // 🆕 v56.0: Info de Exclusividade
+      // Info de Exclusividade
       exclusividade: {
-        analista_id: data.analista_id,
+        analista_id: analistaId,
+        atribuido: !!analistaId,
         periodo_dias: periodoExclusividade,
-        data_inicio: dataInicio.toISOString(),
-        data_final: dataFinal.toISOString(),
+        data_inicio: dataInicio?.toISOString() || null,
+        data_final: dataFinal?.toISOString() || null,
         max_renovacoes: maxRenovacoes
       }
     });
