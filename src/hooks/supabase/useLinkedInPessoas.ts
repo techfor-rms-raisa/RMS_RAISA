@@ -37,6 +37,14 @@ export interface PessoaLinkedIn {
   total_experiencias?: number;
   total_formacoes?: number;
   skills_lista?: string[];
+  // 🆕 Campos de exclusividade
+  id_analista_rs?: number | null;
+  periodo_exclusividade?: number;
+  data_inicio_exclusividade?: string;
+  data_final_exclusividade?: string;
+  qtd_renovacoes?: number;
+  max_renovacoes?: number;
+  analista_nome?: string;
 }
 
 export interface EstatisticasOrigem {
@@ -93,7 +101,13 @@ export function useLinkedInPessoas() {
           ativo,
           origem,
           criado_em,
-          atualizado_em
+          atualizado_em,
+          id_analista_rs,
+          periodo_exclusividade,
+          data_inicio_exclusividade,
+          data_final_exclusividade,
+          qtd_renovacoes,
+          max_renovacoes
         `)
         .eq('ativo', true)
         .order('criado_em', { ascending: false });
@@ -346,6 +360,155 @@ export function useLinkedInPessoas() {
   }, []);
 
   // ============================================
+  // 🆕 ATRIBUIR ANALISTA RESPONSÁVEL (EXCLUSIVIDADE)
+  // ============================================
+
+  const atribuirAnalista = useCallback(async (
+    pessoaId: number,
+    analistaId: number,
+    periodoExclusividade: number = 60
+  ): Promise<{ sucesso: boolean; mensagem: string }> => {
+    setLoading(true);
+
+    try {
+      const dataInicio = new Date();
+      const dataFinal = new Date();
+      dataFinal.setDate(dataFinal.getDate() + periodoExclusividade);
+
+      const { error: updateError } = await supabase
+        .from('pessoas')
+        .update({
+          id_analista_rs: analistaId,
+          periodo_exclusividade: periodoExclusividade,
+          data_inicio_exclusividade: dataInicio.toISOString(),
+          data_final_exclusividade: dataFinal.toISOString(),
+          qtd_renovacoes: 0,
+          atualizado_em: new Date().toISOString()
+        })
+        .eq('id', pessoaId);
+
+      if (updateError) throw updateError;
+
+      return {
+        sucesso: true,
+        mensagem: `Exclusividade de ${periodoExclusividade} dias atribuída com sucesso!`
+      };
+
+    } catch (err: any) {
+      console.error('Erro ao atribuir analista:', err);
+      return {
+        sucesso: false,
+        mensagem: err.message
+      };
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // ============================================
+  // 🆕 REMOVER EXCLUSIVIDADE
+  // ============================================
+
+  const removerExclusividade = useCallback(async (
+    pessoaId: number
+  ): Promise<{ sucesso: boolean; mensagem: string }> => {
+    setLoading(true);
+
+    try {
+      const { error: updateError } = await supabase
+        .from('pessoas')
+        .update({
+          id_analista_rs: null,
+          periodo_exclusividade: null,
+          data_inicio_exclusividade: null,
+          data_final_exclusividade: null,
+          qtd_renovacoes: 0,
+          atualizado_em: new Date().toISOString()
+        })
+        .eq('id', pessoaId);
+
+      if (updateError) throw updateError;
+
+      return {
+        sucesso: true,
+        mensagem: 'Exclusividade removida com sucesso!'
+      };
+
+    } catch (err: any) {
+      console.error('Erro ao remover exclusividade:', err);
+      return {
+        sucesso: false,
+        mensagem: err.message
+      };
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // ============================================
+  // 🆕 DELETAR PESSOA (Inativar)
+  // ============================================
+
+  const deletarPessoa = useCallback(async (
+    pessoaId: number
+  ): Promise<{ sucesso: boolean; mensagem: string }> => {
+    setLoading(true);
+
+    try {
+      // Soft delete - apenas inativa a pessoa
+      const { error: updateError } = await supabase
+        .from('pessoas')
+        .update({
+          ativo: false,
+          atualizado_em: new Date().toISOString()
+        })
+        .eq('id', pessoaId);
+
+      if (updateError) throw updateError;
+
+      // Remover da lista local
+      setPessoas(prev => prev.filter(p => p.id !== pessoaId));
+
+      return {
+        sucesso: true,
+        mensagem: 'Candidato removido com sucesso!'
+      };
+
+    } catch (err: any) {
+      console.error('Erro ao deletar pessoa:', err);
+      return {
+        sucesso: false,
+        mensagem: err.message
+      };
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // ============================================
+  // 🆕 BUSCAR PESSOA POR ID (para edição)
+  // ============================================
+
+  const buscarPessoaPorId = useCallback(async (
+    pessoaId: number
+  ): Promise<PessoaLinkedIn | null> => {
+    try {
+      const { data, error } = await supabase
+        .from('pessoas')
+        .select('*')
+        .eq('id', pessoaId)
+        .single();
+
+      if (error) throw error;
+      return data;
+
+    } catch (err: any) {
+      console.error('Erro ao buscar pessoa:', err);
+      return null;
+    }
+  }, []);
+
+  // ============================================
   // RETURN
   // ============================================
 
@@ -358,7 +521,12 @@ export function useLinkedInPessoas() {
     buscarPessoasLinkedIn,
     buscarEstatisticas,
     buscarEstatisticasLinkedIn,
-    atualizarPerfil
+    atualizarPerfil,
+    // 🆕 Novas funções CRUD
+    atribuirAnalista,
+    removerExclusividade,
+    deletarPessoa,
+    buscarPessoaPorId
   };
 }
 

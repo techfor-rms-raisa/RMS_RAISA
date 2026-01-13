@@ -52,7 +52,12 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
     buscarPessoasLinkedIn,
     buscarEstatisticas,
     buscarEstatisticasLinkedIn,
-    buscarPessoas
+    buscarPessoas,
+    // 🆕 Novas funções CRUD
+    atribuirAnalista,
+    removerExclusividade,
+    deletarPessoa,
+    atualizarPerfil
   } = useLinkedInPessoas();
 
   const [tab, setTab] = useState<'linkedin' | 'todas' | 'instrucoes'>('linkedin');
@@ -66,6 +71,13 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
     importadosMes: 0
   });
   const [statsGeral, setStatsGeral] = useState<any[]>([]);
+
+  // 🆕 Estados para modais
+  const [modalEditar, setModalEditar] = useState<PessoaLinkedIn | null>(null);
+  const [modalAtribuir, setModalAtribuir] = useState<PessoaLinkedIn | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<PessoaLinkedIn | null>(null);
+  const [periodoExclusividade, setPeriodoExclusividade] = useState(60);
+  const [editForm, setEditForm] = useState<Partial<PessoaLinkedIn>>({});
 
   // Carregar dados iniciais
   useEffect(() => {
@@ -152,75 +164,171 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
   };
 
   // Render card de pessoa
-  const renderPessoaCard = (pessoa: PessoaLinkedIn) => (
-    <div key={pessoa.id} className="p-4 bg-white rounded-lg border hover:shadow-md transition-shadow">
-      <div className="flex items-start gap-4">
-        {/* Avatar */}
-        <div className="w-12 h-12 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
-          {pessoa.nome?.charAt(0) || '?'}
-        </div>
-        
-        {/* Info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h4 className="font-medium text-gray-800">{pessoa.nome}</h4>
-            {pessoa.linkedin_url && (
-              <a 
-                href={pessoa.linkedin_url} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-blue-600 hover:text-blue-800 text-sm"
-                title="Ver no LinkedIn"
-              >
-                🔗 LinkedIn
-              </a>
-            )}
-            {badgeOrigem(pessoa.origem)}
-          </div>
-          
-          <p className="text-sm text-gray-500 mt-1">{pessoa.titulo_profissional || 'Sem título'}</p>
-          
-          <div className="flex items-center gap-4 mt-2 text-xs text-gray-400 flex-wrap">
-            {pessoa.email && <span>✉️ {pessoa.email}</span>}
-            {pessoa.cidade && <span>📍 {pessoa.cidade}{pessoa.estado ? `, ${pessoa.estado}` : ''}</span>}
-            {pessoa.senioridade && (
-              <span className={`px-2 py-0.5 rounded-full ${
-                pessoa.senioridade === 'Senior' || pessoa.senioridade === 'Especialista'
-                  ? 'bg-purple-100 text-purple-700' 
-                  : pessoa.senioridade === 'Pleno' 
-                    ? 'bg-blue-100 text-blue-700' 
-                    : 'bg-gray-100 text-gray-600'
-              }`}>
-                {pessoa.senioridade}
-              </span>
-            )}
-          </div>
+  const renderPessoaCard = (pessoa: PessoaLinkedIn) => {
+    // Calcular status de exclusividade
+    const temExclusividade = pessoa.id_analista_rs !== null && pessoa.id_analista_rs !== undefined;
+    const isMinhaExclusividade = temExclusividade && pessoa.id_analista_rs === user?.id;
+    
+    let diasRestantes = 0;
+    if (pessoa.data_final_exclusividade) {
+      const dataFinal = new Date(pessoa.data_final_exclusividade);
+      diasRestantes = Math.ceil((dataFinal.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    }
 
-          {/* Skills */}
-          {pessoa.skills_lista && pessoa.skills_lista.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-3">
-              {pessoa.skills_lista.slice(0, 6).map((skill, idx) => (
-                <span key={idx} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">
-                  {skill}
+    return (
+      <div key={pessoa.id} className="p-4 bg-white rounded-lg border hover:shadow-md transition-shadow">
+        <div className="flex items-start gap-4">
+          {/* Avatar */}
+          <div className={`w-12 h-12 ${
+            isMinhaExclusividade 
+              ? 'bg-gradient-to-br from-green-500 to-green-600' 
+              : temExclusividade 
+                ? 'bg-gradient-to-br from-orange-500 to-orange-600'
+                : 'bg-gradient-to-br from-blue-500 to-blue-600'
+          } rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0`}>
+            {pessoa.nome?.charAt(0) || '?'}
+          </div>
+          
+          {/* Info */}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h4 className="font-medium text-gray-800">{pessoa.nome}</h4>
+              {pessoa.linkedin_url && (
+                <a 
+                  href={pessoa.linkedin_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:text-blue-800 text-sm"
+                  title="Ver no LinkedIn"
+                >
+                  🔗 LinkedIn
+                </a>
+              )}
+              {badgeOrigem(pessoa.origem)}
+              
+              {/* 🆕 Badge de exclusividade */}
+              {temExclusividade && (
+                <span className={`px-2 py-0.5 text-xs rounded-full ${
+                  isMinhaExclusividade 
+                    ? 'bg-green-100 text-green-700 border border-green-300' 
+                    : 'bg-orange-100 text-orange-700 border border-orange-300'
+                }`}>
+                  {isMinhaExclusividade ? '🔒 Minha Exclusividade' : '🔒 Com Exclusividade'}
+                  {diasRestantes > 0 && ` (${diasRestantes}d)`}
                 </span>
-              ))}
-              {pessoa.total_skills && pessoa.total_skills > 6 && (
-                <span className="text-xs text-gray-400">+{pessoa.total_skills - 6}</span>
               )}
             </div>
-          )}
+            
+            <p className="text-sm text-gray-500 mt-1">{pessoa.titulo_profissional || 'Sem título'}</p>
+            
+            <div className="flex items-center gap-4 mt-2 text-xs text-gray-400 flex-wrap">
+              {pessoa.email && <span>✉️ {pessoa.email}</span>}
+              {pessoa.cidade && <span>📍 {pessoa.cidade}{pessoa.estado ? `, ${pessoa.estado}` : ''}</span>}
+              {pessoa.senioridade && (
+                <span className={`px-2 py-0.5 rounded-full ${
+                  pessoa.senioridade === 'Senior' || pessoa.senioridade === 'Especialista'
+                    ? 'bg-purple-100 text-purple-700' 
+                    : pessoa.senioridade === 'Pleno' 
+                      ? 'bg-blue-100 text-blue-700' 
+                      : 'bg-gray-100 text-gray-600'
+                }`}>
+                  {pessoa.senioridade}
+                </span>
+              )}
+            </div>
 
-          {/* Métricas */}
-          <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
-            <span title="Experiências">💼 {pessoa.total_experiencias || 0} exp</span>
-            <span title="Formações">🎓 {pessoa.total_formacoes || 0} form</span>
-            <span title="Skills">🛠️ {pessoa.total_skills || 0} skills</span>
-            <span title="Importado em">📅 {formatarData(pessoa.criado_em)}</span>
+            {/* Skills */}
+            {pessoa.skills_lista && pessoa.skills_lista.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-3">
+                {pessoa.skills_lista.slice(0, 6).map((skill, idx) => (
+                  <span key={idx} className="px-2 py-0.5 bg-gray-100 text-gray-600 text-xs rounded">
+                    {skill}
+                  </span>
+                ))}
+                {pessoa.total_skills && pessoa.total_skills > 6 && (
+                  <span className="text-xs text-gray-400">+{pessoa.total_skills - 6}</span>
+                )}
+              </div>
+            )}
+
+            {/* Métricas */}
+            <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
+              <span title="Experiências">💼 {pessoa.total_experiencias || 0} exp</span>
+              <span title="Formações">🎓 {pessoa.total_formacoes || 0} form</span>
+              <span title="Skills">🛠️ {pessoa.total_skills || 0} skills</span>
+              <span title="Importado em">📅 {formatarData(pessoa.criado_em)}</span>
+            </div>
+
+            {/* 🆕 Botões de ação */}
+            <div className="flex items-center gap-2 mt-4 pt-3 border-t">
+              {/* Botão Editar */}
+              <button
+                onClick={() => {
+                  setEditForm({
+                    nome: pessoa.nome,
+                    email: pessoa.email,
+                    telefone: pessoa.telefone,
+                    titulo_profissional: pessoa.titulo_profissional,
+                    cidade: pessoa.cidade,
+                    estado: pessoa.estado,
+                    senioridade: pessoa.senioridade,
+                    disponibilidade: pessoa.disponibilidade,
+                    resumo_profissional: pessoa.resumo_profissional
+                  });
+                  setModalEditar(pessoa);
+                }}
+                className="px-3 py-1.5 text-xs bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition"
+              >
+                ✏️ Editar
+              </button>
+
+              {/* Botão Atribuir/Gerenciar Exclusividade */}
+              {!temExclusividade ? (
+                <button
+                  onClick={() => {
+                    setPeriodoExclusividade(60);
+                    setModalAtribuir(pessoa);
+                  }}
+                  className="px-3 py-1.5 text-xs bg-green-50 text-green-600 rounded hover:bg-green-100 transition"
+                >
+                  🎯 Assumir Exclusividade
+                </button>
+              ) : isMinhaExclusividade ? (
+                <button
+                  onClick={async () => {
+                    if (confirm('Deseja liberar a exclusividade deste candidato?')) {
+                      const result = await removerExclusividade(pessoa.id);
+                      if (result.sucesso) {
+                        alert(result.mensagem);
+                        carregarDados();
+                      } else {
+                        alert('Erro: ' + result.mensagem);
+                      }
+                    }
+                  }}
+                  className="px-3 py-1.5 text-xs bg-orange-50 text-orange-600 rounded hover:bg-orange-100 transition"
+                >
+                  🔓 Liberar Exclusividade
+                </button>
+              ) : (
+                <span className="px-3 py-1.5 text-xs bg-gray-50 text-gray-400 rounded">
+                  🔒 Exclusivo de outro analista
+                </span>
+              )}
+
+              {/* Botão Deletar */}
+              <button
+                onClick={() => setConfirmDelete(pessoa)}
+                className="px-3 py-1.5 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100 transition ml-auto"
+              >
+                🗑️ Remover
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ============================================
   // RENDER PRINCIPAL
@@ -526,6 +634,281 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
               <li>• <strong>Rastreável:</strong> Origem "linkedin" para filtrar e gerenciar</li>
               <li>• <strong>Rápido:</strong> 3 segundos por candidato vs 5-10 minutos manual</li>
             </ul>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* 🆕 MODAL DE EDIÇÃO */}
+      {/* ============================================ */}
+      {modalEditar && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b">
+              <h3 className="text-lg font-bold text-gray-800">✏️ Editar Candidato</h3>
+              <p className="text-sm text-gray-500">Atualize os dados do candidato importado</p>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              {/* Nome */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
+                <input
+                  type="text"
+                  value={editForm.nome || ''}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, nome: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Email */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={editForm.email || ''}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, email: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Telefone */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Telefone</label>
+                <input
+                  type="tel"
+                  value={editForm.telefone || ''}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, telefone: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Título Profissional */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Título Profissional</label>
+                <input
+                  type="text"
+                  value={editForm.titulo_profissional || ''}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, titulo_profissional: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                {/* Cidade */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Cidade</label>
+                  <input
+                    type="text"
+                    value={editForm.cidade || ''}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, cidade: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                {/* Estado */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Estado</label>
+                  <input
+                    type="text"
+                    value={editForm.estado || ''}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, estado: e.target.value }))}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    maxLength={2}
+                  />
+                </div>
+              </div>
+
+              {/* Senioridade */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Senioridade</label>
+                <select
+                  value={editForm.senioridade || ''}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, senioridade: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Selecione...</option>
+                  <option value="Junior">Junior</option>
+                  <option value="Pleno">Pleno</option>
+                  <option value="Senior">Senior</option>
+                  <option value="Especialista">Especialista</option>
+                </select>
+              </div>
+
+              {/* Disponibilidade */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Disponibilidade</label>
+                <select
+                  value={editForm.disponibilidade || ''}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, disponibilidade: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="">Selecione...</option>
+                  <option value="Imediata">Imediata</option>
+                  <option value="15 dias">15 dias</option>
+                  <option value="30 dias">30 dias</option>
+                  <option value="A combinar">A combinar</option>
+                </select>
+              </div>
+
+              {/* Resumo */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Resumo Profissional</label>
+                <textarea
+                  rows={3}
+                  value={editForm.resumo_profissional || ''}
+                  onChange={(e) => setEditForm(prev => ({ ...prev, resumo_profissional: e.target.value }))}
+                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="p-6 border-t bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => setModalEditar(null)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  const result = await atualizarPerfil(modalEditar.id, editForm);
+                  if (result.sucesso) {
+                    alert(result.mensagem);
+                    setModalEditar(null);
+                    carregarDados();
+                  } else {
+                    alert('Erro: ' + result.mensagem);
+                  }
+                }}
+                disabled={loading}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loading ? 'Salvando...' : '💾 Salvar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* 🆕 MODAL DE ATRIBUIÇÃO DE EXCLUSIVIDADE */}
+      {/* ============================================ */}
+      {modalAtribuir && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="p-6 border-b">
+              <h3 className="text-lg font-bold text-gray-800">🎯 Assumir Exclusividade</h3>
+              <p className="text-sm text-gray-500">Candidato: <strong>{modalAtribuir.nome}</strong></p>
+            </div>
+            
+            <div className="p-6 space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <p className="text-sm text-blue-800">
+                  <strong>Exclusividade</strong> significa que este candidato ficará reservado para você pelo período definido. 
+                  Outros analistas não poderão assumir este perfil durante este período.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Período de Exclusividade</label>
+                <div className="flex gap-2">
+                  {[30, 60, 90].map(dias => (
+                    <button
+                      key={dias}
+                      onClick={() => setPeriodoExclusividade(dias)}
+                      className={`flex-1 py-3 rounded-lg border-2 text-center transition ${
+                        periodoExclusividade === dias
+                          ? 'border-green-500 bg-green-50 text-green-700'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <span className="block font-bold text-lg">{dias}</span>
+                      <span className="text-xs text-gray-500">dias</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="text-sm text-gray-500 text-center">
+                A exclusividade expirará em: <strong>{
+                  new Date(Date.now() + periodoExclusividade * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR')
+                }</strong>
+              </div>
+            </div>
+
+            <div className="p-6 border-t bg-gray-50 flex justify-end gap-3">
+              <button
+                onClick={() => setModalAtribuir(null)}
+                className="px-4 py-2 text-gray-600 hover:text-gray-800"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  if (!user?.id) {
+                    alert('Erro: Usuário não identificado');
+                    return;
+                  }
+                  const result = await atribuirAnalista(modalAtribuir.id, user.id, periodoExclusividade);
+                  if (result.sucesso) {
+                    alert(result.mensagem);
+                    setModalAtribuir(null);
+                    carregarDados();
+                  } else {
+                    alert('Erro: ' + result.mensagem);
+                  }
+                }}
+                disabled={loading}
+                className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {loading ? 'Processando...' : '✓ Confirmar Exclusividade'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================ */}
+      {/* 🆕 MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
+      {/* ============================================ */}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
+            <div className="p-6 text-center">
+              <div className="text-5xl mb-4">⚠️</div>
+              <h3 className="text-lg font-bold text-gray-800 mb-2">Confirmar Remoção</h3>
+              <p className="text-gray-600">
+                Tem certeza que deseja remover o candidato <strong>{confirmDelete.nome}</strong>?
+              </p>
+              <p className="text-sm text-gray-400 mt-2">
+                Esta ação irá inativar o registro (não exclui permanentemente).
+              </p>
+            </div>
+
+            <div className="p-6 border-t bg-gray-50 flex justify-center gap-3">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="px-6 py-2 border rounded-lg hover:bg-gray-100"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  const result = await deletarPessoa(confirmDelete.id);
+                  if (result.sucesso) {
+                    alert(result.mensagem);
+                    setConfirmDelete(null);
+                  } else {
+                    alert('Erro: ' + result.mensagem);
+                  }
+                }}
+                disabled={loading}
+                className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                {loading ? 'Removendo...' : '🗑️ Remover'}
+              </button>
+            </div>
           </div>
         </div>
       )}
