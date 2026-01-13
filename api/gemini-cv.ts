@@ -13,7 +13,12 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // Inicializar Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+// Suporta API_KEY (Vercel) ou GEMINI_API_KEY (fallback)
+const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+if (!apiKey) {
+  console.error('❌ API_KEY (Gemini) não configurada!');
+}
+const genAI = new GoogleGenerativeAI(apiKey);
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
