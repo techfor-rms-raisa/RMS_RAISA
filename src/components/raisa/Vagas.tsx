@@ -1,8 +1,16 @@
 /**
- * Vagas.tsx - RMS RAISA v57.0
+ * Vagas.tsx - RMS RAISA v58.0
  * Componente de Gestão de Vagas
  * 
- * 🆕 v57.0: Controle de permissões
+ * 🆕 v58.0: Melhorias de UX
+ *        - Campo de busca por nome/descrição da vaga
+ *        - Ícone "olho" para visualizar vaga completa em popup
+ *        - Ícone de candidaturas com contador
+ *        - Modal de candidaturas com lista detalhada
+ *        - Botão "Limpar filtros" quando filtros ativos
+ *        - Layout limpo e responsivo
+ * 
+ * v57.0: Controle de permissões
  *        - Botão "Nova Vaga" condicionado por permissão
  *        - Modo read-only para Gestão Comercial
  * 
@@ -22,14 +30,37 @@
  * v56.0: Extração de Requisitos e Stack via Backend/Gemini
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Vaga, Client, UsuarioCliente, User } from '../../types/types_index';
 import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 import CVMatchingPanel from './CVMatchingPanel';
 import VagaSugestoesIA from './VagaSugestoesIA';
-import { Wand2, Loader2, Plus, X, ChevronDown, ChevronUp, Eye } from 'lucide-react';
+import { Wand2, Loader2, Plus, X, ChevronDown, ChevronUp, Eye, Users, Calendar, User as UserIcon, Briefcase, MapPin, DollarSign, Clock, FileText, CheckCircle, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { podeInserirVagas, isReadOnly } from '../../utils/permissions';
+import { supabase } from '../../config/supabase';
+
+// Interface para candidatura com dados expandidos
+interface CandidaturaExpandida {
+  id: number;
+  pessoa_id: number;
+  vaga_id: number;
+  status: string;
+  created_at: string;
+  pessoa?: {
+    id: number;
+    nome: string;
+    email: string;
+    telefone: string;
+    titulo_profissional: string;
+    senioridade: string;
+    id_analista_rs: number | null;
+  };
+  analista?: {
+    id: number;
+    nome_usuario: string;
+  };
+}
 
 interface VagasProps {
     vagas: Vaga[];
@@ -124,10 +155,22 @@ const Vagas: React.FC<VagasProps> = ({
     // Estado para Sugestões IA
     const [sugestoesIAVaga, setSugestoesIAVaga] = useState<Vaga | null>(null);
     
+    // 🆕 v58.0: Estado para visualização de vaga (popup read-only)
+    const [vagaVisualizacao, setVagaVisualizacao] = useState<Vaga | null>(null);
+    
+    // 🆕 v58.0: Estado para modal de candidaturas
+    const [candidaturasVaga, setCandidaturasVaga] = useState<Vaga | null>(null);
+    const [candidaturas, setCandidaturas] = useState<CandidaturaExpandida[]>([]);
+    const [loadingCandidaturas, setLoadingCandidaturas] = useState(false);
+    
+    // 🆕 v58.0: Contagem de candidaturas por vaga
+    const [contagemCandidaturas, setContagemCandidaturas] = useState<Record<string, number>>({});
+    
     // Estados dos filtros de header
     const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
     const [selectedGestorId, setSelectedGestorId] = useState<number | null>(null);
     const [selectedStatus, setSelectedStatus] = useState<string>(''); // 🆕 Filtro por status
+    const [searchTerm, setSearchTerm] = useState<string>(''); // 🆕 v58.0: Filtro por nome da vaga
     
     // Estado para expandir/colapsar seções do modal
     const [expandedSections, setExpandedSections] = useState({
@@ -198,9 +241,19 @@ const Vagas: React.FC<VagasProps> = ({
         return safeUsuariosCliente.filter(g => g.id_cliente === formData.cliente_id && g.ativo !== false);
     }, [formData.cliente_id, safeUsuariosCliente]);
 
-    // Filtrar vagas pelo cliente e status selecionados
+    // Filtrar vagas pelo cliente, status e nome
     const vagasFiltradas = useMemo(() => {
         let filtered = safeVagas;
+        
+        // 🆕 v58.0: Filtro por nome da vaga
+        if (searchTerm.trim()) {
+            const termo = searchTerm.toLowerCase().trim();
+            filtered = filtered.filter(v => 
+                v.titulo?.toLowerCase().includes(termo) ||
+                v.descricao?.toLowerCase().includes(termo)
+            );
+        }
+        
         if (selectedClientId) {
             filtered = filtered.filter(v => v.cliente_id === selectedClientId);
         }
@@ -208,7 +261,7 @@ const Vagas: React.FC<VagasProps> = ({
             filtered = filtered.filter(v => v.status === selectedStatus);
         }
         return filtered;
-    }, [safeVagas, selectedClientId, selectedStatus]);
+    }, [safeVagas, selectedClientId, selectedStatus, searchTerm]);
 
     // Ordenar clientes alfabeticamente
     const sortedClients = useMemo(() => {
@@ -216,6 +269,119 @@ const Vagas: React.FC<VagasProps> = ({
             .filter(c => c.ativo_cliente !== false)
             .sort((a, b) => (a.razao_social_cliente || '').localeCompare(b.razao_social_cliente || ''));
     }, [safeClients]);
+
+    // 🆕 v58.0: Buscar contagem de candidaturas por vaga
+    useEffect(() => {
+        const buscarContagemCandidaturas = async () => {
+            if (safeVagas.length === 0) return;
+            
+            try {
+                const vagaIds = safeVagas.map(v => v.id);
+                const { data, error } = await supabase
+                    .from('candidaturas')
+                    .select('vaga_id')
+                    .in('vaga_id', vagaIds);
+                
+                if (error) throw error;
+                
+                // Contar candidaturas por vaga
+                const contagem: Record<string, number> = {};
+                (data || []).forEach((c: any) => {
+                    const vagaId = String(c.vaga_id);
+                    contagem[vagaId] = (contagem[vagaId] || 0) + 1;
+                });
+                
+                setContagemCandidaturas(contagem);
+            } catch (err) {
+                console.error('Erro ao buscar contagem de candidaturas:', err);
+            }
+        };
+        
+        buscarContagemCandidaturas();
+    }, [safeVagas]);
+
+    // 🆕 v58.0: Buscar candidaturas de uma vaga específica
+    const buscarCandidaturasVaga = async (vaga: Vaga) => {
+        setCandidaturasVaga(vaga);
+        setLoadingCandidaturas(true);
+        setCandidaturas([]);
+        
+        try {
+            // Buscar candidaturas com dados da pessoa
+            const { data: candidaturasData, error } = await supabase
+                .from('candidaturas')
+                .select(`
+                    id,
+                    pessoa_id,
+                    vaga_id,
+                    status,
+                    created_at,
+                    pessoas:pessoa_id (
+                        id,
+                        nome,
+                        email,
+                        telefone,
+                        titulo_profissional,
+                        senioridade,
+                        id_analista_rs
+                    )
+                `)
+                .eq('vaga_id', vaga.id)
+                .order('created_at', { ascending: false });
+            
+            if (error) throw error;
+            
+            // Buscar nomes dos analistas
+            const analistaIds = [...new Set((candidaturasData || [])
+                .map((c: any) => c.pessoas?.id_analista_rs)
+                .filter(Boolean))];
+            
+            let analistas: Record<number, string> = {};
+            if (analistaIds.length > 0) {
+                const { data: analistasData } = await supabase
+                    .from('app_users')
+                    .select('id, nome_usuario')
+                    .in('id', analistaIds);
+                
+                (analistasData || []).forEach((a: any) => {
+                    analistas[a.id] = a.nome_usuario;
+                });
+            }
+            
+            // Formatar dados
+            const candidaturasFormatadas: CandidaturaExpandida[] = (candidaturasData || []).map((c: any) => ({
+                id: c.id,
+                pessoa_id: c.pessoa_id,
+                vaga_id: c.vaga_id,
+                status: c.status,
+                created_at: c.created_at,
+                pessoa: c.pessoas,
+                analista: c.pessoas?.id_analista_rs 
+                    ? { id: c.pessoas.id_analista_rs, nome_usuario: analistas[c.pessoas.id_analista_rs] || 'N/A' }
+                    : undefined
+            }));
+            
+            setCandidaturas(candidaturasFormatadas);
+        } catch (err) {
+            console.error('Erro ao buscar candidaturas:', err);
+        } finally {
+            setLoadingCandidaturas(false);
+        }
+    };
+
+    // 🆕 v58.0: Formatar status da candidatura
+    const formatarStatusCandidatura = (status: string) => {
+        const statusMap: Record<string, { label: string; color: string; icon: string }> = {
+            'pendente': { label: 'Pendente', color: 'bg-yellow-100 text-yellow-800', icon: '⏳' },
+            'em_analise': { label: 'Em Análise', color: 'bg-blue-100 text-blue-800', icon: '🔍' },
+            'aprovado': { label: 'Aprovado', color: 'bg-green-100 text-green-800', icon: '✅' },
+            'reprovado': { label: 'Reprovado', color: 'bg-red-100 text-red-800', icon: '❌' },
+            'entrevista': { label: 'Entrevista', color: 'bg-purple-100 text-purple-800', icon: '🎯' },
+            'contratado': { label: 'Contratado', color: 'bg-emerald-100 text-emerald-800', icon: '🎉' },
+            'desistiu': { label: 'Desistiu', color: 'bg-gray-100 text-gray-800', icon: '🚫' }
+        };
+        return statusMap[status] || { label: status, color: 'bg-gray-100 text-gray-600', icon: '📋' };
+    };
 
     // 🆕 Verificar se a vaga pode ser excluída (apenas no dia da criação)
     const podeExcluirVaga = (vaga: Vaga): boolean => {
@@ -543,6 +709,37 @@ const Vagas: React.FC<VagasProps> = ({
                 <h1 className="text-3xl font-bold text-gray-800 mb-4">Gestão de Vagas</h1>
                 
                 <div className="flex flex-wrap gap-4 items-center bg-white p-4 rounded-lg shadow-sm">
+                    {/* 🆕 v58.0: Busca por Nome da Vaga */}
+                    <div className="flex-1 min-w-[250px]">
+                        <label className="text-xs font-semibold text-gray-500 uppercase">Buscar Vaga</label>
+                        <div className="relative mt-1">
+                            <input
+                                type="text"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                placeholder="Digite o nome ou descrição da vaga..."
+                                className="w-full border p-2 pl-9 rounded focus:ring-2 focus:ring-orange-500"
+                            />
+                            <svg 
+                                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" 
+                                width="16" height="16" 
+                                fill="none" 
+                                stroke="currentColor" 
+                                viewBox="0 0 24 24"
+                            >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                            </svg>
+                            {searchTerm && (
+                                <button
+                                    onClick={() => setSearchTerm('')}
+                                    className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                                >
+                                    <X size={16} />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+
                     {/* Filtro por Cliente */}
                     <div className="flex-1 min-w-[200px]">
                         <label className="text-xs font-semibold text-gray-500 uppercase">Filtrar por Cliente</label>
@@ -616,9 +813,36 @@ const Vagas: React.FC<VagasProps> = ({
                 </div>
 
                 {/* Info do filtro */}
-                {selectedClientId && (
-                    <div className="mt-2 text-sm text-gray-600">
-                        Mostrando <strong>{vagasFiltradas.length}</strong> vagas de <strong>{getClientName(selectedClientId)}</strong>
+                {(selectedClientId || searchTerm || selectedStatus) && (
+                    <div className="mt-2 text-sm text-gray-600 flex items-center gap-2 flex-wrap">
+                        <span>
+                            Mostrando <strong>{vagasFiltradas.length}</strong> vaga(s)
+                        </span>
+                        {searchTerm && (
+                            <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">
+                                🔍 "{searchTerm}"
+                            </span>
+                        )}
+                        {selectedClientId && (
+                            <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded text-xs">
+                                📍 {getClientName(selectedClientId)}
+                            </span>
+                        )}
+                        {selectedStatus && (
+                            <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">
+                                📋 {selectedStatus}
+                            </span>
+                        )}
+                        <button 
+                            onClick={() => {
+                                setSearchTerm('');
+                                setSelectedClientId(null);
+                                setSelectedStatus('');
+                            }}
+                            className="text-gray-400 hover:text-red-500 text-xs underline ml-2"
+                        >
+                            Limpar filtros
+                        </button>
                     </div>
                 )}
             </div>
@@ -696,7 +920,32 @@ const Vagas: React.FC<VagasProps> = ({
                                 
                                 <div className="flex justify-between items-center pt-4 border-t">
                                     <span className="text-sm font-medium text-gray-500">{vaga.senioridade}</span>
-                                    <div className="flex flex-wrap gap-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        {/* 🆕 v58.0: Ícone de Visualização */}
+                                        <button 
+                                            onClick={() => setVagaVisualizacao(vaga)} 
+                                            className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                                            title="Visualizar vaga completa"
+                                        >
+                                            <Eye size={16} />
+                                        </button>
+                                        
+                                        {/* 🆕 v58.0: Ícone de Candidaturas */}
+                                        <button 
+                                            onClick={() => buscarCandidaturasVaga(vaga)} 
+                                            className="relative p-1.5 text-gray-500 hover:text-purple-600 hover:bg-purple-50 rounded-full transition-colors"
+                                            title="Ver candidaturas"
+                                        >
+                                            <Users size={16} />
+                                            {contagemCandidaturas[vaga.id] > 0 && (
+                                                <span className="absolute -top-1 -right-1 bg-purple-600 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold">
+                                                    {contagemCandidaturas[vaga.id]}
+                                                </span>
+                                            )}
+                                        </button>
+                                        
+                                        <span className="text-gray-300">|</span>
+                                        
                                         <button 
                                             onClick={() => setSugestoesIAVaga(vaga)} 
                                             className="text-purple-600 hover:text-purple-800 hover:underline text-sm font-semibold"
@@ -1288,6 +1537,345 @@ const Vagas: React.FC<VagasProps> = ({
                     }}
                     currentUserId={currentUserId}
                 />
+            )}
+
+            {/* ==================== 🆕 v58.0: MODAL VISUALIZAÇÃO DA VAGA ==================== */}
+            {vagaVisualizacao && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                        {/* Header */}
+                        <div className="bg-gradient-to-r from-blue-600 to-blue-700 text-white p-5">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        {vagaVisualizacao.urgente && (
+                                            <span className="px-2 py-0.5 bg-red-500 text-white text-xs rounded font-bold">
+                                                🚨 URGENTE
+                                            </span>
+                                        )}
+                                        <span className={`px-2 py-0.5 rounded text-xs uppercase font-bold ${
+                                            vagaVisualizacao.status === 'aberta' ? 'bg-green-500' : 
+                                            vagaVisualizacao.status === 'pausada' ? 'bg-yellow-500' :
+                                            'bg-gray-500'
+                                        }`}>
+                                            {vagaVisualizacao.status}
+                                        </span>
+                                    </div>
+                                    <h3 className="text-xl font-bold">{vagaVisualizacao.titulo}</h3>
+                                    <p className="text-blue-100 text-sm mt-1">
+                                        {getClientName(vagaVisualizacao.cliente_id)} • {vagaVisualizacao.senioridade}
+                                    </p>
+                                </div>
+                                <button 
+                                    onClick={() => setVagaVisualizacao(null)}
+                                    className="text-white hover:text-gray-200 text-2xl leading-none"
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Corpo com scroll */}
+                        <div className="overflow-y-auto p-6 space-y-6">
+                            {/* Info Pills */}
+                            <div className="flex flex-wrap gap-2">
+                                {vagaVisualizacao.tipo_de_vaga && (
+                                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm">
+                                        <Briefcase size={14} />
+                                        {vagaVisualizacao.tipo_de_vaga}
+                                    </span>
+                                )}
+                                {vagaVisualizacao.modalidade && (
+                                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">
+                                        <MapPin size={14} />
+                                        {vagaVisualizacao.modalidade}
+                                    </span>
+                                )}
+                                {vagaVisualizacao.regime_contratacao && (
+                                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
+                                        <FileText size={14} />
+                                        {vagaVisualizacao.regime_contratacao}
+                                    </span>
+                                )}
+                                {vagaVisualizacao.vaga_faturavel && (
+                                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-sm">
+                                        <DollarSign size={14} />
+                                        Faturável
+                                    </span>
+                                )}
+                                {vagaVisualizacao.ocorrencia && (
+                                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm">
+                                        OC: {vagaVisualizacao.ocorrencia}
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Descrição */}
+                            <div>
+                                <h4 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-2">
+                                    <FileText size={16} />
+                                    Descrição da Vaga
+                                </h4>
+                                <div className="bg-gray-50 rounded-lg p-4 text-gray-700 whitespace-pre-wrap">
+                                    {vagaVisualizacao.descricao || 'Não informada'}
+                                </div>
+                            </div>
+
+                            {/* Stack Tecnológica */}
+                            <div>
+                                <h4 className="text-sm font-semibold text-gray-500 uppercase mb-2">Stack Tecnológica</h4>
+                                <div className="flex flex-wrap gap-2">
+                                    {ensureStackArray(vagaVisualizacao.stack_tecnologica).length > 0 ? (
+                                        ensureStackArray(vagaVisualizacao.stack_tecnologica).map(tech => (
+                                            <span key={tech} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
+                                                {tech}
+                                            </span>
+                                        ))
+                                    ) : (
+                                        <span className="text-gray-400 italic">Não definida</span>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Requisitos */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <h4 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-2">
+                                        <CheckCircle size={16} className="text-green-500" />
+                                        Requisitos Obrigatórios
+                                    </h4>
+                                    <div className="bg-green-50 rounded-lg p-4 text-gray-700 whitespace-pre-wrap text-sm min-h-[100px]">
+                                        {vagaVisualizacao.requisitos_obrigatorios || 'Não informado'}
+                                    </div>
+                                </div>
+                                <div>
+                                    <h4 className="text-sm font-semibold text-gray-500 uppercase mb-2 flex items-center gap-2">
+                                        <AlertCircle size={16} className="text-amber-500" />
+                                        Requisitos Desejáveis
+                                    </h4>
+                                    <div className="bg-amber-50 rounded-lg p-4 text-gray-700 whitespace-pre-wrap text-sm min-h-[100px]">
+                                        {vagaVisualizacao.requisitos_desejaveis || 'Não informado'}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Informações de Contratação */}
+                            <div>
+                                <h4 className="text-sm font-semibold text-gray-500 uppercase mb-3 flex items-center gap-2">
+                                    <DollarSign size={16} />
+                                    Informações de Contratação
+                                </h4>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <div className="bg-gray-50 rounded-lg p-3">
+                                        <p className="text-xs text-gray-500 uppercase">Valor Hora Mín</p>
+                                        <p className="text-lg font-semibold text-gray-800">
+                                            {vagaVisualizacao.salario_min ? `R$ ${vagaVisualizacao.salario_min}` : '-'}
+                                        </p>
+                                    </div>
+                                    <div className="bg-gray-50 rounded-lg p-3">
+                                        <p className="text-xs text-gray-500 uppercase">Valor Hora Máx</p>
+                                        <p className="text-lg font-semibold text-gray-800">
+                                            {vagaVisualizacao.salario_max ? `R$ ${vagaVisualizacao.salario_max}` : '-'}
+                                        </p>
+                                    </div>
+                                    <div className="bg-gray-50 rounded-lg p-3">
+                                        <p className="text-xs text-gray-500 uppercase">Faturamento</p>
+                                        <p className="text-lg font-semibold text-gray-800">
+                                            {vagaVisualizacao.faturamento_mensal ? `R$ ${vagaVisualizacao.faturamento_mensal}` : '-'}
+                                        </p>
+                                    </div>
+                                    <div className="bg-gray-50 rounded-lg p-3">
+                                        <p className="text-xs text-gray-500 uppercase">Prazo</p>
+                                        <p className="text-lg font-semibold text-gray-800">
+                                            {vagaVisualizacao.prazo_fechamento 
+                                                ? new Date(vagaVisualizacao.prazo_fechamento).toLocaleDateString('pt-BR')
+                                                : '-'}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Benefícios */}
+                            {vagaVisualizacao.beneficios && (
+                                <div>
+                                    <h4 className="text-sm font-semibold text-gray-500 uppercase mb-2">Benefícios</h4>
+                                    <div className="bg-gray-50 rounded-lg p-4 text-gray-700 whitespace-pre-wrap text-sm">
+                                        {vagaVisualizacao.beneficios}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="border-t p-4 bg-gray-50 flex justify-between items-center">
+                            <div className="text-xs text-gray-500">
+                                {vagaVisualizacao.criado_em && (
+                                    <span>Criada em: {new Date(vagaVisualizacao.criado_em).toLocaleDateString('pt-BR')}</span>
+                                )}
+                            </div>
+                            <div className="flex gap-2">
+                                {!apenasLeitura && (
+                                    <button
+                                        onClick={() => {
+                                            setVagaVisualizacao(null);
+                                            openModal(vagaVisualizacao);
+                                        }}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                                    >
+                                        ✏️ Editar Vaga
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => setVagaVisualizacao(null)}
+                                    className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
+                                >
+                                    Fechar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ==================== 🆕 v58.0: MODAL CANDIDATURAS ==================== */}
+            {candidaturasVaga && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                        {/* Header */}
+                        <div className="bg-gradient-to-r from-purple-600 to-purple-700 text-white p-5">
+                            <div className="flex justify-between items-start">
+                                <div>
+                                    <h3 className="text-xl font-bold flex items-center gap-2">
+                                        <Users size={24} />
+                                        Candidaturas
+                                    </h3>
+                                    <p className="text-purple-100 text-sm mt-1">
+                                        {candidaturasVaga.titulo} • {getClientName(candidaturasVaga.cliente_id)}
+                                    </p>
+                                </div>
+                                <button 
+                                    onClick={() => {
+                                        setCandidaturasVaga(null);
+                                        setCandidaturas([]);
+                                    }}
+                                    className="text-white hover:text-gray-200 text-2xl leading-none"
+                                >
+                                    ×
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Corpo com scroll */}
+                        <div className="overflow-y-auto flex-1 p-4">
+                            {loadingCandidaturas ? (
+                                <div className="flex items-center justify-center py-12">
+                                    <Loader2 className="animate-spin text-purple-600" size={32} />
+                                    <span className="ml-3 text-gray-600">Carregando candidaturas...</span>
+                                </div>
+                            ) : candidaturas.length === 0 ? (
+                                <div className="text-center py-12">
+                                    <Users size={48} className="mx-auto text-gray-300 mb-4" />
+                                    <p className="text-gray-500 text-lg">Nenhuma candidatura encontrada</p>
+                                    <p className="text-gray-400 text-sm mt-1">Esta vaga ainda não possui candidatos associados</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-3">
+                                    {/* Header da tabela */}
+                                    <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-2 bg-gray-100 rounded-lg text-xs font-semibold text-gray-500 uppercase">
+                                        <div className="col-span-4">Candidato</div>
+                                        <div className="col-span-2">Status</div>
+                                        <div className="col-span-2">Data Envio</div>
+                                        <div className="col-span-2">Analista R&S</div>
+                                        <div className="col-span-2">Senioridade</div>
+                                    </div>
+                                    
+                                    {/* Lista de candidaturas */}
+                                    {candidaturas.map((candidatura) => {
+                                        const statusInfo = formatarStatusCandidatura(candidatura.status);
+                                        return (
+                                            <div 
+                                                key={candidatura.id} 
+                                                className="grid grid-cols-1 md:grid-cols-12 gap-3 p-4 bg-white border rounded-lg hover:shadow-md transition-shadow items-center"
+                                            >
+                                                {/* Candidato */}
+                                                <div className="col-span-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 flex items-center justify-center text-white font-bold">
+                                                            {candidatura.pessoa?.nome?.charAt(0)?.toUpperCase() || '?'}
+                                                        </div>
+                                                        <div>
+                                                            <p className="font-semibold text-gray-800">
+                                                                {candidatura.pessoa?.nome || 'Nome não disponível'}
+                                                            </p>
+                                                            <p className="text-xs text-gray-500 truncate max-w-[200px]">
+                                                                {candidatura.pessoa?.titulo_profissional || candidatura.pessoa?.email || '-'}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                {/* Status */}
+                                                <div className="col-span-2">
+                                                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${statusInfo.color}`}>
+                                                        {statusInfo.icon} {statusInfo.label}
+                                                    </span>
+                                                </div>
+                                                
+                                                {/* Data Envio */}
+                                                <div className="col-span-2">
+                                                    <div className="flex items-center gap-1 text-sm text-gray-600">
+                                                        <Calendar size={14} />
+                                                        {candidatura.created_at 
+                                                            ? new Date(candidatura.created_at).toLocaleDateString('pt-BR')
+                                                            : '-'}
+                                                    </div>
+                                                </div>
+                                                
+                                                {/* Analista */}
+                                                <div className="col-span-2">
+                                                    <div className="flex items-center gap-1 text-sm text-gray-600">
+                                                        <UserIcon size={14} />
+                                                        {candidatura.analista?.nome_usuario || (
+                                                            <span className="text-gray-400 italic">Não atribuído</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                
+                                                {/* Senioridade */}
+                                                <div className="col-span-2">
+                                                    <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                                        candidatura.pessoa?.senioridade === 'senior' ? 'bg-purple-100 text-purple-700' :
+                                                        candidatura.pessoa?.senioridade === 'pleno' ? 'bg-blue-100 text-blue-700' :
+                                                        candidatura.pessoa?.senioridade === 'junior' ? 'bg-green-100 text-green-700' :
+                                                        'bg-gray-100 text-gray-600'
+                                                    }`}>
+                                                        {candidatura.pessoa?.senioridade || '-'}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="border-t p-4 bg-gray-50 flex justify-between items-center">
+                            <div className="text-sm text-gray-600">
+                                <span className="font-semibold">{candidaturas.length}</span> candidatura(s) encontrada(s)
+                            </div>
+                            <button
+                                onClick={() => {
+                                    setCandidaturasVaga(null);
+                                    setCandidaturas([]);
+                                }}
+                                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
+                            >
+                                Fechar
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
