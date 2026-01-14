@@ -1,5 +1,5 @@
 /**
- * AnaliseRisco.tsx - RMS RAISA v4.2
+ * AnaliseRisco.tsx - RMS RAISA v4.3
  * Componente de Análise de Currículo com IA
  * 
  * HISTÓRICO:
@@ -21,6 +21,10 @@
  *   • Campo origem: 'importacao_cv' (antes era NULL)
  *   • Campos adicionais: cpf, disponibilidade, modalidade_preferida, pretensao_salarial
  *   • Log de exclusividade em log_exclusividade
+ * - v4.3 (14/01/2026): Verificação de duplicatas
+ *   • Verifica duplicata por CPF > Email > Nome ANTES de inserir
+ *   • Se encontrar duplicata, faz UPDATE em vez de INSERT
+ *   • Evita criação de registros duplicados no banco
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -500,6 +504,272 @@ const AnaliseRisco: React.FC = () => {
     }
   };
 
+  // 🆕 v4.3: Função para atualizar candidato existente (evita duplicatas)
+  const atualizarCandidatoExistente = async (
+    pessoaId: number, 
+    candidato: any, 
+    textoOriginal: string, 
+    analiseResult: any,
+    normalizarEstado: (estado: string) => string
+  ) => {
+    try {
+      // Calcular datas de exclusividade
+      const periodoExclusividade = 60;
+      const dataInicio = new Date();
+      const dataFinal = user?.id 
+        ? new Date(dataInicio.getTime() + periodoExclusividade * 24 * 60 * 60 * 1000)
+        : null;
+
+      // Montar objeto de atualização (só atualiza campos com valor)
+      const dadosAtualizacao: Record<string, any> = {
+        cv_texto_original: textoOriginal?.substring(0, 50000) || undefined,
+        cv_resumo: analiseResult?.justificativa || undefined,
+        cv_processado: true,
+        cv_processado_em: new Date().toISOString(),
+        cv_processado_por: 'Triagem Genérica - Gemini',
+        updated_at: new Date().toISOString(),
+        // Exclusividade
+        id_analista_rs: user?.id || undefined,
+        periodo_exclusividade: periodoExclusividade,
+        data_inicio_exclusividade: user?.id ? dataInicio.toISOString() : undefined,
+        data_final_exclusividade: dataFinal?.toISOString() || undefined,
+        qtd_renovacoes: 0
+      };
+
+      // Adicionar campos apenas se tiverem valor
+      if (candidato.email && !candidato.email.includes('@pendente.cadastro')) {
+        dadosAtualizacao.email = candidato.email.trim();
+      }
+      if (candidato.cpf) dadosAtualizacao.cpf = candidato.cpf.trim();
+      if (candidato.telefone) dadosAtualizacao.telefone = candidato.telefone.trim();
+      if (candidato.linkedin_url) dadosAtualizacao.linkedin_url = candidato.linkedin_url.trim();
+      if (candidato.cidade) dadosAtualizacao.cidade = candidato.cidade.trim();
+      if (candidato.estado) dadosAtualizacao.estado = normalizarEstado(candidato.estado);
+      if (candidato.titulo_profissional) dadosAtualizacao.titulo_profissional = candidato.titulo_profissional.trim();
+      if (candidato.senioridade) dadosAtualizacao.senioridade = candidato.senioridade.trim();
+      if (candidato.disponibilidade) dadosAtualizacao.disponibilidade = candidato.disponibilidade.trim();
+      if (candidato.modalidade_preferida) dadosAtualizacao.modalidade_preferida = candidato.modalidade_preferida.trim();
+      if (candidato.pretensao_salarial) dadosAtualizacao.pretensao_salarial = candidato.pretensao_salarial;
+      if (candidato.resumo_profissional) dadosAtualizacao.resumo_profissional = candidato.resumo_profissional.trim();
+
+      // Remover campos undefined
+      Object.keys(dadosAtualizacao).forEach(key => {
+        if (dadosAtualizacao[key] === undefined) delete dadosAtualizacao[key];
+      });
+
+      console.log('📝 Atualizando campos:', Object.keys(dadosAtualizacao));
+
+      const { error: erroPessoa } = await supabase
+        .from('pessoas')
+        .update(dadosAtualizacao)
+        .eq('id', pessoaId);
+
+      if (erroPessoa) {
+        console.error('❌ Erro ao atualizar pessoa:', erroPessoa);
+        return null;
+      }
+
+      // Registrar no log de exclusividade
+      if (user?.id) {
+        await supabase.from('log_exclusividade').insert({
+          pessoa_id: pessoaId,
+          acao: 'atribuicao',
+          analista_novo_id: user.id,
+          realizado_por: user.id,
+          motivo: 'Atualização via Triagem de CVs (duplicata detectada)',
+          data_exclusividade_nova: dataFinal?.toISOString(),
+          qtd_renovacoes_nova: 0
+        });
+        console.log('✅ Exclusividade registrada para analista:', user.nome_usuario);
+      }
+
+      // Atualizar skills (deletar antigas e inserir novas)
+      const skillsCombinadas = [
+        ...(candidato.skills || []),
+        ...(analiseResult?.skills_detectadas || []).map((s: string) => ({
+          nome: s,
+          categoria: 'other',
+          nivel: 'intermediario',
+          anos_experiencia: 0
+        }))
+      ];
+
+      if (skillsCombinadas.length > 0) {
+        // Deletar skills antigas
+        await supabase.from('pessoa_skills').delete().eq('pessoa_id', pessoaId);
+        
+        const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other'];
+        const niveisValidos = ['basico', 'intermediario', 'avancado', 'especialista'];
+        
+        const skillsNormalizadas = skillsCombinadas
+          .filter((s: any) => (s.nome || s) && String(s.nome || s).trim())
+          .map((s: any) => ({
+            pessoa_id: pessoaId,
+            skill_nome: String(s.nome || s).trim().substring(0, 100),
+            skill_categoria: categoriasValidas.includes(s.categoria) ? s.categoria : 'other',
+            nivel: niveisValidos.includes(s.nivel) ? s.nivel : 'intermediario',
+            anos_experiencia: typeof s.anos_experiencia === 'number' ? s.anos_experiencia : 0
+          }));
+        
+        const skillsUnicas = skillsNormalizadas.filter((skill: any, index: number, self: any[]) =>
+          index === self.findIndex(s => s.skill_nome.toLowerCase() === skill.skill_nome.toLowerCase())
+        );
+        
+        if (skillsUnicas.length > 0) {
+          await supabase.from('pessoa_skills').insert(skillsUnicas);
+          console.log('✅ Skills atualizadas:', skillsUnicas.length);
+        }
+      }
+
+      console.log('✅ Candidato atualizado com sucesso (ID:', pessoaId, ')');
+      return { id: pessoaId };
+
+    } catch (err: any) {
+      console.error('❌ Erro ao atualizar candidato existente:', err);
+      return null;
+    }
+  };
+
+  // 🆕 v4.3: Função para atualizar candidato existente na Análise de Adequação
+  const atualizarCandidatoExistenteAdequacao = async (
+    pessoaId: number, 
+    candidato: any, 
+    textoOriginal: string,
+    normalizarEstado: (estado: string) => string
+  ) => {
+    try {
+      // Calcular datas de exclusividade
+      const periodoExclusividade = 60;
+      const dataInicio = new Date();
+      const dataFinal = user?.id 
+        ? new Date(dataInicio.getTime() + periodoExclusividade * 24 * 60 * 60 * 1000)
+        : null;
+
+      // Montar objeto de atualização (só atualiza campos com valor)
+      const dadosAtualizacao: Record<string, any> = {
+        cv_texto_original: textoOriginal?.substring(0, 50000) || undefined,
+        cv_processado: true,
+        cv_processado_em: new Date().toISOString(),
+        cv_processado_por: 'Análise CV vs Vaga - Claude',
+        updated_at: new Date().toISOString(),
+        // Exclusividade
+        id_analista_rs: user?.id || undefined,
+        periodo_exclusividade: periodoExclusividade,
+        data_inicio_exclusividade: user?.id ? dataInicio.toISOString() : undefined,
+        data_final_exclusividade: dataFinal?.toISOString() || undefined,
+        qtd_renovacoes: 0
+      };
+
+      // Adicionar campos apenas se tiverem valor
+      if (candidato.email && !candidato.email.includes('@pendente.cadastro')) {
+        dadosAtualizacao.email = candidato.email.trim();
+      }
+      if (candidato.cpf) dadosAtualizacao.cpf = candidato.cpf.trim();
+      if (candidato.telefone) dadosAtualizacao.telefone = candidato.telefone.trim();
+      if (candidato.linkedin_url) dadosAtualizacao.linkedin_url = candidato.linkedin_url.trim();
+      if (candidato.cidade) dadosAtualizacao.cidade = candidato.cidade.trim();
+      if (candidato.estado) dadosAtualizacao.estado = normalizarEstado(candidato.estado);
+      if (candidato.titulo_profissional) dadosAtualizacao.titulo_profissional = candidato.titulo_profissional.trim();
+      if (candidato.senioridade) dadosAtualizacao.senioridade = candidato.senioridade.trim();
+      if (candidato.disponibilidade) dadosAtualizacao.disponibilidade = candidato.disponibilidade.trim();
+      if (candidato.modalidade_preferida) dadosAtualizacao.modalidade_preferida = candidato.modalidade_preferida.trim();
+      if (candidato.pretensao_salarial) dadosAtualizacao.pretensao_salarial = candidato.pretensao_salarial;
+      if (candidato.resumo_profissional) dadosAtualizacao.resumo_profissional = candidato.resumo_profissional.trim();
+
+      // Remover campos undefined
+      Object.keys(dadosAtualizacao).forEach(key => {
+        if (dadosAtualizacao[key] === undefined) delete dadosAtualizacao[key];
+      });
+
+      console.log('📝 [Adequação] Atualizando campos:', Object.keys(dadosAtualizacao));
+
+      const { error: erroPessoa } = await supabase
+        .from('pessoas')
+        .update(dadosAtualizacao)
+        .eq('id', pessoaId);
+
+      if (erroPessoa) {
+        console.error('❌ [Adequação] Erro ao atualizar pessoa:', erroPessoa);
+        return null;
+      }
+
+      // Registrar no log de exclusividade
+      if (user?.id) {
+        await supabase.from('log_exclusividade').insert({
+          pessoa_id: pessoaId,
+          acao: 'atribuicao',
+          analista_novo_id: user.id,
+          realizado_por: user.id,
+          motivo: 'Atualização via Análise de Adequação (duplicata detectada)',
+          data_exclusividade_nova: dataFinal?.toISOString(),
+          qtd_renovacoes_nova: 0
+        });
+        console.log('✅ [Adequação] Exclusividade registrada para analista:', user.nome_usuario);
+      }
+
+      // Atualizar skills
+      if (candidato.skills?.length > 0) {
+        // Deletar skills antigas
+        await supabase.from('pessoa_skills').delete().eq('pessoa_id', pessoaId);
+        
+        const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other'];
+        const niveisValidos = ['basico', 'intermediario', 'avancado', 'especialista'];
+        
+        const skillsNormalizadas = candidato.skills
+          .filter((s: any) => s.nome && s.nome.trim())
+          .map((s: any) => ({
+            pessoa_id: pessoaId,
+            skill_nome: String(s.nome || '').trim().substring(0, 100),
+            skill_categoria: categoriasValidas.includes(s.categoria) ? s.categoria : 'other',
+            nivel: niveisValidos.includes(s.nivel) ? s.nivel : 'intermediario',
+            anos_experiencia: typeof s.anos_experiencia === 'number' ? s.anos_experiencia : 0
+          }));
+        
+        const skillsUnicas = skillsNormalizadas.filter((skill: any, index: number, self: any[]) =>
+          index === self.findIndex(s => s.skill_nome.toLowerCase() === skill.skill_nome.toLowerCase())
+        );
+        
+        if (skillsUnicas.length > 0) {
+          await supabase.from('pessoa_skills').insert(skillsUnicas);
+          console.log('✅ [Adequação] Skills atualizadas:', skillsUnicas.length);
+        }
+      }
+
+      // Atualizar experiências
+      if (candidato.experiencias?.length > 0) {
+        await supabase.from('pessoa_experiencias').delete().eq('pessoa_id', pessoaId);
+        
+        const formatarData = (data: string | null) => {
+          if (!data) return null;
+          if (data.match(/^\d{4}-\d{2}-\d{2}$/)) return data;
+          if (data.match(/^\d{4}-\d{2}$/)) return `${data}-01`;
+          return null;
+        };
+
+        const experienciasParaSalvar = candidato.experiencias.map((e: any) => ({
+          pessoa_id: pessoaId,
+          empresa: e.empresa || '',
+          cargo: e.cargo || '',
+          data_inicio: formatarData(e.data_inicio),
+          data_fim: formatarData(e.data_fim),
+          atual: e.atual || false,
+          descricao: e.descricao || '',
+          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : []
+        }));
+        
+        await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
+        console.log('✅ [Adequação] Experiências atualizadas:', experienciasParaSalvar.length);
+      }
+
+      console.log('✅ [Adequação] Candidato atualizado com sucesso (ID:', pessoaId, ')');
+      return { id: pessoaId };
+
+    } catch (err: any) {
+      console.error('❌ [Adequação] Erro ao atualizar candidato existente:', err);
+      return null;
+    }
+  };
+
   // Função de persistência para triagem genérica
   const salvarCandidatoNoBancoTriagem = async (candidato: any, dados: any, textoOriginal: string, analiseResult: any) => {
     try {
@@ -518,6 +788,63 @@ const AnaliseRisco: React.FC = () => {
         if (estadoLower.length === 2) return estadoLower.toUpperCase();
         return ESTADOS_BR[estadoLower] || estado.substring(0, 2).toUpperCase();
       };
+
+      // 🆕 v4.3: Verificar duplicatas ANTES de inserir
+      let pessoaExistente: any = null;
+      
+      // 1. Verificar por CPF (prioridade máxima)
+      if (candidato.cpf && candidato.cpf.trim()) {
+        const cpfLimpo = candidato.cpf.replace(/\D/g, '');
+        const { data: byCpf } = await supabase
+          .from('pessoas')
+          .select('id, nome, email, cpf')
+          .or(`cpf.eq.${cpfLimpo},cpf.eq.${candidato.cpf}`)
+          .limit(1)
+          .maybeSingle();
+        
+        if (byCpf) {
+          pessoaExistente = { ...byCpf, motivo_match: 'cpf' };
+          console.log('🔍 Duplicata encontrada por CPF:', byCpf.nome);
+        }
+      }
+      
+      // 2. Verificar por email (se não encontrou por CPF)
+      if (!pessoaExistente && candidato.email && candidato.email.trim() && !candidato.email.includes('@pendente.cadastro')) {
+        const emailNormalizado = candidato.email.toLowerCase().trim();
+        const { data: byEmail } = await supabase
+          .from('pessoas')
+          .select('id, nome, email, cpf')
+          .ilike('email', emailNormalizado)
+          .limit(1)
+          .maybeSingle();
+        
+        if (byEmail) {
+          pessoaExistente = { ...byEmail, motivo_match: 'email' };
+          console.log('🔍 Duplicata encontrada por email:', byEmail.nome);
+        }
+      }
+      
+      // 3. Verificar por nome similar (se não encontrou por CPF nem email)
+      if (!pessoaExistente && candidato.nome && candidato.nome.trim()) {
+        const nomeNormalizado = candidato.nome.trim();
+        const { data: byNome } = await supabase
+          .from('pessoas')
+          .select('id, nome, email, cpf')
+          .ilike('nome', nomeNormalizado)
+          .limit(1)
+          .maybeSingle();
+        
+        if (byNome) {
+          pessoaExistente = { ...byNome, motivo_match: 'nome' };
+          console.log('🔍 Duplicata encontrada por nome:', byNome.nome);
+        }
+      }
+
+      // 🆕 v4.3: Se encontrou duplicata, fazer UPDATE em vez de INSERT
+      if (pessoaExistente) {
+        console.log(`📝 Atualizando candidato existente (ID: ${pessoaExistente.id}) por ${pessoaExistente.motivo_match}`);
+        return await atualizarCandidatoExistente(pessoaExistente.id, candidato, textoOriginal, analiseResult, normalizarEstado);
+      }
 
       const emailFinal = candidato.email || 
         `${(candidato.nome || 'candidato').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.')}@pendente.cadastro`;
@@ -891,6 +1218,63 @@ const AnaliseRisco: React.FC = () => {
         if (estadoLower.length === 2) return estadoLower.toUpperCase();
         return ESTADOS_BR[estadoLower] || estado.substring(0, 2).toUpperCase();
       };
+
+      // 🆕 v4.3: Verificar duplicatas ANTES de inserir
+      let pessoaExistenteAdequacao: any = null;
+      
+      // 1. Verificar por CPF (prioridade máxima)
+      if (candidato.cpf && candidato.cpf.trim()) {
+        const cpfLimpo = candidato.cpf.replace(/\D/g, '');
+        const { data: byCpf } = await supabase
+          .from('pessoas')
+          .select('id, nome, email, cpf')
+          .or(`cpf.eq.${cpfLimpo},cpf.eq.${candidato.cpf}`)
+          .limit(1)
+          .maybeSingle();
+        
+        if (byCpf) {
+          pessoaExistenteAdequacao = { ...byCpf, motivo_match: 'cpf' };
+          console.log('🔍 [Adequação] Duplicata encontrada por CPF:', byCpf.nome);
+        }
+      }
+      
+      // 2. Verificar por email (se não encontrou por CPF)
+      if (!pessoaExistenteAdequacao && candidato.email && candidato.email.trim() && !candidato.email.includes('@pendente.cadastro')) {
+        const emailNormalizado = candidato.email.toLowerCase().trim();
+        const { data: byEmail } = await supabase
+          .from('pessoas')
+          .select('id, nome, email, cpf')
+          .ilike('email', emailNormalizado)
+          .limit(1)
+          .maybeSingle();
+        
+        if (byEmail) {
+          pessoaExistenteAdequacao = { ...byEmail, motivo_match: 'email' };
+          console.log('🔍 [Adequação] Duplicata encontrada por email:', byEmail.nome);
+        }
+      }
+      
+      // 3. Verificar por nome similar (se não encontrou por CPF nem email)
+      if (!pessoaExistenteAdequacao && candidato.nome && candidato.nome.trim()) {
+        const nomeNormalizado = candidato.nome.trim();
+        const { data: byNome } = await supabase
+          .from('pessoas')
+          .select('id, nome, email, cpf')
+          .ilike('nome', nomeNormalizado)
+          .limit(1)
+          .maybeSingle();
+        
+        if (byNome) {
+          pessoaExistenteAdequacao = { ...byNome, motivo_match: 'nome' };
+          console.log('🔍 [Adequação] Duplicata encontrada por nome:', byNome.nome);
+        }
+      }
+
+      // 🆕 v4.3: Se encontrou duplicata, fazer UPDATE em vez de INSERT
+      if (pessoaExistenteAdequacao) {
+        console.log(`📝 [Adequação] Atualizando candidato existente (ID: ${pessoaExistenteAdequacao.id}) por ${pessoaExistenteAdequacao.motivo_match}`);
+        return await atualizarCandidatoExistenteAdequacao(pessoaExistenteAdequacao.id, candidato, textoOriginal, normalizarEstado);
+      }
 
       // Gerar email placeholder se não tiver
       const emailFinal = candidato.email || 
