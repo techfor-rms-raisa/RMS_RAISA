@@ -1,8 +1,19 @@
 /**
- * Vagas.tsx - RMS RAISA v58.0
+ * Vagas.tsx - RMS RAISA v58.2
  * Componente de Gestão de Vagas
  * 
- * 🆕 v58.0: Melhorias de UX
+ * 🆕 v58.2: Botão "Minhas Vagas"
+ *        - Botão azul ao lado de "+ Nova Vaga"
+ *        - Filtra vagas onde o analista logado está associado
+ *        - Contador de vagas no botão
+ *        - Indicador visual quando filtro ativo
+ * 
+ * v58.1: Exibição de Analistas R&S
+ *        - Corrigido: busca analista_id da candidatura (não da pessoa)
+ *        - Exibe analistas R&S associados no card da vaga
+ *        - Exibe analistas R&S no footer do modal de visualização
+ * 
+ * v58.0: Melhorias de UX
  *        - Campo de busca por nome/descrição da vaga
  *        - Ícone "olho" para visualizar vaga completa em popup
  *        - Ícone de candidaturas com contador
@@ -166,6 +177,13 @@ const Vagas: React.FC<VagasProps> = ({
     // 🆕 v58.0: Contagem de candidaturas por vaga
     const [contagemCandidaturas, setContagemCandidaturas] = useState<Record<string, number>>({});
     
+    // 🆕 v58.1: Analistas por vaga (para exibir nos cards)
+    const [analistasPorVaga, setAnalistasPorVaga] = useState<Record<string, string[]>>({});
+    
+    // 🆕 v58.2: Filtro "Minhas Vagas" - vagas onde o analista logado está associado
+    const [filtroMinhasVagas, setFiltroMinhasVagas] = useState<boolean>(false);
+    const [minhasVagasIds, setMinhasVagasIds] = useState<Set<string>>(new Set());
+    
     // Estados dos filtros de header
     const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
     const [selectedGestorId, setSelectedGestorId] = useState<number | null>(null);
@@ -260,8 +278,14 @@ const Vagas: React.FC<VagasProps> = ({
         if (selectedStatus) {
             filtered = filtered.filter(v => v.status === selectedStatus);
         }
+        
+        // 🆕 v58.2: Filtro "Minhas Vagas"
+        if (filtroMinhasVagas && minhasVagasIds.size > 0) {
+            filtered = filtered.filter(v => minhasVagasIds.has(String(v.id)));
+        }
+        
         return filtered;
-    }, [safeVagas, selectedClientId, selectedStatus, searchTerm]);
+    }, [safeVagas, selectedClientId, selectedStatus, searchTerm, filtroMinhasVagas, minhasVagasIds]);
 
     // Ordenar clientes alfabeticamente
     const sortedClients = useMemo(() => {
@@ -270,35 +294,81 @@ const Vagas: React.FC<VagasProps> = ({
             .sort((a, b) => (a.razao_social_cliente || '').localeCompare(b.razao_social_cliente || ''));
     }, [safeClients]);
 
-    // 🆕 v58.0: Buscar contagem de candidaturas por vaga
+    // 🆕 v58.0: Buscar contagem de candidaturas e analistas por vaga
     useEffect(() => {
-        const buscarContagemCandidaturas = async () => {
+        const buscarDadosCandidaturas = async () => {
             if (safeVagas.length === 0) return;
             
             try {
                 const vagaIds = safeVagas.map(v => v.id);
+                
+                // Buscar candidaturas com analista_id
                 const { data, error } = await supabase
                     .from('candidaturas')
-                    .select('vaga_id')
+                    .select('vaga_id, analista_id')
                     .in('vaga_id', vagaIds);
                 
                 if (error) throw error;
                 
-                // Contar candidaturas por vaga
+                // Contar candidaturas por vaga e coletar analistas únicos
                 const contagem: Record<string, number> = {};
+                const analistaIdsPorVaga: Record<string, Set<number>> = {};
+                const todosAnalistaIds = new Set<number>();
+                
+                // 🆕 v58.2: Identificar vagas do analista logado
+                const vagasDoAnalistaLogado = new Set<string>();
+                
                 (data || []).forEach((c: any) => {
                     const vagaId = String(c.vaga_id);
                     contagem[vagaId] = (contagem[vagaId] || 0) + 1;
+                    
+                    if (c.analista_id) {
+                        if (!analistaIdsPorVaga[vagaId]) {
+                            analistaIdsPorVaga[vagaId] = new Set();
+                        }
+                        analistaIdsPorVaga[vagaId].add(c.analista_id);
+                        todosAnalistaIds.add(c.analista_id);
+                        
+                        // 🆕 v58.2: Marcar vaga como "minha" se o analista logado está associado
+                        if (user?.id && c.analista_id === user.id) {
+                            vagasDoAnalistaLogado.add(vagaId);
+                        }
+                    }
                 });
                 
                 setContagemCandidaturas(contagem);
+                setMinhasVagasIds(vagasDoAnalistaLogado);
+                
+                // Buscar nomes dos analistas
+                if (todosAnalistaIds.size > 0) {
+                    const { data: analistasData } = await supabase
+                        .from('app_users')
+                        .select('id, nome_usuario')
+                        .in('id', Array.from(todosAnalistaIds));
+                    
+                    const analistasMap: Record<number, string> = {};
+                    (analistasData || []).forEach((a: any) => {
+                        analistasMap[a.id] = a.nome_usuario;
+                    });
+                    
+                    // Mapear nomes para cada vaga
+                    const analistasNomesPorVaga: Record<string, string[]> = {};
+                    Object.entries(analistaIdsPorVaga).forEach(([vagaId, ids]) => {
+                        analistasNomesPorVaga[vagaId] = Array.from(ids)
+                            .map(id => analistasMap[id])
+                            .filter(Boolean);
+                    });
+                    
+                    setAnalistasPorVaga(analistasNomesPorVaga);
+                }
             } catch (err) {
-                console.error('Erro ao buscar contagem de candidaturas:', err);
+                console.error('Erro ao buscar dados de candidaturas:', err);
+            }
             }
         };
         
-        buscarContagemCandidaturas();
-    }, [safeVagas]);
+        buscarDadosCandidaturas();
+    }, [safeVagas, user?.id]);
 
     // 🆕 v58.0: Buscar candidaturas de uma vaga específica
     const buscarCandidaturasVaga = async (vaga: Vaga) => {
@@ -316,6 +386,7 @@ const Vagas: React.FC<VagasProps> = ({
                     vaga_id,
                     status,
                     created_at,
+                    analista_id,
                     pessoas:pessoa_id (
                         id,
                         nome,
@@ -331,9 +402,9 @@ const Vagas: React.FC<VagasProps> = ({
             
             if (error) throw error;
             
-            // Buscar nomes dos analistas
+            // 🆕 v58.1: Buscar nomes dos analistas - priorizar analista_id da candidatura
             const analistaIds = [...new Set((candidaturasData || [])
-                .map((c: any) => c.pessoas?.id_analista_rs)
+                .map((c: any) => c.analista_id || c.pessoas?.id_analista_rs)
                 .filter(Boolean))];
             
             let analistas: Record<number, string> = {};
@@ -348,18 +419,21 @@ const Vagas: React.FC<VagasProps> = ({
                 });
             }
             
-            // Formatar dados
-            const candidaturasFormatadas: CandidaturaExpandida[] = (candidaturasData || []).map((c: any) => ({
-                id: c.id,
-                pessoa_id: c.pessoa_id,
-                vaga_id: c.vaga_id,
-                status: c.status,
-                created_at: c.created_at,
-                pessoa: c.pessoas,
-                analista: c.pessoas?.id_analista_rs 
-                    ? { id: c.pessoas.id_analista_rs, nome_usuario: analistas[c.pessoas.id_analista_rs] || 'N/A' }
-                    : undefined
-            }));
+            // Formatar dados - usar analista_id da candidatura OU id_analista_rs da pessoa
+            const candidaturasFormatadas: CandidaturaExpandida[] = (candidaturasData || []).map((c: any) => {
+                const analistaId = c.analista_id || c.pessoas?.id_analista_rs;
+                return {
+                    id: c.id,
+                    pessoa_id: c.pessoa_id,
+                    vaga_id: c.vaga_id,
+                    status: c.status,
+                    created_at: c.created_at,
+                    pessoa: c.pessoas,
+                    analista: analistaId 
+                        ? { id: analistaId, nome_usuario: analistas[analistaId] || 'N/A' }
+                        : undefined
+                };
+            });
             
             setCandidaturas(candidaturasFormatadas);
         } catch (err) {
@@ -796,6 +870,27 @@ const Vagas: React.FC<VagasProps> = ({
                         </div>
                     )}
 
+                    {/* 🆕 v58.2: Botão Minhas Vagas */}
+                    <button 
+                        onClick={() => setFiltroMinhasVagas(!filtroMinhasVagas)}
+                        className={`px-5 py-2 rounded-lg font-semibold flex items-center gap-2 shadow-md transition-all ${
+                            filtroMinhasVagas 
+                                ? 'bg-blue-700 text-white ring-2 ring-blue-300' 
+                                : 'bg-blue-600 text-white hover:bg-blue-700'
+                        }`}
+                        title={`Filtrar vagas onde você está associado (${minhasVagasIds.size} vagas)`}
+                    >
+                        <UserIcon size={18} />
+                        Minhas Vagas
+                        {minhasVagasIds.size > 0 && (
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                                filtroMinhasVagas ? 'bg-white text-blue-700' : 'bg-blue-800 text-white'
+                            }`}>
+                                {minhasVagasIds.size}
+                            </span>
+                        )}
+                    </button>
+
                     {/* Botão Nova Vaga - 🆕 v57.0: Condicionado por permissão */}
                     {podeInserir ? (
                         <button 
@@ -813,13 +908,18 @@ const Vagas: React.FC<VagasProps> = ({
                 </div>
 
                 {/* Info do filtro */}
-                {(selectedClientId || searchTerm || selectedStatus) && (
+                {(selectedClientId || searchTerm || selectedStatus || filtroMinhasVagas) && (
                     <div className="mt-2 text-sm text-gray-600 flex items-center gap-2 flex-wrap">
                         <span>
                             Mostrando <strong>{vagasFiltradas.length}</strong> vaga(s)
                         </span>
+                        {filtroMinhasVagas && (
+                            <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-semibold">
+                                👤 Minhas Vagas
+                            </span>
+                        )}
                         {searchTerm && (
-                            <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs">
+                            <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs">
                                 🔍 "{searchTerm}"
                             </span>
                         )}
@@ -838,6 +938,7 @@ const Vagas: React.FC<VagasProps> = ({
                                 setSearchTerm('');
                                 setSelectedClientId(null);
                                 setSelectedStatus('');
+                                setFiltroMinhasVagas(false);
                             }}
                             className="text-gray-400 hover:text-red-500 text-xs underline ml-2"
                         >
@@ -852,7 +953,9 @@ const Vagas: React.FC<VagasProps> = ({
                 {vagasFiltradas.length === 0 ? (
                     <div className="col-span-full text-center py-12 bg-white rounded-lg shadow-sm">
                         <p className="text-gray-500 text-lg">
-                            {selectedClientId 
+                            {filtroMinhasVagas 
+                                ? 'Você não possui vagas associadas.'
+                                : selectedClientId 
                                 ? 'Nenhuma vaga encontrada para este cliente.' 
                                 : 'Nenhuma vaga cadastrada. Clique em "+ Nova Vaga" para criar.'}
                         </p>
@@ -917,6 +1020,24 @@ const Vagas: React.FC<VagasProps> = ({
                                         )}
                                     </div>
                                 </div>
+                                
+                                {/* 🆕 v58.1: Analistas R&S associados à vaga */}
+                                {analistasPorVaga[vaga.id] && analistasPorVaga[vaga.id].length > 0 && (
+                                    <div className="mb-3">
+                                        <span className="text-xs font-semibold text-gray-500">Analistas R&S:</span>
+                                        <div className="flex flex-wrap gap-1 mt-1">
+                                            {analistasPorVaga[vaga.id].slice(0, 3).map((nome, idx) => (
+                                                <span key={idx} className="bg-pink-50 text-pink-700 text-xs px-2 py-0.5 rounded flex items-center gap-1">
+                                                    <UserIcon size={10} />
+                                                    {nome}
+                                                </span>
+                                            ))}
+                                            {analistasPorVaga[vaga.id].length > 3 && (
+                                                <span className="text-xs text-gray-500">+{analistasPorVaga[vaga.id].length - 3}</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                                 
                                 <div className="flex justify-between items-center pt-4 border-t">
                                     <span className="text-sm font-medium text-gray-500">{vaga.senioridade}</span>
@@ -1707,30 +1828,47 @@ const Vagas: React.FC<VagasProps> = ({
                         </div>
 
                         {/* Footer */}
-                        <div className="border-t p-4 bg-gray-50 flex justify-between items-center">
-                            <div className="text-xs text-gray-500">
-                                {vagaVisualizacao.criado_em && (
-                                    <span>Criada em: {new Date(vagaVisualizacao.criado_em).toLocaleDateString('pt-BR')}</span>
-                                )}
-                            </div>
-                            <div className="flex gap-2">
-                                {!apenasLeitura && (
+                        <div className="border-t p-4 bg-gray-50">
+                            {/* 🆕 v58.1: Analistas R&S associados */}
+                            {analistasPorVaga[vagaVisualizacao.id] && analistasPorVaga[vagaVisualizacao.id].length > 0 && (
+                                <div className="mb-3 pb-3 border-b border-gray-200">
+                                    <span className="text-xs font-semibold text-gray-500 uppercase">Analistas R&S Associados:</span>
+                                    <div className="flex flex-wrap gap-2 mt-2">
+                                        {analistasPorVaga[vagaVisualizacao.id].map((nome, idx) => (
+                                            <span key={idx} className="inline-flex items-center gap-1 px-3 py-1 bg-pink-100 text-pink-700 rounded-full text-sm">
+                                                <UserIcon size={14} />
+                                                {nome}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            
+                            <div className="flex justify-between items-center">
+                                <div className="text-xs text-gray-500">
+                                    {vagaVisualizacao.criado_em && (
+                                        <span>Criada em: {new Date(vagaVisualizacao.criado_em).toLocaleDateString('pt-BR')}</span>
+                                    )}
+                                </div>
+                                <div className="flex gap-2">
+                                    {!apenasLeitura && (
+                                        <button
+                                            onClick={() => {
+                                                setVagaVisualizacao(null);
+                                                openModal(vagaVisualizacao);
+                                            }}
+                                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                                        >
+                                            ✏️ Editar Vaga
+                                        </button>
+                                    )}
                                     <button
-                                        onClick={() => {
-                                            setVagaVisualizacao(null);
-                                            openModal(vagaVisualizacao);
-                                        }}
-                                        className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                                        onClick={() => setVagaVisualizacao(null)}
+                                        className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
                                     >
-                                        ✏️ Editar Vaga
+                                        Fechar
                                     </button>
-                                )}
-                                <button
-                                    onClick={() => setVagaVisualizacao(null)}
-                                    className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
-                                >
-                                    Fechar
-                                </button>
+                                </div>
                             </div>
                         </div>
                     </div>
