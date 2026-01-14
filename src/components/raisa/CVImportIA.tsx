@@ -678,26 +678,60 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       }
 
       // Atualizar dados da pessoa
+      // 🆕 v1.4: Usar valores diretos para garantir atualização (não usar || undefined)
+      const dadosAtualizacao: Record<string, any> = {
+        cv_texto_original: dadosExtraidos.cv_texto_original,
+        cv_processado: true,
+        cv_processado_em: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      // Adicionar campos apenas se tiverem valor (evita sobrescrever com vazio)
+      if (dadosExtraidos.email && dadosExtraidos.email.trim()) {
+        dadosAtualizacao.email = dadosExtraidos.email.trim();
+      }
+      if (dadosExtraidos.cpf && dadosExtraidos.cpf.trim()) {
+        dadosAtualizacao.cpf = dadosExtraidos.cpf.trim();
+      }
+      if (dadosExtraidos.telefone && dadosExtraidos.telefone.trim()) {
+        dadosAtualizacao.telefone = dadosExtraidos.telefone.trim();
+      }
+      if (dadosExtraidos.linkedin_url && dadosExtraidos.linkedin_url.trim()) {
+        dadosAtualizacao.linkedin_url = dadosExtraidos.linkedin_url.trim();
+      }
+      if (dadosExtraidos.cidade && dadosExtraidos.cidade.trim()) {
+        dadosAtualizacao.cidade = dadosExtraidos.cidade.trim();
+      }
+      if (dadosExtraidos.estado && dadosExtraidos.estado.trim()) {
+        dadosAtualizacao.estado = normalizarEstado(dadosExtraidos.estado);
+      }
+      if (dadosExtraidos.titulo_profissional && dadosExtraidos.titulo_profissional.trim()) {
+        dadosAtualizacao.titulo_profissional = dadosExtraidos.titulo_profissional.trim();
+      }
+      if (dadosExtraidos.senioridade && dadosExtraidos.senioridade.trim()) {
+        dadosAtualizacao.senioridade = dadosExtraidos.senioridade.trim();
+      }
+      if (dadosExtraidos.disponibilidade && dadosExtraidos.disponibilidade.trim()) {
+        dadosAtualizacao.disponibilidade = dadosExtraidos.disponibilidade.trim();
+      }
+      if (dadosExtraidos.modalidade_preferida && dadosExtraidos.modalidade_preferida.trim()) {
+        dadosAtualizacao.modalidade_preferida = dadosExtraidos.modalidade_preferida.trim();
+      }
+      if (dadosExtraidos.pretensao_salarial !== null && dadosExtraidos.pretensao_salarial !== undefined) {
+        dadosAtualizacao.pretensao_salarial = dadosExtraidos.pretensao_salarial;
+      }
+      if (dadosExtraidos.resumo_profissional && dadosExtraidos.resumo_profissional.trim()) {
+        dadosAtualizacao.resumo_profissional = dadosExtraidos.resumo_profissional.trim();
+      }
+      if (cvArquivoUrl) {
+        dadosAtualizacao.cv_arquivo_url = cvArquivoUrl;
+      }
+
+      console.log('📝 Campos a atualizar:', Object.keys(dadosAtualizacao));
+
       const { error: erroPessoa } = await supabase
         .from('pessoas')
-        .update({
-          cpf: dadosExtraidos.cpf || undefined, // 🆕 v1.3: Atualizar CPF se fornecido
-          telefone: dadosExtraidos.telefone || undefined,
-          linkedin_url: dadosExtraidos.linkedin_url || undefined,
-          cidade: dadosExtraidos.cidade || undefined,
-          estado: normalizarEstado(dadosExtraidos.estado) || undefined,
-          titulo_profissional: dadosExtraidos.titulo_profissional || undefined,
-          senioridade: dadosExtraidos.senioridade || undefined,
-          disponibilidade: dadosExtraidos.disponibilidade || undefined,
-          modalidade_preferida: dadosExtraidos.modalidade_preferida || undefined,
-          pretensao_salarial: dadosExtraidos.pretensao_salarial,
-          resumo_profissional: dadosExtraidos.resumo_profissional || undefined,
-          cv_texto_original: dadosExtraidos.cv_texto_original,
-          cv_arquivo_url: cvArquivoUrl || undefined,
-          cv_processado: true,
-          cv_processado_em: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
+        .update(dadosAtualizacao)
         .eq('id', pessoaId);
 
       if (erroPessoa) throw erroPessoa;

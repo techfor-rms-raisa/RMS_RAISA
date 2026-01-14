@@ -127,6 +127,7 @@ const Vagas: React.FC<VagasProps> = ({
     // Estados dos filtros de header
     const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
     const [selectedGestorId, setSelectedGestorId] = useState<number | null>(null);
+    const [selectedStatus, setSelectedStatus] = useState<string>(''); // 🆕 Filtro por status
     
     // Estado para expandir/colapsar seções do modal
     const [expandedSections, setExpandedSections] = useState({
@@ -197,14 +198,17 @@ const Vagas: React.FC<VagasProps> = ({
         return safeUsuariosCliente.filter(g => g.id_cliente === formData.cliente_id && g.ativo !== false);
     }, [formData.cliente_id, safeUsuariosCliente]);
 
-    // Filtrar vagas pelo cliente selecionado
+    // Filtrar vagas pelo cliente e status selecionados
     const vagasFiltradas = useMemo(() => {
         let filtered = safeVagas;
         if (selectedClientId) {
             filtered = filtered.filter(v => v.cliente_id === selectedClientId);
         }
+        if (selectedStatus) {
+            filtered = filtered.filter(v => v.status === selectedStatus);
+        }
         return filtered;
-    }, [safeVagas, selectedClientId]);
+    }, [safeVagas, selectedClientId, selectedStatus]);
 
     // Ordenar clientes alfabeticamente
     const sortedClients = useMemo(() => {
@@ -212,6 +216,21 @@ const Vagas: React.FC<VagasProps> = ({
             .filter(c => c.ativo_cliente !== false)
             .sort((a, b) => (a.razao_social_cliente || '').localeCompare(b.razao_social_cliente || ''));
     }, [safeClients]);
+
+    // 🆕 Verificar se a vaga pode ser excluída (apenas no dia da criação)
+    const podeExcluirVaga = (vaga: Vaga): boolean => {
+        if (!vaga.criado_em) return false;
+        
+        const dataCriacao = new Date(vaga.criado_em);
+        const hoje = new Date();
+        
+        // Comparar apenas ano, mês e dia (ignorar hora)
+        return (
+            dataCriacao.getFullYear() === hoje.getFullYear() &&
+            dataCriacao.getMonth() === hoje.getMonth() &&
+            dataCriacao.getDate() === hoje.getDate()
+        );
+    };
 
     // Obter nome do cliente
     const getClientName = (clientId: number | null): string => {
@@ -544,6 +563,23 @@ const Vagas: React.FC<VagasProps> = ({
                         </select>
                     </div>
 
+                    {/* 🆕 Filtro por Status */}
+                    <div className="min-w-[180px]">
+                        <label className="text-xs font-semibold text-gray-500 uppercase">Status da Vaga</label>
+                        <select
+                            value={selectedStatus}
+                            onChange={(e) => setSelectedStatus(e.target.value)}
+                            className="w-full border p-2 rounded mt-1 focus:ring-2 focus:ring-orange-500"
+                        >
+                            <option value="">Todas</option>
+                            <option value="aberta">📂 Aberta</option>
+                            <option value="em_andamento">🔄 Em Andamento</option>
+                            <option value="em_selecao">👥 Em Seleção</option>
+                            <option value="finalizada">✅ Finalizada</option>
+                            <option value="cancelada">❌ Cancelada</option>
+                        </select>
+                    </div>
+
                     {/* Filtro por Gestor (apenas se cliente selecionado) */}
                     {selectedClientId && (
                         <div className="flex-1 min-w-[200px]">
@@ -678,7 +714,10 @@ const Vagas: React.FC<VagasProps> = ({
                                         {!apenasLeitura && (
                                             <>
                                                 <button onClick={() => openModal(vaga)} className="text-blue-600 hover:underline text-sm">Editar</button>
-                                                <button onClick={() => deleteVaga(vaga.id)} className="text-red-600 hover:underline text-sm">Excluir</button>
+                                                {/* 🆕 Excluir apenas no dia da criação */}
+                                                {podeExcluirVaga(vaga) && (
+                                                    <button onClick={() => deleteVaga(vaga.id)} className="text-red-600 hover:underline text-sm">Excluir</button>
+                                                )}
                                             </>
                                         )}
                                     </div>

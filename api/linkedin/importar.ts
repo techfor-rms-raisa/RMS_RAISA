@@ -58,19 +58,73 @@ interface LinkedInData {
 function calcularAnosExperiencia(experiencias: LinkedInData['experiencias']): number {
   if (!experiencias || experiencias.length === 0) return 0;
   
-  let totalAnos = 0;
+  let totalMeses = 0;
   const anoAtual = new Date().getFullYear();
+  const mesAtual = new Date().getMonth() + 1;
+  
+  // Mapa de meses em português e inglês
+  const meses: Record<string, number> = {
+    'jan': 1, 'janeiro': 1, 'january': 1,
+    'fev': 2, 'fevereiro': 2, 'february': 2, 'feb': 2,
+    'mar': 3, 'março': 3, 'march': 3,
+    'abr': 4, 'abril': 4, 'april': 4, 'apr': 4,
+    'mai': 5, 'maio': 5, 'may': 5,
+    'jun': 6, 'junho': 6, 'june': 6,
+    'jul': 7, 'julho': 7, 'july': 7,
+    'ago': 8, 'agosto': 8, 'august': 8, 'aug': 8,
+    'set': 9, 'setembro': 9, 'september': 9, 'sep': 9,
+    'out': 10, 'outubro': 10, 'october': 10, 'oct': 10,
+    'nov': 11, 'novembro': 11, 'november': 11,
+    'dez': 12, 'dezembro': 12, 'december': 12, 'dec': 12
+  };
   
   for (const exp of experiencias) {
-    if (exp.periodo) {
-      const anos = exp.periodo.match(/(\d{4})/g);
-      if (anos && anos.length >= 1) {
-        const anoInicio = parseInt(anos[0]);
-        const anoFim = anos.length > 1 ? parseInt(anos[1]) : anoAtual;
-        totalAnos += Math.max(0, anoFim - anoInicio);
+    if (!exp.periodo) continue;
+    
+    const periodoLower = exp.periodo.toLowerCase();
+    
+    // Tentar extrair anos (formato: 2020 - 2024 ou 2020 - Presente)
+    const anosMatch = periodoLower.match(/(\d{4})/g);
+    
+    // Tentar extrair mês/ano (formato: jan 2020 - dez 2024 ou set 2025 - presente)
+    const mesAnoRegex = /(\w+)\s*(\d{4})/g;
+    const matches = [...periodoLower.matchAll(mesAnoRegex)];
+    
+    let mesInicio = 1, anoInicio = 0;
+    let mesFim = mesAtual, anoFim = anoAtual;
+    
+    if (matches.length >= 1) {
+      // Primeiro match = início
+      const mesNome = matches[0][1];
+      mesInicio = meses[mesNome] || 1;
+      anoInicio = parseInt(matches[0][2]);
+      
+      if (matches.length >= 2) {
+        // Segundo match = fim
+        const mesFimNome = matches[1][1];
+        mesFim = meses[mesFimNome] || mesAtual;
+        anoFim = parseInt(matches[1][2]);
+      } else if (periodoLower.includes('presente') || periodoLower.includes('atual') || periodoLower.includes('present') || exp.atual) {
+        // Se for emprego atual
+        mesFim = mesAtual;
+        anoFim = anoAtual;
       }
+    } else if (anosMatch && anosMatch.length >= 1) {
+      // Fallback: só anos sem meses
+      anoInicio = parseInt(anosMatch[0]);
+      anoFim = anosMatch.length > 1 ? parseInt(anosMatch[1]) : anoAtual;
+    }
+    
+    if (anoInicio > 0) {
+      // Calcular diferença em meses
+      const mesesExp = (anoFim - anoInicio) * 12 + (mesFim - mesInicio);
+      totalMeses += Math.max(0, mesesExp);
     }
   }
+  
+  // Converter para anos (arredondando)
+  const totalAnos = Math.round(totalMeses / 12);
+  console.log(`📊 Total experiência calculada: ${totalMeses} meses = ${totalAnos} anos`);
   
   return totalAnos;
 }
@@ -297,7 +351,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // SALVAR SKILLS
     // ============================================
     
-    if (data.skills && data.skills.length > 0) {
+    // 🆕 Combinar skills do LinkedIn + skills extraídas do headline
+    const skillsDoLinkedIn = data.skills || [];
+    const skillsDoHeadline = extrairSkillsDoHeadline(data.headline || '');
+    
+    // Combinar e remover duplicatas (case-insensitive)
+    const todasSkills: string[] = [];
+    const skillsNormalizadas = new Set<string>();
+    
+    for (const skill of [...skillsDoLinkedIn, ...skillsDoHeadline]) {
+      const skillLower = skill.toLowerCase().trim();
+      if (skillLower && !skillsNormalizadas.has(skillLower)) {
+        skillsNormalizadas.add(skillLower);
+        todasSkills.push(skill);
+      }
+    }
+    
+    console.log(`📊 Skills: ${skillsDoLinkedIn.length} do LinkedIn + ${skillsDoHeadline.length} do headline = ${todasSkills.length} únicas`);
+    
+    if (todasSkills.length > 0) {
       // Deletar skills antigas se atualizando
       if (atualizado) {
         await supabase
@@ -307,7 +379,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Inserir novas skills
-      const skillsData = data.skills.map(skill => ({
+      const skillsData = todasSkills.map(skill => ({
         pessoa_id,
         skill_nome: skill,
         skill_categoria: categorizarSkill(skill),
@@ -324,7 +396,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (error) {
         console.warn('Aviso ao salvar skills:', error.message);
       } else {
-        console.log(`✅ ${data.skills.length} skills salvas`);
+        console.log(`✅ ${todasSkills.length} skills salvas`);
       }
     }
 
@@ -436,6 +508,67 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       error: error.message || 'Erro interno do servidor'
     });
   }
+}
+
+// ============================================
+// FUNÇÃO AUXILIAR: Extrair Skills do Headline
+// ============================================
+
+function extrairSkillsDoHeadline(headline: string): string[] {
+  if (!headline) return [];
+  
+  // Lista de skills conhecidas para extrair do headline
+  const skillsConhecidas = [
+    // Backend
+    'PHP', 'Java', 'Python', 'C#', '.NET', 'Node', 'Node.js', 'Node JS', 'NodeJS',
+    'Ruby', 'Go', 'Golang', 'Rust', 'Spring', 'Laravel', 'Django', 'FastAPI',
+    'Express', 'NestJS', 'Nest.js',
+    // Frontend
+    'React', 'React.js', 'ReactJS', 'React JS', 'Vue', 'Vue.js', 'VueJS', 'Vue JS',
+    'Angular', 'JavaScript', 'TypeScript', 'HTML', 'CSS', 'Sass', 'Tailwind',
+    'Next.js', 'NextJS', 'Nuxt', 'Nuxt.js',
+    // Mobile
+    'React Native', 'Flutter', 'Swift', 'Kotlin', 'Android', 'iOS',
+    // Database
+    'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'Oracle', 'Firebase',
+    // DevOps
+    'Docker', 'Kubernetes', 'AWS', 'Azure', 'GCP', 'CI/CD', 'Jenkins', 'Git',
+    'Linux', 'Terraform',
+    // Metodologias
+    'Scrum', 'Kanban', 'Agile', 'Clean Code', 'Clean Architecture', 'SOLID',
+    'TDD', 'DDD', 'Design Patterns'
+  ];
+  
+  const skillsEncontradas: string[] = [];
+  const headlineUpper = headline.toUpperCase();
+  
+  for (const skill of skillsConhecidas) {
+    // Verificar se a skill está presente no headline
+    const skillUpper = skill.toUpperCase();
+    
+    // Criar regex para match de palavra completa ou separada por delimitadores
+    const regex = new RegExp(`(^|[\\s|,./\\-])${skillUpper.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s|,./\\-])`, 'i');
+    
+    if (regex.test(headline)) {
+      // Normalizar nome da skill
+      let skillNormalizada = skill;
+      
+      // Normalizar variações
+      if (['Node', 'Node.js', 'Node JS', 'NodeJS'].includes(skill)) skillNormalizada = 'Node.js';
+      if (['Vue', 'Vue.js', 'Vue JS', 'VueJS'].includes(skill)) skillNormalizada = 'Vue.js';
+      if (['React.js', 'ReactJS', 'React JS'].includes(skill)) skillNormalizada = 'React';
+      if (['Next.js', 'NextJS'].includes(skill)) skillNormalizada = 'Next.js';
+      if (['Nuxt.js'].includes(skill)) skillNormalizada = 'Nuxt.js';
+      
+      // Evitar duplicatas
+      if (!skillsEncontradas.includes(skillNormalizada)) {
+        skillsEncontradas.push(skillNormalizada);
+      }
+    }
+  }
+  
+  console.log(`🔍 Skills extraídas do headline: ${skillsEncontradas.join(', ')}`);
+  return skillsEncontradas;
 }
 
 // ============================================
