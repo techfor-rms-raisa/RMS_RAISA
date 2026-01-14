@@ -8,8 +8,11 @@
  *   • Atribui id_analista_rs ao analista logado no UPDATE
  *   • periodo_exclusividade = 60 dias
  *   • Log de exclusividade em log_exclusividade
+ * - v1.6 (14/01/2026): Correção erro Supabase
+ *   • Removido .catch() que não funciona com cliente Supabase
+ *   • Substituído por try/catch adequado
  * 
- * Versão: 1.5
+ * Versão: 1.6
  * Data: 14/01/2026
  */
 
@@ -827,14 +830,18 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         await supabase.from('pessoa_formacoes').insert(formacoes);
       }
 
-      // Registrar no log
+      // Registrar no log (ignorar erro se falhar)
       if (user?.id) {
-        await supabase.from('log_exclusividade').insert({
-          pessoa_id: pessoaId,
-          acao: 'atualizacao_cv',
-          realizado_por: user.id,
-          motivo: 'CV atualizado via importação'
-        }).catch(() => {}); // Ignorar erro se tabela não existir
+        try {
+          await supabase.from('log_exclusividade').insert({
+            pessoa_id: pessoaId,
+            acao: 'atualizacao_cv',
+            realizado_por: user.id,
+            motivo: 'CV atualizado via importação'
+          });
+        } catch (logError) {
+          console.warn('⚠️ Erro ao registrar log (ignorado):', logError);
+        }
       }
 
       console.log('✅ Candidato atualizado com sucesso! ID:', pessoaId);
