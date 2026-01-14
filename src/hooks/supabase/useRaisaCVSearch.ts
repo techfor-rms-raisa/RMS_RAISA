@@ -14,6 +14,11 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '@/config/supabase';
 import { Vaga, Pessoa } from '@/types';
+import matchingInteligenteService, { 
+  calcularScoreCompatibilidade, 
+  filtrarERankearCandidatos,
+  ScoreDetalhado 
+} from '@/services/matchingInteligenteService';
 
 // ============================================
 // TIPOS
@@ -496,6 +501,7 @@ export const useRaisaCVSearch = () => {
 
   /**
    * Busca candidatos aderentes a uma vaga específica
+   * 🆕 v4.0: Usa matching inteligente com validação de função/área
    */
   const buscarParaVaga = useCallback(async (
     vaga: Vaga,
@@ -505,6 +511,7 @@ export const useRaisaCVSearch = () => {
       setLoading(true);
       setError(null);
       console.log(`🎯 Buscando candidatos para vaga: ${vaga.titulo}`);
+      console.log(`📋 Stack tecnológica: ${JSON.stringify(vaga.stack_tecnologica)}`);
 
       // Extrair skills da vaga
       let skills: string[] = [];
@@ -521,54 +528,125 @@ export const useRaisaCVSearch = () => {
         return [];
       }
 
-      // Buscar candidatos (sem filtrar por senioridade para ampliar resultados)
-      const resultados = await buscarPorSkills(skills, {
-        // senioridade removida - vamos apenas dar bonus para match de senioridade
-        limite
+      // 🆕 v4.0: Detectar área da vaga para filtro inteligente
+      const areaVaga = matchingInteligenteService.detectarAreaAtuacao(vaga.titulo, skills);
+      console.log(`🎯 Área detectada da vaga: ${areaVaga}`);
+
+      // Buscar candidatos base (todas as pessoas com skills)
+      const resultadosBase = await buscarPorSkills(skills, { limite: limite * 3 }); // Buscar mais para filtrar depois
+      
+      console.log(`📊 Candidatos base encontrados: ${resultadosBase.length}`);
+
+      // 🆕 v4.0: Aplicar matching inteligente com validação de função
+      const candidatosParaAnalise = resultadosBase.map(r => ({
+        pessoa_id: r.pessoa_id,
+        nome: r.nome,
+        titulo_profissional: r.titulo_profissional,
+        skills: r.skills_match, // Skills que o candidato tem
+        senioridade: r.senioridade,
+        // Passar outros dados para preservar
+        email: r.email,
+        telefone: r.telefone,
+        disponibilidade: r.disponibilidade,
+        modalidade_preferida: r.modalidade_preferida,
+        pretensao_salarial: r.pretensao_salarial,
+        skills_extras: r.skills_extras,
+        status: r.status,
+        top_skills: r.top_skills,
+        anos_experiencia_total: r.anos_experiencia_total
+      }));
+
+      // Aplicar filtro inteligente
+      const resultadosFiltrados = filtrarERankearCandidatos(
+        candidatosParaAnalise,
+        {
+          titulo: vaga.titulo,
+          stack_tecnologica: skills,
+          senioridade: vaga.senioridade
+        },
+        {
+          scoreMinimo: 25, // Mínimo 25% para aparecer
+          incluirIncompativeis: false,
+          limite
+        }
+      );
+
+      console.log(`✅ Candidatos após filtro inteligente: ${resultadosFiltrados.length}`);
+
+      // Log dos candidatos filtrados para debug
+      resultadosFiltrados.slice(0, 5).forEach((r, idx) => {
+        console.log(`   ${idx + 1}. ${r.candidato.nome} (${r.candidato.titulo_profissional})`);
+        console.log(`      Área: ${r.score.area_candidato} | Score: ${r.score.score_total}%`);
+        console.log(`      Core: ${r.score.score_core}% | Func: ${r.score.score_funcao}%`);
+        if (r.score.skills_core_faltantes.length > 0) {
+          console.log(`      ⚠️ Skills core faltantes: ${r.score.skills_core_faltantes.join(', ')}`);
+        }
       });
 
-      // Calcular score completo considerando outros fatores
-      const normalizarSenioridade = (s: string) => 
-        (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      
-      const vagaSenioridade = normalizarSenioridade(vaga.senioridade);
-      
-      const resultadosCompletos = resultados.map(r => {
-        let scoreExtra = 0;
-        const candidatoSenioridade = normalizarSenioridade(r.senioridade);
-
-        // Bonus por senioridade compatível (comparação normalizada)
+      // Transformar resultados para o formato CandidatoMatch
+      const resultadosCompletos: CandidatoMatch[] = resultadosFiltrados.map(({ candidato, score }) => {
+        // Calcular score de senioridade
+        const normalizarSenioridade = (s: string) => 
+          (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        
+        const vagaSenioridade = normalizarSenioridade(vaga.senioridade);
+        const candidatoSenioridade = normalizarSenioridade(candidato.senioridade || '');
+        
+        let scoreSenioridade = 50;
         if (candidatoSenioridade === vagaSenioridade || 
             candidatoSenioridade.includes(vagaSenioridade) ||
             vagaSenioridade.includes(candidatoSenioridade)) {
-          scoreExtra += 10;
+          scoreSenioridade = 100;
         }
-        // Especialista pode atender Senior
         if (vagaSenioridade === 'senior' && candidatoSenioridade === 'especialista') {
-          scoreExtra += 10;
+          scoreSenioridade = 100;
         }
 
         // Bonus por disponibilidade
-        if (r.disponibilidade === 'imediata') {
-          scoreExtra += 5;
+        let bonusDisponibilidade = 0;
+        if (candidato.disponibilidade === 'imediata') {
+          bonusDisponibilidade = 3;
         }
 
-        // Ajustar score total
-        const scoreAjustado = Math.min(100, r.score_total + scoreExtra);
+        // Score total ajustado
+        const scoreAjustado = Math.min(100, score.score_total + bonusDisponibilidade);
 
         return {
-          ...r,
+          pessoa_id: candidato.pessoa_id,
+          nome: candidato.nome,
+          email: candidato.email || '',
+          telefone: candidato.telefone,
+          titulo_profissional: candidato.titulo_profissional || 'Não informado',
+          senioridade: candidato.senioridade || 'Não informado',
+          disponibilidade: candidato.disponibilidade || 'Não informado',
+          modalidade_preferida: candidato.modalidade_preferida || 'Não informado',
+          pretensao_salarial: candidato.pretensao_salarial || 0,
           score_total: scoreAjustado,
-          score_senioridade: (candidatoSenioridade === vagaSenioridade || 
-            candidatoSenioridade === 'especialista') ? 100 : 50
+          score_skills: score.score_core,
+          score_experiencia: score.score_obrigatorias,
+          score_senioridade: scoreSenioridade,
+          skills_match: [...score.skills_core_atendidas, ...score.skills_obrig_atendidas],
+          skills_faltantes: score.skills_core_faltantes,
+          skills_extras: candidato.skills_extras || [],
+          justificativa_ia: score.motivo_incompatibilidade || 
+            `Área: ${score.area_candidato} | Score Função: ${score.score_funcao}% | Score Core: ${score.score_core}%`,
+          status: candidato.status || 'novo',
+          top_skills: score.skills_core_atendidas.slice(0, 5),
+          anos_experiencia_total: candidato.anos_experiencia_total || 0
         };
       });
 
-      // Reordenar
+      // Ordenar por score total
       resultadosCompletos.sort((a, b) => b.score_total - a.score_total);
 
       setMatches(resultadosCompletos);
-      console.log(`✅ ${resultadosCompletos.length} candidatos encontrados para a vaga`);
+      console.log(`✅ ${resultadosCompletos.length} candidatos finais para a vaga`);
+      
+      // Log dos candidatos EXCLUÍDOS para análise
+      const excluidos = candidatosParaAnalise.length - resultadosFiltrados.length;
+      if (excluidos > 0) {
+        console.log(`🚫 ${excluidos} candidatos excluídos por incompatibilidade de função/área`);
+      }
       
       return resultadosCompletos;
     } catch (err: any) {
