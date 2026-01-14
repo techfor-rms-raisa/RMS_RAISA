@@ -1,12 +1,13 @@
 /**
  * CVImportIA.tsx - Importação Inteligente de CVs com IA
  * 
- * CORRIGIDO v1.2: Usa API backend /api/gemini-analyze
- * - NÃO usa API key no frontend (segurança)
- * - Chama endpoint Vercel que tem a API_KEY configurada
+ * CORRIGIDO v1.3: Verificação de duplicatas antes de salvar
+ * - Verifica se candidato já existe por email ou nome similar
+ * - Pergunta ao analista se deseja atualizar o CV existente
+ * - Faz UPDATE se confirmado, descarta se não
  * 
- * Versão: 1.2
- * Data: 27/12/2024
+ * Versão: 1.3
+ * Data: 14/01/2026
  */
 
 import React, { useState, useRef } from 'react';
@@ -16,7 +17,7 @@ import {
   Upload, Sparkles, Check, X, AlertCircle, AlertTriangle,
   User, Briefcase, GraduationCap,
   Globe, Code, ChevronDown, ChevronUp, Save, RefreshCw,
-  Loader2, Eye
+  Loader2, Eye, UserCheck, UserX
 } from 'lucide-react';
 
 // ============================================
@@ -26,6 +27,17 @@ import {
 interface CVImportIAProps {
   onImportComplete: (pessoa: DadosExtraidos) => void;
   onClose: () => void;
+}
+
+// Interface para candidato duplicado encontrado
+interface CandidatoDuplicado {
+  id: number;
+  nome: string;
+  email: string;
+  cpf: string | null; // 🆕 v1.3: Adicionado CPF
+  titulo_profissional: string;
+  created_at: string;
+  motivo_match: 'cpf' | 'email' | 'nome'; // 🆕 v1.3: Adicionado 'cpf'
 }
 
 // Mapeamento de nomes de estados para siglas
@@ -75,6 +87,7 @@ interface DadosExtraidos {
   nome: string;
   email: string;
   telefone: string;
+  cpf: string; // 🆕 v1.3: Adicionado CPF
   linkedin_url: string;
   cidade: string;
   estado: string;
@@ -172,18 +185,20 @@ ${textoCV}
 ==================
 
 INSTRUÇÕES:
-1. Extraia dados pessoais com cuidado (nome completo, email, telefone, LinkedIn)
-2. Identifique o título profissional mais adequado
-3. Detecte a senioridade baseada nas experiências (junior, pleno, senior, especialista)
-4. Extraia TODAS as skills técnicas mencionadas
-5. Liste todas as experiências profissionais
-6. Liste toda formação acadêmica e certificações
-7. Identifique idiomas e níveis
+1. Extraia dados pessoais com cuidado (nome completo, CPF, email, telefone, LinkedIn)
+2. O CPF pode estar em formatos diferentes: 123.456.789-00, 12345678900, etc. Extraia e normalize para XXX.XXX.XXX-XX
+3. Identifique o título profissional mais adequado
+4. Detecte a senioridade baseada nas experiências (junior, pleno, senior, especialista)
+5. Extraia TODAS as skills técnicas mencionadas
+6. Liste todas as experiências profissionais
+7. Liste toda formação acadêmica e certificações
+8. Identifique idiomas e níveis
 
 RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
 {
   "dados_pessoais": {
     "nome": "Nome Completo",
+    "cpf": "123.456.789-00",
     "email": "email@exemplo.com",
     "telefone": "(11) 99999-9999",
     "linkedin_url": "https://linkedin.com/in/perfil",
@@ -233,6 +248,7 @@ RESPONDA APENAS EM JSON VÁLIDO (sem markdown, sem backticks):
 
 REGRAS:
 - Se não encontrar um dado, use string vazia "" ou null
+- CPF deve estar no formato XXX.XXX.XXX-XX ou vazio se não encontrado
 - Categorias de skill: frontend, backend, database, devops, mobile, soft_skill, tool, other
 - Níveis de skill: basico, intermediario, avancado, especialista
 - Níveis de idioma: basico, intermediario, avancado, fluente, nativo`;
@@ -254,6 +270,11 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
   const [progresso, setProgresso] = useState<number>(0);
   const [salvando, setSalvando] = useState(false);
   const [secaoExpandida, setSecaoExpandida] = useState<string>('dados');
+  
+  // 🆕 v1.3: Estados para controle de duplicatas
+  const [candidatoDuplicado, setCandidatoDuplicado] = useState<CandidatoDuplicado | null>(null);
+  const [mostrarModalDuplicado, setMostrarModalDuplicado] = useState(false);
+  const [verificandoDuplicata, setVerificandoDuplicata] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -375,10 +396,19 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       console.log('   - Certificações:', dados.certificacoes?.length || 0);
       console.log('   - Idiomas:', dados.idiomas?.length || 0);
 
+      // 🆕 v1.3: Normalizar CPF para formato XXX.XXX.XXX-XX
+      const normalizarCPF = (cpf: string | null | undefined): string => {
+        if (!cpf) return '';
+        const numeros = cpf.replace(/\D/g, '');
+        if (numeros.length !== 11) return cpf; // Retorna original se não tiver 11 dígitos
+        return numeros.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+      };
+
       const dadosCompletos: DadosExtraidos = {
         nome: dados.dados_pessoais?.nome || '',
         email: dados.dados_pessoais?.email || '',
         telefone: dados.dados_pessoais?.telefone || '',
+        cpf: normalizarCPF(dados.dados_pessoais?.cpf), // 🆕 v1.3: Adicionado CPF
         linkedin_url: dados.dados_pessoais?.linkedin_url || '',
         cidade: dados.dados_pessoais?.cidade || '',
         estado: normalizarEstado(dados.dados_pessoais?.estado || ''),
@@ -427,6 +457,8 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     const emailMatch = texto.match(/[\w.-]+@[\w.-]+\.\w+/);
     const telefoneMatch = texto.match(/\(?\d{2}\)?\s*\d{4,5}[-.\s]?\d{4}/);
     const linkedinMatch = texto.match(/linkedin\.com\/in\/[\w-]+/i);
+    // 🆕 v1.3: Extrair CPF do texto
+    const cpfMatch = texto.match(/\d{3}\.?\d{3}\.?\d{3}[-.]?\d{2}/);
 
     const skillsComuns = [
       'React', 'Angular', 'Vue', 'Node.js', 'Python', 'Java', 'C#', '.NET',
@@ -445,10 +477,19 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         anos_experiencia: 1
       }));
 
+    // 🆕 v1.3: Normalizar CPF extraído
+    const normalizarCPFBasico = (cpf: string | null | undefined): string => {
+      if (!cpf) return '';
+      const numeros = cpf.replace(/\D/g, '');
+      if (numeros.length !== 11) return '';
+      return numeros.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    };
+
     return {
       nome: '',
       email: emailMatch?.[0] || '',
       telefone: telefoneMatch?.[0] || '',
+      cpf: normalizarCPFBasico(cpfMatch?.[0]), // 🆕 v1.3: Adicionado CPF
       linkedin_url: linkedinMatch?.[0] ? `https://${linkedinMatch[0]}` : '',
       cidade: '',
       estado: '',
@@ -486,9 +527,271 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
     setSalvando(true);
     setErro(null);
+    setVerificandoDuplicata(true);
     
-    let pessoaId: number | null = null; // Declarado fora do try para acesso no catch
+    try {
+      // 🆕 v1.3: VERIFICAR DUPLICATAS ANTES DE INSERIR
+      // Ordem de prioridade: CPF > Email > Nome
+      
+      const cpfNormalizado = dadosExtraidos.cpf?.replace(/\D/g, '').trim();
+      const emailNormalizado = dadosExtraidos.email?.toLowerCase().trim();
+      const nomeNormalizado = dadosExtraidos.nome?.toLowerCase().trim();
+      
+      // 1. VERIFICAR POR CPF (mais confiável)
+      if (cpfNormalizado && cpfNormalizado.length === 11) {
+        // Buscar tanto CPF formatado quanto não formatado
+        const cpfFormatado = cpfNormalizado.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+        
+        const { data: duplicadoCpf } = await supabase
+          .from('pessoas')
+          .select('id, nome, email, cpf, titulo_profissional, created_at')
+          .or(`cpf.eq.${cpfNormalizado},cpf.eq.${cpfFormatado}`)
+          .limit(1)
+          .single();
+        
+        if (duplicadoCpf) {
+          console.log('⚠️ Candidato duplicado encontrado por CPF:', duplicadoCpf.nome);
+          setVerificandoDuplicata(false);
+          setSalvando(false);
+          setCandidatoDuplicado({
+            ...duplicadoCpf,
+            motivo_match: 'cpf'
+          });
+          setMostrarModalDuplicado(true);
+          return;
+        }
+      }
+      
+      // 2. VERIFICAR POR EMAIL (se não for placeholder)
+      if (emailNormalizado && !emailNormalizado.includes('@pendente.cadastro')) {
+        const { data: duplicadoEmail } = await supabase
+          .from('pessoas')
+          .select('id, nome, email, cpf, titulo_profissional, created_at')
+          .eq('email', emailNormalizado)
+          .limit(1)
+          .single();
+        
+        if (duplicadoEmail) {
+          console.log('⚠️ Candidato duplicado encontrado por EMAIL:', duplicadoEmail.nome);
+          setVerificandoDuplicata(false);
+          setSalvando(false);
+          setCandidatoDuplicado({
+            ...duplicadoEmail,
+            motivo_match: 'email'
+          });
+          setMostrarModalDuplicado(true);
+          return;
+        }
+      }
+      
+      // 3. VERIFICAR POR NOME (último recurso - case-insensitive)
+      if (nomeNormalizado) {
+        const { data: duplicadosNome } = await supabase
+          .from('pessoas')
+          .select('id, nome, email, cpf, titulo_profissional, created_at')
+          .ilike('nome', nomeNormalizado)
+          .limit(1);
+        
+        if (duplicadosNome && duplicadosNome.length > 0) {
+          console.log('⚠️ Candidato duplicado encontrado por NOME:', duplicadosNome[0].nome);
+          setVerificandoDuplicata(false);
+          setSalvando(false);
+          setCandidatoDuplicado({
+            ...duplicadosNome[0],
+            motivo_match: 'nome'
+          });
+          setMostrarModalDuplicado(true);
+          return;
+        }
+      }
+      
+      setVerificandoDuplicata(false);
+      
+      // Se não encontrou duplicata, prosseguir com INSERT normal
+      await executarInsercao();
+      
+    } catch (error: any) {
+      console.error('❌ Erro ao verificar duplicatas:', error);
+      setVerificandoDuplicata(false);
+      // Em caso de erro na verificação, prosseguir com a inserção
+      await executarInsercao();
+    }
+  };
 
+  // 🆕 v1.3: Handler para confirmar atualização de duplicata
+  const handleConfirmarAtualizacao = async () => {
+    if (!dadosExtraidos || !candidatoDuplicado) return;
+    
+    setMostrarModalDuplicado(false);
+    setSalvando(true);
+    setErro(null);
+    
+    try {
+      await executarAtualizacao(candidatoDuplicado.id);
+    } catch (error: any) {
+      console.error('❌ Erro ao atualizar candidato:', error);
+      setErro(`Erro ao atualizar: ${error.message}`);
+      setSalvando(false);
+    }
+  };
+
+  // 🆕 v1.3: Handler para cancelar e descartar
+  const handleDescartarDuplicata = () => {
+    setMostrarModalDuplicado(false);
+    setCandidatoDuplicado(null);
+    setSalvando(false);
+    setErro('Importação cancelada: candidato já existe no banco de talentos.');
+  };
+
+  // 🆕 v1.3: Função para executar UPDATE de candidato existente
+  const executarAtualizacao = async (pessoaId: number) => {
+    if (!dadosExtraidos) return;
+    
+    try {
+      // Upload do PDF se houver
+      let cvArquivoUrl: string | null = null;
+      
+      if (arquivo && arquivo.type === 'application/pdf') {
+        const timestamp = Date.now();
+        const nomeArquivoLimpo = dadosExtraidos.nome
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-zA-Z0-9]/g, '_')
+          .substring(0, 50);
+        const nomeArquivo = `cv_${nomeArquivoLimpo}_${timestamp}.pdf`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('cvs')
+          .upload(nomeArquivo, arquivo, {
+            cacheControl: '3600',
+            upsert: true
+          });
+
+        if (!uploadError) {
+          const { data: urlData } = supabase.storage
+            .from('cvs')
+            .getPublicUrl(nomeArquivo);
+          
+          cvArquivoUrl = urlData?.publicUrl || null;
+          console.log('✅ PDF atualizado no Storage:', cvArquivoUrl);
+        }
+      }
+
+      // Atualizar dados da pessoa
+      const { error: erroPessoa } = await supabase
+        .from('pessoas')
+        .update({
+          cpf: dadosExtraidos.cpf || undefined, // 🆕 v1.3: Atualizar CPF se fornecido
+          telefone: dadosExtraidos.telefone || undefined,
+          linkedin_url: dadosExtraidos.linkedin_url || undefined,
+          cidade: dadosExtraidos.cidade || undefined,
+          estado: normalizarEstado(dadosExtraidos.estado) || undefined,
+          titulo_profissional: dadosExtraidos.titulo_profissional || undefined,
+          senioridade: dadosExtraidos.senioridade || undefined,
+          disponibilidade: dadosExtraidos.disponibilidade || undefined,
+          modalidade_preferida: dadosExtraidos.modalidade_preferida || undefined,
+          pretensao_salarial: dadosExtraidos.pretensao_salarial,
+          resumo_profissional: dadosExtraidos.resumo_profissional || undefined,
+          cv_texto_original: dadosExtraidos.cv_texto_original,
+          cv_arquivo_url: cvArquivoUrl || undefined,
+          cv_processado: true,
+          cv_processado_em: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', pessoaId);
+
+      if (erroPessoa) throw erroPessoa;
+
+      // Atualizar skills: deletar antigas e inserir novas
+      if (dadosExtraidos.skills.length > 0) {
+        // Deletar skills existentes
+        await supabase.from('pessoa_skills').delete().eq('pessoa_id', pessoaId);
+        
+        // Inserir novas skills
+        const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other'];
+        const niveisValidos = ['basico', 'intermediario', 'avancado', 'especialista'];
+        
+        const skillsNormalizadas = dadosExtraidos.skills
+          .filter(s => s.nome && s.nome.trim())
+          .map(s => ({
+            pessoa_id: pessoaId,
+            skill_nome: String(s.nome || '').trim().substring(0, 100),
+            skill_categoria: categoriasValidas.includes(s.categoria) ? s.categoria : 'other',
+            nivel: niveisValidos.includes(s.nivel) ? s.nivel : 'intermediario',
+            anos_experiencia: typeof s.anos_experiencia === 'number' ? s.anos_experiencia : 0
+          }));
+        
+        // Remover duplicatas
+        const skillsUnicas = skillsNormalizadas.filter((skill, index, self) =>
+          index === self.findIndex(s => s.skill_nome.toLowerCase() === skill.skill_nome.toLowerCase())
+        );
+        
+        await supabase.from('pessoa_skills').insert(skillsUnicas);
+      }
+
+      // Atualizar experiências
+      if (dadosExtraidos.experiencias.length > 0) {
+        await supabase.from('pessoa_experiencias').delete().eq('pessoa_id', pessoaId);
+        
+        const experiencias = dadosExtraidos.experiencias.map(e => ({
+          pessoa_id: pessoaId,
+          empresa: e.empresa || '',
+          cargo: e.cargo || '',
+          data_inicio: e.data_inicio?.match(/^\d{4}-\d{2}$/) ? `${e.data_inicio}-01` : e.data_inicio,
+          data_fim: e.data_fim?.match(/^\d{4}-\d{2}$/) ? `${e.data_fim}-01` : e.data_fim,
+          atual: e.atual || false,
+          descricao: e.descricao || '',
+          tecnologias_usadas: e.tecnologias || []
+        }));
+        
+        await supabase.from('pessoa_experiencias').insert(experiencias);
+      }
+
+      // Atualizar formação
+      if (dadosExtraidos.formacao.length > 0) {
+        await supabase.from('pessoa_formacoes').delete().eq('pessoa_id', pessoaId);
+        
+        const formacoes = dadosExtraidos.formacao.map(f => ({
+          pessoa_id: pessoaId,
+          tipo: f.tipo || 'graduacao',
+          curso: f.curso || '',
+          instituicao: f.instituicao || '',
+          ano_conclusao: f.ano_conclusao,
+          em_andamento: f.em_andamento || false
+        }));
+        
+        await supabase.from('pessoa_formacoes').insert(formacoes);
+      }
+
+      // Registrar no log
+      if (user?.id) {
+        await supabase.from('log_exclusividade').insert({
+          pessoa_id: pessoaId,
+          acao: 'atualizacao_cv',
+          realizado_por: user.id,
+          motivo: 'CV atualizado via importação'
+        }).catch(() => {}); // Ignorar erro se tabela não existir
+      }
+
+      console.log('✅ Candidato atualizado com sucesso! ID:', pessoaId);
+      
+      setEtapaAtual(4);
+      onImportComplete(dadosExtraidos);
+      
+    } catch (error: any) {
+      throw error;
+    } finally {
+      setSalvando(false);
+      setCandidatoDuplicado(null);
+    }
+  };
+
+  // 🆕 v1.3: Função para executar INSERT de novo candidato
+  const executarInsercao = async () => {
+    if (!dadosExtraidos) return;
+    
+    let pessoaId: number | null = null;
+    
     try {
       // ✅ NOVO: Upload do PDF para Supabase Storage
       let cvArquivoUrl: string | null = null;
@@ -539,6 +842,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         .insert({
           nome: dadosExtraidos.nome,
           email: emailFinal,
+          cpf: dadosExtraidos.cpf || null, // 🆕 v1.3: Adicionado CPF
           telefone: dadosExtraidos.telefone,
           linkedin_url: dadosExtraidos.linkedin_url,
           cidade: dadosExtraidos.cidade,
@@ -752,6 +1056,73 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      
+      {/* 🆕 v1.3: MODAL DE CONFIRMAÇÃO DE DUPLICATA */}
+      {mostrarModalDuplicado && candidatoDuplicado && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 bg-amber-100 rounded-full flex items-center justify-center">
+                <AlertTriangle className="w-6 h-6 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Candidato já existe!</h3>
+                <p className="text-sm text-gray-500">
+                  {candidatoDuplicado.motivo_match === 'cpf' 
+                    ? 'Foi encontrado um candidato com o mesmo CPF'
+                    : candidatoDuplicado.motivo_match === 'email' 
+                    ? 'Foi encontrado um candidato com o mesmo email'
+                    : 'Foi encontrado um candidato com o mesmo nome'}
+                </p>
+              </div>
+            </div>
+            
+            <div className="bg-gray-50 rounded-lg p-4 mb-6">
+              <p className="text-sm text-gray-500 mb-2">Candidato encontrado no Banco de Talentos:</p>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                  <User className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-900">{candidatoDuplicado.nome}</p>
+                  {candidatoDuplicado.cpf && (
+                    <p className="text-sm text-gray-600">CPF: {candidatoDuplicado.cpf}</p>
+                  )}
+                  <p className="text-sm text-gray-600">{candidatoDuplicado.email}</p>
+                  {candidatoDuplicado.titulo_profissional && (
+                    <p className="text-xs text-gray-500">{candidatoDuplicado.titulo_profissional}</p>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">
+                Cadastrado em: {new Date(candidatoDuplicado.created_at).toLocaleDateString('pt-BR')}
+              </p>
+            </div>
+            
+            <p className="text-sm text-gray-700 mb-6">
+              Deseja <strong>atualizar o CV</strong> deste candidato com os novos dados extraídos?
+            </p>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={handleDescartarDuplicata}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition font-medium"
+              >
+                <UserX className="w-5 h-5" />
+                Não, descartar
+              </button>
+              <button
+                onClick={handleConfirmarAtualizacao}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+              >
+                <UserCheck className="w-5 h-5" />
+                Sim, atualizar CV
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
       <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[95vh] overflow-hidden flex flex-col">
         
         {/* Header */}
@@ -894,6 +1265,15 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                     <div>
                       <label className="text-sm font-medium text-gray-700">Nome *</label>
                       <input className="w-full border p-2 rounded mt-1" value={dadosExtraidos.nome} onChange={e => handleCampoChange('nome', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium text-gray-700">CPF</label>
+                      <input 
+                        className="w-full border p-2 rounded mt-1" 
+                        placeholder="000.000.000-00"
+                        value={dadosExtraidos.cpf} 
+                        onChange={e => handleCampoChange('cpf', e.target.value)} 
+                      />
                     </div>
                     <div>
                       <label className="text-sm font-medium text-gray-700">Email *</label>

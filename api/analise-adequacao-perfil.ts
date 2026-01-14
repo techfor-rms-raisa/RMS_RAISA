@@ -156,41 +156,96 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Construir prompt detalhado
     const userPrompt = buildAnalysisPrompt(candidato, vaga, opcoes);
 
-    // Chamar Gemini
-    const response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: SYSTEM_PROMPT + '\n\n' + userPrompt }]
+    // Chamar Gemini com retry
+    let response;
+    let tentativas = 0;
+    const maxTentativas = 2;
+    
+    while (tentativas < maxTentativas) {
+      try {
+        tentativas++;
+        console.log(`🔄 [Gemini] Tentativa ${tentativas}/${maxTentativas}...`);
+        
+        response = await ai.models.generateContent({
+          model: GEMINI_MODEL,
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: SYSTEM_PROMPT + '\n\n' + userPrompt }]
+            }
+          ],
+          config: {
+            temperature: 0.3,
+            maxOutputTokens: 8192,
+          }
+        });
+        
+        // Se chegou aqui, sucesso - sair do loop
+        break;
+      } catch (retryError: any) {
+        console.error(`❌ [Gemini] Erro na tentativa ${tentativas}:`, retryError.message);
+        if (tentativas >= maxTentativas) {
+          throw retryError;
         }
-      ],
-      config: {
-        temperature: 0.3,
-        maxOutputTokens: 8192,
+        // Aguardar antes de tentar novamente
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
-    });
+    }
 
     // Extrair resposta
-    const responseText = response.text || '';
+    const responseText = response?.text || '';
+    
+    if (!responseText || responseText.trim().length < 50) {
+      console.error('❌ Resposta vazia ou muito curta da API Gemini');
+      return res.status(500).json({ 
+        error: '❌ Erro na API Gemini (gemini-2.0-flash): Resposta vazia',
+        tipo: 'EMPTY_RESPONSE',
+        acao: 'A API não retornou dados. Tente novamente em alguns segundos.',
+        raw: responseText
+      });
+    }
 
-    // Parsear JSON
+    // Parsear JSON com múltiplas tentativas de limpeza
     let result: AnaliseAdequacaoPerfil;
     try {
-      const cleanedText = responseText
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
+      // Tentativa 1: Limpeza padrão
+      let cleanedText = responseText
+        .replace(/```json\n?/gi, '')
+        .replace(/```\n?/gi, '')
         .trim();
+      
+      // Tentativa 2: Se ainda não é JSON válido, tentar extrair o objeto
+      if (!cleanedText.startsWith('{')) {
+        const jsonMatch = cleanedText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          cleanedText = jsonMatch[0];
+        }
+      }
+      
+      // Tentativa 3: Remover caracteres problemáticos
+      cleanedText = cleanedText
+        .replace(/[\x00-\x1F\x7F]/g, '') // Caracteres de controle
+        .replace(/,\s*}/g, '}') // Vírgula antes de }
+        .replace(/,\s*]/g, ']'); // Vírgula antes de ]
+      
       result = JSON.parse(cleanedText);
+      
     } catch (parseError) {
       console.error('❌ Erro ao parsear resposta Gemini:', parseError);
-      console.error('Resposta bruta:', responseText.substring(0, 1000));
-      return res.status(500).json({ 
-        error: '❌ Erro na API Gemini (gemini-2.0-flash): Resposta inválida',
-        tipo: 'PARSE_ERROR',
-        acao: 'Tente novamente. Se persistir, contate o suporte.',
-        raw: responseText.substring(0, 500)
-      });
+      console.error('Resposta bruta (primeiros 2000 chars):', responseText.substring(0, 2000));
+      
+      // Tentar criar resposta mínima de fallback
+      try {
+        result = criarRespostaFallback(candidato, vaga);
+        console.log('⚠️ Usando resposta fallback devido a erro de parse');
+      } catch {
+        return res.status(500).json({ 
+          error: '❌ Erro na API Gemini (gemini-2.0-flash): Resposta inválida',
+          tipo: 'PARSE_ERROR',
+          acao: 'O modelo retornou dados mal formatados. Tente novamente.',
+          detalhes: 'JSON inválido na resposta'
+        });
+      }
     }
 
     const tempoMs = Date.now() - startTime;
@@ -244,6 +299,66 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       codigo: errorStatus
     });
   }
+}
+
+// ============================================================
+// CONSTRUIR PROMPT DE ANÁLISE
+// ============================================================
+
+// ============================================================
+// FUNÇÃO FALLBACK - Quando o parse da resposta Gemini falha
+// ============================================================
+
+function criarRespostaFallback(candidato: any, vaga: any): AnaliseAdequacaoPerfil {
+  console.log('⚠️ Criando resposta fallback para análise de adequação');
+  
+  return {
+    candidato_nome: candidato.nome || 'Candidato',
+    vaga_titulo: vaga.titulo || 'Vaga',
+    data_analise: new Date().toISOString(),
+    score_geral: 50,
+    nivel_adequacao_geral: 'PARCIALMENTE_COMPATIVEL',
+    confianca_analise: 30,
+    requisitos_imprescindiveis: [{
+      requisito: 'Análise automática indisponível',
+      tipo: 'HARD_SKILL',
+      obrigatoriedade: 'IMPRESCINDIVEL',
+      analise_candidato: {
+        evidencias_encontradas: ['Análise manual necessária'],
+        evidencias_ausentes: [],
+        experiencias_relacionadas: []
+      },
+      nivel_adequacao: 'NAO_AVALIAVEL',
+      score_adequacao: 50,
+      justificativa: 'A análise automática não pôde ser concluída. Recomenda-se análise manual do CV.',
+      pergunta_investigacao: 'Valide manualmente as competências do candidato durante a entrevista.'
+    }],
+    requisitos_muito_desejaveis: [],
+    requisitos_desejaveis: [],
+    resumo_executivo: {
+      principais_pontos_fortes: ['Análise manual recomendada'],
+      gaps_criticos: ['Não foi possível analisar automaticamente'],
+      gaps_investigar: ['Todas as competências devem ser validadas na entrevista'],
+      diferenciais_candidato: []
+    },
+    perguntas_entrevista: [{
+      categoria: 'Validação Geral',
+      icone: '❓',
+      perguntas: [{
+        pergunta: 'Descreva sua experiência mais relevante para esta vaga.',
+        objetivo: 'Validar fit com a posição',
+        o_que_avaliar: ['Experiência técnica', 'Alinhamento com requisitos'],
+        red_flags: ['Respostas vagas', 'Falta de exemplos concretos']
+      }]
+    }],
+    avaliacao_final: {
+      recomendacao: 'ENTREVISTAR',
+      justificativa: 'A análise automática não pôde ser concluída devido a um erro técnico. Recomenda-se prosseguir com entrevista para avaliação manual.',
+      proximos_passos: ['Agendar entrevista técnica', 'Avaliar CV manualmente'],
+      riscos_identificados: ['Análise incompleta - validar requisitos na entrevista'],
+      pontos_atencao_entrevista: ['Validar todas as competências técnicas manualmente']
+    }
+  };
 }
 
 // ============================================================
