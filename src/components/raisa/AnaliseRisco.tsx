@@ -1,5 +1,5 @@
 /**
- * AnaliseRisco.tsx - RMS RAISA v4.1
+ * AnaliseRisco.tsx - RMS RAISA v4.2
  * Componente de Análise de Currículo com IA
  * 
  * HISTÓRICO:
@@ -15,10 +15,17 @@
  *   • Score mínimo 40% para salvamento automático
  *   • Botão de salvamento manual para scores baixos
  *   • Persistência automática seguindo padrão CVImportIA
+ * - v4.2 (14/01/2026): Correção de campos e exclusividade
+ *   • Adicionado useAuth para acesso ao usuário logado
+ *   • Campos de exclusividade: id_analista_rs, periodo_exclusividade (60 dias)
+ *   • Campo origem: 'importacao_cv' (antes era NULL)
+ *   • Campos adicionais: cpf, disponibilidade, modalidade_preferida, pretensao_salarial
+ *   • Log de exclusividade em log_exclusividade
  */
 
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '@/config/supabase';
+import { useAuth } from '../../contexts/AuthContext'; // 🆕 v4.2: Autenticação para exclusividade
 import { 
   Upload, FileText, Brain, Loader2, CheckCircle, XCircle,
   AlertTriangle, Target, RefreshCw, UserPlus, Download,
@@ -139,6 +146,9 @@ interface AnaliseAdequacaoResultado {
 // ============================================
 
 const AnaliseRisco: React.FC = () => {
+  // 🆕 v4.2: Autenticação para exclusividade
+  const { user } = useAuth();
+  
   // Estados gerais
   const [abaAtiva, setAbaAtiva] = useState<'triagem' | 'alertas' | 'metricas'>('triagem');
   
@@ -512,18 +522,29 @@ const AnaliseRisco: React.FC = () => {
       const emailFinal = candidato.email || 
         `${(candidato.nome || 'candidato').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.')}@pendente.cadastro`;
 
+      // 🆕 v4.2: Calcular datas de exclusividade
+      const periodoExclusividade = 60; // Período padrão
+      const dataInicio = new Date();
+      const dataFinal = user?.id 
+        ? new Date(dataInicio.getTime() + periodoExclusividade * 24 * 60 * 60 * 1000)
+        : null;
+
       // 1. Salvar pessoa
       const { data: pessoa, error: erroPessoa } = await supabase
         .from('pessoas')
         .insert({
           nome: candidato.nome || 'Candidato (CV Importado)',
           email: emailFinal,
+          cpf: candidato.cpf || null, // 🆕 v4.2
           telefone: candidato.telefone || null,
           linkedin_url: candidato.linkedin_url || null,
           cidade: candidato.cidade || null,
           estado: normalizarEstado(candidato.estado || ''),
           titulo_profissional: candidato.titulo_profissional || null,
           senioridade: candidato.senioridade || 'pleno',
+          disponibilidade: candidato.disponibilidade || null, // 🆕 v4.2
+          modalidade_preferida: candidato.modalidade_preferida || null, // 🆕 v4.2
+          pretensao_salarial: candidato.pretensao_salarial || null, // 🆕 v4.2
           resumo_profissional: candidato.resumo_profissional || null,
           cv_texto_original: textoOriginal?.substring(0, 50000) || null,
           cv_resumo: analiseResult?.justificativa || null,
@@ -532,7 +553,15 @@ const AnaliseRisco: React.FC = () => {
           cv_processado_por: 'Triagem Genérica - Gemini',
           observacoes: `Importado via Triagem de CVs em ${new Date().toLocaleDateString('pt-BR')}\n\nScore: ${analiseResult?.score_geral || 0}%\nRecomendação IA: ${analiseResult?.recomendacao || 'N/A'}`,
           ativo: true,
-          criado_em: new Date().toISOString()
+          origem: 'importacao_cv', // 🆕 v4.2
+          criado_em: new Date().toISOString(),
+          // 🆕 v4.2: Campos de Exclusividade
+          id_analista_rs: user?.id || null,
+          periodo_exclusividade: periodoExclusividade,
+          data_inicio_exclusividade: user?.id ? dataInicio.toISOString() : null,
+          data_final_exclusividade: dataFinal?.toISOString() || null,
+          qtd_renovacoes: 0,
+          max_renovacoes: 2
         })
         .select()
         .single();
@@ -543,6 +572,20 @@ const AnaliseRisco: React.FC = () => {
       }
 
       const pessoaId = pessoa.id;
+
+      // 🆕 v4.2: Registrar no log de exclusividade
+      if (user?.id) {
+        await supabase.from('log_exclusividade').insert({
+          pessoa_id: pessoaId,
+          acao: 'atribuicao',
+          analista_novo_id: user.id,
+          realizado_por: user.id,
+          motivo: 'Cadastro via Triagem de CVs',
+          data_exclusividade_nova: dataFinal?.toISOString(),
+          qtd_renovacoes_nova: 0
+        });
+        console.log('✅ Exclusividade registrada para analista:', user.nome_usuario);
+      }
 
       // 2. Salvar Skills - combina extraídas + detectadas na triagem
       const skillsCombinadas = [
@@ -853,18 +896,29 @@ const AnaliseRisco: React.FC = () => {
       const emailFinal = candidato.email || 
         `${(candidato.nome || 'candidato').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.')}@pendente.cadastro`;
 
+      // 🆕 v4.2: Calcular datas de exclusividade
+      const periodoExclusividadeAdequacao = 60; // Período padrão
+      const dataInicioAdequacao = new Date();
+      const dataFinalAdequacao = user?.id 
+        ? new Date(dataInicioAdequacao.getTime() + periodoExclusividadeAdequacao * 24 * 60 * 60 * 1000)
+        : null;
+
       // 1. Salvar pessoa
       const { data: pessoa, error: erroPessoa } = await supabase
         .from('pessoas')
         .insert({
           nome: candidato.nome || 'Candidato (CV Importado)',
           email: emailFinal,
+          cpf: candidato.cpf || null, // 🆕 v4.2
           telefone: candidato.telefone || null,
           linkedin_url: candidato.linkedin_url || null,
           cidade: candidato.cidade || null,
           estado: normalizarEstado(candidato.estado || ''),
           titulo_profissional: candidato.titulo_profissional || null,
           senioridade: candidato.senioridade || 'pleno',
+          disponibilidade: candidato.disponibilidade || null, // 🆕 v4.2
+          modalidade_preferida: candidato.modalidade_preferida || null, // 🆕 v4.2
+          pretensao_salarial: candidato.pretensao_salarial || null, // 🆕 v4.2
           resumo_profissional: candidato.resumo_profissional || null,
           cv_texto_original: textoOriginal?.substring(0, 50000) || null,
           cv_processado: true,
@@ -872,7 +926,15 @@ const AnaliseRisco: React.FC = () => {
           cv_processado_por: 'Análise CV vs Vaga - Claude',
           observacoes: `Importado via Análise de Adequação em ${new Date().toLocaleDateString('pt-BR')}`,
           ativo: true,
-          criado_em: new Date().toISOString()
+          origem: 'importacao_cv', // 🆕 v4.2
+          criado_em: new Date().toISOString(),
+          // 🆕 v4.2: Campos de Exclusividade
+          id_analista_rs: user?.id || null,
+          periodo_exclusividade: periodoExclusividadeAdequacao,
+          data_inicio_exclusividade: user?.id ? dataInicioAdequacao.toISOString() : null,
+          data_final_exclusividade: dataFinalAdequacao?.toISOString() || null,
+          qtd_renovacoes: 0,
+          max_renovacoes: 2
         })
         .select()
         .single();
@@ -884,6 +946,20 @@ const AnaliseRisco: React.FC = () => {
       }
 
       const pessoaId = pessoa.id;
+
+      // 🆕 v4.2: Registrar no log de exclusividade
+      if (user?.id) {
+        await supabase.from('log_exclusividade').insert({
+          pessoa_id: pessoaId,
+          acao: 'atribuicao',
+          analista_novo_id: user.id,
+          realizado_por: user.id,
+          motivo: 'Cadastro via Análise de Adequação CV vs Vaga',
+          data_exclusividade_nova: dataFinalAdequacao?.toISOString(),
+          qtd_renovacoes_nova: 0
+        });
+        console.log('✅ Exclusividade registrada para analista:', user.nome_usuario);
+      }
 
       // 2. Salvar Skills (padrão CVImportIA)
       if (candidato.skills?.length > 0) {

@@ -1,12 +1,15 @@
 /**
  * CVImportIA.tsx - Importação Inteligente de CVs com IA
  * 
- * CORRIGIDO v1.3: Verificação de duplicatas antes de salvar
- * - Verifica se candidato já existe por email ou nome similar
- * - Pergunta ao analista se deseja atualizar o CV existente
- * - Faz UPDATE se confirmado, descarta se não
+ * HISTÓRICO:
+ * - v1.3 (14/01/2026): Verificação de duplicatas por CPF/Email/Nome
+ * - v1.4 (14/01/2026): Correção do UPDATE - todos os campos atualizados
+ * - v1.5 (14/01/2026): Exclusividade na atualização
+ *   • Atribui id_analista_rs ao analista logado no UPDATE
+ *   • periodo_exclusividade = 60 dias
+ *   • Log de exclusividade em log_exclusividade
  * 
- * Versão: 1.3
+ * Versão: 1.5
  * Data: 14/01/2026
  */
 
@@ -677,13 +680,26 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         }
       }
 
+      // 🆕 v1.5: Calcular datas de exclusividade para atribuir ao analista logado
+      const periodoExclusividade = 60;
+      const dataInicio = new Date();
+      const dataFinal = user?.id 
+        ? new Date(dataInicio.getTime() + periodoExclusividade * 24 * 60 * 60 * 1000)
+        : null;
+
       // Atualizar dados da pessoa
       // 🆕 v1.4: Usar valores diretos para garantir atualização (não usar || undefined)
       const dadosAtualizacao: Record<string, any> = {
         cv_texto_original: dadosExtraidos.cv_texto_original,
         cv_processado: true,
         cv_processado_em: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        // 🆕 v1.5: Atribuir exclusividade ao analista que atualizou
+        id_analista_rs: user?.id || null,
+        periodo_exclusividade: periodoExclusividade,
+        data_inicio_exclusividade: user?.id ? dataInicio.toISOString() : null,
+        data_final_exclusividade: dataFinal?.toISOString() || null,
+        qtd_renovacoes: 0
       };
 
       // Adicionar campos apenas se tiverem valor (evita sobrescrever com vazio)
@@ -735,6 +751,20 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         .eq('id', pessoaId);
 
       if (erroPessoa) throw erroPessoa;
+
+      // 🆕 v1.5: Registrar no log de exclusividade
+      if (user?.id) {
+        await supabase.from('log_exclusividade').insert({
+          pessoa_id: pessoaId,
+          acao: 'atribuicao',
+          analista_novo_id: user.id,
+          realizado_por: user.id,
+          motivo: 'Atualização de CV via Banco de Talentos',
+          data_exclusividade_nova: dataFinal?.toISOString(),
+          qtd_renovacoes_nova: 0
+        });
+        console.log('✅ Exclusividade registrada para analista:', user.nome_usuario);
+      }
 
       // Atualizar skills: deletar antigas e inserir novas
       if (dadosExtraidos.skills.length > 0) {
