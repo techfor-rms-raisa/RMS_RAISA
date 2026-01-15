@@ -1,5 +1,5 @@
 /**
- * EntrevistaTecnicaInteligente.tsx - RMS RAISA v2.7
+ * EntrevistaTecnicaInteligente.tsx - RMS RAISA v2.8
  * Componente de Entrevista Técnica com IA
  * 
  * NOVO FLUXO:
@@ -11,7 +11,14 @@
  * 6. Score e recomendação
  * 7. Decisão do analista
  * 
- * Data: 08/01/2026
+ * NOVIDADES v2.8:
+ * - 🆕 Botão "Baixar PDF" para gerar roteiro de perguntas em PDF
+ * - 🆕 PDF formatado com nome do candidato, vaga e espaço para anotações
+ * - ✅ Suporte a arquivos .webm (áudio apenas) para upload
+ * - 🔧 CORREÇÃO: Perguntas geradas agora são SALVAS no Supabase
+ *   para persistência entre sessões (tabela analise_adequacao)
+ * 
+ * Data: 15/01/2026
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
@@ -22,9 +29,10 @@ import {
   ChevronRight, ChevronDown, User, Briefcase, Clock,
   ThumbsUp, ThumbsDown, HelpCircle, FileText, Trash2,
   RefreshCw, Download, BarChart3, Award, TrendingUp,
-  Volume2, Headphones, Send, Save, Eye
+  Volume2, Headphones, Send, Save, Eye, FileDown
 } from 'lucide-react';
 import { Candidatura, Vaga } from '@/types';
+import jsPDF from 'jspdf';
 
 // ============================================
 // TIPOS
@@ -184,6 +192,155 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   }, [candidaturas, vagas]);
 
   // ============================================
+  // 🆕 GERAR PDF DAS PERGUNTAS
+  // ============================================
+  
+  const gerarPDFPerguntas = useCallback(() => {
+    if (!candidaturaAtual || perguntas.length === 0) return;
+    
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 20;
+    const lineHeight = 7;
+    let yPos = margin;
+    
+    // Helper para adicionar nova página se necessário
+    const checkNewPage = (requiredSpace: number = 30) => {
+      if (yPos + requiredSpace > pageHeight - margin) {
+        doc.addPage();
+        yPos = margin;
+        return true;
+      }
+      return false;
+    };
+    
+    // Helper para quebrar texto em múltiplas linhas
+    const splitText = (text: string, maxWidth: number) => {
+      return doc.splitTextToSize(text, maxWidth);
+    };
+    
+    // ===== CABEÇALHO =====
+    doc.setFillColor(249, 115, 22); // Orange
+    doc.rect(0, 0, pageWidth, 35, 'F');
+    
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Roteiro de Entrevista Técnica', pageWidth / 2, 15, { align: 'center' });
+    
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('RMS RAISA - Powered by AI', pageWidth / 2, 25, { align: 'center' });
+    
+    yPos = 50;
+    
+    // ===== DADOS DO CANDIDATO =====
+    doc.setTextColor(0, 0, 0);
+    doc.setFillColor(245, 245, 245);
+    doc.rect(margin, yPos - 5, pageWidth - (margin * 2), 30, 'F');
+    
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Candidato:', margin + 5, yPos + 5);
+    doc.setFont('helvetica', 'normal');
+    doc.text(candidaturaAtual.candidato_nome || 'N/A', margin + 35, yPos + 5);
+    
+    doc.setFont('helvetica', 'bold');
+    doc.text('Vaga:', margin + 5, yPos + 15);
+    doc.setFont('helvetica', 'normal');
+    const vagaTitulo = vagaAtual?.titulo || 'N/A';
+    doc.text(vagaTitulo.substring(0, 60), margin + 20, yPos + 15);
+    
+    const dataHoje = new Date().toLocaleDateString('pt-BR');
+    doc.setFont('helvetica', 'bold');
+    doc.text('Data:', pageWidth - margin - 50, yPos + 5);
+    doc.setFont('helvetica', 'normal');
+    doc.text(dataHoje, pageWidth - margin - 35, yPos + 5);
+    
+    yPos += 40;
+    
+    // ===== PERGUNTAS =====
+    let perguntaNum = 1;
+    
+    perguntas.forEach((categoria, catIdx) => {
+      checkNewPage(50);
+      
+      // Título da categoria
+      const isGap = categoria.categoria?.includes('GAP');
+      if (isGap) {
+        doc.setFillColor(254, 243, 199); // Amber-100
+        doc.setTextColor(146, 64, 14); // Amber-800
+      } else {
+        doc.setFillColor(219, 234, 254); // Blue-100
+        doc.setTextColor(30, 64, 175); // Blue-800
+      }
+      
+      doc.rect(margin, yPos - 5, pageWidth - (margin * 2), 12, 'F');
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${categoria.icone || '📋'} ${categoria.categoria || 'Categoria'}`, margin + 3, yPos + 3);
+      
+      yPos += 15;
+      doc.setTextColor(0, 0, 0);
+      
+      categoria.perguntas.forEach((p: any, pIdx: number) => {
+        checkNewPage(40);
+        
+        // Número e pergunta
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        const perguntaTexto = `${perguntaNum}. ${p.pergunta}`;
+        const linhasPergunta = splitText(perguntaTexto, pageWidth - (margin * 2) - 10);
+        
+        linhasPergunta.forEach((linha: string, idx: number) => {
+          checkNewPage(lineHeight);
+          doc.text(linha, margin + 5, yPos);
+          yPos += lineHeight;
+        });
+        
+        // Espaço para anotações
+        yPos += 3;
+        doc.setDrawColor(200, 200, 200);
+        doc.setLineDashPattern([2, 2], 0);
+        for (let i = 0; i < 3; i++) {
+          checkNewPage(lineHeight);
+          doc.line(margin + 5, yPos, pageWidth - margin - 5, yPos);
+          yPos += lineHeight;
+        }
+        doc.setLineDashPattern([], 0);
+        
+        yPos += 5;
+        perguntaNum++;
+      });
+      
+      yPos += 5;
+    });
+    
+    // ===== RODAPÉ =====
+    const totalPages = doc.internal.pages.length - 1;
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(150, 150, 150);
+      doc.text(
+        `Página ${i} de ${totalPages} | Gerado em ${new Date().toLocaleString('pt-BR')}`,
+        pageWidth / 2,
+        pageHeight - 10,
+        { align: 'center' }
+      );
+    }
+    
+    // Gerar nome do arquivo
+    const nomeArquivo = `Entrevista_${(candidaturaAtual.candidato_nome || 'Candidato').replace(/\s+/g, '_')}_${dataHoje.replace(/\//g, '-')}.pdf`;
+    
+    // Download
+    doc.save(nomeArquivo);
+    
+    console.log(`✅ PDF gerado: ${nomeArquivo}`);
+  }, [candidaturaAtual, vagaAtual, perguntas]);
+
+  // ============================================
   // BUSCAR PERGUNTAS DA ANÁLISE DE ADEQUAÇÃO
   // ============================================
   
@@ -318,6 +475,45 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           console.log('📊 Análise prévia:', result.data.analise_previa);
         }
         
+        // 🆕 v2.8: SALVAR PERGUNTAS NO SUPABASE para persistência
+        try {
+          // Primeiro tenta buscar se já existe
+          const { data: existing } = await supabase
+            .from('analise_adequacao')
+            .select('id')
+            .eq('candidatura_id', parseInt(candidaturaAtual.id))
+            .limit(1)
+            .single();
+          
+          if (existing?.id) {
+            // Atualiza registro existente
+            await supabase
+              .from('analise_adequacao')
+              .update({
+                perguntas_entrevista: result.data.perguntas,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', existing.id);
+            console.log('💾 Perguntas atualizadas no registro existente');
+          } else {
+            // Cria novo registro
+            await supabase
+              .from('analise_adequacao')
+              .insert({
+                candidatura_id: parseInt(candidaturaAtual.id),
+                pessoa_id: candidaturaAtual.pessoa_id || null,
+                vaga_id: parseInt(candidaturaAtual.vaga_id),
+                perguntas_entrevista: result.data.perguntas,
+                score_geral: result.data.analise_previa?.score_estimado || 0,
+                recomendacao: 'AVALIAR',
+                status: 'perguntas_geradas'
+              });
+            console.log('💾 Novo registro de análise criado com perguntas');
+          }
+        } catch (saveErr) {
+          console.warn('⚠️ Erro ao persistir perguntas (não crítico):', saveErr);
+        }
+        
         setPerguntas(result.data.perguntas);
         return;
       }
@@ -356,7 +552,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         ? vagaAtual.requisitos_obrigatorios.slice(0, 3).join(', ')
         : vagaAtual.requisitos_obrigatorios || 'os requisitos';
 
-      setPerguntas([{
+      const perguntasFallback = [{
         categoria: `Validação Técnica - ${vagaAtual.titulo}`,
         icone: '💻',
         perguntas: [
@@ -379,7 +575,44 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             red_flags: ['Não sabe explicar decisões', 'Respostas genéricas', 'Confusão conceitual']
           }
         ]
-      }]);
+      }];
+      
+      // 🆕 v2.8: Salvar perguntas de fallback também
+      try {
+        const { data: existing } = await supabase
+          .from('analise_adequacao')
+          .select('id')
+          .eq('candidatura_id', parseInt(candidaturaAtual.id))
+          .limit(1)
+          .single();
+        
+        if (existing?.id) {
+          await supabase
+            .from('analise_adequacao')
+            .update({
+              perguntas_entrevista: perguntasFallback,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', existing.id);
+        } else {
+          await supabase
+            .from('analise_adequacao')
+            .insert({
+              candidatura_id: parseInt(candidaturaAtual.id),
+              pessoa_id: candidaturaAtual.pessoa_id || null,
+              vaga_id: parseInt(candidaturaAtual.vaga_id),
+              perguntas_entrevista: perguntasFallback,
+              score_geral: 0,
+              recomendacao: 'AVALIAR',
+              status: 'perguntas_fallback'
+            });
+        }
+        console.log('💾 Perguntas fallback salvas no Supabase');
+      } catch (e) {
+        console.warn('⚠️ Erro ao salvar fallback:', e);
+      }
+      
+      setPerguntas(perguntasFallback);
     }
   };
 
@@ -817,11 +1050,26 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
 
       {/* Perguntas */}
       <div>
-        <h3 className="font-semibold text-gray-800 flex items-center gap-2 mb-4">
-          <MessageSquare size={20} className="text-purple-600" />
-          Perguntas para Entrevista
-          {loadingPerguntas && <Loader2 size={16} className="animate-spin text-gray-400" />}
-        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-gray-800 flex items-center gap-2">
+            <MessageSquare size={20} className="text-purple-600" />
+            Perguntas para Entrevista
+            {loadingPerguntas && <Loader2 size={16} className="animate-spin text-gray-400" />}
+          </h3>
+          
+          {/* 🆕 Botão Baixar PDF */}
+          {perguntas.length > 0 && (
+            <button
+              onClick={gerarPDFPerguntas}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-orange-100 text-orange-700 
+                         rounded-lg hover:bg-orange-200 transition-colors"
+              title="Baixar roteiro de perguntas em PDF"
+            >
+              <FileDown size={16} />
+              Baixar PDF
+            </button>
+          )}
+        </div>
 
         {perguntas.length === 0 && !loadingPerguntas ? (
           <p className="text-gray-500 text-center py-8">
