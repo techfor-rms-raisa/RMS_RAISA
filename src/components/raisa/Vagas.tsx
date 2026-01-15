@@ -364,7 +364,6 @@ const Vagas: React.FC<VagasProps> = ({
             } catch (err) {
                 console.error('Erro ao buscar dados de candidaturas:', err);
             }
-            }
         };
         
         buscarDadosCandidaturas();
