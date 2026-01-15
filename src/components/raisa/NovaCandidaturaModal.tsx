@@ -11,6 +11,8 @@
  * - 🆕 v57.1: "Minhas Vagas" agora considera candidaturas onde o analista está associado
  * - 🔧 v57.2: Corrigida query - removido criado_por, adicionado logs de debug
  * - 🔧 v57.4: Corrigido filtro "Minhas Pessoas" - usar id_analista_rs em vez de campos inexistentes
+ * - 🔧 v57.5: CORRIGIDO busca de Minhas Vagas - agora inclui tabela vaga_analista_distribuicao
+ * - 🆕 v57.5: Toggle "Incluir Sem Match" para candidatos sem skills cadastradas
  * 
  * Data: 15/01/2026
  */
@@ -104,6 +106,9 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   const [paginaAtual, setPaginaAtual] = useState(1);
   const [buscaTexto, setBuscaTexto] = useState('');
 
+  // 🆕 v57.5: Toggle para incluir candidatos sem match de skills
+  const [incluirSemMatch, setIncluirSemMatch] = useState(false);
+
   // Vaga selecionada
   const vagaSelecionada = vagas.find(v => String(v.id) === String(vagaSelecionadaId));
 
@@ -133,6 +138,7 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   }, [vagas, filtroVagaEscopo, minhasVagasIds]);
 
   // Matches filtrados por escopo de pessoa + score + busca texto
+  // 🔧 v57.5: CORRIGIDO para incluir candidatos sem skills quando toggle ativo
   const matchesFiltrados = useMemo(() => {
     let filtered = matches.filter(m => m.score_total >= filtroScoreMin);
     
@@ -157,7 +163,48 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       });
       
       if (minhasPessoasIds.size > 0) {
+        // Filtrar matches existentes
         filtered = filtered.filter(m => minhasPessoasIds.has(Number(m.pessoa_id)));
+        
+        // 🆕 v57.5: Se toggle "Incluir Sem Match" está ativo, adicionar candidatos do analista
+        // que não estão nos matches (porque não têm skills ou skills não bateram)
+        if (incluirSemMatch) {
+          const idsJaNoMatch = new Set(filtered.map(m => m.pessoa_id));
+          
+          // Buscar candidatos do analista que NÃO estão nos matches
+          const candidatosSemMatch = pessoas
+            .filter((p: any) => {
+              const analistaId = p.id_analista_rs;
+              return analistaId && 
+                     Number(analistaId) === Number(currentUserId) && 
+                     !idsJaNoMatch.has(Number(p.id));
+            })
+            .map((p: any) => ({
+              pessoa_id: Number(p.id),
+              nome: p.nome || 'Sem nome',
+              email: p.email || '',
+              telefone: p.telefone || '',
+              titulo_profissional: p.titulo_profissional || 'Não informado',
+              senioridade: p.senioridade || 'Não informado',
+              disponibilidade: p.disponibilidade || 'Não informado',
+              modalidade_preferida: p.modalidade_preferida || 'Não informado',
+              pretensao_salarial: p.pretensao_salarial || 0,
+              score_total: 0, // Sem match = score 0
+              score_skills: 0,
+              score_experiencia: 0,
+              score_senioridade: 0,
+              skills_match: [] as string[],
+              skills_faltantes: [] as string[],
+              skills_extras: [] as string[],
+              justificativa_ia: '⚠️ Candidato sem skills cadastradas ou sem match com a vaga',
+              status: 'novo' as const,
+              top_skills: [] as string[],
+              anos_experiencia_total: 0
+            }));
+          
+          console.log('🆕 Candidatos sem match adicionados:', candidatosSemMatch.length);
+          filtered = [...filtered, ...candidatosSemMatch];
+        }
       }
     }
     
@@ -173,7 +220,7 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     }
     
     return filtered;
-  }, [matches, filtroScoreMin, filtroPessoaEscopo, pessoas, currentUserId, buscaTexto]);
+  }, [matches, filtroScoreMin, filtroPessoaEscopo, pessoas, currentUserId, buscaTexto, incluirSemMatch]);
 
   // 🆕 Paginação
   const totalPaginas = Math.ceil(matchesFiltrados.length / ITEMS_PER_PAGE);
@@ -186,7 +233,8 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   // EFFECTS
   // ============================================
 
-  // 🆕 v57.2: Carregar IDs das vagas onde o analista está associado
+  // 🔧 v57.5: Carregar IDs das vagas onde o analista está associado
+  // CORRIGIDO: Agora busca também na tabela vaga_analista_distribuicao
   useEffect(() => {
     const carregarMinhasVagas = async () => {
       if (!isOpen) {
@@ -201,37 +249,54 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       setLoadingMinhasVagas(true);
       try {
         const userId = Number(currentUserId);
-        console.log('🔍 Buscando vagas para analista ID:', userId, 'tipo:', typeof userId);
-        
-        // Buscar TODAS as candidaturas para debug
-        const { data: todasCandidaturas, error: errorTodas } = await supabase
-          .from('candidaturas')
-          .select('id, vaga_id, analista_id, candidato_nome');
-        
-        console.log('📋 TODAS as candidaturas:', todasCandidaturas?.length || 0);
-        
-        if (todasCandidaturas && todasCandidaturas.length > 0) {
-          // Verificar os analista_id únicos
-          const analistaIds = [...new Set(todasCandidaturas.map(c => c.analista_id))];
-          console.log('👥 Analista IDs únicos nas candidaturas:', analistaIds);
-          
-          // Filtrar manualmente pelo analista_id
-          const minhasCandidaturas = todasCandidaturas.filter(c => 
-            Number(c.analista_id) === userId
-          );
-          console.log('📌 Candidaturas do analista', userId, ':', minhasCandidaturas.length, minhasCandidaturas);
-        }
+        console.log('🔍 Buscando vagas para analista ID:', userId);
         
         const vagasIds = new Set<string>();
         
-        // Adicionar vagas das candidaturas filtradas
-        (todasCandidaturas || []).forEach((c: any) => {
-          if (c.vaga_id && Number(c.analista_id) === userId) {
-            vagasIds.add(String(c.vaga_id));
-          }
-        });
+        // ============================================
+        // 🆕 FONTE 1: Tabela vaga_analista_distribuicao (NOVA!)
+        // Esta é a fonte PRINCIPAL de associação analista-vaga
+        // ============================================
+        const { data: distribuicoes, error: errorDistribuicao } = await supabase
+          .from('vaga_analista_distribuicao')
+          .select('vaga_id')
+          .eq('analista_id', userId)
+          .eq('ativo', true);
         
-        // Adicionar vagas onde o analista é responsável direto (do array de vagas)
+        if (errorDistribuicao) {
+          console.warn('⚠️ Erro ao buscar distribuições:', errorDistribuicao.message);
+        } else {
+          console.log('📋 Vagas da distribuição:', distribuicoes?.length || 0);
+          (distribuicoes || []).forEach((d: any) => {
+            if (d.vaga_id) {
+              vagasIds.add(String(d.vaga_id));
+            }
+          });
+        }
+        
+        // ============================================
+        // FONTE 2: Candidaturas onde o analista está associado
+        // ============================================
+        const { data: candidaturas, error: errorCandidaturas } = await supabase
+          .from('candidaturas')
+          .select('vaga_id, analista_id')
+          .eq('analista_id', userId);
+        
+        if (errorCandidaturas) {
+          console.warn('⚠️ Erro ao buscar candidaturas:', errorCandidaturas.message);
+        } else {
+          console.log('📋 Candidaturas do analista:', candidaturas?.length || 0);
+          (candidaturas || []).forEach((c: any) => {
+            if (c.vaga_id) {
+              vagasIds.add(String(c.vaga_id));
+            }
+          });
+        }
+        
+        // ============================================
+        // FONTE 3: Vagas onde o analista é responsável direto
+        // (campo analista_id na própria tabela vagas)
+        // ============================================
         vagas.forEach((v: any) => {
           if (Number(v.analista_id) === userId || 
               Number(v.responsavel_id) === userId) {
@@ -239,8 +304,9 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
           }
         });
         
-        console.log('✅ Minhas Vagas IDs final:', Array.from(vagasIds), 'Total:', vagasIds.size);
+        console.log('✅ Total Minhas Vagas IDs:', vagasIds.size, Array.from(vagasIds));
         setMinhasVagasIds(vagasIds);
+        
       } catch (err) {
         console.error('❌ Erro ao carregar minhas vagas:', err);
       } finally {
@@ -272,13 +338,14 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       setPaginaAtual(1);
       setBuscaTexto('');
       setMatches([]);
+      setIncluirSemMatch(false);
     }
   }, [isOpen]);
 
   // Reset página ao mudar filtros
   useEffect(() => {
     setPaginaAtual(1);
-  }, [filtroScoreMin, filtroPessoaEscopo, buscaTexto]);
+  }, [filtroScoreMin, filtroPessoaEscopo, buscaTexto, incluirSemMatch]);
 
   // ============================================
   // HANDLERS
@@ -331,55 +398,45 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       );
       
       if (candidatura) {
-        const tipoMsg = origem === 'indicacao_cliente' ? '📋 INDICAÇÃO' : '🔍 AQUISIÇÃO';
-        alert(`✅ Candidatura criada com sucesso!\n${tipoMsg}\nCandidato: ${candidatoSelecionado.nome}\nVaga: ${vagaSelecionada.titulo}\n\n📤 Status: Enviado ao Cliente`);
+        const tipoMsg = origem === 'indicacao_cliente' ? '(Indicação)' : '(Aquisição)';
+        alert(`✅ Candidatura criada com sucesso! ${tipoMsg}\n\nStatus: Enviado ao Cliente`);
         
+        // Callback para atualizar lista de candidaturas
         if (onCandidaturaCriada) {
           onCandidaturaCriada(parseInt(candidatura.id));
         }
         
-        // Reset e fechar
-        setCandidatoSelecionado(null);
-        setMostrarFormIndicacao(false);
+        // Fechar modal
         handleFechar();
       }
-    } catch (error: any) {
-      alert(`❌ Erro ao criar candidatura: ${error.message}`);
+    } catch (err: any) {
+      alert(`❌ Erro ao criar candidatura: ${err.message}`);
     } finally {
       setCriandoCandidatura(null);
     }
   };
 
-  // 🆕 Função para criar candidatura com status "enviado_cliente"
+  // 🆕 Criar candidatura com status "enviado_cliente" automaticamente
   const criarCandidaturaComStatusEnviado = async (
     pessoaId: number,
     vagaId: string,
     analistaId: number,
     dadosIndicacao: any
   ) => {
-    // Usar o hook mas sobrescrever o status
+    // Primeiro, criar a candidatura normal
     const candidatura = await criarCandidaturaDoMatch(
       pessoaId,
       vagaId,
       analistaId,
-      {
-        ...dadosIndicacao,
-        // 🆕 Forçar status "enviado_cliente"
-        origem: dadosIndicacao.origem
-      }
+      dadosIndicacao
     );
 
-    // Se criou com sucesso, atualizar status para "enviado_cliente"
+    // Se criou com sucesso, atualizar para status "enviado_cliente"
     if (candidatura) {
       try {
-        const { supabase } = await import('@/config/supabase');
         await supabase
           .from('candidaturas')
-          .update({ 
-            status: 'enviado_cliente',
-            enviado_cliente_em: new Date().toISOString(),
-            enviado_cliente_por: analistaId
-          })
+          .update({ status: 'enviado_cliente' })
           .eq('id', candidatura.id);
         
         console.log(`✅ Status atualizado para "enviado_cliente" - Candidatura #${candidatura.id}`);
@@ -436,173 +493,120 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[95vh] overflow-hidden flex flex-col">
+      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
         
         {/* ============================================ */}
         {/* HEADER */}
         {/* ============================================ */}
-        <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-5">
-          <div className="flex justify-between items-center">
-            <div>
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <UserPlus className="w-6 h-6" />
-                Nova Candidatura
-              </h2>
-              <p className="text-orange-100 text-sm mt-1">
-                Selecione um candidato do banco de talentos para criar a candidatura
-              </p>
-            </div>
-            <button 
-              onClick={handleFechar}
-              className="text-white hover:text-orange-200 p-2 hover:bg-white/10 rounded-lg transition"
-            >
-              <X className="w-6 h-6" />
-            </button>
+        <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-5 py-4 rounded-t-2xl flex justify-between items-center">
+          <div>
+            <h2 className="text-xl font-bold flex items-center gap-2">
+              <UserPlus className="w-6 h-6" />
+              Nova Candidatura
+            </h2>
+            <p className="text-orange-100 text-sm mt-0.5">
+              {currentUserName && `Analista: ${currentUserName}`}
+            </p>
           </div>
+          <button
+            onClick={handleFechar}
+            className="text-white hover:bg-white/20 rounded-full p-1.5 transition"
+          >
+            <X className="w-6 h-6" />
+          </button>
         </div>
-
-        {/* ============================================ */}
-        {/* ABAS */}
-        {/* ============================================ */}
-        {!mostrarFormIndicacao && (
-          <div className="bg-gray-50 px-4 py-3 flex gap-2 border-b">
-            <button 
-              onClick={() => setAbaAtiva('banco')}
-              className={`px-5 py-2.5 rounded-lg font-medium transition-all flex items-center gap-2 text-sm ${
-                abaAtiva === 'banco' 
-                  ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-md' 
-                  : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-              }`}
-            >
-              <Search className="w-4 h-4" /> Banco de Talentos
-            </button>
-            <button 
-              onClick={() => setAbaAtiva('sugestoes')}
-              className={`px-5 py-2.5 rounded-lg font-medium transition-all flex items-center gap-2 text-sm ${
-                abaAtiva === 'sugestoes' 
-                  ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-md' 
-                  : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
-              }`}
-            >
-              <Sparkles className="w-4 h-4" /> Sugestões IA
-            </button>
-          </div>
-        )}
 
         {/* ============================================ */}
         {/* CONTEÚDO */}
         {/* ============================================ */}
         <div className="flex-1 overflow-y-auto p-5">
-          
-          {/* FORMULÁRIO DE INDICAÇÃO (quando candidato selecionado) */}
+
+          {/* CANDIDATO SELECIONADO - FORMULÁRIO DE INDICAÇÃO */}
           {mostrarFormIndicacao && candidatoSelecionado && (
             <div className="space-y-5">
-              {/* Card do Candidato Selecionado */}
-              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-5">
+              {/* Card do candidato selecionado */}
+              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-5">
                 <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 bg-blue-500 rounded-full flex items-center justify-center text-white text-xl font-bold">
-                    {candidatoSelecionado.nome.charAt(0).toUpperCase()}
+                  <div className="w-14 h-14 bg-gradient-to-r from-green-400 to-emerald-400 rounded-full flex items-center justify-center">
+                    <User className="w-7 h-7 text-white" />
                   </div>
                   <div className="flex-1">
-                    <h3 className="text-lg font-bold text-gray-800">{candidatoSelecionado.nome}</h3>
-                    <p className="text-gray-600 text-sm">{candidatoSelecionado.titulo_profissional} | {candidatoSelecionado.senioridade}</p>
-                    <div className="flex items-center gap-2 mt-2">
-                      <span className={`px-3 py-1 rounded-full text-sm font-semibold ${
-                        candidatoSelecionado.score_total >= 80 ? 'bg-green-100 text-green-700' :
-                        candidatoSelecionado.score_total >= 60 ? 'bg-yellow-100 text-yellow-700' :
-                        'bg-orange-100 text-orange-700'
-                      }`}>
-                        Score: {candidatoSelecionado.score_total}%
-                      </span>
-                      <span className="text-sm text-gray-500">
-                        para {vagaSelecionada?.titulo}
-                      </span>
+                    <h3 className="font-semibold text-gray-800 text-lg">{candidatoSelecionado.nome}</h3>
+                    <p className="text-green-700">{candidatoSelecionado.titulo_profissional}</p>
+                    <p className="text-gray-500 text-sm">{candidatoSelecionado.email}</p>
+                  </div>
+                  <div className="text-right">
+                    <div className={`text-2xl font-bold ${
+                      candidatoSelecionado.score_total >= 70 ? 'text-green-600' :
+                      candidatoSelecionado.score_total >= 50 ? 'text-yellow-600' :
+                      'text-gray-500'
+                    }`}>
+                      {candidatoSelecionado.score_total > 0 ? `${candidatoSelecionado.score_total}%` : 'N/A'}
                     </div>
+                    <div className="text-xs text-gray-500">Score</div>
                   </div>
                 </div>
               </div>
 
-              {/* Aviso de Status Automático */}
-              <div className="bg-purple-50 border border-purple-200 rounded-xl p-4">
+              {/* Vaga selecionada */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
-                    📤
-                  </div>
+                  <Briefcase className="w-5 h-5 text-blue-600" />
                   <div>
-                    <p className="font-semibold text-purple-800">Status Automático</p>
-                    <p className="text-sm text-purple-600">
-                      A candidatura será criada com status <strong>"Enviado ao Cliente"</strong>
-                    </p>
+                    <span className="font-medium text-blue-900">{vagaSelecionada?.titulo}</span>
+                    <span className="text-blue-600 ml-2">• {vagaSelecionada?.senioridade}</span>
                   </div>
                 </div>
               </div>
 
-              {/* ORIGEM DO CANDIDATO */}
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
-                <label className="block text-sm font-semibold text-gray-700 mb-3">
-                  🎯 Origem do Candidato
-                </label>
-                <div className="flex flex-wrap gap-3">
-                  <label className={`flex items-center px-4 py-2.5 rounded-xl cursor-pointer transition-all ${
-                    origem === 'aquisicao' 
-                      ? 'bg-blue-100 border-2 border-blue-500 text-blue-700' 
-                      : 'bg-white border-2 border-gray-200 text-gray-600 hover:border-gray-300'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="origem"
-                      value="aquisicao"
-                      checked={origem === 'aquisicao'}
-                      onChange={() => setOrigem('aquisicao')}
-                      className="sr-only"
-                    />
-                    <Search className="w-4 h-4 mr-2" />
-                    <div>
-                      <span className="font-medium text-sm">Aquisição Própria</span>
-                      <p className="text-xs opacity-75">Candidato encontrado pelo analista</p>
-                    </div>
-                  </label>
-                  <label className={`flex items-center px-4 py-2.5 rounded-xl cursor-pointer transition-all ${
-                    origem === 'indicacao_cliente' 
-                      ? 'bg-amber-100 border-2 border-amber-500 text-amber-700' 
-                      : 'bg-white border-2 border-gray-200 text-gray-600 hover:border-gray-300'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="origem"
-                      value="indicacao_cliente"
-                      checked={origem === 'indicacao_cliente'}
-                      onChange={() => setOrigem('indicacao_cliente')}
-                      className="sr-only"
-                    />
-                    <Building2 className="w-4 h-4 mr-2" />
-                    <div>
-                      <span className="font-medium text-sm">Indicação do Cliente</span>
-                      <p className="text-xs opacity-75">Candidato indicado pelo cliente</p>
-                    </div>
-                  </label>
+              {/* Formulário de origem */}
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Origem da Candidatura</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="origem"
+                        checked={origem === 'aquisicao'}
+                        onChange={() => setOrigem('aquisicao')}
+                        className="w-4 h-4 text-orange-500"
+                      />
+                      <span className="text-gray-700">Aquisição (Banco de Talentos)</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="origem"
+                        checked={origem === 'indicacao_cliente'}
+                        onChange={() => setOrigem('indicacao_cliente')}
+                        className="w-4 h-4 text-amber-500"
+                      />
+                      <span className="text-gray-700">Indicação do Cliente</span>
+                    </label>
+                  </div>
                 </div>
 
-                {/* Campos de Indicação */}
+                {/* Campos de indicação (só aparecem se for indicação) */}
                 {origem === 'indicacao_cliente' && (
-                  <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                    <h4 className="text-sm font-semibold text-amber-800 mb-3 flex items-center gap-2">
-                      <User className="w-4 h-4" />
+                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-4">
+                    <h4 className="font-medium text-amber-800 flex items-center gap-2">
+                      <Award className="w-5 h-5" />
                       Dados da Indicação
                     </h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-xs text-gray-600 mb-1">Indicado por (nome)</label>
+                        <label className="block text-sm text-gray-600 mb-1">Nome de quem indicou</label>
                         <input
                           type="text"
                           value={indicadoPorNome}
                           onChange={e => setIndicadoPorNome(e.target.value)}
-                          placeholder="Nome de quem indicou"
+                          placeholder="Ex: João Silva"
                           className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-200"
                         />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-600 mb-1">Cargo de quem indicou</label>
+                        <label className="block text-sm text-gray-600 mb-1">Cargo de quem indicou</label>
                         <input
                           type="text"
                           value={indicadoPorCargo}
@@ -612,8 +616,8 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                         />
                       </div>
                     </div>
-                    <div className="mt-3">
-                      <label className="block text-xs text-gray-600 mb-1">Observações da indicação</label>
+                    <div>
+                      <label className="block text-sm text-gray-600 mb-1">Observações da indicação</label>
                       <textarea
                         value={indicacaoObservacoes}
                         onChange={e => setIndicacaoObservacoes(e.target.value)}
@@ -703,9 +707,11 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                         className="w-full border-2 border-gray-200 rounded-xl p-3 pl-10 focus:border-orange-500 focus:ring-2 focus:ring-orange-200 text-sm"
                       >
                         <option value="">
-                          {vagasFiltradas.length === 0 
-                            ? `Nenhuma vaga ${filtroVagaEscopo === 'minhas' ? 'associada a você' : 'disponível'}...`
-                            : 'Selecione uma vaga para buscar candidatos...'}
+                          {loadingMinhasVagas 
+                            ? 'Carregando vagas...'
+                            : vagasFiltradas.length === 0 
+                              ? `Nenhuma vaga ${filtroVagaEscopo === 'minhas' ? 'associada a você' : 'disponível'}...`
+                              : 'Selecione uma vaga para buscar candidatos...'}
                         </option>
                         {vagasFiltradas.map(v => (
                           <option key={v.id} value={String(v.id)}>
@@ -761,67 +767,89 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                             )}
                           </button>
 
-                          {/* Score Mínimo */}
-                          <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border text-sm">
-                            <Star className="w-4 h-4 text-yellow-500" />
-                            <span className="text-gray-600">Score mín:</span>
-                            <input
-                              type="number"
+                          {/* Filtro de Score Mínimo */}
+                          <div className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-gray-200">
+                            <Filter className="w-4 h-4 text-gray-400" />
+                            <span className="text-sm text-gray-600">Score mín:</span>
+                            <select
                               value={filtroScoreMin}
-                              onChange={e => setFiltroScoreMin(parseInt(e.target.value) || 0)}
-                              min={0}
-                              max={100}
-                              className="border-none focus:ring-0 w-12 text-center font-medium"
-                            />
-                            <span className="text-gray-400">%</span>
+                              onChange={e => setFiltroScoreMin(Number(e.target.value))}
+                              className="border-0 bg-transparent text-sm font-medium focus:ring-0"
+                            >
+                              <option value={0}>Todos</option>
+                              <option value={30}>30%+</option>
+                              <option value={50}>50%+</option>
+                              <option value={70}>70%+</option>
+                            </select>
                           </div>
 
-                          {/* Toggle Meus Candidatos / Todas */}
-                          {buscaBancoRealizada && (
-                            <div className="flex items-center gap-1 bg-white rounded-lg border p-1">
-                              <button
-                                onClick={() => setFiltroPessoaEscopo('minhas')}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                                  filtroPessoaEscopo === 'minhas'
-                                    ? 'bg-orange-100 text-orange-600'
-                                    : 'text-gray-500 hover:text-gray-700'
-                                }`}
-                              >
-                                <User className="w-3.5 h-3.5" />
-                                Meus Candidatos
-                              </button>
-                              <button
-                                onClick={() => setFiltroPessoaEscopo('todas')}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                                  filtroPessoaEscopo === 'todas'
-                                    ? 'bg-orange-100 text-orange-600'
-                                    : 'text-gray-500 hover:text-gray-700'
-                                }`}
-                              >
-                                <Users className="w-3.5 h-3.5" />
-                                Todas
-                              </button>
-                            </div>
+                          {/* Filtro Escopo de Pessoas */}
+                          <div className="flex items-center gap-1 bg-white rounded-lg px-2 py-1.5 border border-gray-200">
+                            <button
+                              onClick={() => setFiltroPessoaEscopo('minhas')}
+                              className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                                filtroPessoaEscopo === 'minhas'
+                                  ? 'bg-orange-100 text-orange-700'
+                                  : 'text-gray-500 hover:bg-gray-100'
+                              }`}
+                            >
+                              Meus Candidatos
+                            </button>
+                            <button
+                              onClick={() => setFiltroPessoaEscopo('todas')}
+                              className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
+                                filtroPessoaEscopo === 'todas'
+                                  ? 'bg-orange-100 text-orange-700'
+                                  : 'text-gray-500 hover:bg-gray-100'
+                              }`}
+                            >
+                              Todos
+                            </button>
+                          </div>
+
+                          {/* 🆕 v57.5: Toggle Incluir Sem Match */}
+                          {filtroPessoaEscopo === 'minhas' && buscaBancoRealizada && (
+                            <button
+                              onClick={() => setIncluirSemMatch(!incluirSemMatch)}
+                              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                                incluirSemMatch
+                                  ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                              }`}
+                              title="Incluir candidatos do seu banco sem match de skills"
+                            >
+                              {incluirSemMatch ? (
+                                <ToggleRight className="w-4 h-4" />
+                              ) : (
+                                <ToggleLeft className="w-4 h-4" />
+                              )}
+                              Incluir Sem Match
+                            </button>
                           )}
                         </div>
 
-                        {/* Linha 2: Busca por texto (aparece após buscar) */}
-                        {buscaBancoRealizada && matches.length > 0 && (
-                          <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                            <input
-                              type="text"
-                              value={buscaTexto}
-                              onChange={e => setBuscaTexto(e.target.value)}
-                              placeholder="Filtrar por nome, cargo ou skill..."
-                              className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-200"
-                            />
-                          </div>
-                        )}
+                        {/* Linha 2: Busca por texto */}
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                          <input
+                            type="text"
+                            placeholder="Buscar por nome, cargo, email ou skill..."
+                            value={buscaTexto}
+                            onChange={e => setBuscaTexto(e.target.value)}
+                            className="w-full border border-gray-200 rounded-lg pl-10 pr-4 py-2 text-sm focus:border-orange-400 focus:ring-1 focus:ring-orange-200"
+                          />
+                        </div>
                       </div>
 
+                      {/* Erro de busca */}
+                      {errorMatches && (
+                        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl">
+                          ❌ {errorMatches}
+                        </div>
+                      )}
+
                       {/* Loading */}
-                      {loadingMatches && !buscaBancoRealizada && (
+                      {loadingMatches && (
                         <div className="space-y-3">
                           <SkeletonCard />
                           <SkeletonCard />
@@ -829,22 +857,15 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                         </div>
                       )}
 
-                      {/* Erro */}
-                      {errorMatches && (
-                        <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-                          <p className="text-red-800 text-sm">❌ {errorMatches}</p>
-                        </div>
-                      )}
-
-                      {/* Sem resultados */}
-                      {buscaBancoRealizada && matchesFiltrados.length === 0 && (
+                      {/* Nenhum resultado */}
+                      {!loadingMatches && buscaBancoRealizada && matchesFiltrados.length === 0 && (
                         <div className="text-center py-10 bg-gray-50 rounded-xl">
-                          <span className="text-5xl">🔍</span>
-                          <p className="mt-3 text-gray-600 text-base">Nenhum candidato encontrado</p>
+                          <Users className="w-14 h-14 text-gray-300 mx-auto mb-3" />
+                          <p className="text-gray-500 text-base font-medium">Nenhum candidato encontrado</p>
                           <p className="text-sm text-gray-400 mt-1">
-                            {matches.length > 0 
-                              ? 'Tente ajustar os filtros de score ou escopo'
-                              : 'Adicione mais pessoas ao banco de talentos'}
+                            {filtroPessoaEscopo === 'minhas' && !incluirSemMatch
+                              ? 'Tente ativar "Incluir Sem Match" ou ajustar os filtros'
+                              : 'Tente ajustar os filtros de score ou escopo'}
                           </p>
                         </div>
                       )}
@@ -858,6 +879,7 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                               <Users className="w-4 h-4" />
                               {matchesFiltrados.length} candidato(s) encontrado(s)
                               {filtroPessoaEscopo === 'minhas' && ' (filtrado)'}
+                              {incluirSemMatch && ' + sem match'}
                             </span>
                             <span>
                               Página {paginaAtual} de {totalPaginas}
@@ -875,7 +897,9 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                                   className={`border-2 rounded-xl p-4 hover:shadow-md transition-all bg-white cursor-pointer ${
                                     match.status === 'candidatura_criada' 
                                       ? 'opacity-60 border-gray-200 cursor-not-allowed' 
-                                      : 'border-gray-100 hover:border-orange-300'
+                                      : match.score_total === 0
+                                        ? 'border-amber-200 bg-amber-50/30'
+                                        : 'border-gray-100 hover:border-orange-300'
                                   }`}
                                   onClick={() => match.status !== 'candidatura_criada' && handleSelecionarCandidato(match)}
                                 >
@@ -883,60 +907,55 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                                     {/* Ranking + Score */}
                                     <div className="flex items-center gap-3 min-w-[100px]">
                                       <div className={`text-xl font-bold ${
+                                        match.score_total === 0 ? 'text-amber-500' :
                                         rankingGlobal === 0 ? 'text-yellow-500' :
                                         rankingGlobal === 1 ? 'text-gray-400' :
                                         rankingGlobal === 2 ? 'text-orange-400' :
                                         'text-gray-400'
                                       }`}>
-                                        {rankingGlobal === 0 ? '🥇' : rankingGlobal === 1 ? '🥈' : rankingGlobal === 2 ? '🥉' : `#${rankingGlobal + 1}`}
+                                        {match.score_total === 0 ? '⚠️' :
+                                         rankingGlobal === 0 ? '🥇' : 
+                                         rankingGlobal === 1 ? '🥈' : 
+                                         rankingGlobal === 2 ? '🥉' : 
+                                         `#${rankingGlobal + 1}`}
                                       </div>
-                                      <div className={`text-xl font-bold px-2.5 py-1 rounded-lg ${
-                                        match.score_total >= 80 ? 'text-green-600 bg-green-50' :
-                                        match.score_total >= 60 ? 'text-yellow-600 bg-yellow-50' :
-                                        match.score_total >= 40 ? 'text-orange-600 bg-orange-50' :
-                                        'text-red-600 bg-red-50'
+                                      <div className={`text-lg font-semibold ${
+                                        match.score_total === 0 ? 'text-amber-500' :
+                                        match.score_total >= 70 ? 'text-green-600' :
+                                        match.score_total >= 50 ? 'text-yellow-600' :
+                                        'text-gray-500'
                                       }`}>
-                                        {match.score_total}%
+                                        {match.score_total === 0 ? 'N/A' : `${match.score_total}%`}
                                       </div>
                                     </div>
 
                                     {/* Info do Candidato */}
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <h4 className="font-bold text-gray-900 truncate">{match.nome}</h4>
-                                        {match.status === 'candidatura_criada' && (
-                                          <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap">
-                                            ✓ Já adicionado
+                                    <div className="flex-1">
+                                      <h4 className="font-semibold text-gray-800">{match.nome}</h4>
+                                      <p className="text-sm text-gray-600">{match.titulo_profissional}</p>
+                                      <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
+                                        <span>{match.senioridade}</span>
+                                        <span>•</span>
+                                        <span>{match.disponibilidade}</span>
+                                        {match.skills_match && match.skills_match.length > 0 && (
+                                          <>
+                                            <span>•</span>
+                                            <span className="text-green-600">
+                                              {match.skills_match.slice(0, 3).join(', ')}
+                                              {match.skills_match.length > 3 && ` +${match.skills_match.length - 3}`}
+                                            </span>
+                                          </>
+                                        )}
+                                        {match.score_total === 0 && (
+                                          <span className="text-amber-600 font-medium">
+                                            Sem skills cadastradas
                                           </span>
                                         )}
                                       </div>
-                                      
-                                      <p className="text-sm text-gray-600 truncate">
-                                        {match.titulo_profissional} | <span className="font-medium">{match.senioridade}</span>
-                                      </p>
-
-                                      {/* Skills */}
-                                      {match.skills_match && match.skills_match.length > 0 && (
-                                        <div className="flex flex-wrap gap-1 mt-2">
-                                          {match.skills_match.slice(0, 5).map((skill, idx) => (
-                                            <span 
-                                              key={idx}
-                                              className="bg-green-50 text-green-700 px-2 py-0.5 rounded text-xs font-medium"
-                                            >
-                                              ✓ {skill}
-                                            </span>
-                                          ))}
-                                          {match.skills_match.length > 5 && (
-                                            <span className="text-xs text-gray-400 px-1">
-                                              +{match.skills_match.length - 5}
-                                            </span>
-                                          )}
-                                        </div>
-                                      )}
                                     </div>
 
-                                    {/* Botão Selecionar */}
-                                    <div className="flex-shrink-0">
+                                    {/* Botão de Seleção */}
+                                    <div>
                                       {match.status === 'candidatura_criada' ? (
                                         <span className="text-gray-400 text-xs">Já adicionado</span>
                                       ) : (
