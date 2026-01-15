@@ -10,8 +10,9 @@
  * - ✅ Skeleton loading
  * - 🆕 v57.1: "Minhas Vagas" agora considera candidaturas onde o analista está associado
  * - 🔧 v57.2: Corrigida query - removido criado_por, adicionado logs de debug
+ * - 🔧 v57.4: Corrigido filtro "Minhas Pessoas" - usar id_analista_rs em vez de campos inexistentes
  * 
- * Data: 14/01/2026
+ * Data: 15/01/2026
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
@@ -136,18 +137,27 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     let filtered = matches.filter(m => m.score_total >= filtroScoreMin);
     
     // Filtro por escopo de pessoa (minhas pessoas)
+    // 🔧 v57.4: Corrigido para usar id_analista_rs (campo correto da tabela pessoas)
     if (filtroPessoaEscopo === 'minhas' && pessoas.length > 0) {
       const minhasPessoasIds = new Set(
         pessoas
-          .filter((p: any) => 
-            p.analista_responsavel_id === currentUserId ||
-            p.criado_por === currentUserId
-          )
-          .map((p: any) => p.id)
+          .filter((p: any) => {
+            // Comparar com id_analista_rs (campo correto)
+            const analistaId = p.id_analista_rs;
+            return analistaId && Number(analistaId) === Number(currentUserId);
+          })
+          .map((p: any) => Number(p.id))
       );
       
+      console.log('🔍 Filtro Minhas Pessoas:', {
+        currentUserId,
+        totalPessoas: pessoas.length,
+        minhasPessoasCount: minhasPessoasIds.size,
+        minhasPessoasIds: Array.from(minhasPessoasIds).slice(0, 10)
+      });
+      
       if (minhasPessoasIds.size > 0) {
-        filtered = filtered.filter(m => minhasPessoasIds.has(m.pessoa_id));
+        filtered = filtered.filter(m => minhasPessoasIds.has(Number(m.pessoa_id)));
       }
     }
     

@@ -7,7 +7,12 @@
  * 🆕 v57.0: PLANO B - Removida validação obrigatória de analista_id
  * O analista será atribuído posteriormente via CRUD do Banco de Talentos
  * 
- * Data: 13/01/2026
+ * 🔧 v57.4: Padronização de skills
+ * - Campo nivel: 'intermediario' (sem acento, minúsculo) - igual ao CVImportIA
+ * - Fallback de inserção individual em caso de erro em lote
+ * - Validação de categorias contra lista
+ * 
+ * Data: 15/01/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -378,23 +383,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('pessoa_id', pessoa_id);
       }
 
-      // Inserir novas skills
-      const skillsData = todasSkills.map(skill => ({
-        pessoa_id,
-        skill_nome: skill,
-        skill_categoria: categorizarSkill(skill),
-        nivel: 'Intermediário',
-        anos_experiencia: 0,
-        certificado: false,
-        criado_em: new Date().toISOString()
-      }));
+      // 🔧 v57.4: Padronização com CVImportIA
+      const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other', 'data', 'outro'];
+      
+      // Inserir novas skills (com validação)
+      const skillsData = todasSkills.map(skill => {
+        const categoria = categorizarSkill(skill);
+        return {
+          pessoa_id,
+          skill_nome: String(skill).trim().substring(0, 100),
+          skill_categoria: categoriasValidas.includes(categoria) ? categoria : 'other',
+          nivel: 'intermediario', // 🔧 Padronizado: sem acento, minúsculo
+          anos_experiencia: 0,
+          certificado: false,
+          criado_em: new Date().toISOString()
+        };
+      });
 
+      // Tentar inserir em lote
       const { error } = await supabase
         .from('pessoa_skills')
         .insert(skillsData);
 
       if (error) {
-        console.warn('Aviso ao salvar skills:', error.message);
+        console.warn('⚠️ Erro ao salvar skills em lote:', error.message);
+        console.log('🔄 Tentando inserir skills individualmente...');
+        
+        // 🔧 v57.4: Fallback - inserir uma a uma (mesmo padrão do CVImportIA)
+        let salvos = 0;
+        for (const skill of skillsData.slice(0, 100)) {
+          const { error: errIndividual } = await supabase.from('pessoa_skills').insert(skill);
+          if (!errIndividual) {
+            salvos++;
+          } else {
+            console.warn(`⚠️ Falha ao salvar skill "${skill.skill_nome}":`, errIndividual.message);
+          }
+        }
+        console.log(`✅ Skills salvas individualmente: ${salvos}/${skillsData.length}`);
       } else {
         console.log(`✅ ${todasSkills.length} skills salvas`);
       }
