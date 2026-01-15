@@ -1,13 +1,14 @@
 /**
  * NovaCandidaturaModal.tsx - Modal de Nova Candidatura
  * 
- * REDESENHADO v3.0:
+ * REDESENHADO v3.1:
  * - ✅ Paginação melhorada com controles intuitivos
  * - ✅ Filtros por Analista (minhas vagas/pessoas vs todas)
  * - ✅ UX aprimorada com cards compactos e responsivos
  * - ✅ Status automático "enviado_cliente" ao criar candidatura
  * - ✅ Busca incremental com debounce
  * - ✅ Skeleton loading
+ * - 🆕 v57.1: "Minhas Vagas" agora considera candidaturas onde o analista está associado
  * 
  * Data: 14/01/2026
  */
@@ -22,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Vaga, Pessoa } from '@/types';
 import { useRaisaCVSearch, CandidatoMatch } from '@/hooks/supabase/useRaisaCVSearch';
+import { supabase } from '@/config/supabase';
 
 // ============================================
 // TIPOS
@@ -69,6 +71,10 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   const [filtroVagaEscopo, setFiltroVagaEscopo] = useState<FiltroEscopo>('minhas');
   const [filtroPessoaEscopo, setFiltroPessoaEscopo] = useState<FiltroEscopo>('minhas');
   
+  // 🆕 v57.1: Estado para armazenar IDs das vagas onde o analista está associado
+  const [minhasVagasIds, setMinhasVagasIds] = useState<Set<string>>(new Set());
+  const [loadingMinhasVagas, setLoadingMinhasVagas] = useState(false);
+  
   // Estados de Origem/Indicação
   const [candidatoSelecionado, setCandidatoSelecionado] = useState<CandidatoMatch | null>(null);
   const [mostrarFormIndicacao, setMostrarFormIndicacao] = useState(false);
@@ -105,21 +111,15 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
 
   // Vagas filtradas por escopo (minhas ou todas)
   const vagasFiltradas = useMemo(() => {
-    const vagasAbertas = vagas.filter(v => v.status === 'aberta');
+    const vagasAbertas = vagas.filter(v => v.status === 'aberta' || v.status === 'em_andamento');
     
+    // 🆕 v57.1: Filtrar usando minhasVagasIds (baseado em candidaturas)
     if (filtroVagaEscopo === 'minhas') {
-      return vagasAbertas.filter(v => {
-        const vagaAny = v as any;
-        return (
-          vagaAny.analista_id === currentUserId ||
-          vagaAny.responsavel_id === currentUserId ||
-          vagaAny.criado_por === currentUserId
-        );
-      });
+      return vagasAbertas.filter(v => minhasVagasIds.has(String(v.id)));
     }
     
     return vagasAbertas;
-  }, [vagas, filtroVagaEscopo, currentUserId]);
+  }, [vagas, filtroVagaEscopo, minhasVagasIds]);
 
   // Matches filtrados por escopo de pessoa + score + busca texto
   const matchesFiltrados = useMemo(() => {
@@ -165,6 +165,49 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   // ============================================
   // EFFECTS
   // ============================================
+
+  // 🆕 v57.1: Carregar IDs das vagas onde o analista está associado
+  useEffect(() => {
+    const carregarMinhasVagas = async () => {
+      if (!isOpen || !currentUserId) return;
+      
+      setLoadingMinhasVagas(true);
+      try {
+        // Buscar candidaturas onde o analista está associado
+        const { data: candidaturas } = await supabase
+          .from('candidaturas')
+          .select('vaga_id, analista_id')
+          .or(`analista_id.eq.${currentUserId},criado_por.eq.${currentUserId}`);
+        
+        const vagasIds = new Set<string>();
+        
+        // Adicionar vagas das candidaturas
+        (candidaturas || []).forEach((c: any) => {
+          if (c.vaga_id) {
+            vagasIds.add(String(c.vaga_id));
+          }
+        });
+        
+        // Adicionar vagas onde o analista é responsável direto
+        vagas.forEach((v: any) => {
+          if (v.analista_id === currentUserId || 
+              v.responsavel_id === currentUserId || 
+              v.criado_por === currentUserId) {
+            vagasIds.add(String(v.id));
+          }
+        });
+        
+        setMinhasVagasIds(vagasIds);
+        console.log(`✅ Minhas Vagas carregadas: ${vagasIds.size} vagas`);
+      } catch (err) {
+        console.error('❌ Erro ao carregar minhas vagas:', err);
+      } finally {
+        setLoadingMinhasVagas(false);
+      }
+    };
+    
+    carregarMinhasVagas();
+  }, [isOpen, currentUserId, vagas]);
 
   // Pré-selecionar vaga se fornecida
   useEffect(() => {

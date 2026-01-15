@@ -1,5 +1,5 @@
 /**
- * Candidaturas.tsx - RMS RAISA v57.0
+ * Candidaturas.tsx - RMS RAISA v57.1
  * Componente de Gestão de Candidaturas (ATUALIZADO)
  * 
  * FLUXO DE STATUS (Processos Internos):
@@ -8,14 +8,14 @@
  * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
  * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
  * 
- * NOVIDADES v57.0:
+ * NOVIDADES v57.1:
+ * - 🔧 CORREÇÃO: "Minhas Vagas" agora considera candidaturas onde o analista está associado
+ *   (não apenas o campo analista_id da vaga)
  * - 🆕 NovaCandidaturaModal REDESENHADO com paginação otimizada
  * - 🆕 Filtros no modal: Minhas Vagas / Todas + Meus Candidatos / Disponíveis / Todos
  * - 🆕 Score de compatibilidade visual por candidato
  * - 🆕 Status automático "Entrevista" ao criar candidatura
  * - 🆕 Abas: Banco de Talentos | Sugestões IA
- * - 🆕 Filtro por Escopo: "Minhas Vagas" / "Todas as Vagas"
- * - 🆕 Filtro por Escopo: "Meus Candidatos" / "Todos os Candidatos"
  * - 🆕 Toggle visual para filtros de escopo por analista
  * - Modal de Detalhes da Candidatura ao clicar na linha
  * - Histórico de mudanças de status
@@ -202,18 +202,23 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         // Aplicar todos os filtros de escopo aos contadores também
         let candidaturasParaContar = safeCandidaturas;
         
-        // 🆕 v56.0: Filtro por escopo de vagas
+        // 🆕 v57.1: Filtro por escopo de vagas - usa minhasVagasIds já calculado
         if (filtroVagaEscopo === 'minhas') {
-            const minhasVagasIds = new Set(
-                safeVagas
-                    .filter((v: any) => 
-                        v.analista_id === currentUserId ||
-                        v.responsavel_id === currentUserId ||
-                        v.criado_por === currentUserId
-                    )
-                    .map(v => String(v.id))
-            );
-            candidaturasParaContar = candidaturasParaContar.filter(c => minhasVagasIds.has(String(c.vaga_id)));
+            // Calcular minhasVagasIds inline para evitar dependência circular
+            const minhasVagasIdsLocal = new Set<string>();
+            safeCandidaturas.forEach((c: any) => {
+                if (c.analista_id === currentUserId || c.criado_por === currentUserId) {
+                    minhasVagasIdsLocal.add(String(c.vaga_id));
+                }
+            });
+            safeVagas.forEach((v: any) => {
+                if (v.analista_id === currentUserId || 
+                    v.responsavel_id === currentUserId || 
+                    v.criado_por === currentUserId) {
+                    minhasVagasIdsLocal.add(String(v.id));
+                }
+            });
+            candidaturasParaContar = candidaturasParaContar.filter(c => minhasVagasIdsLocal.has(String(c.vaga_id)));
         }
         
         // 🆕 v56.0: Filtro por escopo de candidatos
@@ -255,20 +260,34 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     // FILTROS
     // ============================================
 
+    // 🆕 v57.1: Calcular "Minhas Vagas" baseado nas candidaturas onde o analista está associado
+    const minhasVagasIds = useMemo(() => {
+        const vagasIds = new Set<string>();
+        
+        // Vagas onde existem candidaturas com analista_id = currentUserId
+        safeCandidaturas.forEach((c: any) => {
+            if (c.analista_id === currentUserId || c.criado_por === currentUserId) {
+                vagasIds.add(String(c.vaga_id));
+            }
+        });
+        
+        // Também incluir vagas onde o analista é responsável direto
+        safeVagas.forEach((v: any) => {
+            if (v.analista_id === currentUserId || 
+                v.responsavel_id === currentUserId || 
+                v.criado_por === currentUserId) {
+                vagasIds.add(String(v.id));
+            }
+        });
+        
+        return vagasIds;
+    }, [safeCandidaturas, safeVagas, currentUserId]);
+
     const candidaturasFiltradas = useMemo(() => {
         let filtered = safeCandidaturas;
         
-        // 🆕 v56.0: Filtro por escopo de vagas (minhas vagas)
+        // 🆕 v57.1: Filtro por escopo de vagas (minhas vagas) - CORRIGIDO
         if (filtroVagaEscopo === 'minhas') {
-            const minhasVagasIds = new Set(
-                safeVagas
-                    .filter((v: any) => 
-                        v.analista_id === currentUserId ||
-                        v.responsavel_id === currentUserId ||
-                        v.criado_por === currentUserId
-                    )
-                    .map(v => String(v.id))
-            );
             filtered = filtered.filter(c => minhasVagasIds.has(String(c.vaga_id)));
         }
         
@@ -321,18 +340,15 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     }, [filterVaga, filterStatus, filterCliente, searchTerm, safeCandidaturas, safeVagas, filtroVagaEscopo, filtroCandidatoEscopo, currentUserId]);
 
     // ============================================
-    // 🆕 VAGAS FILTRADAS POR CLIENTE E ANALISTA (v57.0)
+    // 🆕 VAGAS FILTRADAS POR CLIENTE E ANALISTA (v57.1)
     // ============================================
     
     const vagasFiltradas = useMemo(() => {
         let filtered = safeVagas;
         
-        // 🆕 v57.0: Filtro por analista (minhas vagas) - usa filtroVagaEscopo
+        // 🆕 v57.1: Filtro por analista - usa minhasVagasIds calculado acima
         if (filtroVagaEscopo === 'minhas') {
-            filtered = filtered.filter(vaga => 
-                vaga.analista_id === currentUserId ||
-                String(vaga.analista_id) === String(currentUserId)
-            );
+            filtered = filtered.filter(vaga => minhasVagasIds.has(String(vaga.id)));
         }
         
         // Filtro por cliente
@@ -345,7 +361,7 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         }
         
         return filtered;
-    }, [safeVagas, filterCliente, filtroVagaEscopo, currentUserId]);
+    }, [safeVagas, filterCliente, filtroVagaEscopo, minhasVagasIds]);
 
     // ============================================
     // HELPERS
