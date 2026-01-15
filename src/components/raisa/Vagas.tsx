@@ -302,7 +302,7 @@ const Vagas: React.FC<VagasProps> = ({
             try {
                 const vagaIds = safeVagas.map(v => v.id);
                 
-                // Buscar candidaturas com analista_id
+                // Buscar candidaturas para contagem
                 const { data, error } = await supabase
                     .from('candidaturas')
                     .select('vaga_id, analista_id')
@@ -310,33 +310,53 @@ const Vagas: React.FC<VagasProps> = ({
                 
                 if (error) throw error;
                 
-                // Contar candidaturas por vaga e coletar analistas únicos
+                // Contar candidaturas por vaga
                 const contagem: Record<string, number> = {};
-                const analistaIdsPorVaga: Record<string, Set<number>> = {};
-                const todosAnalistaIds = new Set<number>();
                 
-                // 🆕 v58.2: Identificar vagas do analista logado
+                // 🆕 v58.2: Identificar vagas do analista logado (via candidaturas que ele gerencia)
                 const vagasDoAnalistaLogado = new Set<string>();
                 
                 (data || []).forEach((c: any) => {
                     const vagaId = String(c.vaga_id);
                     contagem[vagaId] = (contagem[vagaId] || 0) + 1;
                     
-                    if (c.analista_id) {
-                        if (!analistaIdsPorVaga[vagaId]) {
-                            analistaIdsPorVaga[vagaId] = new Set();
-                        }
-                        analistaIdsPorVaga[vagaId].add(c.analista_id);
-                        todosAnalistaIds.add(c.analista_id);
-                        
-                        // 🆕 v58.2: Marcar vaga como "minha" se o analista logado está associado
-                        if (user?.id && c.analista_id === user.id) {
-                            vagasDoAnalistaLogado.add(vagaId);
-                        }
+                    // 🆕 v58.2: Marcar vaga como "minha" se o analista logado está associado
+                    if (user?.id && c.analista_id === user.id) {
+                        vagasDoAnalistaLogado.add(vagaId);
                     }
                 });
                 
                 setContagemCandidaturas(contagem);
+                
+                // 🆕 v58.3: Buscar analistas R&S da tabela vaga_analista_distribuicao (corrigido)
+                const { data: distribuicaoData, error: distError } = await supabase
+                    .from('vaga_analista_distribuicao')
+                    .select('vaga_id, analista_id')
+                    .in('vaga_id', vagaIds)
+                    .eq('ativo', true);
+                
+                if (distError) {
+                    console.error('Erro ao buscar distribuição:', distError);
+                }
+                
+                // Coletar analistas únicos por vaga e identificar "minhas vagas"
+                const analistaIdsPorVaga: Record<string, Set<number>> = {};
+                const todosAnalistaIds = new Set<number>();
+                
+                (distribuicaoData || []).forEach((d: any) => {
+                    const vagaId = String(d.vaga_id);
+                    if (!analistaIdsPorVaga[vagaId]) {
+                        analistaIdsPorVaga[vagaId] = new Set();
+                    }
+                    analistaIdsPorVaga[vagaId].add(d.analista_id);
+                    todosAnalistaIds.add(d.analista_id);
+                    
+                    // Marcar vaga como "minha" se o analista logado está na distribuição
+                    if (user?.id && d.analista_id === user.id) {
+                        vagasDoAnalistaLogado.add(vagaId);
+                    }
+                });
+                
                 setMinhasVagasIds(vagasDoAnalistaLogado);
                 
                 // Buscar nomes dos analistas
@@ -360,6 +380,8 @@ const Vagas: React.FC<VagasProps> = ({
                     });
                     
                     setAnalistasPorVaga(analistasNomesPorVaga);
+                } else {
+                    setAnalistasPorVaga({});
                 }
             } catch (err) {
                 console.error('Erro ao buscar dados de candidaturas:', err);
