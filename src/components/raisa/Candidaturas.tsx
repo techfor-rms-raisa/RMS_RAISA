@@ -1,5 +1,5 @@
 /**
- * Candidaturas.tsx - RMS RAISA v55.0
+ * Candidaturas.tsx - RMS RAISA v57.0
  * Componente de Gestão de Candidaturas (ATUALIZADO)
  * 
  * FLUXO DE STATUS (Processos Internos):
@@ -8,22 +8,26 @@
  * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
  * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
  * 
- * NOVIDADES v55.0:
- * - 🆕 Filtro por Cliente (dropdown)
+ * NOVIDADES v57.0:
+ * - 🆕 NovaCandidaturaModal REDESENHADO com paginação otimizada
+ * - 🆕 Filtros no modal: Minhas Vagas / Todas + Meus Candidatos / Disponíveis / Todos
+ * - 🆕 Score de compatibilidade visual por candidato
+ * - 🆕 Status automático "Entrevista" ao criar candidatura
+ * - 🆕 Abas: Banco de Talentos | Sugestões IA
+ * - 🆕 Filtro por Escopo: "Minhas Vagas" / "Todas as Vagas"
+ * - 🆕 Filtro por Escopo: "Meus Candidatos" / "Todos os Candidatos"
+ * - 🆕 Toggle visual para filtros de escopo por analista
  * - Modal de Detalhes da Candidatura ao clicar na linha
  * - Histórico de mudanças de status
- * - Ações rápidas para mudar status
- * - Motivo obrigatório para reprovação
- * - Fluxo ajustado conforme processos internos
  * 
- * Data: 08/01/2026
+ * Data: 14/01/2026
  */
 
 import React, { useState, useMemo } from 'react';
 import { 
   Plus, Filter, Search, RefreshCw, 
   User, Mail, Calendar, ChevronDown,
-  FileText, Briefcase, Eye, Building2, Download
+  FileText, Briefcase, Eye, Building2, Download, Users
 } from 'lucide-react';
 import { Candidatura, Vaga, Pessoa } from '@/types';
 import NovaCandidaturaModal from './NovaCandidaturaModal';
@@ -82,6 +86,10 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     const [searchTerm, setSearchTerm] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isExportModalOpen, setIsExportModalOpen] = useState(false); // 🆕 Modal de exportação
+    
+    // 🆕 v56.0: Filtros de Escopo por Analista
+    const [filtroVagaEscopo, setFiltroVagaEscopo] = useState<'minhas' | 'todas'>('todas');
+    const [filtroCandidatoEscopo, setFiltroCandidatoEscopo] = useState<'meus' | 'todos'>('todos');
     
     // Estado para modal de detalhes
     const [candidaturaSelecionada, setCandidaturaSelecionada] = useState<Candidatura | null>(null);
@@ -191,8 +199,33 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
     // ============================================
     
     const contadores = useMemo(() => {
-        // Aplicar filtro de cliente aos contadores também
+        // Aplicar todos os filtros de escopo aos contadores também
         let candidaturasParaContar = safeCandidaturas;
+        
+        // 🆕 v56.0: Filtro por escopo de vagas
+        if (filtroVagaEscopo === 'minhas') {
+            const minhasVagasIds = new Set(
+                safeVagas
+                    .filter((v: any) => 
+                        v.analista_id === currentUserId ||
+                        v.responsavel_id === currentUserId ||
+                        v.criado_por === currentUserId
+                    )
+                    .map(v => String(v.id))
+            );
+            candidaturasParaContar = candidaturasParaContar.filter(c => minhasVagasIds.has(String(c.vaga_id)));
+        }
+        
+        // 🆕 v56.0: Filtro por escopo de candidatos
+        if (filtroCandidatoEscopo === 'meus') {
+            candidaturasParaContar = candidaturasParaContar.filter(c => {
+                const candidaturaAny = c as any;
+                return (
+                    candidaturaAny.analista_id === currentUserId ||
+                    candidaturaAny.criado_por === currentUserId
+                );
+            });
+        }
         
         if (filterCliente !== 'all') {
             candidaturasParaContar = candidaturasParaContar.filter(c => {
@@ -216,7 +249,7 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
             ).length,
             total: candidaturasParaContar.length
         };
-    }, [safeCandidaturas, filterCliente, safeVagas]);
+    }, [safeCandidaturas, filterCliente, safeVagas, filtroVagaEscopo, filtroCandidatoEscopo, currentUserId]);
 
     // ============================================
     // FILTROS
@@ -224,6 +257,31 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
 
     const candidaturasFiltradas = useMemo(() => {
         let filtered = safeCandidaturas;
+        
+        // 🆕 v56.0: Filtro por escopo de vagas (minhas vagas)
+        if (filtroVagaEscopo === 'minhas') {
+            const minhasVagasIds = new Set(
+                safeVagas
+                    .filter((v: any) => 
+                        v.analista_id === currentUserId ||
+                        v.responsavel_id === currentUserId ||
+                        v.criado_por === currentUserId
+                    )
+                    .map(v => String(v.id))
+            );
+            filtered = filtered.filter(c => minhasVagasIds.has(String(c.vaga_id)));
+        }
+        
+        // 🆕 v56.0: Filtro por escopo de candidatos (meus candidatos)
+        if (filtroCandidatoEscopo === 'meus') {
+            filtered = filtered.filter(c => {
+                const candidaturaAny = c as any;
+                return (
+                    candidaturaAny.analista_id === currentUserId ||
+                    candidaturaAny.criado_por === currentUserId
+                );
+            });
+        }
         
         // 🆕 Filtro por cliente
         if (filterCliente !== 'all') {
@@ -260,21 +318,34 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         }
         
         return filtered;
-    }, [filterVaga, filterStatus, filterCliente, searchTerm, safeCandidaturas, safeVagas]);
+    }, [filterVaga, filterStatus, filterCliente, searchTerm, safeCandidaturas, safeVagas, filtroVagaEscopo, filtroCandidatoEscopo, currentUserId]);
 
     // ============================================
-    // 🆕 VAGAS FILTRADAS POR CLIENTE
+    // 🆕 VAGAS FILTRADAS POR CLIENTE E ANALISTA (v57.0)
     // ============================================
     
     const vagasFiltradas = useMemo(() => {
-        if (filterCliente === 'all') return safeVagas;
+        let filtered = safeVagas;
         
-        return safeVagas.filter(vaga => {
-            const vagaAny = vaga as any;
-            const clienteId = vagaAny.cliente_id || vagaAny.cliente?.id;
-            return String(clienteId) === filterCliente;
-        });
-    }, [safeVagas, filterCliente]);
+        // 🆕 v57.0: Filtro por analista (minhas vagas) - usa filtroVagaEscopo
+        if (filtroVagaEscopo === 'minhas') {
+            filtered = filtered.filter(vaga => 
+                vaga.analista_id === currentUserId ||
+                String(vaga.analista_id) === String(currentUserId)
+            );
+        }
+        
+        // Filtro por cliente
+        if (filterCliente !== 'all') {
+            filtered = filtered.filter(vaga => {
+                const vagaAny = vaga as any;
+                const clienteId = vagaAny.cliente_id || vagaAny.cliente?.id;
+                return String(clienteId) === filterCliente;
+            });
+        }
+        
+        return filtered;
+    }, [safeVagas, filterCliente, filtroVagaEscopo, currentUserId]);
 
     // ============================================
     // HELPERS
@@ -412,10 +483,12 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         setFilterStatus('all');
         setFilterCliente('all');
         setSearchTerm('');
+        setFiltroVagaEscopo('todas');
+        setFiltroCandidatoEscopo('todos');
     };
 
     // Verificar se há filtros ativos
-    const temFiltrosAtivos = filterVaga !== 'all' || filterStatus !== 'all' || filterCliente !== 'all' || searchTerm;
+    const temFiltrosAtivos = filterVaga !== 'all' || filterStatus !== 'all' || filterCliente !== 'all' || searchTerm || filtroVagaEscopo !== 'todas' || filtroCandidatoEscopo !== 'todos';
 
     // ============================================
     // RENDER
@@ -534,7 +607,75 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
             {/* ============================================ */}
             {/* FILTROS */}
             {/* ============================================ */}
-            <div className="bg-white rounded-xl shadow-sm p-4">
+            <div className="bg-white rounded-xl shadow-sm p-4 space-y-4">
+                {/* 🆕 v56.0: Linha 1 - Toggles de Escopo */}
+                <div className="flex flex-wrap items-center gap-4 pb-3 border-b border-gray-100">
+                    {/* Toggle Minhas Vagas / Todas */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500 font-medium">Vagas:</span>
+                        <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                            <button
+                                onClick={() => setFiltroVagaEscopo('minhas')}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                    filtroVagaEscopo === 'minhas'
+                                        ? 'bg-white text-orange-600 shadow-sm'
+                                        : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                            >
+                                <User className="w-3.5 h-3.5" />
+                                Minhas
+                            </button>
+                            <button
+                                onClick={() => setFiltroVagaEscopo('todas')}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                    filtroVagaEscopo === 'todas'
+                                        ? 'bg-white text-orange-600 shadow-sm'
+                                        : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                            >
+                                <Briefcase className="w-3.5 h-3.5" />
+                                Todas
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Toggle Meus Candidatos / Todos */}
+                    <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500 font-medium">Candidatos:</span>
+                        <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                            <button
+                                onClick={() => setFiltroCandidatoEscopo('meus')}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                    filtroCandidatoEscopo === 'meus'
+                                        ? 'bg-white text-blue-600 shadow-sm'
+                                        : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                            >
+                                <User className="w-3.5 h-3.5" />
+                                Meus
+                            </button>
+                            <button
+                                onClick={() => setFiltroCandidatoEscopo('todos')}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                                    filtroCandidatoEscopo === 'todos'
+                                        ? 'bg-white text-blue-600 shadow-sm'
+                                        : 'text-gray-500 hover:text-gray-700'
+                                }`}
+                            >
+                                <Users className="w-3.5 h-3.5" />
+                                Todos
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Info do analista logado */}
+                    <div className="ml-auto text-xs text-gray-400 flex items-center gap-1">
+                        <User className="w-3 h-3" />
+                        Logado como: <span className="font-medium text-gray-600">{currentUserName}</span>
+                    </div>
+                </div>
+
+                {/* Linha 2 - Filtros existentes */}
                 <div className="flex flex-col md:flex-row gap-4">
                     {/* Busca */}
                     <div className="flex-1 relative">
@@ -775,6 +916,7 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                 vagas={safeVagas}
                 onCandidaturaCriada={handleCandidaturaCriada}
                 currentUserId={currentUserId}
+                currentUserName={currentUserName}
             />
 
             {/* ============================================ */}

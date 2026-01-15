@@ -65,6 +65,7 @@ export const useCandidaturas = () => {
   /**
    * Adiciona uma nova candidatura
    * 🆕 v2.0: Atualiza automaticamente o status da vaga para 'em_andamento'
+   * 🆕 v57.0: Status padrão alterado para 'entrevista' (não mais 'triagem')
    */
   const addCandidatura = async (newCandidatura: Omit<Candidatura, 'id'>) => {
     try {
@@ -79,7 +80,8 @@ export const useCandidaturas = () => {
           candidato_email: newCandidatura.candidato_email,
           candidato_cpf: newCandidatura.candidato_cpf,
           analista_id: newCandidatura.analista_id,
-          status: newCandidatura.status || 'triagem',
+          // 🆕 v57.0: Status padrão agora é 'entrevista'
+          status: newCandidatura.status || 'entrevista',
           curriculo_texto: newCandidatura.curriculo_texto,
           cv_url: newCandidatura.cv_url,
           observacoes: newCandidatura.observacoes,
