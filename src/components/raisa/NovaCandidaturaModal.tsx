@@ -766,7 +766,7 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                             <span className="text-gray-400">%</span>
                           </div>
 
-                          {/* Toggle Minhas Pessoas / Todas */}
+                          {/* Toggle Meus Candidatos / Todas */}
                           {buscaBancoRealizada && (
                             <div className="flex items-center gap-1 bg-white rounded-lg border p-1">
                               <button
@@ -778,7 +778,7 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                                 }`}
                               >
                                 <User className="w-3.5 h-3.5" />
-                                Minhas Pessoas
+                                Meus Candidatos
                               </button>
                               <button
                                 onClick={() => setFiltroPessoaEscopo('todas')}
@@ -954,11 +954,11 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                               <button
                                 onClick={() => irParaPagina(1)}
                                 disabled={paginaAtual === 1}
-                                className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                                className="flex items-center p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                                 title="Primeira página"
                               >
                                 <ChevronLeft className="w-4 h-4" />
-                                <ChevronLeft className="w-4 h-4 -ml-3" />
+                                <ChevronLeft className="w-4 h-4 -ml-2.5" />
                               </button>
                               
                               <button
@@ -1012,11 +1012,11 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                               <button
                                 onClick={() => irParaPagina(totalPaginas)}
                                 disabled={paginaAtual === totalPaginas}
-                                className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
+                                className="flex items-center p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
                                 title="Última página"
                               >
                                 <ChevronRight className="w-4 h-4" />
-                                <ChevronRight className="w-4 h-4 -ml-3" />
+                                <ChevronRight className="w-4 h-4 -ml-2.5" />
                               </button>
                             </div>
                           )}
