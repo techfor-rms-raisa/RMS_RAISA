@@ -37,6 +37,7 @@ export interface SugestaoIA {
   id?: number;
   vaga_id: number;
   ranking_analistas: AnalistaScore[];
+  analistas_ja_atribuidos: AnalistaScore[]; // 🆕 Lista de analistas já atribuídos à vaga
   gerado_em: string;
   modelo_versao: string;
 }
@@ -131,10 +132,11 @@ export function useDistribuicaoIA() {
 
       if (analistasError) throw analistasError;
 
-      // 🆕 Filtrar analistas que já estão atribuídos
+      // 🆕 Separar analistas disponíveis e já atribuídos
       const analistasDisponiveis = (analistas || []).filter(a => !idsJaAtribuidos.has(a.id));
+      const analistasAtribuidos = (analistas || []).filter(a => idsJaAtribuidos.has(a.id));
 
-      // Calcular score de cada analista
+      // Calcular score de cada analista DISPONÍVEL
       const ranking: AnalistaScore[] = await Promise.all(
         analistasDisponiveis.map(async (analista) => {
           const score = await calcularScoreAnalista(
@@ -152,10 +154,30 @@ export function useDistribuicaoIA() {
         })
       );
 
+      // 🆕 Calcular score dos analistas JÁ ATRIBUÍDOS (para seleção manual)
+      const rankingAtribuidos: AnalistaScore[] = await Promise.all(
+        analistasAtribuidos.map(async (analista) => {
+          const score = await calcularScoreAnalista(
+            analista.id,
+            vagaId,
+            vaga.cliente_id,
+            vaga.stack_tecnologica
+          );
+
+          return {
+            analista_id: analista.id,
+            nome: analista.nome_usuario,
+            ...score,
+            justificativa: '✅ Já atribuída a esta vaga'
+          };
+        })
+      );
+
       // Ordenar por score total (maior primeiro)
       ranking.sort((a, b) => b.score_total - a.score_total);
+      rankingAtribuidos.sort((a, b) => b.score_total - a.score_total);
 
-      // Adicionar justificativas
+      // Adicionar justificativas aos disponíveis
       ranking.forEach((analista, index) => {
         analista.justificativa = gerarJustificativa(analista, index + 1);
       });
@@ -164,6 +186,7 @@ export function useDistribuicaoIA() {
       const sugestao: SugestaoIA = {
         vaga_id: vagaId,
         ranking_analistas: ranking,
+        analistas_ja_atribuidos: rankingAtribuidos, // 🆕 Incluir analistas já atribuídos
         gerado_em: new Date().toISOString(),
         modelo_versao: 'v1.0'
       };

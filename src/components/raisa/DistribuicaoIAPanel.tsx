@@ -61,6 +61,35 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
   const [motivoOverride, setMotivoOverride] = useState<string>('');
   const [justificativa, setJustificativa] = useState<string>('');
   const [showDetalhesScore, setShowDetalhesScore] = useState<number | null>(null);
+  
+  // 🆕 Lista completa de analistas para seleção manual (disponíveis + já atribuídos)
+  const listaCompletaAnalistas = React.useMemo(() => {
+    if (!sugestaoAtual) return [];
+    
+    // Combinar analistas disponíveis com os já atribuídos
+    const disponíveis = sugestaoAtual.ranking_analistas || [];
+    const jaAtribuidos = sugestaoAtual.analistas_ja_atribuidos || [];
+    
+    // Marcar quais já estão atribuídos
+    const atribuidosComFlag = jaAtribuidos.map(a => ({
+      ...a,
+      ja_atribuida: true
+    }));
+    
+    const disponiveis = disponíveis.map(a => ({
+      ...a,
+      ja_atribuida: false
+    }));
+    
+    // Ordenar: primeiro os já atribuídos, depois por score
+    return [...atribuidosComFlag, ...disponiveis];
+  }, [sugestaoAtual]);
+  
+  // 🆕 IDs dos analistas já atribuídos para desabilitar seleção
+  const idsJaAtribuidos = React.useMemo(() => {
+    if (!sugestaoAtual?.analistas_ja_atribuidos) return new Set<number>();
+    return new Set(sugestaoAtual.analistas_ja_atribuidos.map(a => a.analista_id));
+  }, [sugestaoAtual]);
 
   // Carregar ranking ao montar
   useEffect(() => {
@@ -79,7 +108,14 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
   };
 
   // Toggle seleção de analista (máximo 3 para seleção manual)
+  // 🆕 Não permite selecionar analistas já atribuídos
   const toggleAnalista = (analistaId: number) => {
+    // Verificar se analista já está atribuída à vaga
+    if (idsJaAtribuidos.has(analistaId)) {
+      alert('⚠️ Esta analista já está atribuída a esta vaga.');
+      return;
+    }
+    
     setAnalistasSelecionados(prev => {
       if (prev.includes(analistaId)) {
         return prev.filter(id => id !== analistaId);
@@ -143,19 +179,21 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
 
       // Adicionar analistas à vaga
       const errosAnalistas: string[] = [];
-      const analistasJaAtribuidos: string[] = [];
+      const analistasJaAtribuidosNomes: string[] = [];
       const analistasAdicionados: string[] = [];
       
       for (const analistaId of analistasSelecionados) {
         const resultado = await adicionarAnalista(vagaId, analistaId, {}, currentUserId);
         if (!resultado) {
-          const analista = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === analistaId);
+          // 🆕 Buscar na lista completa de analistas
+          const analista = listaCompletaAnalistas.find((a: any) => a.analista_id === analistaId);
           const nomeAnalista = analista?.nome || `ID ${analistaId}`;
           // Verificar se o erro é porque já está atribuído
           // (o hook retorna null mas não sabemos exatamente o motivo aqui)
           errosAnalistas.push(nomeAnalista);
         } else {
-          const analista = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === analistaId);
+          // 🆕 Buscar na lista completa de analistas
+          const analista = listaCompletaAnalistas.find((a: any) => a.analista_id === analistaId);
           analistasAdicionados.push(analista?.nome || `ID ${analistaId}`);
         }
       }
@@ -414,44 +452,71 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
               </div>
             </div>
 
-            {/* Lista de seleção */}
+            {/* 🆕 Legenda das analistas */}
+            {sugestaoAtual.analistas_ja_atribuidos && sugestaoAtual.analistas_ja_atribuidos.length > 0 && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm text-green-700">
+                ✅ Analistas marcadas com verde já estão atribuídas a esta vaga e não podem ser selecionadas novamente.
+              </div>
+            )}
+
+            {/* Lista de seleção - 🆕 Usando lista completa */}
             <div className="space-y-2">
-              {sugestaoAtual.ranking_analistas.map((analista, index) => (
-                <div 
-                  key={analista.analista_id}
-                  onClick={() => toggleAnalista(analista.analista_id)}
-                  className={`border rounded-lg p-4 cursor-pointer transition-all ${
-                    analistasSelecionados.includes(analista.analista_id)
-                      ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-200'
-                      : 'border-gray-200 hover:border-purple-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-6 h-6 rounded border-2 flex items-center justify-center ${
-                        analistasSelecionados.includes(analista.analista_id)
-                          ? 'border-purple-500 bg-purple-500 text-white'
-                          : 'border-gray-300'
-                      }`}>
-                        {analistasSelecionados.includes(analista.analista_id) && '✓'}
-                      </div>
-                      <div>
-                        <div className="font-medium text-gray-800">
-                          {analista.nome}
-                          {index < 2 && (
-                            <span className="ml-2 text-xs text-purple-600">
-                              (Sugerido pela IA)
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          Score: {analista.score_total} • Carga atual: {analista.carga_atual} vagas
+              {listaCompletaAnalistas.map((analista: any, index: number) => {
+                const jaAtribuida = idsJaAtribuidos.has(analista.analista_id);
+                const sugeridaPelaIA = !jaAtribuida && index < 2 + (sugestaoAtual.analistas_ja_atribuidos?.length || 0);
+                
+                return (
+                  <div 
+                    key={analista.analista_id}
+                    onClick={() => !jaAtribuida && toggleAnalista(analista.analista_id)}
+                    className={`border rounded-lg p-4 transition-all ${
+                      jaAtribuida
+                        ? 'border-green-300 bg-green-50 cursor-not-allowed opacity-75'
+                        : analistasSelecionados.includes(analista.analista_id)
+                          ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-200 cursor-pointer'
+                          : 'border-gray-200 hover:border-purple-300 cursor-pointer'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        {/* Checkbox ou indicador de já atribuída */}
+                        {jaAtribuida ? (
+                          <div className="w-6 h-6 rounded border-2 border-green-500 bg-green-500 text-white flex items-center justify-center">
+                            ✓
+                          </div>
+                        ) : (
+                          <div className={`w-6 h-6 rounded border-2 flex items-center justify-center ${
+                            analistasSelecionados.includes(analista.analista_id)
+                              ? 'border-purple-500 bg-purple-500 text-white'
+                              : 'border-gray-300'
+                          }`}>
+                            {analistasSelecionados.includes(analista.analista_id) && '✓'}
+                          </div>
+                        )}
+                        <div>
+                          <div className="font-medium text-gray-800">
+                            {analista.nome}
+                            {/* 🆕 Flags visuais */}
+                            {jaAtribuida && (
+                              <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded font-medium">
+                                ✅ Já atribuída
+                              </span>
+                            )}
+                            {!jaAtribuida && sugeridaPelaIA && (
+                              <span className="ml-2 text-xs text-purple-600">
+                                (Sugerido pela IA)
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            Score: {analista.score_total} • Carga atual: {analista.carga_atual} vagas
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             {/* Selecionados */}
@@ -462,7 +527,7 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
                 </div>
                 <div className="flex gap-2 flex-wrap">
                   {analistasSelecionados.map(id => {
-                    const analista = sugestaoAtual.ranking_analistas.find(a => a.analista_id === id);
+                    const analista = listaCompletaAnalistas.find((a: any) => a.analista_id === id);
                     return analista && (
                       <span 
                         key={id}
@@ -518,7 +583,8 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
               <div className="text-sm text-gray-600 mb-3">Analistas que irão conduzir a vaga:</div>
               <div className="space-y-2">
                 {analistasSelecionados.map((id, index) => {
-                  const analista = sugestaoAtual.ranking_analistas.find(a => a.analista_id === id);
+                  // 🆕 Buscar na lista completa de analistas
+                  const analista = listaCompletaAnalistas.find((a: any) => a.analista_id === id);
                   const posicaoOriginal = sugestaoAtual.ranking_analistas.findIndex(a => a.analista_id === id) + 1;
                   return analista && (
                     <div key={id} className="flex items-center justify-between p-3 bg-white rounded border">
@@ -529,7 +595,7 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
                         <div>
                           <div className="font-medium">{analista.nome}</div>
                           <div className="text-xs text-gray-500">
-                            {posicaoOriginal}º no ranking IA • Score: {analista.score_total}
+                            {posicaoOriginal > 0 ? `${posicaoOriginal}º no ranking IA • ` : ''}Score: {analista.score_total}
                           </div>
                         </div>
                       </div>
