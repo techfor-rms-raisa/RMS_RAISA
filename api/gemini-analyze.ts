@@ -399,6 +399,7 @@ function detectarModulosSAP(titulo: string, descricao: string): string[] {
 
 // ========================================
 // ✅ EXTRAÇÃO DE CV OTIMIZADA (UMA ÚNICA CHAMADA)
+// 🆕 v57.6 - Prompt de Skills EXPANDIDO
 // ========================================
 
 async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
@@ -490,15 +491,70 @@ Retorne APENAS este JSON:
   "idiomas": [{"idioma":"","nivel":"basico|intermediario|avancado|fluente"}]
 }`;
 
-    // ETAPA 3: Skills/tecnologias
-    const promptSkills = `Analise este currículo e extraia TODAS as skills e tecnologias em JSON válido (sem markdown, sem backticks).
+    // ========================================
+    // 🆕 v57.6 - ETAPA 3: Skills/tecnologias - PROMPT EXPANDIDO
+    // ========================================
+    const promptSkills = `Analise este currículo e extraia TODAS as competências, habilidades e tecnologias em JSON válido (sem markdown, sem backticks).
 
-Extraia TODAS: linguagens (Java, Python, C#), frameworks (Spring, React), clouds (AWS, GCP, Azure e serviços), bancos de dados, ferramentas, metodologias.
+⚠️ EXTRAIA TUDO - não apenas tecnologias de programação:
+
+1. TECNOLOGIAS DE TI:
+   - Linguagens: Java, Python, C#, JavaScript, TypeScript, PHP, Ruby, Go, Rust, etc.
+   - Frameworks: Spring, React, Angular, Vue, Node.js, Django, Laravel, .NET, etc.
+   - Bancos de Dados: Oracle, SQL Server, PostgreSQL, MySQL, MongoDB, Redis, etc.
+   - Cloud: AWS, Azure, GCP (e serviços específicos como S3, Lambda, EC2)
+   - DevOps: Docker, Kubernetes, Jenkins, GitLab CI, Terraform, Ansible
+   - Mobile: React Native, Flutter, Swift, Kotlin
+
+2. FERRAMENTAS CORPORATIVAS:
+   - ERP/CRM: SAP (todos módulos), Salesforce, Oracle EBS, TOTVS
+   - BI/Analytics: Power BI, Tableau, Qlik, Looker, Excel Avançado
+   - Gestão: Jira, Confluence, Azure DevOps, ServiceNow, MS Project
+   - Office: Excel, Word, PowerPoint, Access (se mencionado como skill)
+
+3. METODOLOGIAS E FRAMEWORKS:
+   - Ágil: Scrum, Kanban, SAFe, XP, Lean
+   - Gestão: PMBOK, PRINCE2, ITIL, COBIT
+   - Qualidade: Six Sigma, ISO, CMMI
+
+4. SOFT SKILLS (extrair se mencionadas explícita ou implicitamente):
+   - Liderança, Gestão de Equipes, Gestão de Projetos
+   - Comunicação, Negociação, Apresentação
+   - Análise Crítica, Resolução de Problemas, Tomada de Decisão
+   - Trabalho em Equipe, Colaboração, Mentoria
+
+5. COMPETÊNCIAS DE NEGÓCIO:
+   - Gestão Financeira, Controladoria, FP&A
+   - Gestão de Pessoas, RH, Recrutamento
+   - Vendas, Marketing, CRM, Atendimento ao Cliente
+   - Operações, Supply Chain, Logística
+
+CATEGORIAS DISPONÍVEIS:
+- frontend, backend, database, devops, cloud, mobile
+- sap (para qualquer módulo SAP)
+- tool (ferramentas como Jira, Excel, Power BI)
+- methodology (Scrum, PMBOK, ITIL)
+- soft_skill (liderança, comunicação, gestão de equipes)
+- other (qualquer outra competência relevante)
 
 Retorne APENAS este JSON:
 {
-  "skills": [{"nome":"","categoria":"frontend|backend|database|devops|cloud|mobile|sap|methodology|tool|other","nivel":"basico|intermediario|avancado|especialista","anos_experiencia":0}]
-}`;
+  "skills": [
+    {"nome":"Excel Avançado","categoria":"tool","nivel":"avancado","anos_experiencia":5},
+    {"nome":"Gestão de Projetos","categoria":"soft_skill","nivel":"avancado","anos_experiencia":8},
+    {"nome":"SAP FI","categoria":"sap","nivel":"intermediario","anos_experiencia":3},
+    {"nome":"Scrum","categoria":"methodology","nivel":"avancado","anos_experiencia":4},
+    {"nome":"Liderança","categoria":"soft_skill","nivel":"avancado","anos_experiencia":6}
+  ]
+}
+
+REGRAS IMPORTANTES:
+1. Extraia PELO MENOS 5 skills (se o CV tiver conteúdo suficiente)
+2. Se não encontrar tecnologias de programação, extraia competências de negócio e soft skills
+3. Use anos_experiencia baseado no tempo total do profissional com aquela skill
+4. Nível: basico (<2 anos), intermediario (2-4 anos), avancado (5-8 anos), especialista (>8 anos)
+5. NUNCA retorne skills: [] vazio - sempre encontre algo relevante no currículo
+6. Infira soft skills dos cargos ocupados (ex: "Gerente" = Liderança, Gestão de Equipes)`;
 
     // ETAPA 4: Experiências + Formação + Certificações
     const promptExperiencias = `Analise este currículo e extraia TODAS as experiências profissionais, formação e certificações em JSON válido (sem markdown, sem backticks).
