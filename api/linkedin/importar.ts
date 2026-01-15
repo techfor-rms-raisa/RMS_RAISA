@@ -467,7 +467,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Deletar formações antigas se atualizando
       if (atualizado) {
         await supabase
-          .from('pessoa_formacoes')
+          .from('pessoa_formacao')
           .delete()
           .eq('pessoa_id', pessoa_id);
       }
@@ -483,7 +483,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }));
 
       const { error } = await supabase
-        .from('pessoa_formacoes')
+        .from('pessoa_formacao')
         .insert(formData);
 
       if (error) {

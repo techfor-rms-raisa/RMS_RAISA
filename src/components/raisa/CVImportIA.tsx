@@ -816,7 +816,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 
       // Atualizar formação
       if (dadosExtraidos.formacao.length > 0) {
-        await supabase.from('pessoa_formacoes').delete().eq('pessoa_id', pessoaId);
+        await supabase.from('pessoa_formacao').delete().eq('pessoa_id', pessoaId);
         
         const formacoes = dadosExtraidos.formacao.map(f => ({
           pessoa_id: pessoaId,
@@ -827,7 +827,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           em_andamento: f.em_andamento || false
         }));
         
-        await supabase.from('pessoa_formacoes').insert(formacoes);
+        await supabase.from('pessoa_formacao').insert(formacoes);
       }
 
       // Registrar no log (ignorar erro se falhar)

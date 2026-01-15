@@ -562,7 +562,7 @@ async function salvarFormacoesPessoa(
     // Se atualizando, remover formações antigas
     if (atualizar) {
       await supabase
-        .from('pessoa_formacoes')
+        .from('pessoa_formacao')
         .delete()
         .eq('pessoa_id', pessoa_id);
     }
@@ -579,7 +579,7 @@ async function salvarFormacoesPessoa(
     }));
 
     const { error } = await supabase
-      .from('pessoa_formacoes')
+      .from('pessoa_formacao')
       .insert(formData);
 
     if (error) {

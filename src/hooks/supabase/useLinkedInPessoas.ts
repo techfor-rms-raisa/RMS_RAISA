@@ -160,7 +160,7 @@ export function useLinkedInPessoas() {
             .eq('pessoa_id', pessoa.id);
 
           const { count: totalForm } = await supabase
-            .from('pessoa_formacoes')
+            .from('pessoa_formacao')
             .select('*', { count: 'exact', head: true })
             .eq('pessoa_id', pessoa.id);
 

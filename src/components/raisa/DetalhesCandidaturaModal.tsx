@@ -377,7 +377,7 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
         .order('data_inicio', { ascending: false });
 
       const { data: formData } = await supabase
-        .from('pessoa_formacoes')
+        .from('pessoa_formacao')
         .select('*')
         .eq('pessoa_id', candidatura.pessoa_id);
 
