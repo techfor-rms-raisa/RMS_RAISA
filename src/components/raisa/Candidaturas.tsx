@@ -930,6 +930,7 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                 isOpen={isModalOpen}
                 onClose={() => setIsModalOpen(false)}
                 vagas={safeVagas}
+                pessoas={safePessoas}
                 onCandidaturaCriada={handleCandidaturaCriada}
                 currentUserId={currentUserId}
                 currentUserName={currentUserName}

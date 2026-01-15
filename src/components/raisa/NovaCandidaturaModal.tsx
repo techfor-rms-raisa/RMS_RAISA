@@ -1,16 +1,25 @@
 /**
  * NovaCandidaturaModal.tsx - Modal de Nova Candidatura
  * 
- * REDESENHADO v3.1:
+ * REDESENHADO v3.2:
  * - ✅ Paginação melhorada com controles intuitivos
  * - ✅ Filtros por Analista (minhas vagas/pessoas vs todas)
  * - ✅ UX aprimorada com cards compactos e responsivos
  * - ✅ Status automático "enviado_cliente" ao criar candidatura
  * - ✅ Busca incremental com debounce
  * - ✅ Skeleton loading
- * - 🆕 v57.1: "Minhas Vagas" agora considera candidaturas onde o analista está associado
+ * - ✅ v57.1: "Minhas Vagas" considera candidaturas onde o analista está associado
+ * - 🆕 v57.2: Correção do campo id_analista_rs (antes usava campo errado)
+ * - 🆕 v57.2: Validação de seleção - não permite selecionar candidatos de outros analistas
+ * - 🆕 v57.2: Badges visuais: "Meu", "Disponível", "Outro Analista"
+ * - 🆕 v57.2: Mensagem clara quando tentar selecionar candidato bloqueado
  * 
- * Data: 14/01/2026
+ * REGRAS DE NEGÓCIO:
+ * - "Meus Candidatos" = pessoas onde id_analista_rs = currentUserId
+ * - Pode selecionar: id_analista_rs IS NULL (sem analista) OU id_analista_rs = currentUserId
+ * - NÃO pode selecionar: id_analista_rs de outro analista
+ * 
+ * Data: 15/01/2026
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
@@ -122,16 +131,18 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   }, [vagas, filtroVagaEscopo, minhasVagasIds]);
 
   // Matches filtrados por escopo de pessoa + score + busca texto
+  // 🆕 v57.2: Adicionado campo id_analista_rs para validação de seleção
   const matchesFiltrados = useMemo(() => {
     let filtered = matches.filter(m => m.score_total >= filtroScoreMin);
     
     // Filtro por escopo de pessoa (minhas pessoas)
+    // 🆕 v57.2: Corrigido para usar id_analista_rs
     if (filtroPessoaEscopo === 'minhas' && pessoas.length > 0) {
       const minhasPessoasIds = new Set(
         pessoas
           .filter((p: any) => 
-            p.analista_responsavel_id === currentUserId ||
-            p.criado_por === currentUserId
+            p.id_analista_rs === currentUserId ||
+            String(p.id_analista_rs) === String(currentUserId)
           )
           .map((p: any) => p.id)
       );
@@ -155,12 +166,58 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     return filtered;
   }, [matches, filtroScoreMin, filtroPessoaEscopo, pessoas, currentUserId, buscaTexto]);
 
-  // 🆕 Paginação
-  const totalPaginas = Math.ceil(matchesFiltrados.length / ITEMS_PER_PAGE);
+  // 🆕 v57.2: Função para verificar se um candidato pode ser selecionado
+  // Regra: Pode selecionar se (id_analista_rs IS NULL) OU (id_analista_rs = currentUserId)
+  const podeSelecionarCandidato = useCallback((pessoaId: number): { pode: boolean; motivo?: string; analistaResponsavel?: string } => {
+    const pessoa = pessoas.find((p: any) => p.id === pessoaId);
+    
+    if (!pessoa) {
+      return { pode: true }; // Se não encontrar, permite (fallback)
+    }
+    
+    const pessoaAny = pessoa as any;
+    const analistaId = pessoaAny.id_analista_rs;
+    
+    // Sem analista atribuído = disponível
+    if (!analistaId) {
+      return { pode: true };
+    }
+    
+    // É meu candidato
+    if (analistaId === currentUserId || String(analistaId) === String(currentUserId)) {
+      return { pode: true };
+    }
+    
+    // Pertence a outro analista
+    return { 
+      pode: false, 
+      motivo: 'Candidato atribuído a outro analista',
+      analistaResponsavel: pessoaAny.analista_nome || `Analista #${analistaId}`
+    };
+  }, [pessoas, currentUserId]);
+
+  // 🆕 v57.2: Enriquecer matches com informação de selecionabilidade
+  const matchesEnriquecidos = useMemo(() => {
+    return matchesFiltrados.map(match => {
+      const verificacao = podeSelecionarCandidato(match.pessoa_id);
+      const pessoa = pessoas.find((p: any) => p.id === match.pessoa_id) as any;
+      
+      return {
+        ...match,
+        podeSelecionarCandidato: verificacao.pode,
+        motivoBloqueio: verificacao.motivo,
+        analistaResponsavel: verificacao.analistaResponsavel,
+        id_analista_rs: pessoa?.id_analista_rs || null
+      };
+    });
+  }, [matchesFiltrados, podeSelecionarCandidato, pessoas]);
+
+  // 🆕 Paginação - agora usa matchesEnriquecidos
+  const totalPaginas = Math.ceil(matchesEnriquecidos.length / ITEMS_PER_PAGE);
   const matchesPaginados = useMemo(() => {
     const inicio = (paginaAtual - 1) * ITEMS_PER_PAGE;
-    return matchesFiltrados.slice(inicio, inicio + ITEMS_PER_PAGE);
-  }, [matchesFiltrados, paginaAtual]);
+    return matchesEnriquecidos.slice(inicio, inicio + ITEMS_PER_PAGE);
+  }, [matchesEnriquecidos, paginaAtual]);
 
   // ============================================
   // EFFECTS
@@ -173,13 +230,13 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       
       setLoadingMinhasVagas(true);
       try {
-        // Buscar candidaturas onde o analista está associado
+        const vagasIds = new Set<string>();
+        
+        // 1. Buscar candidaturas onde o analista está associado
         const { data: candidaturas } = await supabase
           .from('candidaturas')
           .select('vaga_id, analista_id')
           .or(`analista_id.eq.${currentUserId},criado_por.eq.${currentUserId}`);
-        
-        const vagasIds = new Set<string>();
         
         // Adicionar vagas das candidaturas
         (candidaturas || []).forEach((c: any) => {
@@ -188,26 +245,62 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
           }
         });
         
-        // Adicionar vagas onde o analista é responsável direto
+        // 2. Adicionar vagas onde o analista é responsável direto (da tabela vagas)
         vagas.forEach((v: any) => {
           if (v.analista_id === currentUserId || 
+              String(v.analista_id) === String(currentUserId) ||
               v.responsavel_id === currentUserId || 
-              v.criado_por === currentUserId) {
+              String(v.responsavel_id) === String(currentUserId) ||
+              v.criado_por === currentUserId ||
+              String(v.criado_por) === String(currentUserId)) {
             vagasIds.add(String(v.id));
           }
         });
         
+        // 3. 🆕 Buscar pessoas que pertencem ao analista e identificar vagas relacionadas
+        // 🆕 v57.2: Usando apenas id_analista_rs (campo correto da tabela pessoas)
+        if (pessoas.length > 0) {
+          const minhasPessoasIds = pessoas
+            .filter((p: any) => 
+              p.id_analista_rs === currentUserId ||
+              String(p.id_analista_rs) === String(currentUserId)
+            )
+            .map((p: any) => p.id);
+          
+          // Se o analista tem pessoas, buscar candidaturas dessas pessoas
+          if (minhasPessoasIds.length > 0) {
+            const { data: candidaturasPessoas } = await supabase
+              .from('candidaturas')
+              .select('vaga_id')
+              .in('pessoa_id', minhasPessoasIds);
+            
+            (candidaturasPessoas || []).forEach((c: any) => {
+              if (c.vaga_id) {
+                vagasIds.add(String(c.vaga_id));
+              }
+            });
+          }
+        }
+        
         setMinhasVagasIds(vagasIds);
-        console.log(`✅ Minhas Vagas carregadas: ${vagasIds.size} vagas`);
+        console.log(`✅ Minhas Vagas carregadas: ${vagasIds.size} vagas para analista ${currentUserId}`);
+        
+        // 4. 🆕 Se não encontrou nenhuma vaga própria, automaticamente mudar para "Todas"
+        if (vagasIds.size === 0) {
+          console.log('⚠️ Nenhuma vaga associada ao analista, mudando para "Todas as Vagas"');
+          setFiltroVagaEscopo('todas');
+        }
       } catch (err) {
         console.error('❌ Erro ao carregar minhas vagas:', err);
+        // Em caso de erro, mostrar todas as vagas
+        setFiltroVagaEscopo('todas');
       } finally {
         setLoadingMinhasVagas(false);
       }
     };
     
     carregarMinhasVagas();
-  }, [isOpen, currentUserId, vagas]);
+  }, [isOpen, currentUserId, vagas, pessoas]);
 
   // Pré-selecionar vaga se fornecida
   useEffect(() => {
@@ -255,7 +348,14 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     }
   };
 
-  const handleSelecionarCandidato = (match: CandidatoMatch) => {
+  // 🆕 v57.2: Validação antes de selecionar candidato
+  const handleSelecionarCandidato = (match: CandidatoMatch & { podeSelecionarCandidato?: boolean; motivoBloqueio?: string }) => {
+    // Verificar se pode selecionar
+    if (match.podeSelecionarCandidato === false) {
+      alert(`⚠️ Não é possível selecionar este candidato.\n\nMotivo: ${match.motivoBloqueio || 'Candidato atribuído a outro analista'}\n\nApenas candidatos sem analista ou atribuídos a você podem ser selecionados.`);
+      return;
+    }
+    
     setCandidatoSelecionado(match);
     setMostrarFormIndicacao(true);
   };
@@ -630,9 +730,15 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                           ? 'bg-white text-orange-600 shadow-sm'
                           : 'text-gray-500 hover:text-gray-700'
                       }`}
+                      title={`${minhasVagasIds.size} vaga(s) associada(s) a você`}
                     >
                       <User className="w-4 h-4" />
                       Minhas Vagas
+                      {minhasVagasIds.size > 0 && (
+                        <span className="bg-orange-100 text-orange-600 text-xs px-1.5 py-0.5 rounded-full">
+                          {minhasVagasIds.size}
+                        </span>
+                      )}
                     </button>
                     <button
                       onClick={() => setFiltroVagaEscopo('todas')}
@@ -651,30 +757,42 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                   <div className="flex-1">
                     <div className="relative">
                       <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <select 
-                        value={vagaSelecionadaId}
-                        onChange={e => {
-                          setVagaSelecionadaId(e.target.value);
-                          setBuscaBancoRealizada(false);
-                          setPaginaAtual(1);
-                        }}
-                        className="w-full border-2 border-gray-200 rounded-xl p-3 pl-10 focus:border-orange-500 focus:ring-2 focus:ring-orange-200 text-sm"
-                      >
-                        <option value="">
-                          {vagasFiltradas.length === 0 
-                            ? `Nenhuma vaga ${filtroVagaEscopo === 'minhas' ? 'associada a você' : 'disponível'}...`
-                            : 'Selecione uma vaga para buscar candidatos...'}
-                        </option>
-                        {vagasFiltradas.map(v => (
-                          <option key={v.id} value={String(v.id)}>
-                            {v.titulo} - {v.senioridade} 
-                            {v.stack_tecnologica && ` (${Array.isArray(v.stack_tecnologica) ? v.stack_tecnologica.slice(0, 3).join(', ') : v.stack_tecnologica})`}
+                      {loadingMinhasVagas ? (
+                        <div className="w-full border-2 border-gray-200 rounded-xl p-3 pl-10 bg-gray-50 text-gray-400 text-sm flex items-center gap-2">
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Carregando vagas...
+                        </div>
+                      ) : (
+                        <select 
+                          value={vagaSelecionadaId}
+                          onChange={e => {
+                            setVagaSelecionadaId(e.target.value);
+                            setBuscaBancoRealizada(false);
+                            setPaginaAtual(1);
+                          }}
+                          className="w-full border-2 border-gray-200 rounded-xl p-3 pl-10 focus:border-orange-500 focus:ring-2 focus:ring-orange-200 text-sm"
+                        >
+                          <option value="">
+                            {vagasFiltradas.length === 0 
+                              ? (filtroVagaEscopo === 'minhas' 
+                                  ? 'Nenhuma vaga associada a você - Clique em "Todas as Vagas"'
+                                  : 'Nenhuma vaga disponível no momento')
+                              : `Selecione uma vaga (${vagasFiltradas.length} disponíveis)...`}
                           </option>
-                        ))}
-                      </select>
+                          {vagasFiltradas.map(v => (
+                            <option key={v.id} value={String(v.id)}>
+                              {v.titulo} - {v.senioridade} 
+                              {v.stack_tecnologica && ` (${Array.isArray(v.stack_tecnologica) ? v.stack_tecnologica.slice(0, 3).join(', ') : v.stack_tecnologica})`}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </div>
                     <p className="text-xs text-gray-400 mt-1 ml-1">
-                      {vagasFiltradas.length} vaga(s) {filtroVagaEscopo === 'minhas' ? 'associada(s) a você' : 'disponíveis'}
+                      {loadingMinhasVagas 
+                        ? 'Carregando...'
+                        : `${vagasFiltradas.length} vaga(s) ${filtroVagaEscopo === 'minhas' ? 'associada(s) a você' : 'disponíveis'}`
+                      }
                     </p>
                   </div>
                 </div>
@@ -826,16 +944,20 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                           <div className="space-y-3">
                             {matchesPaginados.map((match, index) => {
                               const rankingGlobal = (paginaAtual - 1) * ITEMS_PER_PAGE + index;
+                              const bloqueado = match.podeSelecionarCandidato === false;
+                              const jaCriado = match.status === 'candidatura_criada';
                               
                               return (
                                 <div
                                   key={match.pessoa_id}
-                                  className={`border-2 rounded-xl p-4 hover:shadow-md transition-all bg-white cursor-pointer ${
-                                    match.status === 'candidatura_criada' 
+                                  className={`border-2 rounded-xl p-4 transition-all bg-white ${
+                                    jaCriado 
                                       ? 'opacity-60 border-gray-200 cursor-not-allowed' 
-                                      : 'border-gray-100 hover:border-orange-300'
+                                      : bloqueado
+                                        ? 'opacity-70 border-red-200 bg-red-50/30 cursor-not-allowed'
+                                        : 'border-gray-100 hover:border-orange-300 hover:shadow-md cursor-pointer'
                                   }`}
-                                  onClick={() => match.status !== 'candidatura_criada' && handleSelecionarCandidato(match)}
+                                  onClick={() => !jaCriado && !bloqueado && handleSelecionarCandidato(match)}
                                 >
                                   <div className="flex items-center gap-4">
                                     {/* Ranking + Score */}
@@ -860,11 +982,29 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
 
                                     {/* Info do Candidato */}
                                     <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 mb-1">
+                                      <div className="flex items-center gap-2 mb-1 flex-wrap">
                                         <h4 className="font-bold text-gray-900 truncate">{match.nome}</h4>
-                                        {match.status === 'candidatura_criada' && (
+                                        {jaCriado && (
                                           <span className="bg-purple-100 text-purple-800 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap">
                                             ✓ Já adicionado
+                                          </span>
+                                        )}
+                                        {/* 🆕 v57.2: Badge de candidato bloqueado */}
+                                        {bloqueado && !jaCriado && (
+                                          <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap flex items-center gap-1">
+                                            🔒 Outro Analista
+                                          </span>
+                                        )}
+                                        {/* 🆕 v57.2: Badge "Meu Candidato" */}
+                                        {!bloqueado && !jaCriado && match.id_analista_rs === currentUserId && (
+                                          <span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap">
+                                            👤 Meu
+                                          </span>
+                                        )}
+                                        {/* 🆕 v57.2: Badge "Disponível" para candidatos sem analista */}
+                                        {!bloqueado && !jaCriado && !match.id_analista_rs && (
+                                          <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap">
+                                            ✓ Disponível
                                           </span>
                                         )}
                                       </div>
@@ -872,6 +1012,13 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                                       <p className="text-sm text-gray-600 truncate">
                                         {match.titulo_profissional} | <span className="font-medium">{match.senioridade}</span>
                                       </p>
+
+                                      {/* 🆕 v57.2: Mostrar analista responsável se bloqueado */}
+                                      {bloqueado && match.analistaResponsavel && (
+                                        <p className="text-xs text-red-600 mt-1">
+                                          Responsável: {match.analistaResponsavel}
+                                        </p>
+                                      )}
 
                                       {/* Skills */}
                                       {match.skills_match && match.skills_match.length > 0 && (
@@ -895,8 +1042,12 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
 
                                     {/* Botão Selecionar */}
                                     <div className="flex-shrink-0">
-                                      {match.status === 'candidatura_criada' ? (
+                                      {jaCriado ? (
                                         <span className="text-gray-400 text-xs">Já adicionado</span>
+                                      ) : bloqueado ? (
+                                        <span className="text-red-400 text-xs flex items-center gap-1">
+                                          <span>🔒</span> Indisponível
+                                        </span>
                                       ) : (
                                         <button
                                           className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-4 py-2 rounded-lg hover:shadow-lg transition font-medium text-sm flex items-center gap-2"
