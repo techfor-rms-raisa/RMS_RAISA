@@ -1,28 +1,26 @@
 /**
  * NovaCandidaturaModal.tsx - Modal de Nova Candidatura
  * 
- * REDESENHADO v3.2:
- * - ✅ Paginação melhorada com controles intuitivos
- * - ✅ Filtros por Analista (minhas vagas/pessoas vs todas)
- * - ✅ UX aprimorada com cards compactos e responsivos
- * - ✅ Status automático "enviado_cliente" ao criar candidatura
- * - ✅ Busca incremental com debounce
- * - ✅ Skeleton loading
- * - 🆕 v57.1: "Minhas Vagas" agora considera candidaturas onde o analista está associado
- * - 🔧 v57.2: Corrigida query - removido criado_por, adicionado logs de debug
- * - 🔧 v57.4: Corrigido filtro "Minhas Pessoas" - usar id_analista_rs em vez de campos inexistentes
- * - 🔧 v57.5: CORRIGIDO busca de Minhas Vagas - agora inclui tabela vaga_analista_distribuicao
- * - 🆕 v57.5: Toggle "Incluir Sem Match" para candidatos sem skills cadastradas
+ * 🆕 v57.7 - SIMPLIFICADO:
+ * - "Meus Candidatos" busca DIRETO do banco (pessoas.id_analista_rs = analista_logado)
+ * - NÃO depende de match de skills para exibir candidatos
+ * - Campo de busca filtra por nome em tempo real
+ * - Mais simples e intuitivo para o analista
+ * 
+ * HISTÓRICO:
+ * - v57.7 (15/01/2026): Meus Candidatos busca direto do banco, sem match
+ * - v57.5: Minhas Vagas inclui vaga_analista_distribuicao
+ * - v57.4: Corrigido filtro para usar id_analista_rs
  * 
  * Data: 15/01/2026
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   X, Search, Sparkles, 
   CheckCircle, Loader2,
   User, UserPlus, Users, Award, Building2,
-  ChevronLeft, ChevronRight, Filter, ToggleLeft, ToggleRight,
+  ChevronLeft, ChevronRight,
   Briefcase, Star, Clock, MapPin
 } from 'lucide-react';
 import { Vaga, Pessoa } from '@/types';
@@ -44,14 +42,78 @@ interface NovaCandidaturaModalProps {
   vagaPreSelecionada?: Vaga;
 }
 
-type AbaAtiva = 'banco' | 'sugestoes';
+// Interface para candidato do analista (busca direta)
+interface MeuCandidato {
+  id: number;
+  nome: string;
+  email: string | null;
+  telefone: string | null;
+  titulo_profissional: string | null;
+  senioridade: string | null;
+  disponibilidade: string | null;
+  cidade: string | null;
+  estado: string | null;
+  total_skills: number;
+}
+
 type FiltroEscopo = 'minhas' | 'todas';
 
 // ============================================
 // CONSTANTES
 // ============================================
 
-const ITEMS_PER_PAGE = 5;
+const ITEMS_PER_PAGE = 8;
+
+// ============================================
+// FUNÇÃO: Criar candidatura com status enviado_cliente
+// ============================================
+
+async function criarCandidaturaComStatusEnviado(
+  pessoaId: number,
+  vagaId: number | string,
+  analistaId: number,
+  dados?: {
+    origem?: 'aquisicao' | 'indicacao_cliente';
+    indicado_por_nome?: string;
+    indicado_por_cargo?: string;
+    indicacao_observacoes?: string;
+    status_inicial?: string;
+  }
+): Promise<any> {
+  try {
+    // Buscar dados da pessoa
+    const { data: pessoa } = await supabase
+      .from('pessoas')
+      .select('nome, email')
+      .eq('id', pessoaId)
+      .single();
+
+    // Criar candidatura
+    const { data, error } = await supabase
+      .from('candidaturas')
+      .insert({
+        pessoa_id: pessoaId,
+        vaga_id: Number(vagaId),
+        status: dados?.status_inicial || 'enviado_cliente',
+        analista_id: analistaId,
+        candidato_nome: pessoa?.nome || '',
+        candidato_email: pessoa?.email || '',
+        origem: dados?.origem || 'aquisicao',
+        indicado_por_nome: dados?.indicado_por_nome,
+        indicado_por_cargo: dados?.indicado_por_cargo,
+        indicacao_observacoes: dados?.indicacao_observacoes,
+        created_at: new Date().toISOString()
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data;
+  } catch (err) {
+    console.error('Erro ao criar candidatura:', err);
+    return null;
+  }
+}
 
 // ============================================
 // COMPONENTE PRINCIPAL
@@ -67,244 +129,156 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   currentUserName = 'Analista',
   vagaPreSelecionada
 }) => {
-  // Estados do Modal
-  const [abaAtiva, setAbaAtiva] = useState<AbaAtiva>('banco');
+  // ============================================
+  // ESTADOS
+  // ============================================
+  
   const [vagaSelecionadaId, setVagaSelecionadaId] = useState<string>('');
   
-  // 🆕 Estados de Filtro por Escopo (Analista)
+  // Filtros de escopo
   const [filtroVagaEscopo, setFiltroVagaEscopo] = useState<FiltroEscopo>('minhas');
   const [filtroPessoaEscopo, setFiltroPessoaEscopo] = useState<FiltroEscopo>('minhas');
   
-  // 🆕 v57.1: Estado para armazenar IDs das vagas onde o analista está associado
+  // Minhas Vagas (carregado do banco)
   const [minhasVagasIds, setMinhasVagasIds] = useState<Set<string>>(new Set());
   const [loadingMinhasVagas, setLoadingMinhasVagas] = useState(false);
   
-  // Estados de Origem/Indicação
-  const [candidatoSelecionado, setCandidatoSelecionado] = useState<CandidatoMatch | null>(null);
+  // 🆕 v57.7: Meus Candidatos (busca direta do banco)
+  const [meusCandidatos, setMeusCandidatos] = useState<MeuCandidato[]>([]);
+  const [loadingMeusCandidatos, setLoadingMeusCandidatos] = useState(false);
+  
+  // Formulário de indicação
+  const [candidatoSelecionado, setCandidatoSelecionado] = useState<any>(null);
   const [mostrarFormIndicacao, setMostrarFormIndicacao] = useState(false);
   const [origem, setOrigem] = useState<'aquisicao' | 'indicacao_cliente'>('aquisicao');
   const [indicadoPorNome, setIndicadoPorNome] = useState('');
   const [indicadoPorCargo, setIndicadoPorCargo] = useState('');
   const [indicacaoObservacoes, setIndicacaoObservacoes] = useState('');
 
-  // Hook de busca no Banco de Talentos
+  // Hook de busca (usado apenas no modo "Todos")
   const {
     matches,
     loading: loadingMatches,
-    error: errorMatches,
     buscarParaVaga,
-    criarCandidaturaDoMatch,
     setMatches
   } = useRaisaCVSearch();
 
-  // Estados para aba Banco de Talentos
+  // Estados gerais
   const [buscaBancoRealizada, setBuscaBancoRealizada] = useState(false);
   const [criandoCandidatura, setCriandoCandidatura] = useState<number | null>(null);
-  const [filtroScoreMin, setFiltroScoreMin] = useState<number>(0);
   
-  // 🆕 Estados de Paginação
+  // Paginação e busca
   const [paginaAtual, setPaginaAtual] = useState(1);
   const [buscaTexto, setBuscaTexto] = useState('');
-
-  // 🆕 v57.5: Toggle para incluir candidatos sem match de skills
-  const [incluirSemMatch, setIncluirSemMatch] = useState(false);
 
   // Vaga selecionada
   const vagaSelecionada = vagas.find(v => String(v.id) === String(vagaSelecionadaId));
 
   // ============================================
-  // 🆕 FILTROS POR ANALISTA
+  // 🆕 v57.7: CARREGAR MEUS CANDIDATOS DO BANCO
+  // Busca: pessoas.id_analista_rs = currentUserId
   // ============================================
-
-  // Vagas filtradas por escopo (minhas ou todas)
-  const vagasFiltradas = useMemo(() => {
-    const vagasAbertas = vagas.filter(v => v.status === 'aberta' || v.status === 'em_andamento');
-    
-    console.log('🔄 vagasFiltradas recalculando:', {
-      filtroVagaEscopo,
-      minhasVagasIds: Array.from(minhasVagasIds),
-      totalVagasAbertas: vagasAbertas.length
-    });
-    
-    // 🆕 v57.3: Filtrar usando minhasVagasIds (baseado em candidaturas)
-    if (filtroVagaEscopo === 'minhas') {
-      const filtradas = vagasAbertas.filter(v => minhasVagasIds.has(String(v.id)));
-      console.log('📋 Vagas filtradas (minhas):', filtradas.length);
-      return filtradas;
-    }
-    
-    console.log('📋 Vagas filtradas (todas):', vagasAbertas.length);
-    return vagasAbertas;
-  }, [vagas, filtroVagaEscopo, minhasVagasIds]);
-
-  // Matches filtrados por escopo de pessoa + score + busca texto
-  // 🔧 v57.5: CORRIGIDO para incluir candidatos sem skills quando toggle ativo
-  const matchesFiltrados = useMemo(() => {
-    let filtered = matches.filter(m => m.score_total >= filtroScoreMin);
-    
-    // Filtro por escopo de pessoa (minhas pessoas)
-    // 🔧 v57.4: Corrigido para usar id_analista_rs (campo correto da tabela pessoas)
-    if (filtroPessoaEscopo === 'minhas' && pessoas.length > 0) {
-      const minhasPessoasIds = new Set(
-        pessoas
-          .filter((p: any) => {
-            // Comparar com id_analista_rs (campo correto)
-            const analistaId = p.id_analista_rs;
-            return analistaId && Number(analistaId) === Number(currentUserId);
-          })
-          .map((p: any) => Number(p.id))
-      );
+  
+  useEffect(() => {
+    const carregarMeusCandidatos = async () => {
+      if (!isOpen || !currentUserId) return;
       
-      console.log('🔍 Filtro Minhas Pessoas:', {
-        currentUserId,
-        totalPessoas: pessoas.length,
-        minhasPessoasCount: minhasPessoasIds.size,
-        minhasPessoasIds: Array.from(minhasPessoasIds).slice(0, 10)
-      });
-      
-      if (minhasPessoasIds.size > 0) {
-        // Filtrar matches existentes
-        filtered = filtered.filter(m => minhasPessoasIds.has(Number(m.pessoa_id)));
+      setLoadingMeusCandidatos(true);
+      try {
+        console.log('🔍 [Modal] Buscando candidatos do analista:', currentUserId);
         
-        // 🆕 v57.5: Se toggle "Incluir Sem Match" está ativo, adicionar candidatos do analista
-        // que não estão nos matches (porque não têm skills ou skills não bateram)
-        if (incluirSemMatch) {
-          const idsJaNoMatch = new Set(filtered.map(m => m.pessoa_id));
-          
-          // Buscar candidatos do analista que NÃO estão nos matches
-          const candidatosSemMatch = pessoas
-            .filter((p: any) => {
-              const analistaId = p.id_analista_rs;
-              return analistaId && 
-                     Number(analistaId) === Number(currentUserId) && 
-                     !idsJaNoMatch.has(Number(p.id));
-            })
-            .map((p: any) => ({
-              pessoa_id: Number(p.id),
-              nome: p.nome || 'Sem nome',
-              email: p.email || '',
-              telefone: p.telefone || '',
-              titulo_profissional: p.titulo_profissional || 'Não informado',
-              senioridade: p.senioridade || 'Não informado',
-              disponibilidade: p.disponibilidade || 'Não informado',
-              modalidade_preferida: p.modalidade_preferida || 'Não informado',
-              pretensao_salarial: p.pretensao_salarial || 0,
-              score_total: 0, // Sem match = score 0
-              score_skills: 0,
-              score_experiencia: 0,
-              score_senioridade: 0,
-              skills_match: [] as string[],
-              skills_faltantes: [] as string[],
-              skills_extras: [] as string[],
-              justificativa_ia: '⚠️ Candidato sem skills cadastradas ou sem match com a vaga',
-              status: 'novo' as const,
-              top_skills: [] as string[],
-              anos_experiencia_total: 0
-            }));
-          
-          console.log('🆕 Candidatos sem match adicionados:', candidatosSemMatch.length);
-          filtered = [...filtered, ...candidatosSemMatch];
+        // Buscar pessoas do analista
+        const { data, error } = await supabase
+          .from('pessoas')
+          .select(`
+            id,
+            nome,
+            email,
+            telefone,
+            titulo_profissional,
+            senioridade,
+            disponibilidade,
+            cidade,
+            estado
+          `)
+          .eq('id_analista_rs', currentUserId)
+          .order('nome');
+        
+        if (error) {
+          console.error('❌ Erro ao buscar meus candidatos:', error);
+          return;
         }
+        
+        // Buscar contagem de skills para cada pessoa
+        const candidatosComSkills: MeuCandidato[] = await Promise.all(
+          (data || []).map(async (p) => {
+            const { count } = await supabase
+              .from('pessoa_skills')
+              .select('*', { count: 'exact', head: true })
+              .eq('pessoa_id', p.id);
+            
+            return {
+              ...p,
+              total_skills: count || 0
+            };
+          })
+        );
+        
+        console.log('✅ [Modal] Meus candidatos carregados:', candidatosComSkills.length);
+        setMeusCandidatos(candidatosComSkills);
+        
+      } catch (err) {
+        console.error('❌ Erro ao carregar meus candidatos:', err);
+      } finally {
+        setLoadingMeusCandidatos(false);
       }
-    }
+    };
     
-    // Filtro por texto de busca
-    if (buscaTexto.trim()) {
-      const termo = buscaTexto.toLowerCase();
-      filtered = filtered.filter(m => 
-        m.nome.toLowerCase().includes(termo) ||
-        m.titulo_profissional?.toLowerCase().includes(termo) ||
-        m.email?.toLowerCase().includes(termo) ||
-        m.skills_match?.some(s => s.toLowerCase().includes(termo))
-      );
-    }
-    
-    return filtered;
-  }, [matches, filtroScoreMin, filtroPessoaEscopo, pessoas, currentUserId, buscaTexto, incluirSemMatch]);
-
-  // 🆕 Paginação
-  const totalPaginas = Math.ceil(matchesFiltrados.length / ITEMS_PER_PAGE);
-  const matchesPaginados = useMemo(() => {
-    const inicio = (paginaAtual - 1) * ITEMS_PER_PAGE;
-    return matchesFiltrados.slice(inicio, inicio + ITEMS_PER_PAGE);
-  }, [matchesFiltrados, paginaAtual]);
+    carregarMeusCandidatos();
+  }, [isOpen, currentUserId]);
 
   // ============================================
-  // EFFECTS
+  // CARREGAR MINHAS VAGAS
   // ============================================
-
-  // 🔧 v57.5: Carregar IDs das vagas onde o analista está associado
-  // CORRIGIDO: Agora busca também na tabela vaga_analista_distribuicao
+  
   useEffect(() => {
     const carregarMinhasVagas = async () => {
-      if (!isOpen) {
-        return;
-      }
-      
-      if (!currentUserId) {
-        console.warn('⚠️ currentUserId não definido');
-        return;
-      }
+      if (!isOpen || !currentUserId) return;
       
       setLoadingMinhasVagas(true);
       try {
         const userId = Number(currentUserId);
-        console.log('🔍 Buscando vagas para analista ID:', userId);
-        
         const vagasIds = new Set<string>();
         
-        // ============================================
-        // 🆕 FONTE 1: Tabela vaga_analista_distribuicao (NOVA!)
-        // Esta é a fonte PRINCIPAL de associação analista-vaga
-        // ============================================
-        const { data: distribuicoes, error: errorDistribuicao } = await supabase
+        // FONTE 1: vaga_analista_distribuicao (PRINCIPAL)
+        const { data: distribuicoes } = await supabase
           .from('vaga_analista_distribuicao')
           .select('vaga_id')
           .eq('analista_id', userId)
           .eq('ativo', true);
         
-        if (errorDistribuicao) {
-          console.warn('⚠️ Erro ao buscar distribuições:', errorDistribuicao.message);
-        } else {
-          console.log('📋 Vagas da distribuição:', distribuicoes?.length || 0);
-          (distribuicoes || []).forEach((d: any) => {
-            if (d.vaga_id) {
-              vagasIds.add(String(d.vaga_id));
-            }
-          });
-        }
+        (distribuicoes || []).forEach((d: any) => {
+          if (d.vaga_id) vagasIds.add(String(d.vaga_id));
+        });
         
-        // ============================================
-        // FONTE 2: Candidaturas onde o analista está associado
-        // ============================================
-        const { data: candidaturas, error: errorCandidaturas } = await supabase
+        // FONTE 2: Candidaturas
+        const { data: candidaturas } = await supabase
           .from('candidaturas')
-          .select('vaga_id, analista_id')
+          .select('vaga_id')
           .eq('analista_id', userId);
         
-        if (errorCandidaturas) {
-          console.warn('⚠️ Erro ao buscar candidaturas:', errorCandidaturas.message);
-        } else {
-          console.log('📋 Candidaturas do analista:', candidaturas?.length || 0);
-          (candidaturas || []).forEach((c: any) => {
-            if (c.vaga_id) {
-              vagasIds.add(String(c.vaga_id));
-            }
-          });
-        }
+        (candidaturas || []).forEach((c: any) => {
+          if (c.vaga_id) vagasIds.add(String(c.vaga_id));
+        });
         
-        // ============================================
-        // FONTE 3: Vagas onde o analista é responsável direto
-        // (campo analista_id na própria tabela vagas)
-        // ============================================
+        // FONTE 3: Vagas diretas
         vagas.forEach((v: any) => {
-          if (Number(v.analista_id) === userId || 
-              Number(v.responsavel_id) === userId) {
+          if (Number(v.analista_id) === userId || Number(v.responsavel_id) === userId) {
             vagasIds.add(String(v.id));
           }
         });
         
-        console.log('✅ Total Minhas Vagas IDs:', vagasIds.size, Array.from(vagasIds));
+        console.log('✅ [Modal] Minhas Vagas:', vagasIds.size);
         setMinhasVagasIds(vagasIds);
         
       } catch (err) {
@@ -317,6 +291,71 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     carregarMinhasVagas();
   }, [isOpen, currentUserId, vagas]);
 
+  // ============================================
+  // FILTROS
+  // ============================================
+
+  // Vagas filtradas
+  const vagasFiltradas = useMemo(() => {
+    const vagasAbertas = vagas.filter(v => v.status === 'aberta' || v.status === 'em_andamento');
+    
+    if (filtroVagaEscopo === 'minhas') {
+      return vagasAbertas.filter(v => minhasVagasIds.has(String(v.id)));
+    }
+    
+    return vagasAbertas;
+  }, [vagas, filtroVagaEscopo, minhasVagasIds]);
+
+  // 🆕 v57.7: Candidatos filtrados - lógica SEPARADA para "Meus" vs "Todos"
+  const candidatosFiltrados = useMemo(() => {
+    // =============================================
+    // MODO "MEUS": Busca direta do banco
+    // =============================================
+    if (filtroPessoaEscopo === 'minhas') {
+      let filtered = meusCandidatos;
+      
+      // Filtro por texto de busca (nome, email, título)
+      if (buscaTexto.trim()) {
+        const termo = buscaTexto.toLowerCase();
+        filtered = filtered.filter(c => 
+          c.nome?.toLowerCase().includes(termo) ||
+          c.email?.toLowerCase().includes(termo) ||
+          c.titulo_profissional?.toLowerCase().includes(termo)
+        );
+      }
+      
+      return filtered;
+    }
+    
+    // =============================================
+    // MODO "TODOS": Busca por match de skills
+    // =============================================
+    let filtered = matches;
+    
+    // Filtro por texto de busca
+    if (buscaTexto.trim()) {
+      const termo = buscaTexto.toLowerCase();
+      filtered = filtered.filter(m => 
+        m.nome.toLowerCase().includes(termo) ||
+        m.titulo_profissional?.toLowerCase().includes(termo) ||
+        m.email?.toLowerCase().includes(termo)
+      );
+    }
+    
+    return filtered;
+  }, [filtroPessoaEscopo, meusCandidatos, matches, buscaTexto]);
+
+  // Paginação
+  const totalPaginas = Math.ceil(candidatosFiltrados.length / ITEMS_PER_PAGE);
+  const candidatosPaginados = useMemo(() => {
+    const inicio = (paginaAtual - 1) * ITEMS_PER_PAGE;
+    return candidatosFiltrados.slice(inicio, inicio + ITEMS_PER_PAGE);
+  }, [candidatosFiltrados, paginaAtual]);
+
+  // ============================================
+  // EFFECTS
+  // ============================================
+
   // Pré-selecionar vaga se fornecida
   useEffect(() => {
     if (vagaPreSelecionada) {
@@ -328,7 +367,6 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setBuscaBancoRealizada(false);
-      setFiltroScoreMin(0);
       setCandidatoSelecionado(null);
       setMostrarFormIndicacao(false);
       setOrigem('aquisicao');
@@ -338,14 +376,13 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       setPaginaAtual(1);
       setBuscaTexto('');
       setMatches([]);
-      setIncluirSemMatch(false);
     }
-  }, [isOpen]);
+  }, [isOpen, setMatches]);
 
   // Reset página ao mudar filtros
   useEffect(() => {
     setPaginaAtual(1);
-  }, [filtroScoreMin, filtroPessoaEscopo, buscaTexto, incluirSemMatch]);
+  }, [filtroPessoaEscopo, buscaTexto]);
 
   // ============================================
   // HANDLERS
@@ -355,8 +392,9 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     onClose();
   };
 
+  // Buscar candidatos por match (só para modo "Todos")
   const handleBuscarCandidatos = async () => {
-    if (vagaSelecionada) {
+    if (vagaSelecionada && filtroPessoaEscopo === 'todas') {
       setBuscaBancoRealizada(false);
       setPaginaAtual(1);
       await buscarParaVaga(vagaSelecionada);
@@ -364,34 +402,33 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     }
   };
 
-  const handleSelecionarCandidato = (match: CandidatoMatch) => {
-    setCandidatoSelecionado(match);
+  // Selecionar candidato
+  const handleSelecionarCandidato = (candidato: any) => {
+    setCandidatoSelecionado(candidato);
     setMostrarFormIndicacao(true);
   };
 
-  // 🆕 Criar candidatura com status "enviado_cliente"
+  // Criar candidatura
   const handleCriarCandidatura = async () => {
     if (!candidatoSelecionado || !vagaSelecionada) return;
     
-    setCriandoCandidatura(candidatoSelecionado.pessoa_id);
+    const pessoaId = candidatoSelecionado.pessoa_id || candidatoSelecionado.id;
+    setCriandoCandidatura(pessoaId);
     
     try {
-      // Criar candidatura com dados de indicação
       const dadosIndicacao = origem === 'indicacao_cliente' ? {
         origem: 'indicacao_cliente' as const,
         indicado_por_nome: indicadoPorNome || undefined,
         indicado_por_cargo: indicadoPorCargo || undefined,
         indicacao_observacoes: indicacaoObservacoes || undefined,
-        // 🆕 Status automático "enviado_cliente"
         status_inicial: 'enviado_cliente'
       } : {
         origem: 'aquisicao' as const,
-        // 🆕 Status automático "enviado_cliente"
         status_inicial: 'enviado_cliente'
       };
 
       const candidatura = await criarCandidaturaComStatusEnviado(
-        candidatoSelecionado.pessoa_id,
+        pessoaId,
         vagaSelecionada.id,
         currentUserId,
         dadosIndicacao
@@ -399,722 +436,496 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       
       if (candidatura) {
         const tipoMsg = origem === 'indicacao_cliente' ? '(Indicação)' : '(Aquisição)';
-        alert(`✅ Candidatura criada com sucesso! ${tipoMsg}\n\nStatus: Enviado ao Cliente`);
+        alert(`✅ Candidatura criada com sucesso! ${tipoMsg}\nStatus: Enviado ao Cliente`);
         
-        // Callback para atualizar lista de candidaturas
         if (onCandidaturaCriada) {
-          onCandidaturaCriada(parseInt(candidatura.id));
+          onCandidaturaCriada(candidatura.id);
         }
-        
-        // Fechar modal
         handleFechar();
       }
-    } catch (err: any) {
-      alert(`❌ Erro ao criar candidatura: ${err.message}`);
+    } catch (err) {
+      console.error('Erro ao criar candidatura:', err);
+      alert('❌ Erro ao criar candidatura. Tente novamente.');
     } finally {
       setCriandoCandidatura(null);
     }
   };
 
-  // 🆕 Criar candidatura com status "enviado_cliente" automaticamente
-  const criarCandidaturaComStatusEnviado = async (
-    pessoaId: number,
-    vagaId: string,
-    analistaId: number,
-    dadosIndicacao: any
-  ) => {
-    // Primeiro, criar a candidatura normal
-    const candidatura = await criarCandidaturaDoMatch(
-      pessoaId,
-      vagaId,
-      analistaId,
-      dadosIndicacao
-    );
-
-    // Se criou com sucesso, atualizar para status "enviado_cliente"
-    if (candidatura) {
-      try {
-        await supabase
-          .from('candidaturas')
-          .update({ status: 'enviado_cliente' })
-          .eq('id', candidatura.id);
-        
-        console.log(`✅ Status atualizado para "enviado_cliente" - Candidatura #${candidatura.id}`);
-      } catch (err) {
-        console.warn('⚠️ Não foi possível atualizar status para enviado_cliente:', err);
-      }
-    }
-
-    return candidatura;
-  };
-
-  const handleCancelarIndicacao = () => {
-    setCandidatoSelecionado(null);
-    setMostrarFormIndicacao(false);
-    setOrigem('aquisicao');
-    setIndicadoPorNome('');
-    setIndicadoPorCargo('');
-    setIndicacaoObservacoes('');
-  };
-
-  // Navegação de página
-  const irParaPagina = (pagina: number) => {
-    if (pagina >= 1 && pagina <= totalPaginas) {
-      setPaginaAtual(pagina);
-    }
-  };
-
   // ============================================
-  // RENDER: NÃO ABERTO
+  // RENDER - Verificação se modal está fechado
   // ============================================
-
+  
   if (!isOpen) return null;
 
   // ============================================
-  // RENDER: SKELETON LOADING
+  // RENDER - Formulário de Indicação
   // ============================================
-
-  const SkeletonCard = () => (
-    <div className="border-2 border-gray-100 rounded-xl p-4 animate-pulse">
-      <div className="flex items-center gap-4">
-        <div className="w-12 h-12 bg-gray-200 rounded-full" />
-        <div className="flex-1 space-y-2">
-          <div className="h-4 bg-gray-200 rounded w-1/3" />
-          <div className="h-3 bg-gray-200 rounded w-1/2" />
+  
+  if (mostrarFormIndicacao && candidatoSelecionado) {
+    const nomeCandidate = candidatoSelecionado.nome;
+    const tituloCandidate = candidatoSelecionado.titulo_profissional || 'Não informado';
+    
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <UserPlus className="w-5 h-5" />
+                Confirmar Candidatura
+              </h2>
+              <button onClick={() => setMostrarFormIndicacao(false)} className="text-white/80 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+          
+          {/* Conteúdo */}
+          <div className="p-5 space-y-4">
+            {/* Info do Candidato */}
+            <div className="bg-gray-50 rounded-xl p-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center">
+                  <User className="w-6 h-6 text-orange-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-800">{nomeCandidate}</h3>
+                  <p className="text-sm text-gray-500">{tituloCandidate}</p>
+                </div>
+              </div>
+            </div>
+            
+            {/* Vaga */}
+            <div className="bg-blue-50 rounded-xl p-4">
+              <div className="flex items-center gap-2 text-blue-800">
+                <Briefcase className="w-5 h-5" />
+                <span className="font-medium">{vagaSelecionada?.titulo}</span>
+              </div>
+            </div>
+            
+            {/* Tipo de Origem */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Origem da Candidatura
+              </label>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setOrigem('aquisicao')}
+                  className={`flex-1 py-2 px-4 rounded-lg border-2 transition ${
+                    origem === 'aquisicao'
+                      ? 'border-green-500 bg-green-50 text-green-700'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <Award className="w-5 h-5 mx-auto mb-1" />
+                  <span className="text-sm font-medium">Aquisição</span>
+                </button>
+                <button
+                  onClick={() => setOrigem('indicacao_cliente')}
+                  className={`flex-1 py-2 px-4 rounded-lg border-2 transition ${
+                    origem === 'indicacao_cliente'
+                      ? 'border-purple-500 bg-purple-50 text-purple-700'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <Building2 className="w-5 h-5 mx-auto mb-1" />
+                  <span className="text-sm font-medium">Indicação</span>
+                </button>
+              </div>
+            </div>
+            
+            {/* Campos de Indicação */}
+            {origem === 'indicacao_cliente' && (
+              <div className="space-y-3 pt-2">
+                <input
+                  type="text"
+                  placeholder="Nome de quem indicou"
+                  value={indicadoPorNome}
+                  onChange={e => setIndicadoPorNome(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500"
+                />
+                <input
+                  type="text"
+                  placeholder="Cargo de quem indicou"
+                  value={indicadoPorCargo}
+                  onChange={e => setIndicadoPorCargo(e.target.value)}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500"
+                />
+                <textarea
+                  placeholder="Observações da indicação..."
+                  value={indicacaoObservacoes}
+                  onChange={e => setIndicacaoObservacoes(e.target.value)}
+                  rows={2}
+                  className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+            )}
+          </div>
+          
+          {/* Footer */}
+          <div className="bg-gray-50 px-5 py-4 flex justify-end gap-3">
+            <button
+              onClick={() => setMostrarFormIndicacao(false)}
+              className="px-4 py-2 text-gray-600 hover:text-gray-800"
+            >
+              Voltar
+            </button>
+            <button
+              onClick={handleCriarCandidatura}
+              disabled={criandoCandidatura !== null}
+              className="px-6 py-2 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-lg hover:shadow-lg disabled:opacity-50 flex items-center gap-2"
+            >
+              {criandoCandidatura !== null ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Criando...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4" />
+                  Criar Candidatura
+                </>
+              )}
+            </button>
+          </div>
         </div>
-        <div className="w-20 h-8 bg-gray-200 rounded-lg" />
       </div>
-    </div>
-  );
+    );
+  }
 
   // ============================================
-  // RENDER: MODAL
+  // RENDER - Modal Principal
   // ============================================
-
+  
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
         
         {/* ============================================ */}
         {/* HEADER */}
         {/* ============================================ */}
-        <div className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-5 py-4 rounded-t-2xl flex justify-between items-center">
-          <div>
-            <h2 className="text-xl font-bold flex items-center gap-2">
-              <UserPlus className="w-6 h-6" />
+        <div className="bg-gradient-to-r from-orange-500 to-amber-500 px-5 py-4">
+          <div className="flex justify-between items-center">
+            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+              <UserPlus className="w-5 h-5" />
               Nova Candidatura
             </h2>
-            <p className="text-orange-100 text-sm mt-0.5">
-              {currentUserName && `Analista: ${currentUserName}`}
-            </p>
+            <button onClick={handleFechar} className="text-white/80 hover:text-white">
+              <X className="w-6 h-6" />
+            </button>
           </div>
-          <button
-            onClick={handleFechar}
-            className="text-white hover:bg-white/20 rounded-full p-1.5 transition"
-          >
-            <X className="w-6 h-6" />
-          </button>
+          <p className="text-white/80 text-sm mt-1">
+            Selecione uma vaga e um candidato para criar a candidatura
+          </p>
         </div>
 
         {/* ============================================ */}
         {/* CONTEÚDO */}
         {/* ============================================ */}
-        <div className="flex-1 overflow-y-auto p-5">
-
-          {/* CANDIDATO SELECIONADO - FORMULÁRIO DE INDICAÇÃO */}
-          {mostrarFormIndicacao && candidatoSelecionado && (
-            <div className="space-y-5">
-              {/* Card do candidato selecionado */}
-              <div className="bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-200 rounded-xl p-5">
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 bg-gradient-to-r from-green-400 to-emerald-400 rounded-full flex items-center justify-center">
-                    <User className="w-7 h-7 text-white" />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="font-semibold text-gray-800 text-lg">{candidatoSelecionado.nome}</h3>
-                    <p className="text-green-700">{candidatoSelecionado.titulo_profissional}</p>
-                    <p className="text-gray-500 text-sm">{candidatoSelecionado.email}</p>
-                  </div>
-                  <div className="text-right">
-                    <div className={`text-2xl font-bold ${
-                      candidatoSelecionado.score_total >= 70 ? 'text-green-600' :
-                      candidatoSelecionado.score_total >= 50 ? 'text-yellow-600' :
-                      'text-gray-500'
-                    }`}>
-                      {candidatoSelecionado.score_total > 0 ? `${candidatoSelecionado.score_total}%` : 'N/A'}
-                    </div>
-                    <div className="text-xs text-gray-500">Score</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Vaga selecionada */}
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                <div className="flex items-center gap-3">
-                  <Briefcase className="w-5 h-5 text-blue-600" />
-                  <div>
-                    <span className="font-medium text-blue-900">{vagaSelecionada?.titulo}</span>
-                    <span className="text-blue-600 ml-2">• {vagaSelecionada?.senioridade}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Formulário de origem */}
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Origem da Candidatura</label>
-                  <div className="flex gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="origem"
-                        checked={origem === 'aquisicao'}
-                        onChange={() => setOrigem('aquisicao')}
-                        className="w-4 h-4 text-orange-500"
-                      />
-                      <span className="text-gray-700">Aquisição (Banco de Talentos)</span>
-                    </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="origem"
-                        checked={origem === 'indicacao_cliente'}
-                        onChange={() => setOrigem('indicacao_cliente')}
-                        className="w-4 h-4 text-amber-500"
-                      />
-                      <span className="text-gray-700">Indicação do Cliente</span>
-                    </label>
-                  </div>
-                </div>
-
-                {/* Campos de indicação (só aparecem se for indicação) */}
-                {origem === 'indicacao_cliente' && (
-                  <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-4">
-                    <h4 className="font-medium text-amber-800 flex items-center gap-2">
-                      <Award className="w-5 h-5" />
-                      Dados da Indicação
-                    </h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-sm text-gray-600 mb-1">Nome de quem indicou</label>
-                        <input
-                          type="text"
-                          value={indicadoPorNome}
-                          onChange={e => setIndicadoPorNome(e.target.value)}
-                          placeholder="Ex: João Silva"
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-200"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm text-gray-600 mb-1">Cargo de quem indicou</label>
-                        <input
-                          type="text"
-                          value={indicadoPorCargo}
-                          onChange={e => setIndicadoPorCargo(e.target.value)}
-                          placeholder="Ex: Gerente de TI"
-                          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-amber-500 focus:ring-1 focus:ring-amber-200"
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-600 mb-1">Observações da indicação</label>
-                      <textarea
-                        value={indicacaoObservacoes}
-                        onChange={e => setIndicacaoObservacoes(e.target.value)}
-                        placeholder="Contexto da indicação, relacionamento com o candidato..."
-                        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm h-16 focus:border-amber-500 focus:ring-1 focus:ring-amber-200"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Botões de Ação */}
-              <div className="flex justify-end gap-3">
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          
+          {/* ============================================ */}
+          {/* SELEÇÃO DE VAGA */}
+          {/* ============================================ */}
+          <div className="bg-gray-50 rounded-xl p-4">
+            <div className="flex flex-wrap items-center gap-3 mb-3">
+              <Briefcase className="w-5 h-5 text-orange-500" />
+              <span className="font-semibold text-gray-700">1. Selecione a Vaga</span>
+              
+              {/* Toggle Minhas/Todas Vagas */}
+              <div className="flex rounded-lg overflow-hidden border border-gray-300 ml-auto">
                 <button
-                  onClick={handleCancelarIndicacao}
-                  className="px-5 py-2.5 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50 transition font-medium text-sm"
+                  onClick={() => setFiltroVagaEscopo('minhas')}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    filtroVagaEscopo === 'minhas'
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-white text-gray-600 hover:bg-gray-100'
+                  }`}
                 >
-                  Cancelar
+                  Minhas Vagas
                 </button>
                 <button
-                  onClick={handleCriarCandidatura}
-                  disabled={criandoCandidatura !== null}
-                  className="px-6 py-2.5 bg-gradient-to-r from-green-500 to-emerald-500 text-white rounded-xl hover:shadow-lg transition font-semibold flex items-center gap-2 disabled:opacity-50 text-sm"
+                  onClick={() => setFiltroVagaEscopo('todas')}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    filtroVagaEscopo === 'todas'
+                      ? 'bg-orange-500 text-white'
+                      : 'bg-white text-gray-600 hover:bg-gray-100'
+                  }`}
                 >
-                  {criandoCandidatura ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Criando...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle className="w-4 h-4" />
-                      Criar e Enviar ao Cliente
-                    </>
-                  )}
+                  Todas
                 </button>
               </div>
             </div>
-          )}
+            
+            <select
+              value={vagaSelecionadaId}
+              onChange={e => setVagaSelecionadaId(e.target.value)}
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500 bg-white"
+            >
+              <option value="">-- Selecione uma vaga --</option>
+              {vagasFiltradas.map(v => (
+                <option key={v.id} value={String(v.id)}>
+                  {v.titulo}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-1 ml-1">
+              {vagasFiltradas.length} vaga(s) {filtroVagaEscopo === 'minhas' ? 'associada(s) a você' : 'disponíveis'}
+              {loadingMinhasVagas && ' (carregando...)'}
+            </p>
+          </div>
 
-          {/* BUSCA NORMAL (quando não há candidato selecionado) */}
-          {!mostrarFormIndicacao && (
-            <>
-              {/* ============================================ */}
-              {/* 🆕 FILTROS DE ESCOPO + SELEÇÃO DE VAGA */}
-              {/* ============================================ */}
-              <div className="space-y-4 mb-5">
-                {/* Linha 1: Toggle de Escopo de Vagas + Seleção de Vaga */}
-                <div className="flex flex-col lg:flex-row gap-3">
-                  {/* Toggle Minhas Vagas / Todas */}
-                  <div className="flex items-center gap-2 bg-gray-100 rounded-xl p-2">
-                    <button
-                      onClick={() => setFiltroVagaEscopo('minhas')}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                        filtroVagaEscopo === 'minhas'
-                          ? 'bg-white text-orange-600 shadow-sm'
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      <User className="w-4 h-4" />
-                      Minhas Vagas
-                    </button>
-                    <button
-                      onClick={() => setFiltroVagaEscopo('todas')}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                        filtroVagaEscopo === 'todas'
-                          ? 'bg-white text-orange-600 shadow-sm'
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      <Users className="w-4 h-4" />
-                      Todas as Vagas
-                    </button>
-                  </div>
-
-                  {/* Dropdown de Seleção de Vaga */}
-                  <div className="flex-1">
-                    <div className="relative">
-                      <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                      <select 
-                        value={vagaSelecionadaId}
-                        onChange={e => {
-                          setVagaSelecionadaId(e.target.value);
-                          setBuscaBancoRealizada(false);
-                          setPaginaAtual(1);
-                        }}
-                        className="w-full border-2 border-gray-200 rounded-xl p-3 pl-10 focus:border-orange-500 focus:ring-2 focus:ring-orange-200 text-sm"
-                      >
-                        <option value="">
-                          {loadingMinhasVagas 
-                            ? 'Carregando vagas...'
-                            : vagasFiltradas.length === 0 
-                              ? `Nenhuma vaga ${filtroVagaEscopo === 'minhas' ? 'associada a você' : 'disponível'}...`
-                              : 'Selecione uma vaga para buscar candidatos...'}
-                        </option>
-                        {vagasFiltradas.map(v => (
-                          <option key={v.id} value={String(v.id)}>
-                            {v.titulo} - {v.senioridade} 
-                            {v.stack_tecnologica && ` (${Array.isArray(v.stack_tecnologica) ? v.stack_tecnologica.slice(0, 3).join(', ') : v.stack_tecnologica})`}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <p className="text-xs text-gray-400 mt-1 ml-1">
-                      {vagasFiltradas.length} vaga(s) {filtroVagaEscopo === 'minhas' ? 'associada(s) a você' : 'disponíveis'}
-                    </p>
-                  </div>
+          {/* ============================================ */}
+          {/* SELEÇÃO DE CANDIDATO */}
+          {/* ============================================ */}
+          {vagaSelecionadaId && (
+            <div className="bg-gray-50 rounded-xl p-4">
+              <div className="flex flex-wrap items-center gap-3 mb-3">
+                <User className="w-5 h-5 text-blue-500" />
+                <span className="font-semibold text-gray-700">2. Selecione o Candidato</span>
+                
+                {/* Toggle Meus/Todos Candidatos */}
+                <div className="flex rounded-lg overflow-hidden border border-gray-300 ml-auto">
+                  <button
+                    onClick={() => setFiltroPessoaEscopo('minhas')}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      filtroPessoaEscopo === 'minhas'
+                        ? 'bg-blue-500 text-white'
+                        : 'bg-white text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    Meus Candidatos
+                  </button>
+                  <button
+                    onClick={() => setFiltroPessoaEscopo('todas')}
+                    className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                      filtroPessoaEscopo === 'todas'
+                        ? 'bg-orange-500 text-white'
+                        : 'bg-white text-gray-600 hover:bg-gray-100'
+                    }`}
+                  >
+                    Buscar Todos
+                  </button>
                 </div>
               </div>
 
-              {/* ABA: BANCO DE TALENTOS */}
-              {abaAtiva === 'banco' && (
-                <div className="space-y-4">
-                  {/* Se não tem vaga selecionada */}
-                  {!vagaSelecionadaId && (
-                    <div className="text-center py-10 bg-gray-50 rounded-xl">
-                      <Search className="w-14 h-14 text-gray-300 mx-auto mb-3" />
-                      <p className="text-gray-500 text-base font-medium">Selecione uma Vaga</p>
-                      <p className="text-sm text-gray-400 mt-1">
-                        Escolha uma vaga acima para buscar candidatos compatíveis
-                      </p>
+              {/* Campo de Busca */}
+              <div className="relative mb-4">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="🔍 Buscar por nome do candidato..."
+                  value={buscaTexto}
+                  onChange={e => setBuscaTexto(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              {/* Botão Buscar (só para "Todos") */}
+              {filtroPessoaEscopo === 'todas' && (
+                <div className="mb-4">
+                  <button
+                    onClick={handleBuscarCandidatos}
+                    disabled={loadingMatches}
+                    className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white px-5 py-2.5 rounded-xl hover:shadow-lg disabled:opacity-50 transition font-medium"
+                  >
+                    {loadingMatches ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Buscando candidatos compatíveis...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        Buscar por Match de Skills
+                      </>
+                    )}
+                  </button>
+                  <p className="text-xs text-gray-400 mt-1 text-center">
+                    Busca candidatos com skills compatíveis com a vaga
+                  </p>
+                </div>
+              )}
+
+              {/* Loading */}
+              {(loadingMeusCandidatos || loadingMatches) && (
+                <div className="text-center py-8">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-500 mx-auto" />
+                  <p className="text-gray-500 mt-2">Carregando candidatos...</p>
+                </div>
+              )}
+
+              {/* ============================================ */}
+              {/* LISTA DE CANDIDATOS */}
+              {/* ============================================ */}
+              {!loadingMeusCandidatos && !loadingMatches && (
+                <>
+                  {/* Mensagem quando não há candidatos */}
+                  {candidatosFiltrados.length === 0 && (
+                    <div className="text-center py-8 bg-white rounded-xl border border-dashed border-gray-300">
+                      <User className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                      {filtroPessoaEscopo === 'minhas' ? (
+                        <>
+                          <p className="text-gray-500 font-medium">Nenhum candidato encontrado</p>
+                          <p className="text-sm text-gray-400 mt-1">
+                            {buscaTexto 
+                              ? `Nenhum candidato com "${buscaTexto}" no nome`
+                              : 'Você não tem candidatos associados ainda'}
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-gray-500 font-medium">
+                            {buscaBancoRealizada ? 'Nenhum candidato compatível' : 'Clique em "Buscar" para encontrar candidatos'}
+                          </p>
+                        </>
+                      )}
                     </div>
                   )}
 
-                  {/* Se tem vaga, mostrar busca */}
-                  {vagaSelecionadaId && (
+                  {/* Cards de Candidatos */}
+                  {candidatosFiltrados.length > 0 && (
                     <>
-                      {/* Toolbar de busca */}
-                      <div className="bg-gray-50 rounded-xl p-4 space-y-3">
-                        {/* Linha 1: Botão Buscar + Filtros */}
-                        <div className="flex flex-wrap items-center gap-3">
-                          <button
-                            onClick={handleBuscarCandidatos}
-                            disabled={loadingMatches}
-                            className="flex items-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-500 text-white px-5 py-2.5 rounded-xl hover:shadow-lg disabled:opacity-50 transition font-medium text-sm"
-                          >
-                            {loadingMatches ? (
-                              <>
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                                Buscando...
-                              </>
-                            ) : (
-                              <>
-                                <Search className="w-4 h-4" />
-                                Buscar Candidatos
-                              </>
-                            )}
-                          </button>
-
-                          {/* Filtro de Score Mínimo */}
-                          <div className="flex items-center gap-2 bg-white rounded-lg px-3 py-2 border border-gray-200">
-                            <Filter className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm text-gray-600">Score mín:</span>
-                            <select
-                              value={filtroScoreMin}
-                              onChange={e => setFiltroScoreMin(Number(e.target.value))}
-                              className="border-0 bg-transparent text-sm font-medium focus:ring-0"
-                            >
-                              <option value={0}>Todos</option>
-                              <option value={30}>30%+</option>
-                              <option value={50}>50%+</option>
-                              <option value={70}>70%+</option>
-                            </select>
-                          </div>
-
-                          {/* Filtro Escopo de Pessoas */}
-                          <div className="flex items-center gap-1 bg-white rounded-lg px-2 py-1.5 border border-gray-200">
-                            <button
-                              onClick={() => setFiltroPessoaEscopo('minhas')}
-                              className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
-                                filtroPessoaEscopo === 'minhas'
-                                  ? 'bg-orange-100 text-orange-700'
-                                  : 'text-gray-500 hover:bg-gray-100'
-                              }`}
-                            >
-                              Meus Candidatos
-                            </button>
-                            <button
-                              onClick={() => setFiltroPessoaEscopo('todas')}
-                              className={`px-3 py-1.5 rounded-md text-xs font-medium transition ${
-                                filtroPessoaEscopo === 'todas'
-                                  ? 'bg-orange-100 text-orange-700'
-                                  : 'text-gray-500 hover:bg-gray-100'
-                              }`}
-                            >
-                              Todos
-                            </button>
-                          </div>
-
-                          {/* 🆕 v57.5: Toggle Incluir Sem Match */}
-                          {filtroPessoaEscopo === 'minhas' && buscaBancoRealizada && (
-                            <button
-                              onClick={() => setIncluirSemMatch(!incluirSemMatch)}
-                              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                                incluirSemMatch
-                                  ? 'bg-amber-100 text-amber-700 border border-amber-300'
-                                  : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                              }`}
-                              title="Incluir candidatos do seu banco sem match de skills"
-                            >
-                              {incluirSemMatch ? (
-                                <ToggleRight className="w-4 h-4" />
-                              ) : (
-                                <ToggleLeft className="w-4 h-4" />
-                              )}
-                              Incluir Sem Match
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Linha 2: Busca por texto */}
-                        <div className="relative">
-                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                          <input
-                            type="text"
-                            placeholder="Buscar por nome, cargo, email ou skill..."
-                            value={buscaTexto}
-                            onChange={e => setBuscaTexto(e.target.value)}
-                            className="w-full border border-gray-200 rounded-lg pl-10 pr-4 py-2 text-sm focus:border-orange-400 focus:ring-1 focus:ring-orange-200"
-                          />
-                        </div>
+                      {/* Info de resultados */}
+                      <div className="flex items-center justify-between text-sm text-gray-500 mb-3">
+                        <span>
+                          {candidatosFiltrados.length} candidato(s) {filtroPessoaEscopo === 'minhas' ? 'sob sua responsabilidade' : 'encontrado(s)'}
+                        </span>
+                        {totalPaginas > 1 && (
+                          <span>Página {paginaAtual} de {totalPaginas}</span>
+                        )}
                       </div>
 
-                      {/* Erro de busca */}
-                      {errorMatches && (
-                        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl">
-                          ❌ {errorMatches}
-                        </div>
-                      )}
-
-                      {/* Loading */}
-                      {loadingMatches && (
-                        <div className="space-y-3">
-                          <SkeletonCard />
-                          <SkeletonCard />
-                          <SkeletonCard />
-                        </div>
-                      )}
-
-                      {/* Nenhum resultado */}
-                      {!loadingMatches && buscaBancoRealizada && matchesFiltrados.length === 0 && (
-                        <div className="text-center py-10 bg-gray-50 rounded-xl">
-                          <Users className="w-14 h-14 text-gray-300 mx-auto mb-3" />
-                          <p className="text-gray-500 text-base font-medium">Nenhum candidato encontrado</p>
-                          <p className="text-sm text-gray-400 mt-1">
-                            {filtroPessoaEscopo === 'minhas' && !incluirSemMatch
-                              ? 'Tente ativar "Incluir Sem Match" ou ajustar os filtros'
-                              : 'Tente ajustar os filtros de score ou escopo'}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* 🆕 LISTA DE CANDIDATOS COM PAGINAÇÃO */}
-                      {matchesFiltrados.length > 0 && (
-                        <>
-                          {/* Info de resultados */}
-                          <div className="flex items-center justify-between text-sm text-gray-500 px-1">
-                            <span className="flex items-center gap-2">
-                              <Users className="w-4 h-4" />
-                              {matchesFiltrados.length} candidato(s) encontrado(s)
-                              {filtroPessoaEscopo === 'minhas' && ' (filtrado)'}
-                              {incluirSemMatch && ' + sem match'}
-                            </span>
-                            <span>
-                              Página {paginaAtual} de {totalPaginas}
-                            </span>
-                          </div>
-
-                          {/* Lista de Matches */}
-                          <div className="space-y-3">
-                            {matchesPaginados.map((match, index) => {
-                              const rankingGlobal = (paginaAtual - 1) * ITEMS_PER_PAGE + index;
-                              
-                              return (
-                                <div
-                                  key={match.pessoa_id}
-                                  className={`border-2 rounded-xl p-4 hover:shadow-md transition-all bg-white cursor-pointer ${
-                                    match.status === 'candidatura_criada' 
-                                      ? 'opacity-60 border-gray-200 cursor-not-allowed' 
-                                      : match.score_total === 0
-                                        ? 'border-amber-200 bg-amber-50/30'
-                                        : 'border-gray-100 hover:border-orange-300'
-                                  }`}
-                                  onClick={() => match.status !== 'candidatura_criada' && handleSelecionarCandidato(match)}
-                                >
-                                  <div className="flex items-center gap-4">
-                                    {/* Ranking + Score */}
-                                    <div className="flex items-center gap-3 min-w-[100px]">
-                                      <div className={`text-xl font-bold ${
-                                        match.score_total === 0 ? 'text-amber-500' :
-                                        rankingGlobal === 0 ? 'text-yellow-500' :
-                                        rankingGlobal === 1 ? 'text-gray-400' :
-                                        rankingGlobal === 2 ? 'text-orange-400' :
-                                        'text-gray-400'
-                                      }`}>
-                                        {match.score_total === 0 ? '⚠️' :
-                                         rankingGlobal === 0 ? '🥇' : 
-                                         rankingGlobal === 1 ? '🥈' : 
-                                         rankingGlobal === 2 ? '🥉' : 
-                                         `#${rankingGlobal + 1}`}
-                                      </div>
-                                      <div className={`text-lg font-semibold ${
-                                        match.score_total === 0 ? 'text-amber-500' :
-                                        match.score_total >= 70 ? 'text-green-600' :
-                                        match.score_total >= 50 ? 'text-yellow-600' :
-                                        'text-gray-500'
-                                      }`}>
-                                        {match.score_total === 0 ? 'N/A' : `${match.score_total}%`}
-                                      </div>
-                                    </div>
-
-                                    {/* Info do Candidato */}
-                                    <div className="flex-1">
-                                      <h4 className="font-semibold text-gray-800">{match.nome}</h4>
-                                      <p className="text-sm text-gray-600">{match.titulo_profissional}</p>
-                                      <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
-                                        <span>{match.senioridade}</span>
-                                        <span>•</span>
-                                        <span>{match.disponibilidade}</span>
-                                        {match.skills_match && match.skills_match.length > 0 && (
-                                          <>
-                                            <span>•</span>
-                                            <span className="text-green-600">
-                                              {match.skills_match.slice(0, 3).join(', ')}
-                                              {match.skills_match.length > 3 && ` +${match.skills_match.length - 3}`}
-                                            </span>
-                                          </>
-                                        )}
-                                        {match.score_total === 0 && (
-                                          <span className="text-amber-600 font-medium">
-                                            Sem skills cadastradas
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    {/* Botão de Seleção */}
-                                    <div>
-                                      {match.status === 'candidatura_criada' ? (
-                                        <span className="text-gray-400 text-xs">Já adicionado</span>
-                                      ) : (
-                                        <button
-                                          className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-4 py-2 rounded-lg hover:shadow-lg transition font-medium text-sm flex items-center gap-2"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleSelecionarCandidato(match);
-                                          }}
-                                        >
-                                          <UserPlus className="w-4 h-4" />
-                                          Selecionar
-                                        </button>
-                                      )}
-                                    </div>
+                      <div className="space-y-2">
+                        {candidatosPaginados.map((candidato: any) => {
+                          const id = candidato.pessoa_id || candidato.id;
+                          const nome = candidato.nome || 'Sem nome';
+                          const titulo = candidato.titulo_profissional || 'Não informado';
+                          const senioridade = candidato.senioridade || 'N/I';
+                          const disponibilidade = candidato.disponibilidade || 'N/I';
+                          const cidade = candidato.cidade;
+                          const estado = candidato.estado;
+                          const skills = candidato.total_skills || candidato.skills_match?.length || 0;
+                          const score = candidato.score_total;
+                          
+                          return (
+                            <div
+                              key={id}
+                              onClick={() => handleSelecionarCandidato(candidato)}
+                              className="bg-white border-2 border-gray-100 rounded-xl p-4 hover:border-blue-400 hover:shadow-md cursor-pointer transition-all"
+                            >
+                              <div className="flex items-center gap-4">
+                                {/* Avatar */}
+                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+                                  {nome.charAt(0).toUpperCase()}
+                                </div>
+                                
+                                {/* Info */}
+                                <div className="flex-1 min-w-0">
+                                  <h4 className="font-semibold text-gray-800 truncate">
+                                    {nome}
+                                  </h4>
+                                  <p className="text-sm text-gray-500 truncate">
+                                    {titulo}
+                                  </p>
+                                  <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
+                                    <span className="flex items-center gap-1">
+                                      <Star className="w-3 h-3" />
+                                      {senioridade}
+                                    </span>
+                                    <span className="flex items-center gap-1">
+                                      <Clock className="w-3 h-3" />
+                                      {disponibilidade}
+                                    </span>
+                                    {cidade && (
+                                      <span className="flex items-center gap-1">
+                                        <MapPin className="w-3 h-3" />
+                                        {cidade}/{estado}
+                                      </span>
+                                    )}
                                   </div>
                                 </div>
-                              );
-                            })}
-                          </div>
-
-                          {/* 🆕 CONTROLES DE PAGINAÇÃO */}
-                          {totalPaginas > 1 && (
-                            <div className="flex items-center justify-center gap-2 pt-4">
-                              <button
-                                onClick={() => irParaPagina(1)}
-                                disabled={paginaAtual === 1}
-                                className="flex items-center p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                                title="Primeira página"
-                              >
-                                <ChevronLeft className="w-4 h-4" />
-                                <ChevronLeft className="w-4 h-4 -ml-2.5" />
-                              </button>
-                              
-                              <button
-                                onClick={() => irParaPagina(paginaAtual - 1)}
-                                disabled={paginaAtual === 1}
-                                className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                                title="Página anterior"
-                              >
-                                <ChevronLeft className="w-4 h-4" />
-                              </button>
-
-                              {/* Números das páginas */}
-                              <div className="flex items-center gap-1">
-                                {Array.from({ length: Math.min(5, totalPaginas) }, (_, i) => {
-                                  let pageNum;
-                                  if (totalPaginas <= 5) {
-                                    pageNum = i + 1;
-                                  } else if (paginaAtual <= 3) {
-                                    pageNum = i + 1;
-                                  } else if (paginaAtual >= totalPaginas - 2) {
-                                    pageNum = totalPaginas - 4 + i;
-                                  } else {
-                                    pageNum = paginaAtual - 2 + i;
-                                  }
-                                  
-                                  return (
-                                    <button
-                                      key={pageNum}
-                                      onClick={() => irParaPagina(pageNum)}
-                                      className={`w-9 h-9 rounded-lg font-medium text-sm transition-all ${
-                                        paginaAtual === pageNum
-                                          ? 'bg-orange-500 text-white shadow-md'
-                                          : 'border border-gray-200 hover:bg-gray-50 text-gray-600'
-                                      }`}
-                                    >
-                                      {pageNum}
-                                    </button>
-                                  );
-                                })}
+                                
+                                {/* Info adicional */}
+                                <div className="text-right flex-shrink-0">
+                                  {filtroPessoaEscopo === 'minhas' ? (
+                                    <div className="text-xs text-gray-500">
+                                      {skills} skill(s)
+                                    </div>
+                                  ) : (
+                                    <div className={`text-lg font-bold ${
+                                      score >= 70 ? 'text-green-600' :
+                                      score >= 40 ? 'text-yellow-600' : 'text-gray-400'
+                                    }`}>
+                                      {score}%
+                                    </div>
+                                  )}
+                                  <button className="text-xs text-blue-600 hover:text-blue-800 mt-1">
+                                    Selecionar →
+                                  </button>
+                                </div>
                               </div>
-
-                              <button
-                                onClick={() => irParaPagina(paginaAtual + 1)}
-                                disabled={paginaAtual === totalPaginas}
-                                className="p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                                title="Próxima página"
-                              >
-                                <ChevronRight className="w-4 h-4" />
-                              </button>
-
-                              <button
-                                onClick={() => irParaPagina(totalPaginas)}
-                                disabled={paginaAtual === totalPaginas}
-                                className="flex items-center p-2 rounded-lg border border-gray-200 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50"
-                                title="Última página"
-                              >
-                                <ChevronRight className="w-4 h-4" />
-                                <ChevronRight className="w-4 h-4 -ml-2.5" />
-                              </button>
                             </div>
-                          )}
-                        </>
+                          );
+                        })}
+                      </div>
+
+                      {/* Paginação */}
+                      {totalPaginas > 1 && (
+                        <div className="flex items-center justify-center gap-2 mt-4">
+                          <button
+                            onClick={() => setPaginaAtual(p => Math.max(1, p - 1))}
+                            disabled={paginaAtual === 1}
+                            className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          <span className="text-sm text-gray-600">
+                            {paginaAtual} / {totalPaginas}
+                          </span>
+                          <button
+                            onClick={() => setPaginaAtual(p => Math.min(totalPaginas, p + 1))}
+                            disabled={paginaAtual === totalPaginas}
+                            className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
                       )}
                     </>
                   )}
-                </div>
+                </>
               )}
+            </div>
+          )}
 
-              {/* ABA: SUGESTÕES IA */}
-              {abaAtiva === 'sugestoes' && (
-                <div className="space-y-4">
-                  {/* Se não tem vaga selecionada */}
-                  {!vagaSelecionadaId && (
-                    <div className="text-center py-10 bg-gray-50 rounded-xl">
-                      <Sparkles className="w-14 h-14 text-gray-300 mx-auto mb-3" />
-                      <p className="text-gray-500 text-base font-medium">Selecione uma Vaga</p>
-                      <p className="text-sm text-gray-400 mt-1">
-                        Escolha uma vaga no dropdown acima para receber sugestões da IA
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Se tem vaga */}
-                  {vagaSelecionadaId && (
-                    <div className="text-center py-10 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-xl">
-                      <div className="w-16 h-16 bg-gradient-to-r from-purple-100 to-indigo-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                        <Sparkles className="w-8 h-8 text-purple-500" />
-                      </div>
-                      <p className="text-gray-700 font-medium mb-2">Sugestões Inteligentes</p>
-                      <p className="text-sm text-gray-500 mb-5 max-w-md mx-auto">
-                        A IA analisa o banco de talentos e sugere os melhores candidatos.
-                        Use a aba "Banco de Talentos" para ver os resultados.
-                      </p>
-                      <button 
-                        className="bg-gradient-to-r from-purple-500 to-indigo-500 text-white px-6 py-2.5 rounded-xl hover:shadow-lg transition font-medium flex items-center gap-2 mx-auto text-sm"
-                        onClick={() => {
-                          setAbaAtiva('banco');
-                          handleBuscarCandidatos();
-                        }}
-                      >
-                        <Search className="w-4 h-4" />
-                        Buscar Candidatos Compatíveis
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-            </>
+          {/* Mensagem se não selecionou vaga */}
+          {!vagaSelecionadaId && (
+            <div className="text-center py-10 bg-gray-50 rounded-xl">
+              <Search className="w-14 h-14 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500 text-base font-medium">Selecione uma Vaga</p>
+              <p className="text-sm text-gray-400 mt-1">
+                Escolha uma vaga acima para selecionar candidatos
+              </p>
+            </div>
           )}
         </div>
 
         {/* ============================================ */}
         {/* FOOTER */}
         {/* ============================================ */}
-        {!mostrarFormIndicacao && (
-          <div className="bg-gray-50 px-5 py-3 flex justify-between items-center border-t">
-            <p className="text-xs text-gray-500">
-              💡 Dica: Candidaturas são criadas com status <strong>"Enviado ao Cliente"</strong>
-            </p>
-            <button
-              onClick={handleFechar}
-              className="px-5 py-2 text-gray-600 hover:text-gray-800 font-medium text-sm"
-            >
-              Cancelar
-            </button>
-          </div>
-        )}
+        <div className="bg-gray-50 px-5 py-3 flex justify-between items-center border-t">
+          <p className="text-xs text-gray-500">
+            💡 Candidaturas são criadas com status <strong>"Enviado ao Cliente"</strong>
+          </p>
+          <button
+            onClick={handleFechar}
+            className="px-5 py-2 text-gray-600 hover:text-gray-800 font-medium text-sm"
+          >
+            Cancelar
+          </button>
+        </div>
       </div>
     </div>
   );
