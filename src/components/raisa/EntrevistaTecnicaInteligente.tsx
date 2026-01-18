@@ -177,7 +177,9 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       c.status === 'entrevista' || 
       c.status === 'triagem' || 
       c.status === 'teste_tecnico' ||
-      c.status === 'cv_enviado'
+      c.status === 'cv_enviado' ||
+      c.status === 'aprovado' ||
+      c.status === 'aprovado_interno'
     ),
     [candidaturasComVaga]
   );
