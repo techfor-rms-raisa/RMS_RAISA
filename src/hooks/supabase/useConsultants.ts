@@ -56,7 +56,7 @@ export const useConsultants = () => {
         dt_aniversario: consultant.dt_aniversario,
         cnpj_consultor: consultant.cnpj_consultor,
         empresa_consultor: consultant.empresa_consultor,
-        // ✅ v2.3: NOVOS CAMPOS
+        // ✅ v2.4: NOVOS CAMPOS
         modalidade_contrato: consultant.modalidade_contrato,
         substituicao: consultant.substituicao,
         nome_substituido: consultant.nome_substituido,
@@ -182,7 +182,7 @@ export const useConsultants = () => {
           curriculo_url: cvData.curriculo_url || null,
           curriculo_uploaded_at: cvData.curriculo_url ? new Date().toISOString() : null,
           
-          // ✅ v2.3: NOVOS CAMPOS - modalidade, substituição, observações
+          // ✅ v2.4: NOVOS CAMPOS - modalidade, substituição, observações
           modalidade_contrato: (newConsultant as any).modalidade_contrato || 'PJ',
           substituicao: (newConsultant as any).substituicao || false,
           nome_substituido: (newConsultant as any).nome_substituido || null,
@@ -268,7 +268,7 @@ export const useConsultants = () => {
           cnpj_consultor: (updateData as any).cnpj_consultor,
           empresa_consultor: (updateData as any).empresa_consultor,
           
-          // ✅ v2.3: NOVOS CAMPOS - modalidade, substituição, observações
+          // ✅ v2.4: NOVOS CAMPOS - modalidade, substituição, observações
           modalidade_contrato: (updateData as any).modalidade_contrato,
           substituicao: (updateData as any).substituicao,
           nome_substituido: (updateData as any).nome_substituido,
@@ -371,7 +371,7 @@ export const useConsultants = () => {
             curriculo_url: pessoa?.curriculo_url || null,
             curriculo_uploaded_at: pessoa?.curriculo_url ? new Date().toISOString() : null,
             
-            // ✅ v2.3: NOVOS CAMPOS
+            // ✅ v2.4: NOVOS CAMPOS
             modalidade_contrato: (c as any).modalidade_contrato || 'PJ',
             substituicao: (c as any).substituicao || false,
             nome_substituido: (c as any).nome_substituido || null,

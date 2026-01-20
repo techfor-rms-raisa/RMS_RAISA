@@ -1,12 +1,12 @@
 // src/components/InclusionImport.tsx
-// ✅ v2.3 - Correção completa na extração de campos do PDF
+// ✅ v2.4 - Correção robusta na extração de campos do PDF
 // Melhorias:
 // - EMAIL: filtro para emails pessoais, ignorar corporativos
 // - NOME: ignora seção INFORMAÇÕES DE EMERGÊNCIA
-// - DATA DE INÍCIO: fallback global
-// - FORMA DE CONTRATAÇÃO: fallback global (CLT/PJ)
-// - VALOR PAGAMENTO: fallback global
-// - OBSERVAÇÕES: captura múltiplas linhas
+// - DATA DE INÍCIO: múltiplos padrões + fallbacks robustos
+// - FORMA DE CONTRATAÇÃO: busca CLT/PJ isolados
+// - VALOR PAGAMENTO: múltiplas estratégias de busca
+// - OBSERVAÇÕES: captura texto completo até NOTEBOOK
 // - NOME SUBSTITUÍDO: setar substituicao=true automaticamente
 // - Fix ESModules para Vite
 
@@ -199,16 +199,29 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     role = role.replace(/\s*SR\s*\(\s*X?\s*\)|\s*PL\s*\(\s*X?\s*\)|\s*JR\s*\(\s*X?\s*\)/gi, '').trim();
                 }
                 
-                // Data de Início - ✅ CORREÇÃO v2.3: Buscar em qualquer seção, priorizar DADOS PAGAMENTO
-                if (cleanLine.match(/^DATA DE INÍCIO/i) || cleanLine.match(/^DATA INÍCIO/i)) {
+                // Data de Início - ✅ CORREÇÃO v2.4: Múltiplos padrões de busca
+                if (cleanLine.match(/DATA\s*(?:DE)?\s*INÍCIO/i)) {
                     // Pode estar na mesma linha ou na próxima
                     let match = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
                     if (!match && nextLine) {
                         match = nextLine.match(/(\d{2}\/\d{2}\/\d{4})/);
                     }
+                    // Tentar também formato com hífen ou ponto
+                    if (!match) {
+                        match = cleanLine.match(/(\d{2}[-\.]\d{2}[-\.]\d{4})/);
+                    }
                     if (match && !startDateStr) {
-                        startDateStr = match[1];
+                        startDateStr = match[1].replace(/[-\.]/g, '/');
                         console.log(`✅ Data de Início extraída: ${startDateStr}`);
+                    }
+                }
+                
+                // ✅ v2.4: Buscar data isolada após "DATA DE INÍCIO" (formato do PDF pode separar)
+                if (!startDateStr && cleanLine.match(/^\d{2}\/\d{2}\/\d{4}$/) && i > 0) {
+                    const prevLine = lines[i - 1] || '';
+                    if (prevLine.match(/DATA\s*(?:DE)?\s*INÍCIO/i)) {
+                        startDateStr = cleanLine;
+                        console.log(`✅ Data de Início extraída (linha seguinte): ${startDateStr}`);
                     }
                 }
                 
@@ -284,8 +297,8 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // Valor Pagamento (na seção DADOS PAGAMENTO -> VALOR) - ✅ v2.3: Busca mais flexível
-                if (cleanLine.match(/^VALOR$/i) || cleanLine.match(/^VALOR\s*R\$/i) || cleanLine.match(/^VALOR\s*:\s*R\$/i)) {
+                // Valor Pagamento - ✅ v2.4: Busca mais flexível
+                if (cleanLine.match(/^VALOR$/i) || cleanLine.match(/^VALOR\s*R\$/i) || cleanLine.match(/^VALOR\s*:\s*R?\$/i)) {
                     let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
                     if (!match && nextLine) {
                         match = nextLine.match(/R?\$?\s*([\d.,]+)/);
@@ -296,12 +309,24 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // ✅ v2.3: Detectar valor com R$ na mesma linha do label
+                // ✅ v2.4: Detectar valor com R$ na mesma linha do label
                 if (!valorPagamentoStr && cleanLine.match(/VALOR\s*(?:MENSAL|PAGAMENTO)?\s*[:\-]?\s*R\$\s*([\d.,]+)/i)) {
                     const match = cleanLine.match(/R\$\s*([\d.,]+)/i);
                     if (match) {
                         valorPagamentoStr = match[1];
                         console.log(`✅ Valor extraído (formato R$): ${valorPagamentoStr}`);
+                    }
+                }
+                
+                // ✅ v2.4: Detectar valor monetário isolado após linha "VALOR"
+                if (!valorPagamentoStr && cleanLine.match(/^R?\$?\s*[\d.,]+$/) && i > 0) {
+                    const prevLine = lines[i - 1] || '';
+                    if (prevLine.match(/^VALOR$/i)) {
+                        const match = cleanLine.match(/R?\$?\s*([\d.,]+)/);
+                        if (match) {
+                            valorPagamentoStr = match[1];
+                            console.log(`✅ Valor Pagamento extraído (linha seguinte): ${valorPagamentoStr}`);
+                        }
                     }
                 }
                 
@@ -371,29 +396,46 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // ✅ OBSERVAÇÕES - CORREÇÃO v2.3: Capturar múltiplas linhas corretamente
+                // ✅ OBSERVAÇÕES - CORREÇÃO v2.4: Capturar múltiplas linhas ANTES de NOTEBOOK
                 if (cleanLine.match(/^OBSERVAÇÕES\s*:?/i)) {
                     let obs = cleanLine.replace(/^OBSERVAÇÕES\s*:?/i, '').trim();
                     
-                    // Continuar nas próximas linhas até encontrar outro campo ou seção
+                    // Continuar nas próximas linhas até encontrar campos de checkbox ou seção
                     let j = i + 1;
-                    const stopPatterns = /^(NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS HUMANOS|GERENTE|DIRETORIA|GESTÃO DE PESSOAS|NOME DO PROFISSIONAL|FORMA DE CONTRATAÇÃO|FATURÁVEL|DADOS)/i;
+                    // Parar quando encontrar: NOTEBOOK (checkbox), DATA EMISSÃO (rodapé), ou campos em maiúsculo seguidos de :
+                    const stopPatterns = /^(NOTEBOOK\s*:|SMARTPHONE\s*:|DATA EMISSÃO|RECURSOS HUMANOS|GERENTE|DIRETORIA|GESTÃO DE PESSOAS|NOME DO PROFISSIONAL|FORMA DE CONTRATAÇÃO|FATURÁVEL|DADOS PAGAMENTO|DADOS FATURAMENTO)/i;
                     
-                    while (j < lines.length && !lines[j].match(stopPatterns)) {
+                    while (j < lines.length) {
                         const nextObs = lines[j].trim();
-                        if (nextObs && nextObs.length > 0) {
+                        
+                        // Se encontrar padrão de parada, parar
+                        if (nextObs.match(stopPatterns)) {
+                            break;
+                        }
+                        
+                        // Se encontrar checkbox isolado (NÃO ou SIM sozinhos), parar
+                        if (nextObs.match(/^(NÃO|SIM)\s*$/i)) {
+                            break;
+                        }
+                        
+                        // Se for texto de observação, adicionar
+                        if (nextObs && nextObs.length > 0 && !nextObs.match(/^(NÃO|SIM|X|\(\s*\)|\[\s*\])$/i)) {
                             obs += ' ' + nextObs;
                         }
                         j++;
                     }
                     
-                    observacoesStr = obs.trim();
-                    console.log(`✅ Observações extraídas: ${observacoesStr.substring(0, 100)}...`);
+                    // Limpar o texto das observações
+                    obs = obs.replace(/\s+/g, ' ').trim();
+                    
+                    if (obs && obs.length > 5) {
+                        observacoesStr = obs;
+                        console.log(`✅ Observações extraídas: ${observacoesStr}`);
+                    }
                     
                     // Verifica se nas observações menciona substituição
                     if (observacoesStr.match(/substitui|substituição|substituindo/i)) {
                         substituicao = true;
-                        // Tenta extrair nome do substituído das observações
                         const subMatch = observacoesStr.match(/substitui(?:ção|ndo)?\s+(?:de\s+)?(?:o\s+|a\s+)?([A-Za-zÀ-ÿ\s]+?)(?:\.|,|$)/i);
                         if (subMatch && !nomeSubstituidoStr) {
                             nomeSubstituidoStr = subMatch[1].trim();
@@ -473,19 +515,31 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ v2.3: Fallback para DATA DE INÍCIO - busca global
+            // ✅ v2.4: Fallback para DATA DE INÍCIO - busca global mais flexível
             if (!startDateStr) {
-                const dataInicioMatch = text.match(/DATA\s*(?:DE)?\s*INÍCIO[:\s]*(\d{2}\/\d{2}\/\d{4})/i);
+                // Tentar vários padrões
+                let dataInicioMatch = text.match(/DATA\s*(?:DE)?\s*INÍCIO[:\s]*(\d{2}\/\d{2}\/\d{4})/i);
+                if (!dataInicioMatch) {
+                    // Buscar data após "DATA DE INÍCIO" com quebra de linha
+                    dataInicioMatch = text.match(/DATA\s*(?:DE)?\s*INÍCIO[\s\n]+(\d{2}\/\d{2}\/\d{4})/i);
+                }
+                if (!dataInicioMatch) {
+                    // Buscar na seção DADOS PAGAMENTO
+                    const secaoPagamento = text.match(/DADOS PAGAMENTO[\s\S]*?(\d{2}\/\d{2}\/\d{4})/i);
+                    if (secaoPagamento) {
+                        dataInicioMatch = secaoPagamento;
+                    }
+                }
                 if (dataInicioMatch) {
                     startDateStr = dataInicioMatch[1];
                     console.log(`✅ Data de Início extraída (fallback): ${startDateStr}`);
                 }
             }
             
-            // ✅ v2.3: Fallback para MODALIDADE DE CONTRATO - busca global
+            // ✅ v2.4: Fallback para MODALIDADE DE CONTRATO - busca global
             if (!modalidadeContratoStr) {
                 // Buscar padrão "FORMA DE CONTRATAÇÃO ... CLT" ou "... PJ"
-                if (text.match(/FORMA DE CONTRATAÇÃO[\s\S]{0,50}CLT/i)) {
+                if (text.match(/FORMA DE CONTRATAÇÃO[\s\S]{0,50}CLT/i) || text.match(/\bCLT\b/)) {
                     modalidadeContratoStr = 'CLT';
                     console.log(`✅ Modalidade CLT extraída (fallback global)`);
                 } else if (text.match(/FORMA DE CONTRATAÇÃO[\s\S]{0,50}PJ/i)) {
@@ -494,19 +548,33 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ v2.3: Fallback para VALOR PAGAMENTO - busca global
+            // ✅ v2.4: Fallback para VALOR PAGAMENTO - múltiplas estratégias
             if (!valorPagamentoStr) {
-                // Buscar padrão "VALOR ... R$ 1.234,56" após DADOS PAGAMENTO
-                const valorMatch = text.match(/DADOS PAGAMENTO[\s\S]*?VALOR[:\s]*R?\$?\s*([\d.,]+)/i);
+                // Estratégia 1: Buscar após "DADOS PAGAMENTO ... VALOR"
+                let valorMatch = text.match(/DADOS PAGAMENTO[\s\S]*?VALOR[\s\n:]*R?\$?\s*([\d.,]+)/i);
+                
+                // Estratégia 2: Buscar qualquer valor monetário após VALOR (seção pagamento)
+                if (!valorMatch) {
+                    valorMatch = text.match(/VALOR[\s\n:]+R?\$?\s*([\d.,]+)/i);
+                }
+                
+                // Estratégia 3: Buscar formato "R$ 2.603,17" na seção de pagamento
+                if (!valorMatch) {
+                    const pagamentoSection = text.match(/DADOS PAGAMENTO[\s\S]*?DADOS FATURAMENTO/i);
+                    if (pagamentoSection) {
+                        valorMatch = pagamentoSection[0].match(/R\$\s*([\d.,]+)/i);
+                    }
+                }
+                
                 if (valorMatch) {
                     valorPagamentoStr = valorMatch[1];
                     console.log(`✅ Valor Pagamento extraído (fallback): ${valorPagamentoStr}`);
                 }
             }
             
-            // ✅ v2.3: Fallback para NOME SUBSTITUÍDO - busca global
+            // ✅ v2.4: Fallback para NOME SUBSTITUÍDO - busca global
             if (!nomeSubstituidoStr) {
-                const subMatch = text.match(/(?:NOME DO PROFISSIONAL SUBSTITUÍDO|PROFISSIONAL SUBSTITUÍDO)[:\s]*([A-Za-zÀ-ÿ\s]+?)(?:\(|OBSERVAÇÕES|NOTEBOOK|$)/i);
+                const subMatch = text.match(/(?:NOME DO PROFISSIONAL SUBSTITUÍDO|PROFISSIONAL SUBSTITUÍDO)[:\s]*([A-Za-zÀ-ÿ\s]+?)(?:\(|OBSERVAÇÕES|NOTEBOOK|NÃO|SIM|$)/i);
                 if (subMatch) {
                     const nome = subMatch[1].trim().replace(/\s*\(Confidencial\)/i, '').trim();
                     if (nome && nome.length >= 3 && nome !== 'XXX') {
@@ -517,14 +585,23 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ v2.3: Fallback para OBSERVAÇÕES - busca global
+            // ✅ v2.4: Fallback para OBSERVAÇÕES - capturar todo o conteúdo entre OBSERVAÇÕES e NOTEBOOK
             if (!observacoesStr) {
-                const obsMatch = text.match(/OBSERVAÇÕES[:\s]*(.+?)(?:NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS HUMANOS|$)/is);
+                // Buscar texto entre "OBSERVAÇÕES:" e "NOTEBOOK:" ou final
+                const obsMatch = text.match(/OBSERVAÇÕES\s*:?\s*([\s\S]+?)(?=NOTEBOOK\s*:|SMARTPHONE\s*:|DATA EMISSÃO|NOME DO PROFISSIONAL SUBSTITUÍDO|$)/i);
                 if (obsMatch) {
-                    const obs = obsMatch[1].replace(/\n/g, ' ').trim();
-                    if (obs && obs.length > 5) {
+                    let obs = obsMatch[1]
+                        .replace(/\n/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                    
+                    // Remover possíveis campos que foram capturados junto
+                    obs = obs.replace(/NÃO\s*SIM.*$/i, '').trim();
+                    obs = obs.replace(/\(\s*\)\s*\(\s*\).*$/i, '').trim();
+                    
+                    if (obs && obs.length > 10) {
                         observacoesStr = obs;
-                        console.log(`✅ Observações extraídas (fallback): ${observacoesStr.substring(0, 50)}...`);
+                        console.log(`✅ Observações extraídas (fallback): ${observacoesStr}`);
                     }
                 }
             }
