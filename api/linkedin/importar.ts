@@ -230,10 +230,10 @@ async function extrairSkillsComIA(
   console.log(`🤖 Enviando ${textoParaAnalise.length} caracteres para Gemini extrair skills...`);
   
   try {
-    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    const GEMINI_API_KEY = process.env.API_KEY; // Variável do Vercel é API_KEY
     
     if (!GEMINI_API_KEY) {
-      console.warn('⚠️ GEMINI_API_KEY não configurada, pulando extração via IA');
+      console.warn('⚠️ API_KEY não configurada, pulando extração via IA');
       return [];
     }
     
