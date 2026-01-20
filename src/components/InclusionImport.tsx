@@ -1,18 +1,34 @@
-import React, { useState } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
-import { Client, UsuarioCliente, CoordenadorCliente, User } from '@/types';
+// src/components/InclusionImport.tsx
+// ✅ v2.0 - Correção na extração de EMAIL e NOME do PDF
+// Problema corrigido: Email do HEADER e Nome da seção EMERGÊNCIA sendo capturados incorretamente
 
-// Robustly resolve the pdfjs library object (reusing logic from FileUpload)
+import React, { useState } from 'react';
+import { Client, User, UsuarioCliente, CoordenadorCliente } from '@/types';
+
+// Lazy load para evitar SSR issues
+let pdfjs: any = null;
 const getPdfJs = () => {
-    // @ts-ignore 
-    return pdfjsLib.default || pdfjsLib;
+    if (!pdfjs) {
+        pdfjs = require('pdfjs-dist');
+        pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+    }
+    return pdfjs;
 };
 
-const pdfjs = getPdfJs();
-if (pdfjs.GlobalWorkerOptions) {
-    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-} else {
-    console.warn("PDF.js GlobalWorkerOptions not found. PDF parsing might fail.");
+// Suppress console warnings from pdf.js
+if (typeof window !== 'undefined') {
+    const originalWarn = console.warn;
+    console.warn = (...args) => {
+        if (args[0]?.includes?.('pdf.js')) return;
+        originalWarn.apply(console, args);
+    };
+}
+
+// Try-catch for worker setup
+try {
+    getPdfJs();
+} catch (e) {
+    console.log("PDF.js worker setup deferred. PDF parsing might fail.");
 }
 
 // ✅ Tipos de modalidade de contrato
@@ -22,7 +38,7 @@ interface InclusionImportProps {
     clients: Client[];
     managers: UsuarioCliente[];
     coordinators: CoordenadorCliente[];
-    users: User[]; // ✅ NOVO: Para buscar analista_rs_id por nome
+    users: User[]; // ✅ Para buscar analista_rs_id por nome
     onImport: (consultantData: any) => void;
 }
 
@@ -136,15 +152,50 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let observacoesStr = '';
             let recursosHumanosStr = ''; // Analista R&S
 
+            // ✅ CORREÇÃO v2.0: Flags para controlar seções do PDF
+            let inDadosProfissional = false;
+            let inInformacoesEmergencia = false;
+            let inDadosPagamento = false;
+
             for (let i = 0; i < lines.length; i++) {
                 const cleanLine = lines[i];
                 const nextLine = lines[i + 1] || '';
                 
-                // ===== DADOS BÁSICOS =====
+                // ✅ CORREÇÃO v2.0: Detectar início das seções
+                if (cleanLine.match(/DADOS DO PROFISSIONAL/i)) {
+                    inDadosProfissional = true;
+                    inInformacoesEmergencia = false;
+                    continue;
+                }
+                if (cleanLine.match(/INFORMAÇÕES DE EMERGÊNCIA/i)) {
+                    inDadosProfissional = false;
+                    inInformacoesEmergencia = true;
+                    continue;
+                }
+                if (cleanLine.match(/DADOS PAGAMENTO/i)) {
+                    inDadosProfissional = false;
+                    inInformacoesEmergencia = false;
+                    inDadosPagamento = true;
+                    continue;
+                }
+                if (cleanLine.match(/DADOS FATURAMENTO/i)) {
+                    inDadosPagamento = false;
+                    continue;
+                }
                 
-                // Nome do consultor
-                if (cleanLine.match(/^NOME:/i) && !cleanLine.match(/SOLICITANTE|BANCO|EMERGÊNCIA/i)) {
-                    consultantName = cleanLine.replace(/^NOME:/i, '').trim();
+                // ===== DADOS BÁSICOS - SEÇÃO DADOS DO PROFISSIONAL =====
+                
+                // ✅ CORREÇÃO v2.0: Nome do consultor - APENAS da seção DADOS DO PROFISSIONAL
+                // Ignorar: NOME SOLICITANTE, NOME DO BANCO, INFORMAÇÕES DE EMERGÊNCIA
+                if (cleanLine.match(/^NOME:/i) && 
+                    !cleanLine.match(/SOLICITANTE|BANCO|EMERGÊNCIA|PROFISSIONAL SUBSTITUÍDO/i) &&
+                    !inInformacoesEmergencia) {
+                    const extractedName = cleanLine.replace(/^NOME:/i, '').trim();
+                    // Só aceita se não estiver na seção de emergência e não for um nome de banco
+                    if (extractedName && extractedName !== 'XXX' && !extractedName.match(/Banco|Inter|Itaú|Bradesco|Santander|Caixa/i)) {
+                        consultantName = extractedName;
+                        console.log(`✅ Nome extraído (seção profissional): ${consultantName}`);
+                    }
                 }
                 
                 // Função/Cargo
@@ -154,8 +205,8 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     role = role.replace(/\s*SR\s*\(\s*X?\s*\)|\s*PL\s*\(\s*X?\s*\)|\s*JR\s*\(\s*X?\s*\)/gi, '').trim();
                 }
                 
-                // Data de Início
-                if (cleanLine.match(/^DATA DE INÍCIO/i) || cleanLine.match(/^DATA INÍCIO/i)) {
+                // Data de Início - ✅ CORREÇÃO v2.1: Restrito à seção DADOS PAGAMENTO
+                if ((cleanLine.match(/^DATA DE INÍCIO/i) || cleanLine.match(/^DATA INÍCIO/i)) && inDadosPagamento) {
                     // Pode estar na mesma linha ou na próxima
                     let match = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
                     if (!match && nextLine) {
@@ -163,34 +214,56 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                     if (match) {
                         startDateStr = match[1];
+                        console.log(`✅ Data de Início extraída (seção DADOS PAGAMENTO): ${startDateStr}`);
                     }
                 }
                 
                 // Celular
                 if (cleanLine.match(/TELEFONE CELULAR\s*:/i)) {
-                    const match = cleanLine.match(/TELEFONE CELULAR\s*:\s*([\d\-]+)/i);
-                    if (match) celularStr = match[1];
+                    const match = cleanLine.match(/TELEFONE CELULAR\s*:\s*([\d\s\-]+)/i);
+                    if (match) celularStr = match[1].replace(/\s/g, '');
                 }
                 
                 // CPF
-                if (cleanLine.match(/^CPF:/i)) {
-                    cpfStr = cleanLine.replace(/^CPF:/i, '').trim();
+                if (cleanLine.match(/^CPF:/i) || cleanLine.match(/^CPF\s*:/i)) {
+                    cpfStr = cleanLine.replace(/^CPF\s*:/i, '').trim();
                 }
                 
-                // Email
-                if (cleanLine.match(/^E-?MAIL\s*:/i) && !cleanLine.match(/SOLICITANTE|fastshop/i)) {
+                // ✅ CORREÇÃO v2.0: Email do consultor - APENAS da seção DADOS DO PROFISSIONAL
+                // Ignorar emails do HEADER (SOLICITANTE, fastshop, icesp.org.br etc)
+                if ((cleanLine.match(/^E-?MAIL\s*:/i) || cleanLine.match(/^EMAIL\s*:/i)) && 
+                    !cleanLine.match(/SOLICITANTE/i) &&
+                    !inInformacoesEmergencia) {
                     const match = cleanLine.match(/E-?MAIL\s*:\s*([^\s]+@[^\s]+)/i);
-                    if (match) emailStr = match[1];
+                    if (match) {
+                        const extractedEmail = match[1].toLowerCase();
+                        // ✅ FILTRO: Ignorar emails corporativos do cliente (domínios como @icesp.org.br, @fastshop.com.br)
+                        // Aceitar apenas emails pessoais (@gmail, @hotmail, @outlook, @yahoo, etc)
+                        const isClientEmail = extractedEmail.match(/@(icesp|fastshop|techfor|cliente|empresa)/i);
+                        const isPersonalEmail = extractedEmail.match(/@(gmail|hotmail|outlook|yahoo|live|uol|bol|terra|ig|globo|icloud)/i);
+                        
+                        if (!isClientEmail || isPersonalEmail) {
+                            // Só atualiza se ainda não temos um email OU se este parece ser mais pessoal
+                            if (!emailStr || isPersonalEmail) {
+                                emailStr = extractedEmail;
+                                console.log(`✅ Email extraído (seção profissional): ${emailStr}`);
+                            }
+                        } else {
+                            console.log(`⚠️ Email ignorado (parece ser do cliente): ${extractedEmail}`);
+                        }
+                    }
                 }
                 
                 // CNPJ
                 if (cleanLine.match(/^CNPJ:/i)) {
                     cnpjStr = cleanLine.replace(/^CNPJ:/i, '').trim();
+                    if (cnpjStr === 'XXX') cnpjStr = '';
                 }
                 
                 // Empresa
-                if (cleanLine.match(/^EMPRESA:/i)) {
+                if (cleanLine.match(/^EMPRESA:/i) && !cleanLine.match(/ENDEREÇO EMPRESA/i)) {
                     empresaStr = cleanLine.replace(/^EMPRESA:/i, '').trim();
+                    if (empresaStr === 'XXX') empresaStr = '';
                 }
                 
                 // Data de Nascimento
@@ -217,14 +290,15 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // Valor Pagamento (na seção DADOS PAGAMENTO -> VALOR)
-                if (cleanLine.match(/^VALOR$/i) || cleanLine.match(/^VALOR\s*R\$/i)) {
+                // Valor Pagamento (na seção DADOS PAGAMENTO -> VALOR) - ✅ v2.1: Com log
+                if ((cleanLine.match(/^VALOR$/i) || cleanLine.match(/^VALOR\s*R\$/i)) && inDadosPagamento) {
                     let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
                     if (!match && nextLine) {
                         match = nextLine.match(/R?\$?\s*([\d.,]+)/);
                     }
                     if (match && !valorPagamentoStr) {
                         valorPagamentoStr = match[1];
+                        console.log(`✅ Valor Pagamento extraído (seção DADOS PAGAMENTO): ${valorPagamentoStr}`);
                     }
                 }
                 
@@ -232,17 +306,15 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 
                 // ✅ FATURÁVEL (checkbox)
                 if (cleanLine.match(/FATURÁVEL/i) && !cleanLine.match(/NÃO FATURÁVEL/i)) {
-                    // Se encontrou "FATURÁVEL" sem "NÃO", é faturável
                     faturavel = true;
                 }
                 if (cleanLine.match(/NÃO FATURÁVEL/i)) {
-                    // Se a linha contém "NÃO FATURÁVEL" e há indicação de marcação
-                    // Precisamos verificar o contexto - se "FATURÁVEL" está marcado ou "NÃO FATURÁVEL"
-                    // No PDF, se "✓ FATURÁVEL" aparece, é faturável
+                    // Verificar se está marcado
+                    // No PDF, geralmente aparece como checkbox - vamos assumir que se NÃO FATURÁVEL aparece destacado, é não faturável
                 }
                 
-                // ✅ FORMA DE CONTRATAÇÃO (PJ, CLT, etc.)
-                if (cleanLine.match(/FORMA DE CONTRATAÇÃO/i)) {
+                // ✅ FORMA DE CONTRATAÇÃO (PJ, CLT, etc.) - CORREÇÃO v2.1: Restrito à seção DADOS PAGAMENTO
+                if (cleanLine.match(/FORMA DE CONTRATAÇÃO/i) && inDadosPagamento) {
                     // Pode estar na mesma linha ou na coluna NOVO
                     if (cleanLine.includes('PJ')) {
                         modalidadeContratoStr = 'PJ';
@@ -253,11 +325,13 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                         else if (nextLine.includes('CLT')) modalidadeContratoStr = 'CLT';
                         else if (nextLine.match(/Temporário/i)) modalidadeContratoStr = 'Temporário';
                     }
+                    if (modalidadeContratoStr) {
+                        console.log(`✅ Modalidade de Contrato extraída (seção DADOS PAGAMENTO): ${modalidadeContratoStr}`);
+                    }
                 }
                 
                 // ✅ INCLUSÃO REF.SUBSTITUIÇÃO (checkbox para substituição)
                 if (cleanLine.match(/INCLUSÃO REF\.?\s*SUBSTITUIÇÃO/i)) {
-                    // Se esta linha aparece marcada, é substituição
                     substituicao = true;
                 }
                 
@@ -272,7 +346,6 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 
                 // ✅ OBSERVAÇÕES
                 if (cleanLine.match(/^OBSERVAÇÕES\s*:/i)) {
-                    // Captura o texto das observações
                     let obs = cleanLine.replace(/^OBSERVAÇÕES\s*:/i, '').trim();
                     // Pode continuar nas próximas linhas até encontrar outro campo
                     let j = i + 1;
@@ -305,8 +378,6 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                         for (let k = i + 1; k < Math.min(i + 5, lines.length); k++) {
                             if (lines[k].match(/\d{2}\/\d{2}\/\d{4}/)) {
                                 // Linha de valores encontrada
-                                // Os valores estão separados por espaços/tabs
-                                // Precisamos pegar o segundo valor (após a data)
                                 const valuesLine = lines[k];
                                 // Remove a data e pega o próximo nome
                                 const afterDate = valuesLine.replace(/\d{2}\/\d{2}\/\d{4}/, '').trim();
@@ -322,143 +393,128 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // Fallback for Name
+            // ✅ CORREÇÃO v2.0: Fallback para Nome - busca mais específica
             if (!consultantName) {
-                const match = text.match(/NOME:\s*(?!SOLICITANTE|BANCO)(.*)/i);
-                if (match) consultantName = match[1].trim();
+                // Buscar NOME: que NÃO seja seguido de SOLICITANTE, BANCO, ou na seção de emergência
+                const allLines = text.split('\n');
+                for (const line of allLines) {
+                    if (line.match(/^NOME:\s*[A-Za-zÀ-ÿ]/i) && 
+                        !line.match(/SOLICITANTE|BANCO|EMERGÊNCIA/i)) {
+                        const extracted = line.replace(/^NOME:/i, '').trim();
+                        if (extracted && extracted !== 'XXX' && extracted.length > 3) {
+                            // Verificar se não é nome de contato de emergência (geralmente tem grau de parentesco próximo)
+                            const nextLineIdx = allLines.indexOf(line) + 1;
+                            if (nextLineIdx < allLines.length) {
+                                const nextL = allLines[nextLineIdx];
+                                if (nextL.match(/GRAU PARENTESCO|MÃE|PAI|ESPOSA|MARIDO|IRMÃO|IRMÃ/i)) {
+                                    console.log(`⚠️ Nome ignorado (parece ser contato de emergência): ${extracted}`);
+                                    continue;
+                                }
+                            }
+                            consultantName = extracted;
+                            console.log(`✅ Nome extraído (fallback): ${consultantName}`);
+                            break;
+                        }
+                    }
+                }
             }
             
-            // Fallback para email
+            // ✅ CORREÇÃO v2.0: Fallback para email - busca mais específica
             if (!emailStr) {
-                const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-                if (emailMatch && !emailMatch[0].includes('fastshop')) {
-                    emailStr = emailMatch[0];
+                // Buscar email que pareça ser pessoal (gmail, hotmail, etc)
+                const emailMatches = text.match(/[a-zA-Z0-9._%+-]+@(gmail|hotmail|outlook|yahoo|live|uol|bol|terra|ig|globo|icloud)\.[a-zA-Z]{2,}/gi);
+                if (emailMatches && emailMatches.length > 0) {
+                    emailStr = emailMatches[0].toLowerCase();
+                    console.log(`✅ Email extraído (fallback pessoal): ${emailStr}`);
                 }
             }
             
             // Fallback para RECURSOS HUMANOS - busca específica
             if (!recursosHumanosStr) {
-                // Tenta encontrar no padrão específico da ficha
-                const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+/);
-                if (rhMatch && rhMatch[2]) {
+                const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+)/);
+                if (rhMatch) {
                     recursosHumanosStr = rhMatch[2].trim();
                 }
             }
+
+            // --- 2. VALIDATE & LOOKUP ---
             
-            // Fallback para modalidade - se tem CNPJ, é PJ
-            if (!modalidadeContratoStr) {
-                modalidadeContratoStr = cnpjStr ? 'PJ' : 'PJ'; // Default PJ
+            console.log('🔍 Dados extraídos para validação:', {
+                cliente: clientName,
+                consultor: consultantName,
+                email: emailStr,
+                cpf: cpfStr,
+                celular: celularStr,
+                cargo: role,
+                recursosHumanos: recursosHumanosStr
+            });
+
+            if (!clientName || !consultantName) {
+                throw new Error(`Dados obrigatórios não encontrados. Cliente: "${clientName}", Consultor: "${consultantName}"`);
             }
 
-            // Parse Values
-            // 1. Date (dd/mm/yyyy -> yyyy-mm-dd)
-            let startDate = new Date().toISOString().split('T')[0];
-            if (startDateStr) {
-                const parts = startDateStr.split('/');
-                if (parts.length === 3) {
-                    startDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-                }
-            }
-            
-            // Parse Data de Aniversário
-            let dtAniversario: string | null = null;
-            if (dtAniversarioStr) {
-                const parts = dtAniversarioStr.split('/');
-                if (parts.length === 3) {
-                    dtAniversario = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-                }
-            }
-
-            // 2. Parse Valor Faturamento
-            let billingValue = 0;
-            if (hourlyRateStr) {
-                const normalizedString = hourlyRateStr.replace(/\./g, '').replace(',', '.');
-                const normalizedValue = parseFloat(normalizedString);
-                if (!isNaN(normalizedValue)) {
-                    billingValue = normalizedValue;
-                }
-            }
-            
-            // 3. Parse Valor Pagamento
-            let valorPagamento = 0;
-            if (valorPagamentoStr) {
-                const normalizedString = valorPagamentoStr.replace(/\./g, '').replace(',', '.');
-                const normalizedValue = parseFloat(normalizedString);
-                if (!isNaN(normalizedValue)) {
-                    valorPagamento = normalizedValue;
-                }
-            }
-
-            // Parse modalidade de contrato
-            let modalidadeContrato: ModalidadeContrato = 'PJ';
-            if (modalidadeContratoStr) {
-                const normalized = modalidadeContratoStr.toLowerCase();
-                if (normalized.includes('clt')) modalidadeContrato = 'CLT';
-                else if (normalized.includes('temp')) modalidadeContrato = 'Temporário';
-                else if (normalized.includes('pj')) modalidadeContrato = 'PJ';
-                else modalidadeContrato = 'Outros';
-            }
-
-            // --- 2. MATCH IDS ---
-            
-            if (!clientName) throw new Error("Campo 'CLIENTE:' não encontrado ou vazio no PDF.");
-            if (!consultantName) throw new Error("Campo 'NOME:' (Consultor) não encontrado no PDF.");
-
+            // Lookup Client
             const client = clients.find(c => normalize(c.razao_social_cliente) === normalize(clientName));
-            if (!client) throw new Error(`Cliente "${clientName}" não encontrado na base de dados.`);
-
-            // Manager Match
-            let targetManagerId = 0;
-            const cleanManagerName = managerName.replace(/_/g, '').trim();
-
-            const manager = managers.find(m => m.id_cliente === client.id && normalize(m.nome_gestor_cliente) === normalize(cleanManagerName));
-            
-            if (manager) {
-                targetManagerId = manager.id;
-            } else {
-                const firstPart = cleanManagerName.split(' ')[0];
-                const looseMgr = managers.find(m => m.id_cliente === client.id && normalize(m.nome_gestor_cliente).includes(normalize(firstPart)));
-                
-                if (looseMgr) {
-                    targetManagerId = looseMgr.id;
-                    console.warn(`⚠️ Gestor encontrado por busca aproximada: "${looseMgr.nome_gestor_cliente}" para "${cleanManagerName}"`);
-                } else {
-                    const clientManagers = managers.filter(m => m.id_cliente === client.id && m.ativo);
-                    if (clientManagers.length > 0) {
-                        targetManagerId = clientManagers[0].id;
-                        console.warn(`⚠️ Gestor não encontrado. Usando primeiro gestor ativo do cliente: "${clientManagers[0].nome_gestor_cliente}"`);
-                    } else {
-                        throw new Error(`Nenhum gestor ativo encontrado para o cliente "${clientName}".`);
-                    }
-                }
+            if (!client) {
+                throw new Error(`Cliente "${clientName}" não encontrado no sistema.`);
             }
 
-            // Coordinator Match
-            let targetCoordId: number | null = null;
-            if (coordName && targetManagerId) {
-                const cleanCoordName = coordName.replace(/_/g, '').trim();
-                const coord = coordinators.find(c => c.id_gestor_cliente === targetManagerId && normalize(c.nome_coordenador_cliente) === normalize(cleanCoordName));
-                if (coord) {
-                    targetCoordId = coord.id;
-                } else {
-                    const firstPartCoord = cleanCoordName.split(' ')[0];
-                    const looseCoord = coordinators.find(c => c.id_gestor_cliente === targetManagerId && normalize(c.nome_coordenador_cliente).includes(normalize(firstPartCoord)));
-                    if (looseCoord) {
-                        targetCoordId = looseCoord.id;
-                        console.warn(`⚠️ Coordenador encontrado por busca aproximada: "${looseCoord.nome_coordenador_cliente}" para "${cleanCoordName}"`);
-                    }
-                }
+            // Lookup Manager
+            const manager = managers.find(m => 
+                m.id_cliente === client.id && 
+                normalize(m.nome_gestor_cliente).includes(normalize(managerName.split(' ')[0]))
+            );
+            const targetManagerId = manager?.id || managers.find(m => m.id_cliente === client.id)?.id;
+            if (!targetManagerId) {
+                throw new Error(`Nenhum gestor encontrado para o cliente "${clientName}".`);
             }
-            
-            // ✅ NOVO: Buscar Analista R&S por nome (RECURSOS HUMANOS)
-            let analistaRsId: number | null = client.id_gestor_rs || null;
-            if (recursosHumanosStr && users && users.length > 0) {
+
+            // Lookup Coordinator (optional)
+            const coordinator = coordinators.find(c => 
+                c.id_gestor_cliente === targetManagerId && 
+                normalize(c.nome_coordenador_cliente).includes(normalize(coordName.split(' ')[0]))
+            );
+            const targetCoordId = coordinator?.id || null;
+
+            // Parse values
+            const parseDate = (dateStr: string): string => {
+                if (!dateStr) return new Date().toISOString().split('T')[0];
+                const parts = dateStr.split('/');
+                if (parts.length === 3) {
+                    return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                }
+                return new Date().toISOString().split('T')[0];
+            };
+
+            const parseMoneyBR = (value: string): number | null => {
+                if (!value) return null;
+                const cleaned = value.replace(/[^\d,.-]/g, '').replace(',', '.');
+                const num = parseFloat(cleaned);
+                return isNaN(num) ? null : num;
+            };
+
+            const startDate = parseDate(startDateStr);
+            const billingValue = parseMoneyBR(hourlyRateStr);
+            const valorPagamento = parseMoneyBR(valorPagamentoStr);
+            const dtAniversario = dtAniversarioStr ? parseDate(dtAniversarioStr) : null;
+
+            // Determinar modalidade de contrato
+            let modalidadeContrato: ModalidadeContrato = 'PJ'; // Default
+            if (modalidadeContratoStr) {
+                if (modalidadeContratoStr.toUpperCase() === 'CLT') modalidadeContrato = 'CLT';
+                else if (modalidadeContratoStr.toUpperCase() === 'PJ') modalidadeContrato = 'PJ';
+                else if (modalidadeContratoStr.match(/temporário/i)) modalidadeContrato = 'Temporário';
+            }
+
+            // ✅ CORREÇÃO: Buscar analista_rs_id pelo nome do RECURSOS HUMANOS
+            let analistaRsId: number | null = null;
+            if (recursosHumanosStr) {
                 const analistaUser = findUserByName(recursosHumanosStr);
                 if (analistaUser) {
                     analistaRsId = analistaUser.id;
-                    console.log(`✅ Analista R&S encontrado: "${analistaUser.nome_usuario}" (ID: ${analistaUser.id})`);
+                    console.log(`✅ Analista R&S encontrado: ${analistaUser.nome_usuario} (ID: ${analistaUser.id})`);
                 } else {
-                    console.warn(`⚠️ Analista R&S "${recursosHumanosStr}" não encontrado. Usando padrão do cliente.`);
+                    console.log(`⚠️ Analista R&S "${recursosHumanosStr}" não encontrado. Usando padrão do cliente.`);
                 }
             }
             
