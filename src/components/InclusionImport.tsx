@@ -1,14 +1,11 @@
 // src/components/InclusionImport.tsx
-// ✅ v2.4 - Correção robusta na extração de campos do PDF
+// ✅ v2.5 - Correção final na extração de campos do PDF
 // Melhorias:
-// - EMAIL: filtro para emails pessoais, ignorar corporativos
-// - NOME: ignora seção INFORMAÇÕES DE EMERGÊNCIA
-// - DATA DE INÍCIO: múltiplos padrões + fallbacks robustos
-// - FORMA DE CONTRATAÇÃO: busca CLT/PJ isolados
-// - VALOR PAGAMENTO: múltiplas estratégias de busca
-// - OBSERVAÇÕES: captura texto completo até NOTEBOOK
-// - NOME SUBSTITUÍDO: setar substituicao=true automaticamente
-// - Fix ESModules para Vite
+// - DATA DE INÍCIO: busca específica, NÃO confunde com DATA EMISSÃO
+// - OBSERVAÇÕES: múltiplos padrões de captura
+// - RECURSOS HUMANOS: múltiplas estratégias + logs de debug
+// - findUserByName: busca mais robusta por partes do nome
+// - Logs detalhados para debug
 
 import React, { useState } from 'react';
 import { Client, User, UsuarioCliente, CoordenadorCliente } from '@/types';
@@ -65,31 +62,59 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
 
     /**
      * Busca usuário por nome (para analista_rs_id)
+     * ✅ v2.5: Melhorado com múltiplas estratégias de busca
      */
     const findUserByName = (name: string): User | null => {
         if (!name || name === 'XXX' || name === 'xxx') return null;
         
         const normalizedName = normalize(name);
+        console.log(`🔍 Buscando usuário: "${name}" (normalizado: "${normalizedName}")`);
+        console.log(`📋 Usuários disponíveis: ${users.map(u => u.nome_usuario).join(', ')}`);
         
         // Busca exata
         let user = users.find(u => normalize(u.nome_usuario) === normalizedName);
-        if (user) return user;
+        if (user) {
+            console.log(`✅ Usuário encontrado (exato): ${user.nome_usuario} (ID: ${user.id})`);
+            return user;
+        }
         
         // Busca parcial (primeiro nome)
         const firstName = normalizedName.split(' ')[0];
         user = users.find(u => normalize(u.nome_usuario).startsWith(firstName));
         if (user) {
-            console.log(`⚠️ Usuário encontrado por aproximação: "${user.nome_usuario}" para "${name}"`);
+            console.log(`⚠️ Usuário encontrado por aproximação (primeiro nome): "${user.nome_usuario}" (ID: ${user.id}) para "${name}"`);
             return user;
         }
         
-        // Busca contém
+        // Busca contém (nome completo)
         user = users.find(u => normalize(u.nome_usuario).includes(normalizedName) || normalizedName.includes(normalize(u.nome_usuario)));
         if (user) {
-            console.log(`⚠️ Usuário encontrado por busca parcial: "${user.nome_usuario}" para "${name}"`);
+            console.log(`⚠️ Usuário encontrado por busca parcial (contém): "${user.nome_usuario}" (ID: ${user.id}) para "${name}"`);
             return user;
         }
         
+        // ✅ v2.5: Busca por qualquer parte do nome
+        const nameParts = normalizedName.split(' ').filter(p => p.length > 2);
+        for (const part of nameParts) {
+            user = users.find(u => normalize(u.nome_usuario).includes(part));
+            if (user) {
+                console.log(`⚠️ Usuário encontrado por parte do nome: "${user.nome_usuario}" (ID: ${user.id}) para parte "${part}"`);
+                return user;
+            }
+        }
+        
+        // ✅ v2.5: Busca reversa - nome do usuário contém parte do input
+        for (const u of users) {
+            const userNameParts = normalize(u.nome_usuario).split(' ').filter(p => p.length > 2);
+            for (const userPart of userNameParts) {
+                if (normalizedName.includes(userPart)) {
+                    console.log(`⚠️ Usuário encontrado por busca reversa: "${u.nome_usuario}" (ID: ${u.id}) para "${name}"`);
+                    return u;
+                }
+            }
+        }
+        
+        console.log(`❌ Usuário não encontrado para: "${name}"`);
         return null;
     };
 
@@ -108,6 +133,10 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             const text = await extractTextFromPDF(file);
             
             console.log('📄 Texto extraído do PDF:', text);
+            
+            // ✅ v2.5: Log das linhas para debug de DATA DE INÍCIO
+            const debugLines = text.split('\n').map((l, idx) => `${idx}: ${l.trim()}`).join('\n');
+            console.log('📋 Linhas do PDF:\n', debugLines);
             
             // --- 1. PARSE FIELDS (REGEX STRATEGY) ---
             
@@ -199,29 +228,48 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     role = role.replace(/\s*SR\s*\(\s*X?\s*\)|\s*PL\s*\(\s*X?\s*\)|\s*JR\s*\(\s*X?\s*\)/gi, '').trim();
                 }
                 
-                // Data de Início - ✅ CORREÇÃO v2.4: Múltiplos padrões de busca
-                if (cleanLine.match(/DATA\s*(?:DE)?\s*INÍCIO/i)) {
+                // Data de Início - ✅ CORREÇÃO v2.5: Múltiplos padrões de busca
+                // IMPORTANTE: Não confundir com DATA EMISSÃO
+                if (cleanLine.match(/DATA\s*(?:DE\s*)?INÍCIO/i) && !cleanLine.match(/EMISSÃO/i)) {
+                    console.log(`🔍 Encontrado label DATA DE INÍCIO na linha: "${cleanLine}"`);
+                    
                     // Pode estar na mesma linha ou na próxima
                     let match = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
+                    if (match) {
+                        console.log(`  → Data na mesma linha: ${match[1]}`);
+                    }
+                    
                     if (!match && nextLine) {
                         match = nextLine.match(/(\d{2}\/\d{2}\/\d{4})/);
+                        if (match) {
+                            console.log(`  → Data na próxima linha: ${match[1]}`);
+                        }
                     }
+                    
                     // Tentar também formato com hífen ou ponto
                     if (!match) {
                         match = cleanLine.match(/(\d{2}[-\.]\d{2}[-\.]\d{4})/);
                     }
+                    
                     if (match && !startDateStr) {
                         startDateStr = match[1].replace(/[-\.]/g, '/');
-                        console.log(`✅ Data de Início extraída: ${startDateStr}`);
+                        console.log(`✅ Data de Início extraída (loop): ${startDateStr}`);
                     }
                 }
                 
-                // ✅ v2.4: Buscar data isolada após "DATA DE INÍCIO" (formato do PDF pode separar)
+                // ✅ v2.5: Buscar data isolada após "DATA DE INÍCIO" (formato do PDF pode separar)
+                // Verificar se a linha anterior era DATA DE INÍCIO e esta linha é só a data
                 if (!startDateStr && cleanLine.match(/^\d{2}\/\d{2}\/\d{4}$/) && i > 0) {
                     const prevLine = lines[i - 1] || '';
-                    if (prevLine.match(/DATA\s*(?:DE)?\s*INÍCIO/i)) {
-                        startDateStr = cleanLine;
-                        console.log(`✅ Data de Início extraída (linha seguinte): ${startDateStr}`);
+                    const prevPrevLine = lines[i - 2] || '';
+                    
+                    // Verificar se linha anterior ou duas linhas atrás contém DATA DE INÍCIO
+                    if (prevLine.match(/DATA\s*(?:DE\s*)?INÍCIO/i) || prevPrevLine.match(/DATA\s*(?:DE\s*)?INÍCIO/i)) {
+                        // Certificar que não é DATA EMISSÃO
+                        if (!prevLine.match(/EMISSÃO/i) && !prevPrevLine.match(/EMISSÃO/i)) {
+                            startDateStr = cleanLine;
+                            console.log(`✅ Data de Início extraída (linha isolada): ${startDateStr}`);
+                        }
                     }
                 }
                 
@@ -444,28 +492,47 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // ✅ RECURSOS HUMANOS (Analista R&S)
-                if (cleanLine.match(/RECURSOS HUMANOS/i)) {
-                    // No PDF, aparece na linha de DATA EMISSÃO como coluna
-                    // Formato: DATA EMISSÃO | RECURSOS HUMANOS | GERENTE COMERCIAL | DIRETORIA | GESTÃO DE PESSOAS
-                    // Valores: 24/10/2025 | LUIZA LONGO | MESSIAS OLIVEIRA | MESSIAS OLIVEIRA | PRISCILA DO ESPÍRITO SANTO
+                // ✅ v2.5: RECURSOS HUMANOS (Analista R&S) - Múltiplas estratégias
+                if (cleanLine.match(/RECURSOS HUMANOS/i) && !cleanLine.match(/GESTÃO DE PESSOAS/i)) {
+                    // Estratégia 1: O valor pode estar na MESMA linha após o label
+                    const sameLineMatch = cleanLine.match(/RECURSOS HUMANOS\s*[:\s]*([A-Za-zÀ-ÿ\s]+?)(?:\s{2,}|$)/i);
+                    if (sameLineMatch && sameLineMatch[1].trim().length > 3) {
+                        const nome = sameLineMatch[1].trim();
+                        if (!nome.match(/GERENTE|DIRETORIA|GESTÃO|COMERCIAL/i)) {
+                            recursosHumanosStr = nome;
+                            console.log(`✅ Recursos Humanos extraído (mesma linha): ${recursosHumanosStr}`);
+                        }
+                    }
                     
-                    // Busca a próxima linha que contém a data (valores)
-                    if (i + 1 < lines.length) {
-                        // Procura a linha com a data de emissão
+                    // Estratégia 2: O valor está na linha de valores (tabela)
+                    if (!recursosHumanosStr && i + 1 < lines.length) {
+                        // Encontrar a linha com a data de emissão (linha de valores da tabela)
                         for (let k = i + 1; k < Math.min(i + 5, lines.length); k++) {
-                            if (lines[k].match(/\d{2}\/\d{2}\/\d{4}/)) {
+                            const testLine = lines[k].trim();
+                            if (testLine.match(/\d{2}\/\d{2}\/\d{4}/)) {
                                 // Linha de valores encontrada
-                                const valuesLine = lines[k];
                                 // Remove a data e pega o próximo nome
-                                const afterDate = valuesLine.replace(/\d{2}\/\d{2}\/\d{4}/, '').trim();
+                                const afterDate = testLine.replace(/\d{2}\/\d{2}\/\d{4}/, '').trim();
                                 // O primeiro nome após a data é o RECURSOS HUMANOS
                                 const nameParts = afterDate.split(/\s{2,}|\t/);
-                                if (nameParts[0]) {
+                                if (nameParts[0] && nameParts[0].trim().length > 3) {
                                     recursosHumanosStr = nameParts[0].trim();
+                                    console.log(`✅ Recursos Humanos extraído (tabela): ${recursosHumanosStr}`);
                                 }
                                 break;
                             }
+                        }
+                    }
+                    
+                    // Estratégia 3: O valor está na próxima linha (formato simples)
+                    if (!recursosHumanosStr && nextLine) {
+                        const nextTrimmed = nextLine.trim();
+                        // Verificar se não é outro cabeçalho
+                        if (nextTrimmed.length > 3 && 
+                            !nextTrimmed.match(/GERENTE|DIRETORIA|GESTÃO|COMERCIAL|DATA|EMISSÃO/i) &&
+                            !nextTrimmed.match(/^\d{2}\/\d{2}\/\d{4}/)) {
+                            recursosHumanosStr = nextTrimmed;
+                            console.log(`✅ Recursos Humanos extraído (próxima linha): ${recursosHumanosStr}`);
                         }
                     }
                 }
@@ -507,32 +574,95 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // Fallback para RECURSOS HUMANOS - busca específica
+            // ✅ v2.5: Fallback para RECURSOS HUMANOS - múltiplas estratégias
             if (!recursosHumanosStr) {
-                const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+)/);
-                if (rhMatch) {
-                    recursosHumanosStr = rhMatch[2].trim();
+                // Estratégia 1: Buscar na estrutura de tabela (DATA EMISSÃO na mesma linha que data)
+                const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s+([A-Za-zÀ-ÿ\s]+?)(?:\s{2,}|GERENTE|MESSIAS|DIRETORIA)/i);
+                if (rhMatch && rhMatch[2]) {
+                    const nome = rhMatch[2].trim();
+                    if (nome.length > 3 && !nome.match(/GERENTE|COMERCIAL|DIRETORIA/i)) {
+                        recursosHumanosStr = nome;
+                        console.log(`✅ Recursos Humanos extraído (fallback tabela): ${recursosHumanosStr}`);
+                    }
+                }
+                
+                // Estratégia 2: Buscar linha abaixo de "RECURSOS HUMANOS" que não seja cabeçalho
+                if (!recursosHumanosStr) {
+                    const lines = text.split('\n');
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].match(/^RECURSOS HUMANOS$/i) || lines[i].match(/RECURSOS HUMANOS\s*$/i)) {
+                            // Verificar próximas linhas
+                            for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+                                const testLine = lines[j].trim();
+                                // Pular se for data ou cabeçalho
+                                if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) continue;
+                                if (testLine.match(/GERENTE|DIRETORIA|GESTÃO|COMERCIAL|DATA|EMISSÃO/i)) continue;
+                                if (testLine.length < 4) continue;
+                                
+                                // Encontrou um nome válido
+                                if (testLine.match(/^[A-Za-zÀ-ÿ\s]+$/)) {
+                                    recursosHumanosStr = testLine;
+                                    console.log(`✅ Recursos Humanos extraído (fallback linha): ${recursosHumanosStr}`);
+                                    break;
+                                }
+                            }
+                            if (recursosHumanosStr) break;
+                        }
+                    }
+                }
+                
+                // Estratégia 3: Buscar nome específico após DATA EMISSÃO e antes de outros campos
+                if (!recursosHumanosStr) {
+                    const dataEmissaoMatch = text.match(/DATA EMISSÃO[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s*\n\s*([A-Za-zÀ-ÿ\s]+?)(?:\n|GERENTE|MESSIAS)/i);
+                    if (dataEmissaoMatch && dataEmissaoMatch[2]) {
+                        const nome = dataEmissaoMatch[2].trim();
+                        if (nome.length > 3 && !nome.match(/GERENTE|COMERCIAL|DIRETORIA/i)) {
+                            recursosHumanosStr = nome;
+                            console.log(`✅ Recursos Humanos extraído (fallback após data emissão): ${recursosHumanosStr}`);
+                        }
+                    }
                 }
             }
             
-            // ✅ v2.4: Fallback para DATA DE INÍCIO - busca global mais flexível
+            // ✅ v2.5: Fallback para DATA DE INÍCIO - MUITO ESPECÍFICO
             if (!startDateStr) {
-                // Tentar vários padrões
-                let dataInicioMatch = text.match(/DATA\s*(?:DE)?\s*INÍCIO[:\s]*(\d{2}\/\d{2}\/\d{4})/i);
+                // Estratégia 1: Buscar "DATA DE INÍCIO" seguido de data (com ou sem quebra de linha)
+                let dataInicioMatch = text.match(/DATA\s*DE\s*INÍCIO[\s\n:]*(\d{2}\/\d{2}\/\d{4})/i);
+                
+                // Estratégia 2: Buscar "DATA INÍCIO" (sem "DE")
                 if (!dataInicioMatch) {
-                    // Buscar data após "DATA DE INÍCIO" com quebra de linha
-                    dataInicioMatch = text.match(/DATA\s*(?:DE)?\s*INÍCIO[\s\n]+(\d{2}\/\d{2}\/\d{4})/i);
+                    dataInicioMatch = text.match(/DATA\s*INÍCIO[\s\n:]*(\d{2}\/\d{2}\/\d{4})/i);
                 }
+                
+                // Estratégia 3: Buscar linha que começa com data após "DATA DE INÍCIO"
                 if (!dataInicioMatch) {
-                    // Buscar na seção DADOS PAGAMENTO
-                    const secaoPagamento = text.match(/DADOS PAGAMENTO[\s\S]*?(\d{2}\/\d{2}\/\d{4})/i);
-                    if (secaoPagamento) {
-                        dataInicioMatch = secaoPagamento;
+                    const lines = text.split('\n');
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].match(/DATA\s*(?:DE\s*)?INÍCIO/i)) {
+                            // Verificar se a data está na mesma linha
+                            const sameLine = lines[i].match(/(\d{2}\/\d{2}\/\d{4})/);
+                            if (sameLine) {
+                                dataInicioMatch = sameLine;
+                                break;
+                            }
+                            // Verificar próximas 3 linhas
+                            for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+                                const nextMatch = lines[j].trim().match(/^(\d{2}\/\d{2}\/\d{4})$/);
+                                if (nextMatch) {
+                                    dataInicioMatch = nextMatch;
+                                    break;
+                                }
+                            }
+                            if (dataInicioMatch) break;
+                        }
                     }
                 }
+                
+                // NÃO usar fallback genérico da seção DADOS PAGAMENTO (pode pegar DATA EMISSÃO)
+                
                 if (dataInicioMatch) {
                     startDateStr = dataInicioMatch[1];
-                    console.log(`✅ Data de Início extraída (fallback): ${startDateStr}`);
+                    console.log(`✅ Data de Início extraída (fallback específico): ${startDateStr}`);
                 }
             }
             
@@ -585,23 +715,36 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ v2.4: Fallback para OBSERVAÇÕES - capturar todo o conteúdo entre OBSERVAÇÕES e NOTEBOOK
+            // ✅ v2.5: Fallback para OBSERVAÇÕES - capturar TODO o conteúdo
             if (!observacoesStr) {
-                // Buscar texto entre "OBSERVAÇÕES:" e "NOTEBOOK:" ou final
-                const obsMatch = text.match(/OBSERVAÇÕES\s*:?\s*([\s\S]+?)(?=NOTEBOOK\s*:|SMARTPHONE\s*:|DATA EMISSÃO|NOME DO PROFISSIONAL SUBSTITUÍDO|$)/i);
-                if (obsMatch) {
-                    let obs = obsMatch[1]
-                        .replace(/\n/g, ' ')
-                        .replace(/\s+/g, ' ')
-                        .trim();
-                    
-                    // Remover possíveis campos que foram capturados junto
-                    obs = obs.replace(/NÃO\s*SIM.*$/i, '').trim();
-                    obs = obs.replace(/\(\s*\)\s*\(\s*\).*$/i, '').trim();
-                    
-                    if (obs && obs.length > 10) {
-                        observacoesStr = obs;
-                        console.log(`✅ Observações extraídas (fallback): ${observacoesStr}`);
+                // O texto de observações está em AMARELO no PDF, geralmente em maiúsculas
+                // Buscar texto entre "OBSERVAÇÕES:" e próximo campo conhecido
+                
+                // Estratégia 1: Buscar padrão com texto longo após OBSERVAÇÕES
+                const obsPatterns = [
+                    /OBSERVAÇÕES\s*:?\s*\n?([\s\S]+?)(?=\n\s*NOTEBOOK\s*:|\n\s*SMARTPHONE\s*:|\n\s*NOME DO PROFISSIONAL|\n\s*DATA EMISSÃO)/i,
+                    /OBSERVAÇÕES\s*:?\s*((?:ATUARÁ|UTILIZARÁ|GESTÃO|FAVOR|EM CASO)[\s\S]+?)(?=NOTEBOOK|SMARTPHONE|NOME DO|DATA EMISSÃO)/i,
+                    /OBSERVAÇÕES\s*:?\s*\n([A-Z][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ\s,.:;\-\(\)0-9]+)/i
+                ];
+                
+                for (const pattern of obsPatterns) {
+                    const obsMatch = text.match(pattern);
+                    if (obsMatch) {
+                        let obs = obsMatch[1]
+                            .replace(/\n/g, ' ')
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                        
+                        // Remover possíveis campos que foram capturados junto
+                        obs = obs.replace(/\s*NÃO\s*SIM\s*$/i, '').trim();
+                        obs = obs.replace(/\s*\(\s*\)\s*\(\s*\)\s*$/i, '').trim();
+                        obs = obs.replace(/\s*X\s*$/i, '').trim();
+                        
+                        if (obs && obs.length > 20) {
+                            observacoesStr = obs;
+                            console.log(`✅ Observações extraídas (fallback): ${observacoesStr}`);
+                            break;
+                        }
                     }
                 }
             }
