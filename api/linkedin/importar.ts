@@ -396,7 +396,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           nivel: 'intermediario', // 🔧 Padronizado: sem acento, minúsculo
           anos_experiencia: 0,
           certificado: false,
-          criado_em: new Date().toISOString()
+          created_at: new Date().toISOString()
         };
       });
 
