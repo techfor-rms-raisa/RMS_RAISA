@@ -1,19 +1,14 @@
 // src/components/InclusionImport.tsx
-// ✅ v2.0 - Correção na extração de EMAIL e NOME do PDF
+// ✅ v2.2 - Correção na extração de EMAIL e NOME do PDF + Fix ESModules
 // Problema corrigido: Email do HEADER e Nome da seção EMERGÊNCIA sendo capturados incorretamente
+// Fix: require is not defined - agora usa import dinâmico para Vite/ESM
 
 import React, { useState } from 'react';
 import { Client, User, UsuarioCliente, CoordenadorCliente } from '@/types';
+import * as pdfjsLib from 'pdfjs-dist';
 
-// Lazy load para evitar SSR issues
-let pdfjs: any = null;
-const getPdfJs = () => {
-    if (!pdfjs) {
-        pdfjs = require('pdfjs-dist');
-        pdfjs.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
-    }
-    return pdfjs;
-};
+// ✅ CORREÇÃO v2.2: Configurar worker para ESModules (Vite)
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 // Suppress console warnings from pdf.js
 if (typeof window !== 'undefined') {
@@ -22,13 +17,6 @@ if (typeof window !== 'undefined') {
         if (args[0]?.includes?.('pdf.js')) return;
         originalWarn.apply(console, args);
     };
-}
-
-// Try-catch for worker setup
-try {
-    getPdfJs();
-} catch (e) {
-    console.log("PDF.js worker setup deferred. PDF parsing might fail.");
 }
 
 // ✅ Tipos de modalidade de contrato
@@ -52,9 +40,8 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
     };
 
     const extractTextFromPDF = async (file: File): Promise<string> => {
-        const pdfjs = getPdfJs();
         const arrayBuffer = await file.arrayBuffer();
-        const loadingTask = pdfjs.getDocument(arrayBuffer);
+        const loadingTask = pdfjsLib.getDocument(arrayBuffer);
         const pdf = await loadingTask.promise;
         
         let fullText = '';
