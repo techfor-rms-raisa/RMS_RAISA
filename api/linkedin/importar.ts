@@ -587,7 +587,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         pessoa_id,
         instituicao: form.instituicao,
         curso: form.curso || '',
-        grau: form.grau || '',
         em_andamento: false,
         created_at: new Date().toISOString()
       }));
