@@ -12,7 +12,13 @@
  * - Fallback de inserção individual em caso de erro em lote
  * - Validação de categorias contra lista
  * 
- * Data: 15/01/2026
+ * 🆕 v57.5: Extração de Skills via IA (Gemini)
+ * - Analisa texto das experiências com Gemini
+ * - Extrai skills técnicas e de negócio automaticamente
+ * - Combina com skills do LinkedIn e headline
+ * - Corrigido: criado_em → created_at
+ * 
+ * Data: 20/01/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -181,6 +187,138 @@ function parseLocalizacao(localizacao: string): { cidade: string; estado: string
   }
   
   return { cidade: cidade.substring(0, 100), estado };
+}
+
+// ============================================
+// 🆕 v57.5: EXTRAIR SKILLS VIA GEMINI (IA)
+// ============================================
+
+async function extrairSkillsComIA(
+  resumo: string | undefined,
+  experiencias: LinkedInData['experiencias'],
+  headline: string | undefined
+): Promise<string[]> {
+  
+  // Montar texto para análise
+  let textoParaAnalise = '';
+  
+  if (headline) {
+    textoParaAnalise += `Título: ${headline}\n\n`;
+  }
+  
+  if (resumo) {
+    textoParaAnalise += `Resumo: ${resumo}\n\n`;
+  }
+  
+  if (experiencias && experiencias.length > 0) {
+    textoParaAnalise += 'Experiências:\n';
+    for (const exp of experiencias) {
+      textoParaAnalise += `- ${exp.cargo} na ${exp.empresa}`;
+      if (exp.descricao) {
+        textoParaAnalise += `: ${exp.descricao}`;
+      }
+      textoParaAnalise += '\n';
+    }
+  }
+  
+  // Se não tem texto suficiente, retornar vazio
+  if (textoParaAnalise.length < 50) {
+    console.log('⚠️ Texto insuficiente para extração de skills via IA');
+    return [];
+  }
+  
+  console.log(`🤖 Enviando ${textoParaAnalise.length} caracteres para Gemini extrair skills...`);
+  
+  try {
+    const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    
+    if (!GEMINI_API_KEY) {
+      console.warn('⚠️ GEMINI_API_KEY não configurada, pulando extração via IA');
+      return [];
+    }
+    
+    const prompt = `Analise o seguinte perfil profissional e extraia TODAS as skills, competências e tecnologias mencionadas ou implícitas.
+
+PERFIL:
+${textoParaAnalise}
+
+INSTRUÇÕES:
+1. Extraia skills técnicas (tecnologias, ferramentas, linguagens)
+2. Extraia skills de negócio (metodologias, áreas de conhecimento, certificações)
+3. Extraia skills do mercado financeiro se houver (CVM, Anbima, BACEN, tipos de fundos, etc.)
+4. NÃO invente skills que não estejam no texto
+5. Retorne APENAS um JSON array de strings, sem explicações
+
+EXEMPLO DE RESPOSTA:
+["Python", "React", "Scrum", "Gestão de Projetos", "CVM 175", "Fundos de Investimento"]
+
+RESPOSTA (apenas o JSON array):`;
+
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 1000
+          }
+        })
+      }
+    );
+    
+    if (!response.ok) {
+      console.error('❌ Erro na chamada Gemini:', response.status, response.statusText);
+      return [];
+    }
+    
+    const result = await response.json();
+    const textoResposta = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    
+    console.log('📝 Resposta Gemini (raw):', textoResposta.substring(0, 200));
+    
+    // Extrair JSON da resposta
+    let skills: string[] = [];
+    
+    // Tentar parsear diretamente
+    try {
+      // Limpar a resposta (remover markdown code blocks se houver)
+      let jsonStr = textoResposta.trim();
+      
+      // Remover ```json e ``` se presentes
+      jsonStr = jsonStr.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
+      
+      // Encontrar o array JSON na resposta
+      const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
+        skills = JSON.parse(arrayMatch[0]);
+      }
+    } catch (parseError) {
+      console.warn('⚠️ Erro ao parsear resposta Gemini:', parseError);
+      
+      // Fallback: tentar extrair skills por regex
+      const skillMatches = textoResposta.match(/"([^"]+)"/g);
+      if (skillMatches) {
+        skills = skillMatches.map(s => s.replace(/"/g, ''));
+      }
+    }
+    
+    // Filtrar e limpar skills
+    skills = skills
+      .filter(s => typeof s === 'string' && s.length > 1 && s.length < 80)
+      .map(s => s.trim())
+      .filter(s => !s.match(/^(e|ou|de|da|do|para|com|em|o|a|os|as)$/i)); // Remover palavras soltas
+    
+    console.log(`✅ Gemini extraiu ${skills.length} skills:`, skills.slice(0, 10));
+    
+    return skills;
+    
+  } catch (error: any) {
+    console.error('❌ Erro ao extrair skills via IA:', error.message);
+    return [];
+  }
 }
 
 // ============================================
@@ -356,23 +494,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // SALVAR SKILLS
     // ============================================
     
-    // 🆕 Combinar skills do LinkedIn + skills extraídas do headline
+    // 🆕 v57.5: Combinar skills de 3 fontes:
+    // 1. Skills do LinkedIn (capturadas pela extensão)
+    // 2. Skills extraídas do headline
+    // 3. Skills extraídas via IA (Gemini) das experiências
+    
     const skillsDoLinkedIn = data.skills || [];
     const skillsDoHeadline = extrairSkillsDoHeadline(data.headline || '');
+    
+    // 🆕 v57.5: Extrair skills via Gemini das experiências
+    const skillsDaIA = await extrairSkillsComIA(data.resumo, data.experiencias, data.headline);
     
     // Combinar e remover duplicatas (case-insensitive)
     const todasSkills: string[] = [];
     const skillsNormalizadas = new Set<string>();
     
-    for (const skill of [...skillsDoLinkedIn, ...skillsDoHeadline]) {
+    for (const skill of [...skillsDoLinkedIn, ...skillsDoHeadline, ...skillsDaIA]) {
       const skillLower = skill.toLowerCase().trim();
-      if (skillLower && !skillsNormalizadas.has(skillLower)) {
+      if (skillLower && skillLower.length > 1 && !skillsNormalizadas.has(skillLower)) {
         skillsNormalizadas.add(skillLower);
         todasSkills.push(skill);
       }
     }
     
-    console.log(`📊 Skills: ${skillsDoLinkedIn.length} do LinkedIn + ${skillsDoHeadline.length} do headline = ${todasSkills.length} únicas`);
+    console.log(`📊 Skills: ${skillsDoLinkedIn.length} LinkedIn + ${skillsDoHeadline.length} headline + ${skillsDaIA.length} IA = ${todasSkills.length} únicas`);
+    
+    let skillsSalvas = 0;
     
     if (todasSkills.length > 0) {
       // Deletar skills antigas se atualizando
@@ -384,9 +531,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // 🔧 v57.4: Padronização com CVImportIA
-      const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other', 'data', 'outro'];
+      const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other', 'data', 'outro', 'finance'];
       
       // Inserir novas skills (com validação)
+      // 🔧 v57.5: Corrigido criado_em → created_at
       const skillsData = todasSkills.map(skill => {
         const categoria = categorizarSkill(skill);
         return {
@@ -396,7 +544,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           nivel: 'intermediario', // 🔧 Padronizado: sem acento, minúsculo
           anos_experiencia: 0,
           certificado: false,
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString() // 🔧 v57.5: Corrigido de criado_em
         };
       });
 
@@ -410,17 +558,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('🔄 Tentando inserir skills individualmente...');
         
         // 🔧 v57.4: Fallback - inserir uma a uma (mesmo padrão do CVImportIA)
-        let salvos = 0;
         for (const skill of skillsData.slice(0, 100)) {
           const { error: errIndividual } = await supabase.from('pessoa_skills').insert(skill);
           if (!errIndividual) {
-            salvos++;
+            skillsSalvas++;
           } else {
             console.warn(`⚠️ Falha ao salvar skill "${skill.skill_nome}":`, errIndividual.message);
           }
         }
-        console.log(`✅ Skills salvas individualmente: ${salvos}/${skillsData.length}`);
+        console.log(`✅ Skills salvas individualmente: ${skillsSalvas}/${skillsData.length}`);
       } else {
+        skillsSalvas = todasSkills.length;
         console.log(`✅ ${todasSkills.length} skills salvas`);
       }
     }
@@ -439,13 +587,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Inserir novas experiências
+      // 🔧 v57.5: Corrigido criado_em → created_at
       const expData = data.experiencias.map(exp => ({
         pessoa_id,
         empresa: exp.empresa,
         cargo: exp.cargo,
         atual: exp.atual || false,
         descricao: exp.descricao || null,
-        criado_em: new Date().toISOString()
+        created_at: new Date().toISOString() // 🔧 v57.5: Corrigido de criado_em
       }));
 
       const { error } = await supabase
@@ -473,13 +622,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // Inserir novas formações
+      // 🔧 v57.5: Corrigido criado_em → created_at
       const formData = data.formacoes.map(form => ({
         pessoa_id,
         instituicao: form.instituicao,
         curso: form.curso || '',
         grau: form.grau || '',
         em_andamento: false,
-        criado_em: new Date().toISOString()
+        created_at: new Date().toISOString() // 🔧 v57.5: Corrigido de criado_em
       }));
 
       const { error } = await supabase
@@ -512,7 +662,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       dados: {
         nome: data.nome,
         senioridade,
-        skills_count: data.skills?.length || 0,
+        skills_count: skillsSalvas, // 🆕 v57.5: Retorna quantidade real salva
+        skills_linkedin: skillsDoLinkedIn.length,
+        skills_headline: skillsDoHeadline.length,
+        skills_ia: skillsDaIA.length,
         experiencias_count: data.experiencias?.length || 0
       },
       // Info de Exclusividade
@@ -633,8 +786,13 @@ function categorizarSkill(skill: string): string {
     return 'data';
   }
   
+  // 🆕 v57.5: Finance (mercado financeiro)
+  if (['cvm', 'anbima', 'bacen', 'fundo', 'fidc', 'fip', 'fii', 'fiagro', 'renda fixa', 'renda variável', 'derivativo', 'câmbio', 'tesouraria', 'custódia', 'b3', 'bovespa'].some(s => skillLower.includes(s))) {
+    return 'finance';
+  }
+  
   // Soft Skills
-  if (['comunicação', 'liderança', 'agile', 'scrum', 'kanban', 'gestão', 'management'].some(s => skillLower.includes(s))) {
+  if (['comunicação', 'liderança', 'agile', 'scrum', 'kanban', 'gestão', 'management', 'análise de negócio', 'product owner', 'po'].some(s => skillLower.includes(s))) {
     return 'soft_skill';
   }
   
