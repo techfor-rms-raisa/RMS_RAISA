@@ -503,16 +503,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other', 'data', 'outro', 'finance'];
       
-      const skillsData = todasSkills.map(skill => {
+      // 🔧 v57.9: Filtrar skills inválidas ANTES de processar
+      const skillsFiltradas = todasSkills.filter(skill => {
+        const s = String(skill).trim();
+        // Rejeitar skills muito longas (provavelmente descrições)
+        if (s.length > 80) {
+          console.log(`⚠️ Skill rejeitada (muito longa ${s.length} chars): ${s.substring(0, 50)}...`);
+          return false;
+        }
+        // Rejeitar URLs
+        if (s.startsWith('http') || s.includes('://')) {
+          console.log(`⚠️ Skill rejeitada (URL): ${s.substring(0, 50)}`);
+          return false;
+        }
+        // Rejeitar textos que parecem descrições
+        if (s.includes(' tem como objetivo') || s.includes('Programa de') || s.includes('Tive o privilégio')) {
+          console.log(`⚠️ Skill rejeitada (descrição): ${s.substring(0, 50)}...`);
+          return false;
+        }
+        return s.length >= 2;
+      });
+      
+      console.log(`📊 Skills após filtro: ${skillsFiltradas.length} (de ${todasSkills.length})`);
+      
+      const skillsData = skillsFiltradas.map(skill => {
         const categoria = categorizarSkill(skill);
+        const skillNome = String(skill).trim().substring(0, 100);
+        console.log(`   💾 Skill: "${skillNome}" (${skillNome.length} chars) → ${categoria}`);
         return {
           pessoa_id,
-          skill_nome: String(skill).trim().substring(0, 100),
+          skill_nome: skillNome,
           skill_categoria: categoriasValidas.includes(categoria) ? categoria : 'other',
           nivel: 'intermediario',
           anos_experiencia: 0,
-          certificado: false,
-          created_at: new Date().toISOString()
+          certificado: false
         };
       });
 
