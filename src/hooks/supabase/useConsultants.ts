@@ -3,7 +3,8 @@
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui lazy loading de relatórios
  * 
- * ✅ ATUALIZADO: Suporte completo a todos os campos da tabela consultants
+ * ✅ ATUALIZADO v2.3: Suporte completo a todos os campos da tabela consultants
+ * - Adicionado: modalidade_contrato, substituicao, nome_substituido, observacoes, faturavel
  */
 
 import { useState } from 'react';
@@ -42,18 +43,25 @@ export const useConsultants = () => {
         data_saida: consultant.data_saida,
         status: consultant.status,
         motivo_desligamento: consultant.motivo_desligamento,
-        ativo_consultor: consultant.ativo_consultor, // ✅ NOVO
+        ativo_consultor: consultant.ativo_consultor,
         valor_faturamento: consultant.valor_faturamento,
         valor_pagamento: consultant.valor_pagamento,
         gestor_imediato_id: consultant.gestor_imediato_id,
         coordenador_id: consultant.coordenador_id,
         analista_rs_id: consultant.analista_rs_id,
         id_gestao_de_pessoas: consultant.id_gestao_de_pessoas,
-        // ✅ NOVOS CAMPOS
+        cliente_id: consultant.cliente_id,
+        // Campos adicionais
         especialidade: consultant.especialidade,
         dt_aniversario: consultant.dt_aniversario,
         cnpj_consultor: consultant.cnpj_consultor,
         empresa_consultor: consultant.empresa_consultor,
+        // ✅ v2.3: NOVOS CAMPOS
+        modalidade_contrato: consultant.modalidade_contrato,
+        substituicao: consultant.substituicao,
+        nome_substituido: consultant.nome_substituido,
+        faturavel: consultant.faturavel,
+        observacoes: consultant.observacoes,
         // Pareceres
         parecer_1_consultor: consultant.parecer_1_consultor,
         parecer_2_consultor: consultant.parecer_2_consultor,
@@ -86,7 +94,7 @@ export const useConsultants = () => {
 
   /**
    * Adiciona um novo consultor com recuperação automática de CV
-   * ✅ ATUALIZADO: Suporte a todos os campos da tabela
+   * ✅ ATUALIZADO v2.3: Suporte a todos os campos da tabela
    */
   const addConsultant = async (newConsultant: Omit<Consultant, 'id'>) => {
     try {
@@ -96,45 +104,37 @@ export const useConsultants = () => {
       let cvData: { pessoa_id?: number; candidatura_id?: number; curriculo_url?: string; analista_rs_id?: number } = {};
       
       if (newConsultant.cpf || newConsultant.email_consultor) {
-        console.log('🔍 Buscando CV do candidato...');
+        console.log('🔍 Buscando CV e analista do candidato...');
         
-        let pessoaQuery = supabase.from('pessoas').select('*');
+        // Buscar pessoa pelo CPF ou Email
+        let query = supabase.from('pessoas').select('*');
         
         if (newConsultant.cpf) {
-          pessoaQuery = pessoaQuery.eq('cpf', newConsultant.cpf);
+          query = query.eq('cpf', newConsultant.cpf);
         } else if (newConsultant.email_consultor) {
-          pessoaQuery = pessoaQuery.eq('email', newConsultant.email_consultor);
+          query = query.eq('email', newConsultant.email_consultor);
         }
         
-        const { data: pessoaData, error: pessoaError } = await pessoaQuery.single();
+        const { data: pessoaData } = await query.maybeSingle();
         
-        if (!pessoaError && pessoaData) {
-          console.log('✅ Pessoa encontrada no banco de talentos:', pessoaData.nome);
+        if (pessoaData) {
+          console.log('✅ Pessoa encontrada:', pessoaData.id);
           cvData.pessoa_id = pessoaData.id;
           cvData.curriculo_url = pessoaData.curriculo_url;
           
-          // Buscar candidatura aprovada desta pessoa
+          // Buscar candidatura para pegar analista_rs_id
           const { data: candidaturaData } = await supabase
             .from('candidaturas')
-            .select('*')
-            .eq('pessoa_id', String(pessoaData.id))
-            .in('status', ['aprovado_cliente', 'aprovado'])
+            .select('id, analista_rs_id')
+            .eq('pessoa_id', pessoaData.id)
             .order('created_at', { ascending: false })
             .limit(1)
-            .single();
+            .maybeSingle();
           
           if (candidaturaData) {
-            console.log('✅ Candidatura aprovada encontrada');
-            cvData.candidatura_id = parseInt(candidaturaData.id);
-            
-            if (candidaturaData.analista_id) {
-              cvData.analista_rs_id = candidaturaData.analista_id;
-              console.log('✅ Analista R&S encontrado automaticamente:', candidaturaData.analista_id);
-            }
-          }
-          
-          if (cvData.curriculo_url) {
-            console.log('📎 CV recuperado automaticamente:', cvData.curriculo_url);
+            cvData.candidatura_id = candidaturaData.id;
+            cvData.analista_rs_id = candidaturaData.analista_rs_id;
+            console.log('✅ Candidatura encontrada:', candidaturaData.id, 'Analista:', candidaturaData.analista_rs_id);
           }
         }
       }
@@ -149,19 +149,19 @@ export const useConsultants = () => {
           status: newConsultant.status || 'Ativo',
           ano_vigencia: newConsultant.ano_vigencia || new Date().getFullYear(),
           
-          // ✅ NOVO: Flag ativo separado do status
-          ativo_consultor: newConsultant.ativo_consultor ?? true,
+          // Flag ativo
+          ativo_consultor: (newConsultant as any).ativo_consultor ?? true,
           
           // Dados de contato
           email_consultor: newConsultant.email_consultor || null,
           celular: newConsultant.celular || null,
           cpf: newConsultant.cpf || null,
           
-          // ✅ NOVO: Dados PJ
+          // Dados PJ
           cnpj_consultor: (newConsultant as any).cnpj_consultor || null,
           empresa_consultor: (newConsultant as any).empresa_consultor || null,
           
-          // ✅ NOVO: Dados adicionais
+          // Dados adicionais
           dt_aniversario: (newConsultant as any).dt_aniversario || null,
           especialidade: (newConsultant as any).especialidade || null,
           
@@ -174,12 +174,20 @@ export const useConsultants = () => {
           coordenador_id: newConsultant.coordenador_id || null,
           analista_rs_id: cvData.analista_rs_id || newConsultant.analista_rs_id || null,
           id_gestao_de_pessoas: newConsultant.id_gestao_de_pessoas || null,
+          cliente_id: (newConsultant as any).cliente_id || null,
           
           // Vínculo com candidato (recuperação automática de CV)
           pessoa_id: cvData.pessoa_id || null,
           candidatura_id: cvData.candidatura_id || null,
           curriculo_url: cvData.curriculo_url || null,
-          curriculo_uploaded_at: cvData.curriculo_url ? new Date().toISOString() : null
+          curriculo_uploaded_at: cvData.curriculo_url ? new Date().toISOString() : null,
+          
+          // ✅ v2.3: NOVOS CAMPOS - modalidade, substituição, observações
+          modalidade_contrato: (newConsultant as any).modalidade_contrato || 'PJ',
+          substituicao: (newConsultant as any).substituicao || false,
+          nome_substituido: (newConsultant as any).nome_substituido || null,
+          faturavel: (newConsultant as any).faturavel ?? true,
+          observacoes: (newConsultant as any).observacoes || null,
         }])
         .select()
         .single();
@@ -205,7 +213,7 @@ export const useConsultants = () => {
   /**
    * Atualiza um consultor existente
    * ✅ CORRIGIDO: Aceita tanto (id, updates) quanto (consultant)
-   * ✅ ATUALIZADO: Suporte a todos os campos da tabela
+   * ✅ ATUALIZADO v2.3: Suporte a todos os campos da tabela
    */
   const updateConsultant = async (consultantOrId: number | Consultant, updates?: Partial<Consultant>) => {
     try {
@@ -236,10 +244,11 @@ export const useConsultants = () => {
           cargo_consultores: updateData.cargo_consultores,
           ano_vigencia: updateData.ano_vigencia,
           status: updateData.status,
+          data_inclusao_consultores: (updateData as any).data_inclusao_consultores,
           data_saida: updateData.data_saida,
           motivo_desligamento: updateData.motivo_desligamento,
           
-          // ✅ NOVO: Flag ativo
+          // Flag ativo
           ativo_consultor: (updateData as any).ativo_consultor,
           
           // Valores financeiros
@@ -251,12 +260,20 @@ export const useConsultants = () => {
           coordenador_id: updateData.coordenador_id,
           analista_rs_id: updateData.analista_rs_id,
           id_gestao_de_pessoas: updateData.id_gestao_de_pessoas,
+          cliente_id: (updateData as any).cliente_id,
           
-          // ✅ NOVOS CAMPOS
+          // Campos adicionais
           especialidade: (updateData as any).especialidade,
           dt_aniversario: (updateData as any).dt_aniversario,
           cnpj_consultor: (updateData as any).cnpj_consultor,
-          empresa_consultor: (updateData as any).empresa_consultor
+          empresa_consultor: (updateData as any).empresa_consultor,
+          
+          // ✅ v2.3: NOVOS CAMPOS - modalidade, substituição, observações
+          modalidade_contrato: (updateData as any).modalidade_contrato,
+          substituicao: (updateData as any).substituicao,
+          nome_substituido: (updateData as any).nome_substituido,
+          faturavel: (updateData as any).faturavel,
+          observacoes: (updateData as any).observacoes,
         })
         .eq('id', id)
         .select()
@@ -282,7 +299,7 @@ export const useConsultants = () => {
 
   /**
    * Adiciona múltiplos consultores em lote
-   * ✅ ATUALIZADO: Suporte a todos os campos da tabela
+   * ✅ ATUALIZADO v2.3: Suporte a todos os campos da tabela
    */
   const batchAddConsultants = async (newConsultants: Omit<Consultant, 'id'>[]) => {
     try {
@@ -324,7 +341,7 @@ export const useConsultants = () => {
             status: c.status || 'Ativo',
             ano_vigencia: c.ano_vigencia || new Date().getFullYear(),
             
-            // ✅ NOVO: Flag ativo
+            // Flag ativo
             ativo_consultor: (c as any).ativo_consultor ?? true,
             
             // Dados de contato
@@ -332,7 +349,7 @@ export const useConsultants = () => {
             celular: c.celular || null,
             cpf: c.cpf || null,
             
-            // ✅ NOVOS CAMPOS
+            // Campos adicionais
             cnpj_consultor: (c as any).cnpj_consultor || null,
             empresa_consultor: (c as any).empresa_consultor || null,
             dt_aniversario: (c as any).dt_aniversario || null,
@@ -347,11 +364,19 @@ export const useConsultants = () => {
             coordenador_id: c.coordenador_id || null,
             analista_rs_id: c.analista_rs_id || null,
             id_gestao_de_pessoas: c.id_gestao_de_pessoas || null,
+            cliente_id: (c as any).cliente_id || null,
             
             // Vínculo com candidato
             pessoa_id: pessoa?.id || null,
             curriculo_url: pessoa?.curriculo_url || null,
-            curriculo_uploaded_at: pessoa?.curriculo_url ? new Date().toISOString() : null
+            curriculo_uploaded_at: pessoa?.curriculo_url ? new Date().toISOString() : null,
+            
+            // ✅ v2.3: NOVOS CAMPOS
+            modalidade_contrato: (c as any).modalidade_contrato || 'PJ',
+            substituicao: (c as any).substituicao || false,
+            nome_substituido: (c as any).nome_substituido || null,
+            faturavel: (c as any).faturavel ?? true,
+            observacoes: (c as any).observacoes || null,
           };
         }))
         .select();
@@ -385,7 +410,7 @@ export const useConsultants = () => {
         .from('consultants')
         .update({
           status: 'Encerrado',
-          ativo_consultor: false, // ✅ NOVO: Atualizar flag ativo
+          ativo_consultor: false,
           data_saida: dataDesligamento,
           motivo_desligamento: motivoDesligamento || undefined
         })
@@ -401,7 +426,7 @@ export const useConsultants = () => {
       };
 
       setConsultants(prev => prev.map(c => c.id === id ? updatedConsultant : c));
-      console.log(`✅ Consultor ${id} inativado com sucesso!`);
+      console.log('✅ Consultor inativado');
       
       return updatedConsultant;
     } catch (err: any) {
@@ -411,109 +436,67 @@ export const useConsultants = () => {
   };
 
   /**
-   * 🔥 LAZY LOADING DE RELATÓRIOS
-   * Carrega relatórios de um consultor específico sob demanda
-   * Inclui retry automático e tratamento robusto de erros
+   * Carrega relatórios de um consultor específico (lazy loading)
    */
   const loadConsultantReports = async (consultantId: number): Promise<ConsultantReport[]> => {
-    const MAX_RETRIES = 3;
-    const RETRY_DELAY = 1000;
-    
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      try {
-        console.log(`📊 Carregando relatórios do consultor ${consultantId}... (tentativa ${attempt}/${MAX_RETRIES})`);
-        
-        if (!supabase) {
-          throw new Error('Cliente Supabase não inicializado');
+    try {
+      const { data, error } = await supabase
+        .from('consultant_reports')
+        .select('*')
+        .eq('consultant_id', consultantId)
+        .order('month', { ascending: true });
+
+      if (error) throw error;
+
+      // Atualizar o consultor no estado com os relatórios
+      setConsultants(prev => prev.map(c => {
+        if (c.id === consultantId) {
+          return { ...c, reports: data || [], consultant_reports: data || [] };
         }
-        
-        const { data, error } = await supabase
-          .from('consultant_reports')
-          .select('*')
-          .eq('consultant_id', consultantId)
-          .order('created_at', { ascending: false });
-        
-        if (error) {
-          console.error(`❌ Erro Supabase (tentativa ${attempt}):`, error);
-          throw error;
-        }
-        
-        const reports: ConsultantReport[] = (data || []).map((report: any) => {
-          let parsedRecommendations = [];
-          try {
-            if (typeof report.recommendations === 'string') {
-              parsedRecommendations = JSON.parse(report.recommendations);
-            } else if (Array.isArray(report.recommendations)) {
-              parsedRecommendations = report.recommendations;
-            }
-          } catch (parseError) {
-            console.warn(`⚠️ Erro ao parsear recommendations do relatório ${report.id}:`, parseError);
-            parsedRecommendations = [];
-          }
-          
-          return {
-            id: report.id,
-            month: report.month,
-            year: report.year,
-            riskScore: report.risk_score,
-            summary: report.summary || '',
-            negativePattern: report.negative_pattern || null,
-            predictiveAlert: report.predictive_alert || null,
-            recommendations: parsedRecommendations,
-            content: report.content || '',
-            createdAt: report.created_at || new Date().toISOString(),
-            generatedBy: report.generated_by || 'unknown',
-            aiJustification: report.ai_justification || ''
-          };
-        });
-        
-        console.log(`✅ ${reports.length} relatórios carregados para consultor ${consultantId}`);
-        
-        // Atualizar o estado local do consultor com os relatórios
-        setConsultants(prev => prev.map(c => 
-          c.id === consultantId 
-            ? { ...c, consultant_reports: reports }
-            : c
-        ));
-        
-        return reports;
-        
-      } catch (err: any) {
-        const isNetworkError = err.message?.includes('fetch') || 
-                               err.message?.includes('network') ||
-                               err.code === 'NETWORK_ERROR';
-        
-        console.error(`❌ Erro ao carregar relatórios (tentativa ${attempt}/${MAX_RETRIES}):`, {
-          message: err.message,
-          code: err.code,
-          hint: err.hint,
-          details: err.details
-        });
-        
-        if (attempt < MAX_RETRIES && isNetworkError) {
-          console.log(`⏳ Aguardando ${RETRY_DELAY * attempt}ms antes de tentar novamente...`);
-          await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * attempt));
-          continue;
-        }
-        
-        console.error(`❌ Falha definitiva ao carregar relatórios do consultor ${consultantId}:`, err);
-        
-        const friendlyError = new Error(
-          `Erro ao carregar relatórios: ${err.message || 'Falha na conexão com o servidor'}`
-        );
-        (friendlyError as any).code = err.code;
-        (friendlyError as any).hint = err.hint;
-        (friendlyError as any).details = err.details;
-        throw friendlyError;
-      }
+        return c;
+      }));
+
+      return data || [];
+    } catch (err: any) {
+      console.error(`❌ Erro ao carregar relatórios do consultor ${consultantId}:`, err);
+      return [];
     }
-    
-    return [];
+  };
+
+  /**
+   * Atualiza um relatório mensal do consultor
+   */
+  const updateConsultantReport = async (reportId: number, updates: Partial<ConsultantReport>) => {
+    try {
+      const { data, error } = await supabase
+        .from('consultant_reports')
+        .update(updates)
+        .eq('id', reportId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // Atualizar o estado local
+      setConsultants(prev => prev.map(c => {
+        const reportIndex = c.reports?.findIndex(r => r.id === reportId);
+        if (reportIndex !== undefined && reportIndex >= 0 && c.reports) {
+          const newReports = [...c.reports];
+          newReports[reportIndex] = data;
+          return { ...c, reports: newReports };
+        }
+        return c;
+      }));
+
+      return data;
+    } catch (err: any) {
+      console.error('❌ Erro ao atualizar relatório:', err);
+      throw err;
+    }
   };
 
   return {
     consultants,
-    setConsultants,
     loading,
     error,
     loadConsultants,
@@ -521,7 +504,8 @@ export const useConsultants = () => {
     updateConsultant,
     batchAddConsultants,
     inactivateConsultant,
-    loadConsultantReports
+    loadConsultantReports,
+    updateConsultantReport,
+    setConsultants
   };
 };
-

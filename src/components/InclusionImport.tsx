@@ -1,7 +1,14 @@
 // src/components/InclusionImport.tsx
-// ✅ v2.2 - Correção na extração de EMAIL e NOME do PDF + Fix ESModules
-// Problema corrigido: Email do HEADER e Nome da seção EMERGÊNCIA sendo capturados incorretamente
-// Fix: require is not defined - agora usa import dinâmico para Vite/ESM
+// ✅ v2.3 - Correção completa na extração de campos do PDF
+// Melhorias:
+// - EMAIL: filtro para emails pessoais, ignorar corporativos
+// - NOME: ignora seção INFORMAÇÕES DE EMERGÊNCIA
+// - DATA DE INÍCIO: fallback global
+// - FORMA DE CONTRATAÇÃO: fallback global (CLT/PJ)
+// - VALOR PAGAMENTO: fallback global
+// - OBSERVAÇÕES: captura múltiplas linhas
+// - NOME SUBSTITUÍDO: setar substituicao=true automaticamente
+// - Fix ESModules para Vite
 
 import React, { useState } from 'react';
 import { Client, User, UsuarioCliente, CoordenadorCliente } from '@/types';
@@ -192,16 +199,16 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     role = role.replace(/\s*SR\s*\(\s*X?\s*\)|\s*PL\s*\(\s*X?\s*\)|\s*JR\s*\(\s*X?\s*\)/gi, '').trim();
                 }
                 
-                // Data de Início - ✅ CORREÇÃO v2.1: Restrito à seção DADOS PAGAMENTO
-                if ((cleanLine.match(/^DATA DE INÍCIO/i) || cleanLine.match(/^DATA INÍCIO/i)) && inDadosPagamento) {
+                // Data de Início - ✅ CORREÇÃO v2.3: Buscar em qualquer seção, priorizar DADOS PAGAMENTO
+                if (cleanLine.match(/^DATA DE INÍCIO/i) || cleanLine.match(/^DATA INÍCIO/i)) {
                     // Pode estar na mesma linha ou na próxima
                     let match = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
                     if (!match && nextLine) {
                         match = nextLine.match(/(\d{2}\/\d{2}\/\d{4})/);
                     }
-                    if (match) {
+                    if (match && !startDateStr) {
                         startDateStr = match[1];
-                        console.log(`✅ Data de Início extraída (seção DADOS PAGAMENTO): ${startDateStr}`);
+                        console.log(`✅ Data de Início extraída: ${startDateStr}`);
                     }
                 }
                 
@@ -277,15 +284,24 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // Valor Pagamento (na seção DADOS PAGAMENTO -> VALOR) - ✅ v2.1: Com log
-                if ((cleanLine.match(/^VALOR$/i) || cleanLine.match(/^VALOR\s*R\$/i)) && inDadosPagamento) {
+                // Valor Pagamento (na seção DADOS PAGAMENTO -> VALOR) - ✅ v2.3: Busca mais flexível
+                if (cleanLine.match(/^VALOR$/i) || cleanLine.match(/^VALOR\s*R\$/i) || cleanLine.match(/^VALOR\s*:\s*R\$/i)) {
                     let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
                     if (!match && nextLine) {
                         match = nextLine.match(/R?\$?\s*([\d.,]+)/);
                     }
                     if (match && !valorPagamentoStr) {
                         valorPagamentoStr = match[1];
-                        console.log(`✅ Valor Pagamento extraído (seção DADOS PAGAMENTO): ${valorPagamentoStr}`);
+                        console.log(`✅ Valor Pagamento extraído: ${valorPagamentoStr}`);
+                    }
+                }
+                
+                // ✅ v2.3: Detectar valor com R$ na mesma linha do label
+                if (!valorPagamentoStr && cleanLine.match(/VALOR\s*(?:MENSAL|PAGAMENTO)?\s*[:\-]?\s*R\$\s*([\d.,]+)/i)) {
+                    const match = cleanLine.match(/R\$\s*([\d.,]+)/i);
+                    if (match) {
+                        valorPagamentoStr = match[1];
+                        console.log(`✅ Valor extraído (formato R$): ${valorPagamentoStr}`);
                     }
                 }
                 
@@ -300,8 +316,8 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     // No PDF, geralmente aparece como checkbox - vamos assumir que se NÃO FATURÁVEL aparece destacado, é não faturável
                 }
                 
-                // ✅ FORMA DE CONTRATAÇÃO (PJ, CLT, etc.) - CORREÇÃO v2.1: Restrito à seção DADOS PAGAMENTO
-                if (cleanLine.match(/FORMA DE CONTRATAÇÃO/i) && inDadosPagamento) {
+                // ✅ FORMA DE CONTRATAÇÃO (PJ, CLT, etc.) - CORREÇÃO v2.3: Buscar em qualquer seção
+                if (cleanLine.match(/FORMA DE CONTRATAÇÃO/i)) {
                     // Pode estar na mesma linha ou na coluna NOVO
                     if (cleanLine.includes('PJ')) {
                         modalidadeContratoStr = 'PJ';
@@ -313,8 +329,18 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                         else if (nextLine.match(/Temporário/i)) modalidadeContratoStr = 'Temporário';
                     }
                     if (modalidadeContratoStr) {
-                        console.log(`✅ Modalidade de Contrato extraída (seção DADOS PAGAMENTO): ${modalidadeContratoStr}`);
+                        console.log(`✅ Modalidade de Contrato extraída: ${modalidadeContratoStr}`);
                     }
+                }
+                
+                // ✅ v2.3: Detectar CLT isolado na linha (caso o PDF tenha formatação diferente)
+                if (!modalidadeContratoStr && cleanLine.match(/^\s*CLT\s*$/i)) {
+                    modalidadeContratoStr = 'CLT';
+                    console.log(`✅ Modalidade CLT detectada (linha isolada)`);
+                }
+                if (!modalidadeContratoStr && cleanLine.match(/^\s*PJ\s*$/i)) {
+                    modalidadeContratoStr = 'PJ';
+                    console.log(`✅ Modalidade PJ detectada (linha isolada)`);
                 }
                 
                 // ✅ INCLUSÃO REF.SUBSTITUIÇÃO (checkbox para substituição)
@@ -322,25 +348,47 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     substituicao = true;
                 }
                 
-                // ✅ NOME DO PROFISSIONAL SUBSTITUÍDO
-                if (cleanLine.match(/NOME DO PROFISSIONAL SUBSTITUÍDO/i)) {
-                    let valor = cleanLine.replace(/NOME DO PROFISSIONAL SUBSTITUÍDO\s*:?/i, '').trim();
-                    if (valor && valor !== 'XXX' && valor !== 'xxx') {
+                // ✅ NOME DO PROFISSIONAL SUBSTITUÍDO - CORREÇÃO v2.3: Busca mais robusta
+                if (cleanLine.match(/NOME DO PROFISSIONAL SUBSTITUÍDO/i) || cleanLine.match(/PROFISSIONAL SUBSTITUÍDO/i)) {
+                    let valor = cleanLine.replace(/NOME DO PROFISSIONAL SUBSTITUÍDO\s*:?/i, '').replace(/PROFISSIONAL SUBSTITUÍDO\s*:?/i, '').trim();
+                    
+                    // Se o valor está vazio, pode estar na próxima linha
+                    if ((!valor || valor === 'XXX' || valor === 'xxx' || valor.length < 3) && nextLine) {
+                        // Verificar se a próxima linha não é outro campo
+                        if (!nextLine.match(/^(OBSERVAÇÕES|NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS|GESTÃO)/i)) {
+                            valor = nextLine.trim();
+                        }
+                    }
+                    
+                    // Se encontrou valor válido
+                    if (valor && valor !== 'XXX' && valor !== 'xxx' && valor.length >= 3) {
+                        // Limpar possíveis sufixos como "(Confidencial)"
+                        valor = valor.replace(/\s*\(Confidencial\)/i, '').trim();
                         nomeSubstituidoStr = valor;
                         substituicao = true; // Se tem nome, é substituição
+                        console.log(`✅ Nome Substituído extraído: ${nomeSubstituidoStr}`);
+                        console.log(`✅ Substituição setada como TRUE`);
                     }
                 }
                 
-                // ✅ OBSERVAÇÕES
-                if (cleanLine.match(/^OBSERVAÇÕES\s*:/i)) {
-                    let obs = cleanLine.replace(/^OBSERVAÇÕES\s*:/i, '').trim();
-                    // Pode continuar nas próximas linhas até encontrar outro campo
+                // ✅ OBSERVAÇÕES - CORREÇÃO v2.3: Capturar múltiplas linhas corretamente
+                if (cleanLine.match(/^OBSERVAÇÕES\s*:?/i)) {
+                    let obs = cleanLine.replace(/^OBSERVAÇÕES\s*:?/i, '').trim();
+                    
+                    // Continuar nas próximas linhas até encontrar outro campo ou seção
                     let j = i + 1;
-                    while (j < lines.length && !lines[j].match(/^(NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS HUMANOS)/i)) {
-                        obs += ' ' + lines[j];
+                    const stopPatterns = /^(NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS HUMANOS|GERENTE|DIRETORIA|GESTÃO DE PESSOAS|NOME DO PROFISSIONAL|FORMA DE CONTRATAÇÃO|FATURÁVEL|DADOS)/i;
+                    
+                    while (j < lines.length && !lines[j].match(stopPatterns)) {
+                        const nextObs = lines[j].trim();
+                        if (nextObs && nextObs.length > 0) {
+                            obs += ' ' + nextObs;
+                        }
                         j++;
                     }
+                    
                     observacoesStr = obs.trim();
+                    console.log(`✅ Observações extraídas: ${observacoesStr.substring(0, 100)}...`);
                     
                     // Verifica se nas observações menciona substituição
                     if (observacoesStr.match(/substitui|substituição|substituindo/i)) {
@@ -349,6 +397,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                         const subMatch = observacoesStr.match(/substitui(?:ção|ndo)?\s+(?:de\s+)?(?:o\s+|a\s+)?([A-Za-zÀ-ÿ\s]+?)(?:\.|,|$)/i);
                         if (subMatch && !nomeSubstituidoStr) {
                             nomeSubstituidoStr = subMatch[1].trim();
+                            console.log(`✅ Nome substituído extraído das observações: ${nomeSubstituidoStr}`);
                         }
                     }
                 }
@@ -421,6 +470,62 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+?)\s+([A-Z][A-Za-zÀ-ÿ\s]+)/);
                 if (rhMatch) {
                     recursosHumanosStr = rhMatch[2].trim();
+                }
+            }
+            
+            // ✅ v2.3: Fallback para DATA DE INÍCIO - busca global
+            if (!startDateStr) {
+                const dataInicioMatch = text.match(/DATA\s*(?:DE)?\s*INÍCIO[:\s]*(\d{2}\/\d{2}\/\d{4})/i);
+                if (dataInicioMatch) {
+                    startDateStr = dataInicioMatch[1];
+                    console.log(`✅ Data de Início extraída (fallback): ${startDateStr}`);
+                }
+            }
+            
+            // ✅ v2.3: Fallback para MODALIDADE DE CONTRATO - busca global
+            if (!modalidadeContratoStr) {
+                // Buscar padrão "FORMA DE CONTRATAÇÃO ... CLT" ou "... PJ"
+                if (text.match(/FORMA DE CONTRATAÇÃO[\s\S]{0,50}CLT/i)) {
+                    modalidadeContratoStr = 'CLT';
+                    console.log(`✅ Modalidade CLT extraída (fallback global)`);
+                } else if (text.match(/FORMA DE CONTRATAÇÃO[\s\S]{0,50}PJ/i)) {
+                    modalidadeContratoStr = 'PJ';
+                    console.log(`✅ Modalidade PJ extraída (fallback global)`);
+                }
+            }
+            
+            // ✅ v2.3: Fallback para VALOR PAGAMENTO - busca global
+            if (!valorPagamentoStr) {
+                // Buscar padrão "VALOR ... R$ 1.234,56" após DADOS PAGAMENTO
+                const valorMatch = text.match(/DADOS PAGAMENTO[\s\S]*?VALOR[:\s]*R?\$?\s*([\d.,]+)/i);
+                if (valorMatch) {
+                    valorPagamentoStr = valorMatch[1];
+                    console.log(`✅ Valor Pagamento extraído (fallback): ${valorPagamentoStr}`);
+                }
+            }
+            
+            // ✅ v2.3: Fallback para NOME SUBSTITUÍDO - busca global
+            if (!nomeSubstituidoStr) {
+                const subMatch = text.match(/(?:NOME DO PROFISSIONAL SUBSTITUÍDO|PROFISSIONAL SUBSTITUÍDO)[:\s]*([A-Za-zÀ-ÿ\s]+?)(?:\(|OBSERVAÇÕES|NOTEBOOK|$)/i);
+                if (subMatch) {
+                    const nome = subMatch[1].trim().replace(/\s*\(Confidencial\)/i, '').trim();
+                    if (nome && nome.length >= 3 && nome !== 'XXX') {
+                        nomeSubstituidoStr = nome;
+                        substituicao = true;
+                        console.log(`✅ Nome Substituído extraído (fallback): ${nomeSubstituidoStr}`);
+                    }
+                }
+            }
+            
+            // ✅ v2.3: Fallback para OBSERVAÇÕES - busca global
+            if (!observacoesStr) {
+                const obsMatch = text.match(/OBSERVAÇÕES[:\s]*(.+?)(?:NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS HUMANOS|$)/is);
+                if (obsMatch) {
+                    const obs = obsMatch[1].replace(/\n/g, ' ').trim();
+                    if (obs && obs.length > 5) {
+                        observacoesStr = obs;
+                        console.log(`✅ Observações extraídas (fallback): ${observacoesStr.substring(0, 50)}...`);
+                    }
                 }
             }
 
