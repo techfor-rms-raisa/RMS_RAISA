@@ -18,13 +18,45 @@
  * - Combina com skills do LinkedIn e headline
  * - Corrigido: criado_em → created_at
  * 
+ * 🔧 v57.6: Correção do SDK Gemini
+ * - Usa @google/genai igual ao resto do sistema
+ * - Modelo: gemini-2.0-flash
+ * - Padrão getAI() lazy initialization
+ * 
  * Data: 20/01/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import { GoogleGenAI } from '@google/genai';
 
-// Supabase Admin Client
+// ============================================
+// CONFIGURAÇÃO GEMINI - Lazy Initialization
+// ============================================
+
+const GEMINI_MODEL = 'gemini-2.0-flash';
+
+let aiInstance: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    
+    if (!apiKey) {
+      console.error('❌ API_KEY (Gemini) não encontrada!');
+      throw new Error('API_KEY não configurada.');
+    }
+    
+    console.log('✅ API_KEY carregada para LinkedIn Import');
+    aiInstance = new GoogleGenAI({ apiKey });
+  }
+  return aiInstance;
+}
+
+// ============================================
+// SUPABASE ADMIN CLIENT
+// ============================================
+
 function getSupabaseAdmin() {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -61,7 +93,6 @@ interface LinkedInData {
   skills?: string[];
   certificacoes?: string[];
   idiomas?: Array<{ idioma: string; nivel: string }>;
-  // 🆕 v57.0: analista_id agora é OPCIONAL
   analista_id?: number;
 }
 
@@ -73,7 +104,6 @@ function calcularAnosExperiencia(experiencias: LinkedInData['experiencias']): nu
   const anoAtual = new Date().getFullYear();
   const mesAtual = new Date().getMonth() + 1;
   
-  // Mapa de meses em português e inglês
   const meses: Record<string, number> = {
     'jan': 1, 'janeiro': 1, 'january': 1,
     'fev': 2, 'fevereiro': 2, 'february': 2, 'feb': 2,
@@ -93,11 +123,7 @@ function calcularAnosExperiencia(experiencias: LinkedInData['experiencias']): nu
     if (!exp.periodo) continue;
     
     const periodoLower = exp.periodo.toLowerCase();
-    
-    // Tentar extrair anos (formato: 2020 - 2024 ou 2020 - Presente)
     const anosMatch = periodoLower.match(/(\d{4})/g);
-    
-    // Tentar extrair mês/ano (formato: jan 2020 - dez 2024 ou set 2025 - presente)
     const mesAnoRegex = /(\w+)\s*(\d{4})/g;
     const matches = [...periodoLower.matchAll(mesAnoRegex)];
     
@@ -105,42 +131,35 @@ function calcularAnosExperiencia(experiencias: LinkedInData['experiencias']): nu
     let mesFim = mesAtual, anoFim = anoAtual;
     
     if (matches.length >= 1) {
-      // Primeiro match = início
       const mesNome = matches[0][1];
       mesInicio = meses[mesNome] || 1;
       anoInicio = parseInt(matches[0][2]);
       
       if (matches.length >= 2) {
-        // Segundo match = fim
         const mesFimNome = matches[1][1];
         mesFim = meses[mesFimNome] || mesAtual;
         anoFim = parseInt(matches[1][2]);
       } else if (periodoLower.includes('presente') || periodoLower.includes('atual') || periodoLower.includes('present') || exp.atual) {
-        // Se for emprego atual
         mesFim = mesAtual;
         anoFim = anoAtual;
       }
     } else if (anosMatch && anosMatch.length >= 1) {
-      // Fallback: só anos sem meses
       anoInicio = parseInt(anosMatch[0]);
       anoFim = anosMatch.length > 1 ? parseInt(anosMatch[1]) : anoAtual;
     }
     
     if (anoInicio > 0) {
-      // Calcular diferença em meses
       const mesesExp = (anoFim - anoInicio) * 12 + (mesFim - mesInicio);
       totalMeses += Math.max(0, mesesExp);
     }
   }
   
-  // Converter para anos (arredondando)
   const totalAnos = Math.round(totalMeses / 12);
   console.log(`📊 Total experiência calculada: ${totalMeses} meses = ${totalAnos} anos`);
   
   return totalAnos;
 }
 
-// Estimar senioridade baseado em anos de experiência
 function estimarSenioridade(anos: number): string {
   if (anos >= 10) return 'Especialista';
   if (anos >= 6) return 'Senior';
@@ -148,13 +167,11 @@ function estimarSenioridade(anos: number): string {
   return 'Junior';
 }
 
-// Extrair cidade e estado da localização
 function parseLocalizacao(localizacao: string): { cidade: string; estado: string } {
   if (!localizacao) return { cidade: '', estado: '' };
   
   const partes = localizacao.split(',').map(p => p.trim());
   
-  // Mapa de estados brasileiros para siglas
   const estadosParaSigla: Record<string, string> = {
     'acre': 'AC', 'alagoas': 'AL', 'amapá': 'AP', 'amazonas': 'AM',
     'bahia': 'BA', 'ceará': 'CE', 'distrito federal': 'DF', 'espírito santo': 'ES',
@@ -170,16 +187,12 @@ function parseLocalizacao(localizacao: string): { cidade: string; estado: string
   
   if (partes.length >= 2) {
     cidade = partes[0];
-    
-    // Tentar converter nome do estado para sigla
     const estadoRaw = partes[1].toLowerCase();
     if (estadosParaSigla[estadoRaw]) {
       estado = estadosParaSigla[estadoRaw];
     } else if (partes[1].length === 2) {
-      // Já é uma sigla
       estado = partes[1].toUpperCase();
     } else {
-      // Não reconhecido, deixar vazio para evitar erro
       estado = '';
     }
   } else if (partes.length === 1) {
@@ -190,7 +203,7 @@ function parseLocalizacao(localizacao: string): { cidade: string; estado: string
 }
 
 // ============================================
-// 🆕 v57.5: EXTRAIR SKILLS VIA GEMINI (IA)
+// 🆕 v57.6: EXTRAIR SKILLS VIA GEMINI (SDK)
 // ============================================
 
 async function extrairSkillsComIA(
@@ -230,13 +243,6 @@ async function extrairSkillsComIA(
   console.log(`🤖 Enviando ${textoParaAnalise.length} caracteres para Gemini extrair skills...`);
   
   try {
-    const GEMINI_API_KEY = process.env.API_KEY; // Variável do Vercel é API_KEY
-    
-    if (!GEMINI_API_KEY) {
-      console.warn('⚠️ API_KEY não configurada, pulando extração via IA');
-      return [];
-    }
-    
     const prompt = `Analise o seguinte perfil profissional e extraia TODAS as skills, competências e tecnologias mencionadas ou implícitas.
 
 PERFIL:
@@ -254,40 +260,22 @@ EXEMPLO DE RESPOSTA:
 
 RESPOSTA (apenas o JSON array):`;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 1000
-          }
-        })
-      }
-    );
+    // 🔧 v57.6: Usar SDK @google/genai igual ao resto do sistema
+    const result = await getAI().models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt
+    });
     
-    if (!response.ok) {
-      console.error('❌ Erro na chamada Gemini:', response.status, response.statusText);
-      return [];
-    }
-    
-    const result = await response.json();
-    const textoResposta = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const textoResposta = result.text || '';
     
     console.log('📝 Resposta Gemini (raw):', textoResposta.substring(0, 200));
     
     // Extrair JSON da resposta
     let skills: string[] = [];
     
-    // Tentar parsear diretamente
     try {
       // Limpar a resposta (remover markdown code blocks se houver)
       let jsonStr = textoResposta.trim();
-      
-      // Remover ```json e ``` se presentes
       jsonStr = jsonStr.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
       
       // Encontrar o array JSON na resposta
@@ -309,7 +297,7 @@ RESPOSTA (apenas o JSON array):`;
     skills = skills
       .filter(s => typeof s === 'string' && s.length > 1 && s.length < 80)
       .map(s => s.trim())
-      .filter(s => !s.match(/^(e|ou|de|da|do|para|com|em|o|a|os|as)$/i)); // Remover palavras soltas
+      .filter(s => !s.match(/^(e|ou|de|da|do|para|com|em|o|a|os|as)$/i));
     
     console.log(`✅ Gemini extraiu ${skills.length} skills:`, skills.slice(0, 10));
     
@@ -345,7 +333,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log('📥 Recebendo dados do LinkedIn:', data.nome);
 
-    // Validar dados mínimos
     if (!data.nome) {
       return res.status(400).json({ 
         success: false, 
@@ -353,8 +340,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // 🆕 v57.0: REMOVIDA validação obrigatória de analista_id
-    // Se tiver analista_id, usa. Se não tiver, deixa null (será atribuído depois via CRUD)
     const analistaId = data.analista_id || null;
 
     // Buscar configuração de exclusividade
@@ -372,19 +357,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const senioridade = estimarSenioridade(anosExperiencia);
     const { cidade, estado } = parseLocalizacao(data.localizacao || '');
     
-    // Extrair último cargo e empresa
     const ultimaExp = data.experiencias?.[0];
     const ultimoCargo = ultimaExp?.cargo || data.headline || '';
-    const ultimaEmpresa = ultimaExp?.empresa || '';
 
-    // 🆕 v57.0: Só calcula datas de exclusividade se tiver analista_id
     const dataInicio = analistaId ? new Date() : null;
     const dataFinal = analistaId 
       ? new Date(new Date().getTime() + periodoExclusividade * 24 * 60 * 60 * 1000)
       : null;
 
     // ============================================
-    // VERIFICAR SE JÁ EXISTE (por LinkedIn URL ou email)
+    // VERIFICAR SE JÁ EXISTE
     // ============================================
     
     let pessoaExistente = null;
@@ -429,13 +411,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       origem: 'linkedin',
       importado_em: new Date().toISOString(),
       atualizado_em: new Date().toISOString(),
-      // 🆕 v57.0: Campos de Exclusividade - só seta se tiver analista_id
       periodo_exclusividade: periodoExclusividade,
       max_renovacoes: maxRenovacoes,
       qtd_renovacoes: 0
     };
 
-    // 🆕 v57.0: Só adiciona campos de exclusividade se tiver analista_id
     if (analistaId) {
       pessoaData.id_analista_rs = analistaId;
       pessoaData.data_inicio_exclusividade = dataInicio?.toISOString();
@@ -446,7 +426,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let atualizado = false;
 
     if (pessoaExistente) {
-      // ATUALIZAR pessoa existente
       const { data: updated, error } = await supabase
         .from('pessoas')
         .update(pessoaData)
@@ -460,7 +439,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`✅ Pessoa ATUALIZADA: ${data.nome} (ID: ${pessoa_id})`);
 
     } else {
-      // INSERIR nova pessoa
       const { data: inserted, error } = await supabase
         .from('pessoas')
         .insert({
@@ -475,7 +453,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`✅ Pessoa INSERIDA: ${data.nome} (ID: ${pessoa_id})`);
     }
 
-    // 🆕 v57.0: Só registra log de exclusividade se tiver analista_id
     if (analistaId) {
       await supabase.from('log_exclusividade').insert({
         pessoa_id: pessoa_id,
@@ -494,18 +471,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // SALVAR SKILLS
     // ============================================
     
-    // 🆕 v57.5: Combinar skills de 3 fontes:
-    // 1. Skills do LinkedIn (capturadas pela extensão)
-    // 2. Skills extraídas do headline
-    // 3. Skills extraídas via IA (Gemini) das experiências
-    
     const skillsDoLinkedIn = data.skills || [];
     const skillsDoHeadline = extrairSkillsDoHeadline(data.headline || '');
     
-    // 🆕 v57.5: Extrair skills via Gemini das experiências
+    // 🆕 v57.6: Extrair skills via Gemini das experiências
     const skillsDaIA = await extrairSkillsComIA(data.resumo, data.experiencias, data.headline);
     
-    // Combinar e remover duplicatas (case-insensitive)
+    // Combinar e remover duplicatas
     const todasSkills: string[] = [];
     const skillsNormalizadas = new Set<string>();
     
@@ -522,7 +494,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let skillsSalvas = 0;
     
     if (todasSkills.length > 0) {
-      // Deletar skills antigas se atualizando
       if (atualizado) {
         await supabase
           .from('pessoa_skills')
@@ -530,25 +501,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('pessoa_id', pessoa_id);
       }
 
-      // 🔧 v57.4: Padronização com CVImportIA
       const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other', 'data', 'outro', 'finance'];
       
-      // Inserir novas skills (com validação)
-      // 🔧 v57.5: Corrigido criado_em → created_at
       const skillsData = todasSkills.map(skill => {
         const categoria = categorizarSkill(skill);
         return {
           pessoa_id,
           skill_nome: String(skill).trim().substring(0, 100),
           skill_categoria: categoriasValidas.includes(categoria) ? categoria : 'other',
-          nivel: 'intermediario', // 🔧 Padronizado: sem acento, minúsculo
+          nivel: 'intermediario',
           anos_experiencia: 0,
           certificado: false,
-          created_at: new Date().toISOString() // 🔧 v57.5: Corrigido de criado_em
+          created_at: new Date().toISOString()
         };
       });
 
-      // Tentar inserir em lote
       const { error } = await supabase
         .from('pessoa_skills')
         .insert(skillsData);
@@ -557,7 +524,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.warn('⚠️ Erro ao salvar skills em lote:', error.message);
         console.log('🔄 Tentando inserir skills individualmente...');
         
-        // 🔧 v57.4: Fallback - inserir uma a uma (mesmo padrão do CVImportIA)
         for (const skill of skillsData.slice(0, 100)) {
           const { error: errIndividual } = await supabase.from('pessoa_skills').insert(skill);
           if (!errIndividual) {
@@ -578,7 +544,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ============================================
     
     if (data.experiencias && data.experiencias.length > 0) {
-      // Deletar experiências antigas se atualizando
       if (atualizado) {
         await supabase
           .from('pessoa_experiencias')
@@ -586,15 +551,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('pessoa_id', pessoa_id);
       }
 
-      // Inserir novas experiências
-      // 🔧 v57.5: Corrigido criado_em → created_at
       const expData = data.experiencias.map(exp => ({
         pessoa_id,
         empresa: exp.empresa,
         cargo: exp.cargo,
         atual: exp.atual || false,
         descricao: exp.descricao || null,
-        created_at: new Date().toISOString() // 🔧 v57.5: Corrigido de criado_em
+        created_at: new Date().toISOString()
       }));
 
       const { error } = await supabase
@@ -613,7 +576,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ============================================
     
     if (data.formacoes && data.formacoes.length > 0) {
-      // Deletar formações antigas se atualizando
       if (atualizado) {
         await supabase
           .from('pessoa_formacao')
@@ -621,15 +583,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('pessoa_id', pessoa_id);
       }
 
-      // Inserir novas formações
-      // 🔧 v57.5: Corrigido criado_em → created_at
       const formData = data.formacoes.map(form => ({
         pessoa_id,
         instituicao: form.instituicao,
         curso: form.curso || '',
         grau: form.grau || '',
         em_andamento: false,
-        created_at: new Date().toISOString() // 🔧 v57.5: Corrigido de criado_em
+        created_at: new Date().toISOString()
       }));
 
       const { error } = await supabase
@@ -647,7 +607,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // RESPOSTA DE SUCESSO
     // ============================================
     
-    // 🆕 v57.0: Mensagem diferente se não tiver analista
     const mensagemExtra = !analistaId 
       ? ' ⚠️ Abra o cadastro e atribua um Analista de R&S para ativar exclusividade.'
       : '';
@@ -662,13 +621,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       dados: {
         nome: data.nome,
         senioridade,
-        skills_count: skillsSalvas, // 🆕 v57.5: Retorna quantidade real salva
+        skills_count: skillsSalvas,
         skills_linkedin: skillsDoLinkedIn.length,
         skills_headline: skillsDoHeadline.length,
         skills_ia: skillsDaIA.length,
         experiencias_count: data.experiencias?.length || 0
       },
-      // Info de Exclusividade
       exclusividade: {
         analista_id: analistaId,
         atribuido: !!analistaId,
@@ -695,50 +653,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 function extrairSkillsDoHeadline(headline: string): string[] {
   if (!headline) return [];
   
-  // Lista de skills conhecidas para extrair do headline
   const skillsConhecidas = [
-    // Backend
     'PHP', 'Java', 'Python', 'C#', '.NET', 'Node', 'Node.js', 'Node JS', 'NodeJS',
     'Ruby', 'Go', 'Golang', 'Rust', 'Spring', 'Laravel', 'Django', 'FastAPI',
     'Express', 'NestJS', 'Nest.js',
-    // Frontend
     'React', 'React.js', 'ReactJS', 'React JS', 'Vue', 'Vue.js', 'VueJS', 'Vue JS',
     'Angular', 'JavaScript', 'TypeScript', 'HTML', 'CSS', 'Sass', 'Tailwind',
     'Next.js', 'NextJS', 'Nuxt', 'Nuxt.js',
-    // Mobile
     'React Native', 'Flutter', 'Swift', 'Kotlin', 'Android', 'iOS',
-    // Database
     'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'Oracle', 'Firebase',
-    // DevOps
     'Docker', 'Kubernetes', 'AWS', 'Azure', 'GCP', 'CI/CD', 'Jenkins', 'Git',
     'Linux', 'Terraform',
-    // Metodologias
     'Scrum', 'Kanban', 'Agile', 'Clean Code', 'Clean Architecture', 'SOLID',
     'TDD', 'DDD', 'Design Patterns'
   ];
   
   const skillsEncontradas: string[] = [];
-  const headlineUpper = headline.toUpperCase();
   
   for (const skill of skillsConhecidas) {
-    // Verificar se a skill está presente no headline
     const skillUpper = skill.toUpperCase();
-    
-    // Criar regex para match de palavra completa ou separada por delimitadores
     const regex = new RegExp(`(^|[\\s|,./\\-])${skillUpper.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s|,./\\-])`, 'i');
     
     if (regex.test(headline)) {
-      // Normalizar nome da skill
       let skillNormalizada = skill;
       
-      // Normalizar variações
       if (['Node', 'Node.js', 'Node JS', 'NodeJS'].includes(skill)) skillNormalizada = 'Node.js';
       if (['Vue', 'Vue.js', 'Vue JS', 'VueJS'].includes(skill)) skillNormalizada = 'Vue.js';
       if (['React.js', 'ReactJS', 'React JS'].includes(skill)) skillNormalizada = 'React';
       if (['Next.js', 'NextJS'].includes(skill)) skillNormalizada = 'Next.js';
       if (['Nuxt.js'].includes(skill)) skillNormalizada = 'Nuxt.js';
       
-      // Evitar duplicatas
       if (!skillsEncontradas.includes(skillNormalizada)) {
         skillsEncontradas.push(skillNormalizada);
       }
@@ -756,42 +700,34 @@ function extrairSkillsDoHeadline(headline: string): string[] {
 function categorizarSkill(skill: string): string {
   const skillLower = skill.toLowerCase();
   
-  // Frontend
   if (['react', 'vue', 'angular', 'javascript', 'typescript', 'html', 'css', 'sass', 'tailwind', 'next.js', 'nuxt'].some(s => skillLower.includes(s))) {
     return 'frontend';
   }
   
-  // Backend
   if (['node', 'python', 'java', 'c#', '.net', 'php', 'ruby', 'go', 'rust', 'spring', 'django', 'fastapi', 'express'].some(s => skillLower.includes(s))) {
     return 'backend';
   }
   
-  // Database
   if (['sql', 'postgres', 'mysql', 'mongodb', 'redis', 'elasticsearch', 'oracle', 'firebase'].some(s => skillLower.includes(s))) {
     return 'database';
   }
   
-  // DevOps
   if (['docker', 'kubernetes', 'aws', 'azure', 'gcp', 'ci/cd', 'jenkins', 'terraform', 'ansible', 'linux'].some(s => skillLower.includes(s))) {
     return 'devops';
   }
   
-  // Mobile
   if (['android', 'ios', 'swift', 'kotlin', 'flutter', 'react native', 'xamarin'].some(s => skillLower.includes(s))) {
     return 'mobile';
   }
   
-  // Data
   if (['machine learning', 'data science', 'pandas', 'numpy', 'tensorflow', 'pytorch', 'spark', 'hadoop', 'power bi', 'tableau'].some(s => skillLower.includes(s))) {
     return 'data';
   }
   
-  // 🆕 v57.5: Finance (mercado financeiro)
   if (['cvm', 'anbima', 'bacen', 'fundo', 'fidc', 'fip', 'fii', 'fiagro', 'renda fixa', 'renda variável', 'derivativo', 'câmbio', 'tesouraria', 'custódia', 'b3', 'bovespa'].some(s => skillLower.includes(s))) {
     return 'finance';
   }
   
-  // Soft Skills
   if (['comunicação', 'liderança', 'agile', 'scrum', 'kanban', 'gestão', 'management', 'análise de negócio', 'product owner', 'po'].some(s => skillLower.includes(s))) {
     return 'soft_skill';
   }
