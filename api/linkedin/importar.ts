@@ -553,8 +553,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const expData = data.experiencias.map((exp, index) => ({
         pessoa_id,
-        empresa: exp.empresa || '',
-        cargo: exp.cargo || '',
+        empresa: (exp.empresa || '').substring(0, 200), // 🔧 v57.8: Limitar a 200 chars
+        cargo: (exp.cargo || '').substring(0, 200),     // 🔧 v57.8: Limitar a 200 chars
         data_inicio: null, // LinkedIn não envia data formatada
         data_fim: null,
         atual: exp.atual || false,
