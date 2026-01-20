@@ -395,16 +395,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // INSERIR OU ATUALIZAR PESSOA
     // ============================================
     
+    // 🔧 v57.10: Truncar TODOS os campos de texto para evitar erro varchar(200)
+    const tituloProfissional = (data.headline || ultimoCargo || 'Profissional de TI').substring(0, 200);
+    const linkedinUrl = (data.linkedin_url || '').substring(0, 500); // URL pode ser maior
+    const nomeCompleto = (data.nome || '').substring(0, 255);
+    const resumoProfissional = data.resumo || null; // TEXT, sem limite
+    
+    console.log(`📏 Tamanhos dos campos:`);
+    console.log(`   nome: ${nomeCompleto.length} chars`);
+    console.log(`   titulo_profissional: ${tituloProfissional.length} chars`);
+    console.log(`   linkedin_url: ${linkedinUrl.length} chars`);
+    console.log(`   cidade: ${(cidade || '').length} chars`);
+    
     const pessoaData: any = {
-      nome: data.nome,
+      nome: nomeCompleto,
       email: data.email || null,
       telefone: data.telefone || null,
-      titulo_profissional: data.headline || ultimoCargo || 'Profissional de TI',
+      titulo_profissional: tituloProfissional,
       senioridade: senioridade,
-      resumo_profissional: data.resumo || null,
-      linkedin_url: data.linkedin_url || null,
-      cidade: cidade || null,
-      estado: estado || null,
+      resumo_profissional: resumoProfissional,
+      linkedin_url: linkedinUrl || null,
+      cidade: (cidade || '').substring(0, 100),
+      estado: (estado || '').substring(0, 50),
       disponibilidade: 'A combinar',
       modalidade_preferida: 'Remoto',
       ativo: true,
@@ -613,8 +625,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const formData = data.formacoes.map(form => ({
         pessoa_id,
         tipo: 'graduacao', // Campo obrigatório - default para LinkedIn
-        instituicao: form.instituicao,
-        curso: form.curso || '',
+        instituicao: (form.instituicao || '').substring(0, 200), // 🔧 v57.10: Truncar
+        curso: (form.curso || '').substring(0, 200),              // 🔧 v57.10: Truncar
         ano_conclusao: null,
         em_andamento: false
       }));
