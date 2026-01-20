@@ -1,10 +1,8 @@
 // src/components/InclusionImport.tsx
-// ✅ v2.5 - Correção final na extração de campos do PDF
-// Melhorias:
-// - DATA DE INÍCIO: busca específica, NÃO confunde com DATA EMISSÃO
-// - OBSERVAÇÕES: múltiplos padrões de captura
-// - RECURSOS HUMANOS: múltiplas estratégias + logs de debug
-// - findUserByName: busca mais robusta por partes do nome
+// ✅ v2.6 - Correção RECURSOS HUMANOS, VALOR PAGAMENTO e OBSERVAÇÕES
+// - RECURSOS HUMANOS: lógica de posição de coluna na tabela
+// - VALOR PAGAMENTO: múltiplas estratégias de extração
+// - OBSERVAÇÕES: captura texto real, ignora checkboxes
 // - Logs detalhados para debug
 
 import React, { useState } from 'react';
@@ -345,7 +343,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // Valor Pagamento - ✅ v2.4: Busca mais flexível
+                // Valor Pagamento - ✅ v2.6: Busca mais flexível com múltiplos padrões
                 if (cleanLine.match(/^VALOR$/i) || cleanLine.match(/^VALOR\s*R\$/i) || cleanLine.match(/^VALOR\s*:\s*R?\$/i)) {
                     let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
                     if (!match && nextLine) {
@@ -353,7 +351,30 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                     if (match && !valorPagamentoStr) {
                         valorPagamentoStr = match[1];
-                        console.log(`✅ Valor Pagamento extraído: ${valorPagamentoStr}`);
+                        console.log(`✅ Valor Pagamento extraído (label VALOR): ${valorPagamentoStr}`);
+                    }
+                }
+                
+                // ✅ v2.6: Detectar valor monetário isolado (R$ 2.603,17) após label VALOR
+                if (!valorPagamentoStr && cleanLine.match(/^R?\$?\s*[\d.,]+$/)) {
+                    // Verificar se a linha anterior era VALOR
+                    const prevLine = i > 0 ? lines[i - 1].trim() : '';
+                    if (prevLine.match(/^VALOR$/i)) {
+                        const match = cleanLine.match(/R?\$?\s*([\d.,]+)/);
+                        if (match) {
+                            valorPagamentoStr = match[1];
+                            console.log(`✅ Valor Pagamento extraído (linha após VALOR): ${valorPagamentoStr}`);
+                        }
+                    }
+                }
+                
+                // ✅ v2.6: Detectar formato "2.603,17" na seção de pagamento
+                if (!valorPagamentoStr && inDadosPagamento && cleanLine.match(/^[\d.,]+$/)) {
+                    const val = cleanLine.trim();
+                    // Verificar se parece um valor monetário (tem vírgula ou ponto)
+                    if (val.match(/[\d]+[.,][\d]+/)) {
+                        valorPagamentoStr = val;
+                        console.log(`✅ Valor Pagamento extraído (valor isolado seção): ${valorPagamentoStr}`);
                     }
                 }
                 
@@ -444,30 +465,42 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // ✅ OBSERVAÇÕES - CORREÇÃO v2.4: Capturar múltiplas linhas ANTES de NOTEBOOK
+                // ✅ OBSERVAÇÕES - CORREÇÃO v2.6: Capturar texto real, ignorar checkboxes
                 if (cleanLine.match(/^OBSERVAÇÕES\s*:?/i)) {
                     let obs = cleanLine.replace(/^OBSERVAÇÕES\s*:?/i, '').trim();
+                    console.log(`🔍 Encontrado label OBSERVAÇÕES, conteúdo inicial: "${obs}"`);
                     
                     // Continuar nas próximas linhas até encontrar campos de checkbox ou seção
                     let j = i + 1;
-                    // Parar quando encontrar: NOTEBOOK (checkbox), DATA EMISSÃO (rodapé), ou campos em maiúsculo seguidos de :
-                    const stopPatterns = /^(NOTEBOOK\s*:|SMARTPHONE\s*:|DATA EMISSÃO|RECURSOS HUMANOS|GERENTE|DIRETORIA|GESTÃO DE PESSOAS|NOME DO PROFISSIONAL|FORMA DE CONTRATAÇÃO|FATURÁVEL|DADOS PAGAMENTO|DADOS FATURAMENTO)/i;
+                    // Parar quando encontrar: NOTEBOOK, SMARTPHONE (checkboxes), ou campos de rodapé
+                    // Note: NOTEBOOK pode vir sem ":" no texto extraído
+                    const stopPatterns = /^(NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS HUMANOS|GERENTE|DIRETORIA|GESTÃO DE PESSOAS|NOME DO PROFISSIONAL|FORMA DE CONTRATAÇÃO|FATURÁVEL|DADOS PAGAMENTO|DADOS FATURAMENTO|CERTIFICAÇÃO)/i;
                     
                     while (j < lines.length) {
                         const nextObs = lines[j].trim();
                         
                         // Se encontrar padrão de parada, parar
                         if (nextObs.match(stopPatterns)) {
+                            console.log(`🔍 Observações: parando em "${nextObs}"`);
                             break;
                         }
                         
-                        // Se encontrar checkbox isolado (NÃO ou SIM sozinhos), parar
-                        if (nextObs.match(/^(NÃO|SIM)\s*$/i)) {
+                        // Se encontrar checkbox isolado (NÃO ou SIM sozinhos ou com parênteses), parar
+                        if (nextObs.match(/^(NÃO|SIM)\s*(\(|\[|X|$)/i)) {
+                            console.log(`🔍 Observações: parando em checkbox "${nextObs}"`);
                             break;
                         }
                         
-                        // Se for texto de observação, adicionar
-                        if (nextObs && nextObs.length > 0 && !nextObs.match(/^(NÃO|SIM|X|\(\s*\)|\[\s*\])$/i)) {
+                        // Se encontrar linha com "NÃO SIM" (checkbox), parar
+                        if (nextObs.match(/NÃO\s+SIM/i)) {
+                            console.log(`🔍 Observações: parando em checkbox NÃO SIM "${nextObs}"`);
+                            break;
+                        }
+                        
+                        // Se for texto de observação válido (não é checkbox), adicionar
+                        if (nextObs && nextObs.length > 0 && 
+                            !nextObs.match(/^(NÃO|SIM|X|\(\s*\)|\[\s*\]|XXX)$/i) &&
+                            !nextObs.match(/^\s*:\s*$/)) {
                             obs += ' ' + nextObs;
                         }
                         j++;
@@ -476,9 +509,16 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     // Limpar o texto das observações
                     obs = obs.replace(/\s+/g, ' ').trim();
                     
-                    if (obs && obs.length > 5) {
+                    // Remover qualquer checkbox que tenha sido capturado acidentalmente
+                    obs = obs.replace(/NOTEBOOK\s*:?\s*NÃO.*/i, '').trim();
+                    obs = obs.replace(/SMARTPHONE\s*:?\s*NÃO.*/i, '').trim();
+                    obs = obs.replace(/\s*:\s*NÃO\s+SIM.*/i, '').trim();
+                    
+                    if (obs && obs.length > 10) {
                         observacoesStr = obs;
-                        console.log(`✅ Observações extraídas: ${observacoesStr}`);
+                        console.log(`✅ Observações extraídas (${obs.length} chars): ${observacoesStr}`);
+                    } else {
+                        console.log(`⚠️ Observações muito curtas ou vazias: "${obs}"`);
                     }
                     
                     // Verifica se nas observações menciona substituição
@@ -492,47 +532,67 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // ✅ v2.5: RECURSOS HUMANOS (Analista R&S) - Múltiplas estratégias
-                if (cleanLine.match(/RECURSOS HUMANOS/i) && !cleanLine.match(/GESTÃO DE PESSOAS/i)) {
-                    // Estratégia 1: O valor pode estar na MESMA linha após o label
-                    const sameLineMatch = cleanLine.match(/RECURSOS HUMANOS\s*[:\s]*([A-Za-zÀ-ÿ\s]+?)(?:\s{2,}|$)/i);
-                    if (sameLineMatch && sameLineMatch[1].trim().length > 3) {
-                        const nome = sameLineMatch[1].trim();
-                        if (!nome.match(/GERENTE|DIRETORIA|GESTÃO|COMERCIAL/i)) {
-                            recursosHumanosStr = nome;
-                            console.log(`✅ Recursos Humanos extraído (mesma linha): ${recursosHumanosStr}`);
-                        }
-                    }
+                // ✅ v2.6: RECURSOS HUMANOS (Analista R&S) - Estratégia baseada em posição de coluna
+                // A estrutura do PDF é uma tabela onde:
+                // Linha de headers: DATA EMISSÃO | RECURSOS HUMANOS | GERENTE COMERCIAL | DIRETORIA | GESTÃO DE PESSOAS
+                // Linha de valores: 12/01/2026 | LARISSA CONCEIÇÃO | MESSIAS OLIVEIRA | ... | PRISCILA
+                // 
+                // No texto extraído, pode aparecer como linhas separadas:
+                // "RECURSOS HUMANOS"
+                // "GERENTE COMERCIAL"
+                // ... (outros headers)
+                // "LARISSA CONCEIÇÃO" (valores)
+                // ...
+                
+                if (cleanLine.match(/^RECURSOS HUMANOS$/i)) {
+                    console.log(`🔍 Encontrado header RECURSOS HUMANOS na linha ${i}`);
                     
-                    // Estratégia 2: O valor está na linha de valores (tabela)
-                    if (!recursosHumanosStr && i + 1 < lines.length) {
-                        // Encontrar a linha com a data de emissão (linha de valores da tabela)
-                        for (let k = i + 1; k < Math.min(i + 5, lines.length); k++) {
-                            const testLine = lines[k].trim();
-                            if (testLine.match(/\d{2}\/\d{2}\/\d{4}/)) {
-                                // Linha de valores encontrada
-                                // Remove a data e pega o próximo nome
-                                const afterDate = testLine.replace(/\d{2}\/\d{2}\/\d{4}/, '').trim();
-                                // O primeiro nome após a data é o RECURSOS HUMANOS
-                                const nameParts = afterDate.split(/\s{2,}|\t/);
-                                if (nameParts[0] && nameParts[0].trim().length > 3) {
-                                    recursosHumanosStr = nameParts[0].trim();
-                                    console.log(`✅ Recursos Humanos extraído (tabela): ${recursosHumanosStr}`);
+                    // Estratégia: Encontrar a posição desta coluna entre os headers
+                    // e depois pegar o valor correspondente
+                    
+                    // Verificar se as próximas linhas são outros headers da tabela
+                    const tableHeaders = ['RECURSOS HUMANOS', 'GERENTE COMERCIAL', 'DIRETORIA', 'GESTÃO DE PESSOAS'];
+                    let headerIndex = 0; // RECURSOS HUMANOS é o primeiro (índice 0 após DATA EMISSÃO)
+                    
+                    // Procurar onde começam os valores (linha que NÃO é um header conhecido)
+                    for (let k = i + 1; k < Math.min(i + 10, lines.length); k++) {
+                        const testLine = lines[k].trim();
+                        
+                        // Se encontrou uma data, estamos na linha de valores
+                        if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+                            // A próxima linha após a data deve ser o valor de RECURSOS HUMANOS
+                            if (k + 1 < lines.length) {
+                                const valorRH = lines[k + 1].trim();
+                                if (valorRH && valorRH.length > 3 && !valorRH.match(/GERENTE|DIRETORIA|GESTÃO|COMERCIAL|DATA|EMISSÃO/i)) {
+                                    recursosHumanosStr = valorRH;
+                                    console.log(`✅ Recursos Humanos extraído (posição após data): ${recursosHumanosStr}`);
                                 }
+                            }
+                            break;
+                        }
+                        
+                        // Se a linha é um nome próprio (não é header), pode ser o valor
+                        if (!tableHeaders.some(h => testLine.toUpperCase().includes(h)) && 
+                            !testLine.match(/DATA|EMISSÃO|NOTEBOOK|SMARTPHONE/i) &&
+                            testLine.match(/^[A-Za-zÀ-ÿ\s]+$/) &&
+                            testLine.length > 5) {
+                            
+                            // Verificar se não é um valor de outra coluna
+                            // RECURSOS HUMANOS é a primeira coluna de nomes
+                            // Contar quantos headers já passamos
+                            let headersPassados = 0;
+                            for (let m = i; m < k; m++) {
+                                if (tableHeaders.some(h => lines[m].trim().toUpperCase() === h)) {
+                                    headersPassados++;
+                                }
+                            }
+                            
+                            // Se passamos apenas "RECURSOS HUMANOS", este é o valor correto
+                            if (headersPassados <= 1) {
+                                recursosHumanosStr = testLine;
+                                console.log(`✅ Recursos Humanos extraído (primeiro valor): ${recursosHumanosStr}`);
                                 break;
                             }
-                        }
-                    }
-                    
-                    // Estratégia 3: O valor está na próxima linha (formato simples)
-                    if (!recursosHumanosStr && nextLine) {
-                        const nextTrimmed = nextLine.trim();
-                        // Verificar se não é outro cabeçalho
-                        if (nextTrimmed.length > 3 && 
-                            !nextTrimmed.match(/GERENTE|DIRETORIA|GESTÃO|COMERCIAL|DATA|EMISSÃO/i) &&
-                            !nextTrimmed.match(/^\d{2}\/\d{2}\/\d{4}/)) {
-                            recursosHumanosStr = nextTrimmed;
-                            console.log(`✅ Recursos Humanos extraído (próxima linha): ${recursosHumanosStr}`);
                         }
                     }
                 }
@@ -574,51 +634,53 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ v2.5: Fallback para RECURSOS HUMANOS - múltiplas estratégias
+            // ✅ v2.6: Fallback para RECURSOS HUMANOS - baseado em posição de coluna
             if (!recursosHumanosStr) {
-                // Estratégia 1: Buscar na estrutura de tabela (DATA EMISSÃO na mesma linha que data)
-                const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s+([A-Za-zÀ-ÿ\s]+?)(?:\s{2,}|GERENTE|MESSIAS|DIRETORIA)/i);
-                if (rhMatch && rhMatch[2]) {
-                    const nome = rhMatch[2].trim();
-                    if (nome.length > 3 && !nome.match(/GERENTE|COMERCIAL|DIRETORIA/i)) {
-                        recursosHumanosStr = nome;
-                        console.log(`✅ Recursos Humanos extraído (fallback tabela): ${recursosHumanosStr}`);
+                const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                
+                // Encontrar o índice do header "RECURSOS HUMANOS"
+                let rhHeaderIndex = -1;
+                let tableStartIndex = -1;
+                
+                for (let i = 0; i < lines.length; i++) {
+                    if (lines[i].match(/^RECURSOS HUMANOS$/i)) {
+                        rhHeaderIndex = i;
+                        console.log(`🔍 Fallback: Header RECURSOS HUMANOS encontrado na linha ${i}`);
+                        break;
                     }
                 }
                 
-                // Estratégia 2: Buscar linha abaixo de "RECURSOS HUMANOS" que não seja cabeçalho
-                if (!recursosHumanosStr) {
-                    const lines = text.split('\n');
-                    for (let i = 0; i < lines.length; i++) {
-                        if (lines[i].match(/^RECURSOS HUMANOS$/i) || lines[i].match(/RECURSOS HUMANOS\s*$/i)) {
-                            // Verificar próximas linhas
-                            for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
-                                const testLine = lines[j].trim();
-                                // Pular se for data ou cabeçalho
-                                if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) continue;
-                                if (testLine.match(/GERENTE|DIRETORIA|GESTÃO|COMERCIAL|DATA|EMISSÃO/i)) continue;
-                                if (testLine.length < 4) continue;
-                                
-                                // Encontrou um nome válido
-                                if (testLine.match(/^[A-Za-zÀ-ÿ\s]+$/)) {
-                                    recursosHumanosStr = testLine;
-                                    console.log(`✅ Recursos Humanos extraído (fallback linha): ${recursosHumanosStr}`);
-                                    break;
-                                }
-                            }
-                            if (recursosHumanosStr) break;
+                if (rhHeaderIndex >= 0) {
+                    // Contar quantos headers de tabela existem após RECURSOS HUMANOS
+                    // até encontrar a linha com a data (DATA EMISSÃO valor)
+                    const tableHeaders = ['GERENTE COMERCIAL', 'DIRETORIA', 'GESTÃO DE PESSOAS'];
+                    let headersAfterRH = 0;
+                    
+                    for (let i = rhHeaderIndex + 1; i < Math.min(rhHeaderIndex + 10, lines.length); i++) {
+                        const line = lines[i].toUpperCase();
+                        
+                        // Se encontrou a data, os valores começam aqui
+                        if (lines[i].match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+                            tableStartIndex = i;
+                            console.log(`🔍 Fallback: Data encontrada na linha ${i}, ${headersAfterRH} headers entre RH e data`);
+                            break;
+                        }
+                        
+                        // Contar headers
+                        if (tableHeaders.some(h => line.includes(h))) {
+                            headersAfterRH++;
                         }
                     }
-                }
-                
-                // Estratégia 3: Buscar nome específico após DATA EMISSÃO e antes de outros campos
-                if (!recursosHumanosStr) {
-                    const dataEmissaoMatch = text.match(/DATA EMISSÃO[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s*\n\s*([A-Za-zÀ-ÿ\s]+?)(?:\n|GERENTE|MESSIAS)/i);
-                    if (dataEmissaoMatch && dataEmissaoMatch[2]) {
-                        const nome = dataEmissaoMatch[2].trim();
-                        if (nome.length > 3 && !nome.match(/GERENTE|COMERCIAL|DIRETORIA/i)) {
-                            recursosHumanosStr = nome;
-                            console.log(`✅ Recursos Humanos extraído (fallback após data emissão): ${recursosHumanosStr}`);
+                    
+                    // O valor de RECURSOS HUMANOS é a primeira linha após a data
+                    // (índice = tableStartIndex + 1)
+                    if (tableStartIndex >= 0 && tableStartIndex + 1 < lines.length) {
+                        const valorRH = lines[tableStartIndex + 1];
+                        if (valorRH && valorRH.length > 3 && 
+                            valorRH.match(/^[A-Za-zÀ-ÿ\s]+$/) &&
+                            !valorRH.match(/GERENTE|DIRETORIA|GESTÃO|COMERCIAL/i)) {
+                            recursosHumanosStr = valorRH;
+                            console.log(`✅ Recursos Humanos extraído (fallback posição): ${recursosHumanosStr}`);
                         }
                     }
                 }
@@ -678,27 +740,73 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ v2.4: Fallback para VALOR PAGAMENTO - múltiplas estratégias
+            // ✅ v2.6: Fallback para VALOR PAGAMENTO - múltiplas estratégias
             if (!valorPagamentoStr) {
-                // Estratégia 1: Buscar após "DADOS PAGAMENTO ... VALOR"
+                console.log('🔍 Fallback: Buscando VALOR PAGAMENTO...');
+                
+                // Estratégia 1: Buscar após "VALOR" na seção DADOS PAGAMENTO
                 let valorMatch = text.match(/DADOS PAGAMENTO[\s\S]*?VALOR[\s\n:]*R?\$?\s*([\d.,]+)/i);
                 
-                // Estratégia 2: Buscar qualquer valor monetário após VALOR (seção pagamento)
+                // Estratégia 2: Buscar "VALOR" seguido de número (qualquer lugar)
                 if (!valorMatch) {
-                    valorMatch = text.match(/VALOR[\s\n:]+R?\$?\s*([\d.,]+)/i);
+                    valorMatch = text.match(/\bVALOR\s*[\n:]+\s*R?\$?\s*([\d.,]+)/i);
                 }
                 
-                // Estratégia 3: Buscar formato "R$ 2.603,17" na seção de pagamento
+                // Estratégia 3: Buscar linha após "VALOR" que contenha número
                 if (!valorMatch) {
-                    const pagamentoSection = text.match(/DADOS PAGAMENTO[\s\S]*?DADOS FATURAMENTO/i);
+                    const lines = text.split('\n');
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].trim().match(/^VALOR$/i)) {
+                            // Verificar próximas 3 linhas
+                            for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+                                const testLine = lines[j].trim();
+                                const numMatch = testLine.match(/^R?\$?\s*([\d.,]+)$/);
+                                if (numMatch) {
+                                    valorMatch = numMatch;
+                                    console.log(`🔍 Fallback: VALOR encontrado na linha ${j}: ${testLine}`);
+                                    break;
+                                }
+                            }
+                            if (valorMatch) break;
+                        }
+                    }
+                }
+                
+                // Estratégia 4: Buscar qualquer R$ X.XXX,XX na seção DADOS PAGAMENTO
+                if (!valorMatch) {
+                    const pagamentoSection = text.match(/DADOS PAGAMENTO[\s\S]*?(?:DADOS FATURAMENTO|NOTEBOOK|SMARTPHONE|$)/i);
                     if (pagamentoSection) {
                         valorMatch = pagamentoSection[0].match(/R\$\s*([\d.,]+)/i);
+                        if (valorMatch) {
+                            console.log(`🔍 Fallback: R$ encontrado na seção DADOS PAGAMENTO: ${valorMatch[1]}`);
+                        }
+                    }
+                }
+                
+                // Estratégia 5: Buscar formato "2.603,17" (número com vírgula decimal) na seção
+                if (!valorMatch) {
+                    const lines = text.split('\n');
+                    let inPagamento = false;
+                    for (const line of lines) {
+                        if (line.match(/DADOS PAGAMENTO/i)) inPagamento = true;
+                        if (line.match(/DADOS FATURAMENTO|NOTEBOOK|SMARTPHONE/i)) inPagamento = false;
+                        
+                        if (inPagamento) {
+                            const numMatch = line.trim().match(/^([\d]+\.[\d]+,[\d]+)$/);
+                            if (numMatch) {
+                                valorMatch = numMatch;
+                                console.log(`🔍 Fallback: Valor formato X.XXX,XX encontrado: ${numMatch[1]}`);
+                                break;
+                            }
+                        }
                     }
                 }
                 
                 if (valorMatch) {
                     valorPagamentoStr = valorMatch[1];
                     console.log(`✅ Valor Pagamento extraído (fallback): ${valorPagamentoStr}`);
+                } else {
+                    console.log(`⚠️ Valor Pagamento NÃO encontrado em nenhuma estratégia`);
                 }
             }
             
@@ -715,16 +823,21 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ v2.5: Fallback para OBSERVAÇÕES - capturar TODO o conteúdo
+            // ✅ v2.6: Fallback para OBSERVAÇÕES - capturar texto real
             if (!observacoesStr) {
-                // O texto de observações está em AMARELO no PDF, geralmente em maiúsculas
-                // Buscar texto entre "OBSERVAÇÕES:" e próximo campo conhecido
+                console.log('🔍 Fallback: Buscando OBSERVAÇÕES...');
                 
-                // Estratégia 1: Buscar padrão com texto longo após OBSERVAÇÕES
+                // O texto de observações está em um campo amarelo no PDF
+                // Geralmente começa com palavras como "ATUARÁ", "UTILIZARÁ", "GESTÃO", "FAVOR", "EM CASO"
+                
+                // Estratégia 1: Buscar texto após "OBSERVAÇÕES:" até "NOTEBOOK"
                 const obsPatterns = [
-                    /OBSERVAÇÕES\s*:?\s*\n?([\s\S]+?)(?=\n\s*NOTEBOOK\s*:|\n\s*SMARTPHONE\s*:|\n\s*NOME DO PROFISSIONAL|\n\s*DATA EMISSÃO)/i,
-                    /OBSERVAÇÕES\s*:?\s*((?:ATUARÁ|UTILIZARÁ|GESTÃO|FAVOR|EM CASO)[\s\S]+?)(?=NOTEBOOK|SMARTPHONE|NOME DO|DATA EMISSÃO)/i,
-                    /OBSERVAÇÕES\s*:?\s*\n([A-Z][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ\s,.:;\-\(\)0-9]+)/i
+                    // Padrão 1: OBSERVAÇÕES seguido de texto até NOTEBOOK (sem ":")
+                    /OBSERVAÇÕES\s*:?\s*([\s\S]+?)(?=NOTEBOOK|SMARTPHONE|NOME DO PROFISSIONAL)/i,
+                    // Padrão 2: Texto que começa com palavras típicas de observações
+                    /OBSERVAÇÕES\s*:?\s*((?:ATUARÁ|UTILIZARÁ|GESTÃO|FAVOR|EM CASO|DEVERÁ|IMPORTANTE)[^]*?)(?=NOTEBOOK|SMARTPHONE)/i,
+                    // Padrão 3: Texto em maiúsculas após OBSERVAÇÕES
+                    /OBSERVAÇÕES\s*:?\s*([A-Z][A-ZÀÁÂÃÉÊÍÓÔÕÚÇ\s,.:;\-\(\)0-9]{20,})/i
                 ];
                 
                 for (const pattern of obsPatterns) {
@@ -735,17 +848,24 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                             .replace(/\s+/g, ' ')
                             .trim();
                         
-                        // Remover possíveis campos que foram capturados junto
+                        // Limpar checkboxes capturados acidentalmente
+                        obs = obs.replace(/NOTEBOOK\s*:?\s*NÃO.*/i, '').trim();
+                        obs = obs.replace(/SMARTPHONE\s*:?\s*NÃO.*/i, '').trim();
+                        obs = obs.replace(/\s*:?\s*NÃO\s+SIM.*/i, '').trim();
                         obs = obs.replace(/\s*NÃO\s*SIM\s*$/i, '').trim();
                         obs = obs.replace(/\s*\(\s*\)\s*\(\s*\)\s*$/i, '').trim();
-                        obs = obs.replace(/\s*X\s*$/i, '').trim();
+                        obs = obs.replace(/CERTIFICAÇÃO\s*:?\s*XXX.*/i, '').trim();
                         
                         if (obs && obs.length > 20) {
                             observacoesStr = obs;
-                            console.log(`✅ Observações extraídas (fallback): ${observacoesStr}`);
+                            console.log(`✅ Observações extraídas (fallback ${pattern.toString().substring(0, 30)}...): ${observacoesStr}`);
                             break;
                         }
                     }
+                }
+                
+                if (!observacoesStr) {
+                    console.log(`⚠️ Observações NÃO encontradas em nenhum padrão`);
                 }
             }
 
