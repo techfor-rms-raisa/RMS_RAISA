@@ -551,13 +551,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('pessoa_id', pessoa_id);
       }
 
-      const expData = data.experiencias.map(exp => ({
+      const expData = data.experiencias.map((exp, index) => ({
         pessoa_id,
-        empresa: exp.empresa,
-        cargo: exp.cargo,
+        empresa: exp.empresa || '',
+        cargo: exp.cargo || '',
+        data_inicio: null, // LinkedIn não envia data formatada
+        data_fim: null,
         atual: exp.atual || false,
         descricao: exp.descricao || null,
-        created_at: new Date().toISOString()
+        tecnologias_usadas: [],
+        ordem: index
       }));
 
       const { error } = await supabase
@@ -585,10 +588,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const formData = data.formacoes.map(form => ({
         pessoa_id,
+        tipo: 'graduacao', // Campo obrigatório - default para LinkedIn
         instituicao: form.instituicao,
         curso: form.curso || '',
-        em_andamento: false,
-        created_at: new Date().toISOString()
+        ano_conclusao: null,
+        em_andamento: false
       }));
 
       const { error } = await supabase
