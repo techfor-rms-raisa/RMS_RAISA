@@ -113,6 +113,19 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
 
     const isReadOnly = currentUser.tipo_usuario === 'Consulta';
 
+    // ✅ CORREÇÃO v3.0: Função para formatar datas para input type="date"
+    // O banco retorna "2026-01-19 00:00:00" mas o input espera "2026-01-19"
+    const formatDateForInput = (dateStr: string | undefined | null): string => {
+        if (!dateStr) return '';
+        // Se já está no formato correto (YYYY-MM-DD), retornar
+        if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+        // Se tem timestamp (2026-01-19 00:00:00), extrair apenas a data
+        if (dateStr.includes(' ')) return dateStr.split(' ')[0];
+        // Se tem T (ISO format), extrair apenas a data
+        if (dateStr.includes('T')) return dateStr.split('T')[0];
+        return dateStr;
+    };
+
     const toggleCardExpanded = (consultantId: number) => {
         setExpandedCards(prev => {
             const newSet = new Set(prev);
@@ -138,9 +151,10 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                 cpf: editingConsultant.cpf || '',
                 cargo_consultores: editingConsultant.cargo_consultores || '',
                 especialidade: (editingConsultant as any).especialidade || '',
-                data_inclusao_consultores: editingConsultant.data_inclusao_consultores || '',
-                data_saida: editingConsultant.data_saida || '',
-                dt_aniversario: editingConsultant.dt_aniversario || '',
+                // ✅ CORREÇÃO v3.0: Formatar datas para input type="date"
+                data_inclusao_consultores: formatDateForInput(editingConsultant.data_inclusao_consultores),
+                data_saida: formatDateForInput(editingConsultant.data_saida),
+                dt_aniversario: formatDateForInput(editingConsultant.dt_aniversario),
                 id_cliente: clientId,
                 gestor_imediato_id: String(editingConsultant.gestor_imediato_id || ''),
                 coordenador_id: editingConsultant.coordenador_id ? String(editingConsultant.coordenador_id) : '',
