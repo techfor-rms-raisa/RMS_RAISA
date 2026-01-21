@@ -200,12 +200,21 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== DATA INÍCIO =====
-                if (cleanLine.match(/DATA DE INÍCIO/i)) {
+                if (cleanLine.match(/DATA DE INÍCIO/i) && !startDateStr) {
                     const dateMatch = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
                     if (dateMatch) {
                         startDateStr = dateMatch[1];
-                    } else if (nextLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
-                        startDateStr = nextLine;
+                        console.log(`✅ Data de Início extraída (mesma linha): ${startDateStr}`);
+                    } else {
+                        // Procurar nas próximas linhas
+                        for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+                            const testLine = lines[j].trim();
+                            if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+                                startDateStr = testLine;
+                                console.log(`✅ Data de Início extraída (linha ${j}): ${startDateStr}`);
+                                break;
+                            }
+                        }
                     }
                 }
                 
@@ -257,10 +266,28 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== EMAIL =====
-                if (cleanLine.match(/E-MAIL\s*:/i)) {
+                // IMPORTANTE: Pegar email do PROFISSIONAL, não do solicitante
+                if (cleanLine.match(/E-MAIL\s*:/i) && !emailStr) {
                     const emailMatch = cleanLine.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
                     if (emailMatch) {
-                        emailStr = emailMatch[1].toLowerCase();
+                        const emailEncontrado = emailMatch[1].toLowerCase();
+                        // Ignorar email do solicitante (geralmente @icesp, @cliente, etc.)
+                        // O email do profissional geralmente é @gmail, @hotmail, @outlook
+                        if (emailEncontrado.includes('@gmail') || 
+                            emailEncontrado.includes('@hotmail') || 
+                            emailEncontrado.includes('@outlook') ||
+                            emailEncontrado.includes('@yahoo') ||
+                            emailEncontrado.includes('@live') ||
+                            emailEncontrado.includes('@icloud')) {
+                            emailStr = emailEncontrado;
+                            console.log(`✅ Email do profissional extraído: ${emailStr}`);
+                        } else if (!cleanLine.includes('SOLICITANTE') && 
+                                   !cleanLine.includes('RESPONSÁVEL') &&
+                                   !cleanLine.includes('APROVADOR')) {
+                            // Se não é email pessoal, verificar se não é do solicitante
+                            emailStr = emailEncontrado;
+                            console.log(`✅ Email extraído (corporativo): ${emailStr}`);
+                        }
                     }
                 }
                 
@@ -334,9 +361,14 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== FATURÁVEL =====
-                if (cleanLine.match(/^FATURÁVEL$/i) || cleanLine.match(/NÃO FATURÁVEL/i)) {
-                    if (cleanLine.includes('NÃO')) {
+                // No PDF: checkbox FATURÁVEL marcado = true, NÃO FATURÁVEL marcado = false
+                if (cleanLine.match(/FATURÁVEL/i)) {
+                    if (cleanLine.match(/NÃO\s*FATURÁVEL/i)) {
                         faturavel = false;
+                        console.log(`✅ Faturável: false (encontrado NÃO FATURÁVEL)`);
+                    } else if (cleanLine.match(/^FATURÁVEL$/i)) {
+                        faturavel = true;
+                        console.log(`✅ Faturável: true (encontrado FATURÁVEL)`);
                     }
                 }
                 
@@ -345,22 +377,32 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 // porque a estrutura do PDF mistura seções
                 
                 // ===== RECURSOS HUMANOS =====
-                if (cleanLine === 'RECURSOS HUMANOS') {
+                if (cleanLine === 'RECURSOS HUMANOS' && !recursosHumanosStr) {
                     console.log(`🔍 Encontrado header RECURSOS HUMANOS na linha ${i}`);
                     
-                    for (let k = i + 1; k < Math.min(i + 15, lines.length); k++) {
+                    // Estrutura do rodapé do PDF:
+                    // HEADERS: DATA EMISSÃO | RECURSOS HUMANOS | GERENTE COMERCIAL | DIRETORIA | GESTÃO DE PESSOAS
+                    // VALUES:  12/01/2026   | LARISSA CONCEIÇÃO | MARCOS ROSSI     | ...       | ...
+                    
+                    // Procurar data de emissão (DD/MM/YYYY) e depois o nome do RH
+                    for (let k = i + 1; k < Math.min(i + 20, lines.length); k++) {
                         const testLine = lines[k].trim();
                         
+                        // Se encontrou uma data no formato DD/MM/YYYY
                         if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
                             console.log(`🔍 Data de emissão encontrada na linha ${k}: ${testLine}`);
                             
+                            // O próximo valor após a data é o nome do RECURSOS HUMANOS
                             if (k + 1 < lines.length) {
                                 const possibleRH = lines[k + 1].trim();
+                                console.log(`🔍 Possível RH na linha ${k + 1}: "${possibleRH}"`);
+                                
+                                // Validar: deve ser nome (não header, não XXX, não número)
                                 if (possibleRH && 
-                                    !possibleRH.match(/^\d/) && 
-                                    !possibleRH.match(/GERENTE|COMERCIAL|DIRETORIA|GESTÃO/i) &&
                                     possibleRH.length > 3 &&
-                                    possibleRH !== 'XXX') {
+                                    possibleRH !== 'XXX' &&
+                                    !possibleRH.match(/^\d/) &&
+                                    !possibleRH.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|DATA|RECURSOS)/i)) {
                                     recursosHumanosStr = possibleRH;
                                     console.log(`✅ Recursos Humanos extraído: ${recursosHumanosStr}`);
                                     break;
@@ -401,21 +443,68 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // Fallback para EMAIL
+            // Fallback para EMAIL (priorizar email pessoal do profissional)
             if (!emailStr) {
                 const emailMatches = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi);
                 if (emailMatches && emailMatches.length > 0) {
-                    emailStr = emailMatches[0].toLowerCase();
-                    console.log(`✅ Email extraído (fallback): ${emailStr}`);
+                    // Priorizar emails pessoais (@gmail, @hotmail, etc.)
+                    const emailPessoal = emailMatches.find(e => 
+                        e.toLowerCase().includes('@gmail') ||
+                        e.toLowerCase().includes('@hotmail') ||
+                        e.toLowerCase().includes('@outlook') ||
+                        e.toLowerCase().includes('@yahoo')
+                    );
+                    
+                    if (emailPessoal) {
+                        emailStr = emailPessoal.toLowerCase();
+                        console.log(`✅ Email pessoal extraído (fallback): ${emailStr}`);
+                    } else {
+                        // Se não tem email pessoal, pegar o que não é do cliente/solicitante
+                        const emailNaoCorp = emailMatches.find(e => 
+                            !e.toLowerCase().includes('@icesp') &&
+                            !e.toLowerCase().includes('@cliente')
+                        );
+                        emailStr = (emailNaoCorp || emailMatches[0]).toLowerCase();
+                        console.log(`✅ Email extraído (fallback): ${emailStr}`);
+                    }
                 }
             }
             
             // Fallback para DATA DE INÍCIO
             if (!startDateStr) {
+                console.log('🔄 Tentando fallback para data_inicio...');
+                
+                // Método 1: Buscar "DATA DE INÍCIO" seguido de data
                 const dataMatch = text.match(/DATA\s*(?:DE\s*)?INÍCIO[\s\n]*(\d{2}\/\d{2}\/\d{4})/i);
                 if (dataMatch) {
                     startDateStr = dataMatch[1];
                     console.log(`✅ Data de Início extraída (fallback regex): ${startDateStr}`);
+                }
+                
+                // Método 2: Buscar na seção DADOS PAGAMENTO
+                if (!startDateStr) {
+                    const dataPagMatch = text.match(/DADOS PAGAMENTO[\s\S]*?DATA DE INÍCIO[\s\n]*(\d{2}\/\d{2}\/\d{4})/i);
+                    if (dataPagMatch) {
+                        startDateStr = dataPagMatch[1];
+                        console.log(`✅ Data de Início extraída (seção pagamento): ${startDateStr}`);
+                    }
+                }
+                
+                // Método 3: Buscar data após "19/01/2026" ou similar no contexto certo
+                if (!startDateStr) {
+                    // Procurar data no formato DD/MM/2026 que NÃO seja a data de emissão
+                    const allDates = text.match(/\d{2}\/\d{2}\/202\d/g);
+                    if (allDates && allDates.length > 0) {
+                        // A primeira data geralmente é a de início
+                        for (const date of allDates) {
+                            // Ignorar se for a data de emissão (geralmente é a última)
+                            if (!text.includes('DATA EMISSÃO') || text.indexOf(date) < text.indexOf('DATA EMISSÃO')) {
+                                startDateStr = date;
+                                console.log(`✅ Data de Início extraída (primeira data): ${startDateStr}`);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             
@@ -489,12 +578,44 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             
             // Fallback para RECURSOS HUMANOS
             if (!recursosHumanosStr) {
-                const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s*\n\s*([A-Za-zÀ-ÿ\s]+?)(?:\n|GERENTE|MESSIAS)/i);
+                console.log('🔄 Tentando fallback para recursos_humanos...');
+                
+                // Método 1: Buscar padrão específico no rodapé
+                const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s*\n\s*([A-Za-zÀ-ÿ\s]+?)(?:\n|GERENTE|MARCOS)/i);
                 if (rhMatch && rhMatch[2]) {
                     const nome = rhMatch[2].trim();
                     if (nome.length > 3 && !nome.match(/GERENTE|COMERCIAL|DIRETORIA/i)) {
                         recursosHumanosStr = nome;
-                        console.log(`✅ Recursos Humanos extraído (fallback): ${recursosHumanosStr}`);
+                        console.log(`✅ Recursos Humanos extraído (fallback 1): ${recursosHumanosStr}`);
+                    }
+                }
+                
+                // Método 2: Buscar nomes conhecidos de analistas após "RECURSOS HUMANOS"
+                if (!recursosHumanosStr) {
+                    const nomesAnalistas = ['LARISSA', 'MACIELMA', 'PRISCILA', 'TATIANA', 'RENATA'];
+                    for (const nome of nomesAnalistas) {
+                        if (text.includes(nome)) {
+                            // Extrair nome completo
+                            const nomeCompleto = text.match(new RegExp(`(${nome}[A-Za-zÀ-ÿ\\s]+?)(?:\\n|MARCOS|GERENTE|ROSENI)`, 'i'));
+                            if (nomeCompleto && nomeCompleto[1]) {
+                                recursosHumanosStr = nomeCompleto[1].trim();
+                                console.log(`✅ Recursos Humanos extraído (fallback 2): ${recursosHumanosStr}`);
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                // Método 3: Buscar após data de emissão
+                if (!recursosHumanosStr) {
+                    const afterDateMatch = text.match(/(\d{2}\/\d{2}\/\d{4})\s*\n\s*([A-Za-zÀ-ÿ]+\s+[A-Za-zÀ-ÿ]+)/);
+                    if (afterDateMatch && afterDateMatch[2]) {
+                        const possibleName = afterDateMatch[2].trim();
+                        if (possibleName.length > 5 && 
+                            !possibleName.match(/^(GERENTE|MARCOS|ROSENI|PRISCILA DO)/i)) {
+                            recursosHumanosStr = possibleName;
+                            console.log(`✅ Recursos Humanos extraído (fallback 3): ${recursosHumanosStr}`);
+                        }
                     }
                 }
             }
