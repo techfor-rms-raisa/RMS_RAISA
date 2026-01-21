@@ -1,6 +1,9 @@
 /**
  * useAnaliseCandidato.ts - Hook para Análise de Candidatos
  * 
+ * 🆕 v58.3: Corrigido - Agora atualiza status da vaga para 'em_andamento'
+ *           quando uma candidatura é criada (função criarCandidatura)
+ * 
  * Orquestra todo o fluxo de:
  * - Importação de CV
  * - Extração de dados via IA
@@ -9,8 +12,8 @@
  * - Salvamento no Banco de Talentos
  * - Criação de Candidatura
  * 
- * Versão: 1.0
- * Data: 30/12/2025
+ * Versão: 1.1
+ * Data: 21/01/2026
  */
 
 import { useState, useCallback } from 'react';
@@ -302,6 +305,32 @@ export const useAnaliseCandidato = () => {
       if (error) throw error;
 
       console.log(`✅ Candidatura criada: ID ${data.id} (${dadosIndicacao?.origem === 'indicacao_cliente' ? 'INDICAÇÃO' : 'AQUISIÇÃO'})`);
+
+      // 🆕 v58.3: ATUALIZAR STATUS DA VAGA PARA 'em_andamento'
+      if (vaga_id) {
+        const { data: vagaAtual } = await supabase
+          .from('vagas')
+          .select('status')
+          .eq('id', parseInt(vaga_id))
+          .single();
+
+        // Só atualiza se a vaga estiver 'aberta'
+        if (vagaAtual?.status === 'aberta') {
+          const { error: vagaError } = await supabase
+            .from('vagas')
+            .update({ 
+              status: 'em_andamento',
+              atualizado_em: new Date().toISOString()
+            })
+            .eq('id', parseInt(vaga_id));
+
+          if (vagaError) {
+            console.warn('⚠️ Erro ao atualizar status da vaga:', vagaError);
+          } else {
+            console.log('✅ Status da vaga atualizado para em_andamento');
+          }
+        }
+      }
 
       return {
         id: String(data.id),
