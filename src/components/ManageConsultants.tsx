@@ -187,8 +187,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             return;
         }
         
-        // ✅ NOVO: Validação - se substituição, nome_substituido é obrigatório
-        if (formData.substituicao && !formData.nome_substituido.trim()) {
+        // ✅ NOVO: Validação - se substituição E consultor ATIVO, nome_substituido é obrigatório
+        // Se consultor está sendo INATIVADO, não exige nome (ele está saindo, não substituindo)
+        if (formData.substituicao && formData.ativo_consultor && !formData.nome_substituido.trim()) {
             alert("Informe o nome do consultor que está sendo substituído.");
             return;
         }
@@ -543,7 +544,8 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                             </label>
                                         </div>
                                     </div>
-                                    {formData.substituicao && (
+                                    {/* ✅ CORREÇÃO: Só exibe se substituição=true E consultor ATIVO (não faz sentido pedir substituto de quem está saindo) */}
+                                    {formData.substituicao && formData.ativo_consultor && (
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">
                                                 Nome do Substituído *
