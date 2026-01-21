@@ -1,22 +1,34 @@
-// src/components/InclusionImport.tsx
-// ✅ v3.0 - Versão limpa com foco nos campos problemáticos:
-// - RECURSOS HUMANOS: Busca específica pelo header e posição
-// - OBSERVAÇÕES: Captura até NOTEBOOK (sem dois pontos)
-// - VALOR PAGAMENTO: Busca após DADOS PAGAMENTO
-// - DATA DE INÍCIO: Busca específica (não confundir com DATA EMISSÃO)
+/**
+ * InclusionImport.tsx - Importador de Ficha de Inclusão
+ * 
+ * VERSÃO: Fix v1.0
+ * 
+ * CORREÇÕES:
+ * - Melhorada extração de VALOR (valor_pagamento) para formato brasileiro (R$ X.XXX,XX)
+ * - Melhorada extração de OBSERVAÇÕES com múltiplos fallbacks
+ * - Adicionados logs detalhados para debug
+ */
 
 import React, { useState } from 'react';
 import { Client, User, UsuarioCliente, CoordenadorCliente } from '@/types';
 import * as pdfjsLib from 'pdfjs-dist';
 
-// ✅ CORREÇÃO: Configurar worker para ESModules (Vite)
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+// Configurar worker do PDF.js
+const getPdfJs = () => {
+    // @ts-ignore
+    return pdfjsLib.default || pdfjsLib;
+};
 
-// Suppress console warnings from pdf.js
+const pdfjs = getPdfJs();
+if (pdfjs.GlobalWorkerOptions) {
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+// Suprimir warnings do pdf.js
 if (typeof window !== 'undefined') {
     const originalWarn = console.warn;
-    console.warn = (...args) => {
-        if (args[0]?.includes?.('pdf.js')) return;
+    console.warn = (...args: any[]) => {
+        if (args[0]?.toString().includes('pdf.js')) return;
         originalWarn.apply(console, args);
     };
 }
@@ -61,14 +73,12 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
         const normalizedName = normalize(name);
         console.log(`🔍 Buscando usuário: "${name}" (normalizado: "${normalizedName}")`);
         
-        // Busca exata
         let user = users.find(u => normalize(u.nome_usuario) === normalizedName);
         if (user) {
             console.log(`✅ Usuário encontrado (exato): ${user.nome_usuario} (ID: ${user.id})`);
             return user;
         }
         
-        // Busca por primeiro nome
         const firstName = normalizedName.split(' ')[0];
         user = users.find(u => normalize(u.nome_usuario).startsWith(firstName));
         if (user) {
@@ -76,7 +86,6 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             return user;
         }
         
-        // Busca contém
         user = users.find(u => normalize(u.nome_usuario).includes(normalizedName) || normalizedName.includes(normalize(u.nome_usuario)));
         if (user) {
             console.log(`✅ Usuário encontrado (contém): ${user.nome_usuario} (ID: ${user.id})`);
@@ -140,7 +149,6 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let inInformacoesEmergencia = false;
             let inDadosPagamento = false;
 
-            // Log das linhas para debug
             console.log('📋 Total de linhas:', lines.length);
 
             for (let i = 0; i < lines.length; i++) {
@@ -148,139 +156,130 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 const nextLine = lines[i + 1] || '';
                 
                 // Detectar seções
-                if (cleanLine.match(/DADOS DO PROFISSIONAL/i)) {
+                if (cleanLine.includes('DADOS DO PROFISSIONAL')) {
                     inDadosProfissional = true;
                     inInformacoesEmergencia = false;
-                    continue;
+                    inDadosPagamento = false;
                 }
-                if (cleanLine.match(/INFORMAÇÕES DE EMERGÊNCIA/i)) {
+                if (cleanLine.includes('INFORMAÇÕES DE EMERGÊNCIA')) {
                     inDadosProfissional = false;
                     inInformacoesEmergencia = true;
-                    continue;
+                    inDadosPagamento = false;
                 }
-                if (cleanLine.match(/DADOS PAGAMENTO/i)) {
+                if (cleanLine.includes('DADOS PAGAMENTO')) {
                     inDadosProfissional = false;
                     inInformacoesEmergencia = false;
                     inDadosPagamento = true;
-                    continue;
-                }
-                if (cleanLine.match(/DADOS FATURAMENTO/i)) {
-                    inDadosPagamento = false;
-                    continue;
+                    console.log(`📍 Seção DADOS PAGAMENTO detectada na linha ${i}`);
                 }
                 
-                // ===== NOME DO CONSULTOR =====
-                if (cleanLine.match(/^NOME:/i) && 
-                    !cleanLine.match(/SOLICITANTE|BANCO|EMERGÊNCIA|PROFISSIONAL SUBSTITUÍDO/i) &&
-                    !inInformacoesEmergencia) {
-                    const extractedName = cleanLine.replace(/^NOME:/i, '').trim();
-                    if (extractedName && extractedName !== 'XXX' && !extractedName.match(/Banco|Inter|Itaú|Bradesco|Santander|Caixa/i)) {
-                        consultantName = extractedName;
-                        console.log(`✅ Nome extraído: ${consultantName}`);
-                    }
+                // ===== NOME DO PROFISSIONAL =====
+                if (cleanLine.startsWith('NOME:') && inDadosProfissional) {
+                    consultantName = cleanLine.replace('NOME:', '').trim();
                 }
                 
-                // ===== FUNÇÃO/CARGO =====
+                // ===== FUNÇÃO =====
                 if (cleanLine.match(/^FUNÇÃO:/i)) {
-                    role = cleanLine.replace(/^FUNÇÃO:/i, '').trim();
-                    role = role.replace(/\s*SR\s*\(\s*X?\s*\)|\s*PL\s*\(\s*X?\s*\)|\s*JR\s*\(\s*X?\s*\)/gi, '').trim();
+                    let funcaoText = cleanLine.replace(/FUNÇÃO:/i, '').trim();
+                    if (funcaoText.includes('SR')) funcaoText = funcaoText.replace(/\(\s*\)/g, '').replace(/SR\s*\(\s*X?\s*\)/i, 'SR').trim();
+                    if (funcaoText.includes('PL')) funcaoText = funcaoText.replace(/\(\s*\)/g, '').replace(/PL\s*\(\s*X?\s*\)/i, 'PL').trim();
+                    if (funcaoText.includes('JR')) funcaoText = funcaoText.replace(/\(\s*\)/g, '').replace(/JR\s*\(\s*X?\s*\)/i, 'JR').trim();
+                    role = funcaoText.replace(/\s+/g, ' ').replace(/\(\s*\)/g, '').trim();
                 }
                 
-                // ===== DATA DE INÍCIO (NÃO confundir com DATA EMISSÃO) =====
-                if (cleanLine.match(/^DATA DE INÍCIO$/i) || cleanLine.match(/^DATA INÍCIO$/i)) {
-                    console.log(`🔍 Encontrado label DATA DE INÍCIO na linha ${i}`);
-                    // A data está na próxima linha
-                    if (nextLine && nextLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+                // ===== DATA INÍCIO =====
+                if (cleanLine.match(/DATA DE INÍCIO/i)) {
+                    const dateMatch = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
+                    if (dateMatch) {
+                        startDateStr = dateMatch[1];
+                    } else if (nextLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
                         startDateStr = nextLine;
-                        console.log(`✅ Data de Início extraída: ${startDateStr}`);
-                    }
-                }
-                // Também verificar se a data está na mesma linha
-                if (cleanLine.match(/DATA DE INÍCIO.*?(\d{2}\/\d{2}\/\d{4})/i)) {
-                    const match = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
-                    if (match && !startDateStr) {
-                        startDateStr = match[1];
-                        console.log(`✅ Data de Início extraída (mesma linha): ${startDateStr}`);
                     }
                 }
                 
-                // ===== CELULAR =====
-                if (cleanLine.match(/TELEFONE CELULAR\s*:/i)) {
-                    const match = cleanLine.match(/TELEFONE CELULAR\s*:\s*([\d\s\-]+)/i);
-                    if (match) celularStr = match[1].replace(/\s/g, '');
+                // ===== 🔧 FIX v1.0: VALOR (valor_pagamento) =====
+                if (cleanLine === 'VALOR' && inDadosPagamento) {
+                    console.log(`🔍 Encontrado label VALOR na seção DADOS PAGAMENTO (linha ${i})`);
+                    // Procurar o valor nas próximas linhas
+                    for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
+                        const testLine = lines[j].trim();
+                        // 🔧 FIX: Regex melhorado para formato brasileiro (R$ X.XXX,XX)
+                        if (testLine.match(/^R?\$?\s*[\d.]+,\d{2}$/) || 
+                            testLine.match(/^[\d.]+,\d{2}$/) ||
+                            testLine.match(/^R\$\s*[\d.,]+$/)) {
+                            valorPagamentoStr = testLine.replace(/R\$\s*/, '').trim();
+                            console.log(`✅ Valor Pagamento extraído: ${valorPagamentoStr}`);
+                            break;
+                        }
+                    }
+                }
+                
+                // ===== FATURAMENTO MENSAL =====
+                if (cleanLine.match(/FATURAMENTO MENSAL/i)) {
+                    for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+                        const testLine = lines[j].trim();
+                        if (testLine.match(/^R?\$?\s*[\d.,]+$/) || testLine.match(/^[\d.]+,\d{2}$/)) {
+                            hourlyRateStr = testLine.replace(/R\$\s*/, '');
+                            console.log(`✅ Faturamento Mensal extraído: ${hourlyRateStr}`);
+                            break;
+                        }
+                    }
+                }
+                
+                // ===== TELEFONE CELULAR =====
+                if (cleanLine.match(/TELEFONE CELULAR/i)) {
+                    const phoneMatch = cleanLine.match(/(\d{2}\s*\d{4,5}[-\s]?\d{4})/);
+                    if (phoneMatch) {
+                        celularStr = phoneMatch[1].replace(/\s/g, '');
+                    } else if (nextLine.match(/^\d/)) {
+                        celularStr = nextLine.replace(/\s/g, '');
+                    }
                 }
                 
                 // ===== CPF =====
-                if (cleanLine.match(/^CPF:/i) || cleanLine.match(/^CPF\s*:/i)) {
-                    cpfStr = cleanLine.replace(/^CPF\s*:/i, '').trim();
+                if (cleanLine.match(/^CPF:/i) || cleanLine.match(/CPF:\s*[\d.-]+/i)) {
+                    const cpfMatch = cleanLine.match(/(\d{3}[.\s]?\d{3}[.\s]?\d{3}[-\s]?\d{2})/);
+                    if (cpfMatch) {
+                        cpfStr = cpfMatch[1];
+                    }
                 }
                 
                 // ===== EMAIL =====
-                if ((cleanLine.match(/^E-?MAIL\s*:/i) || cleanLine.match(/^EMAIL\s*:/i)) && 
-                    !cleanLine.match(/SOLICITANTE/i) &&
-                    !inInformacoesEmergencia) {
-                    const match = cleanLine.match(/E-?MAIL\s*:\s*([^\s]+@[^\s]+)/i);
-                    if (match) {
-                        const extractedEmail = match[1].toLowerCase();
-                        const isClientEmail = extractedEmail.match(/@(icesp|fastshop|techfor|cliente|empresa)/i);
-                        const isPersonalEmail = extractedEmail.match(/@(gmail|hotmail|outlook|yahoo|live|uol|bol|terra|ig|globo|icloud)/i);
-                        
-                        if (!isClientEmail || isPersonalEmail) {
-                            if (!emailStr || isPersonalEmail) {
-                                emailStr = extractedEmail;
-                                console.log(`✅ Email extraído: ${emailStr}`);
-                            }
-                        } else {
-                            console.log(`⚠️ Email ignorado (cliente): ${extractedEmail}`);
-                        }
+                if (cleanLine.match(/E-MAIL\s*:/i)) {
+                    const emailMatch = cleanLine.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
+                    if (emailMatch) {
+                        emailStr = emailMatch[1].toLowerCase();
+                    }
+                }
+                
+                // ===== DATA NASCIMENTO =====
+                if (cleanLine.match(/DT NASCIMENTO/i) || cleanLine.match(/DATA DE NASCIMENTO/i)) {
+                    const dateMatch = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
+                    if (dateMatch) {
+                        dtAniversarioStr = dateMatch[1];
+                    }
+                }
+                
+                // ===== TECNOLOGIA (especialidade) =====
+                if (cleanLine.match(/^TECNOLOGIA:/i)) {
+                    especialidadeStr = cleanLine.replace(/TECNOLOGIA:/i, '').trim();
+                    if (!especialidadeStr && nextLine) {
+                        especialidadeStr = nextLine;
                     }
                 }
                 
                 // ===== CNPJ =====
                 if (cleanLine.match(/^CNPJ:/i)) {
-                    cnpjStr = cleanLine.replace(/^CNPJ:/i, '').trim();
-                    if (cnpjStr === 'XXX') cnpjStr = '';
+                    const cnpjMatch = cleanLine.match(/(\d{2}[.\s]?\d{3}[.\s]?\d{3}[\/\s]?\d{4}[-\s]?\d{2})/);
+                    if (cnpjMatch) {
+                        cnpjStr = cnpjMatch[1];
+                    }
                 }
                 
                 // ===== EMPRESA =====
-                if (cleanLine.match(/^EMPRESA:/i) && !cleanLine.match(/ENDEREÇO EMPRESA/i)) {
-                    empresaStr = cleanLine.replace(/^EMPRESA:/i, '').trim();
-                    if (empresaStr === 'XXX') empresaStr = '';
-                }
-                
-                // ===== DATA NASCIMENTO =====
-                if (cleanLine.match(/^DT NASCIMENTO:/i)) {
-                    const match = cleanLine.match(/(\d{2}\/\d{2}\/\d{4})/);
-                    if (match) dtAniversarioStr = match[1];
-                }
-                
-                // ===== TECNOLOGIA =====
-                if (cleanLine.match(/^TECNOLOGIA:/i)) {
-                    especialidadeStr = cleanLine.replace(/^TECNOLOGIA:/i, '').trim();
-                }
-                
-                // ===== FATURAMENTO MENSAL =====
-                if (cleanLine.match(/FATURAMENTO MENSAL/i)) {
-                    let match = cleanLine.match(/R?\$?\s*([\d.,]+)/i);
-                    if (!match && nextLine) {
-                        match = nextLine.match(/R?\$?\s*([\d.,]+)/);
-                    }
-                    if (match) hourlyRateStr = match[1];
-                }
-                
-                // ===== VALOR PAGAMENTO =====
-                if (cleanLine === 'VALOR' && inDadosPagamento) {
-                    console.log(`🔍 Encontrado label VALOR na seção DADOS PAGAMENTO (linha ${i})`);
-                    // Procurar o valor nas próximas linhas
-                    for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
-                        const testLine = lines[j].trim();
-                        // Se for um número monetário
-                        if (testLine.match(/^R?\$?\s*[\d.,]+$/) || testLine.match(/^[\d]+[.,][\d]+$/)) {
-                            valorPagamentoStr = testLine.replace(/R\$\s*/, '');
-                            console.log(`✅ Valor Pagamento extraído: ${valorPagamentoStr}`);
-                            break;
-                        }
-                    }
+                if (cleanLine.match(/^EMPRESA:/i) && !cleanLine.includes('ENDEREÇO')) {
+                    empresaStr = cleanLine.replace(/EMPRESA:/i, '').trim();
+                    if (empresaStr === 'XXX' || empresaStr === 'xxx') empresaStr = '';
                 }
                 
                 // ===== FORMA DE CONTRATAÇÃO =====
@@ -294,50 +293,59 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                         else if (nextLine === 'CLT' || nextLine.includes('CLT')) modalidadeContratoStr = 'CLT';
                     }
                 }
-                // Detectar CLT isolado
                 if (!modalidadeContratoStr && cleanLine === 'CLT') {
                     modalidadeContratoStr = 'CLT';
                     console.log(`✅ Modalidade CLT detectada (linha isolada)`);
                 }
                 
                 // ===== SUBSTITUIÇÃO =====
-                if (cleanLine.match(/INCLUSÃO REF\.?\s*SUBSTITUIÇÃO/i)) {
-                    substituicao = true;
-                }
-                
-                // ===== NOME DO PROFISSIONAL SUBSTITUÍDO =====
-                if (cleanLine.match(/NOME DO PROFISSIONAL SUBSTITUÍDO/i)) {
-                    let valor = cleanLine.replace(/NOME DO PROFISSIONAL SUBSTITUÍDO\s*:?/i, '').trim();
-                    // Se vazio, tentar próxima linha
-                    if ((!valor || valor === 'XXX') && nextLine && !nextLine.match(/OBSERVAÇÕES|NOTEBOOK|SMARTPHONE/i)) {
-                        valor = nextLine.trim();
-                    }
-                    if (valor && valor !== 'XXX' && valor.length >= 3) {
-                        nomeSubstituidoStr = valor;
+                if (cleanLine.match(/INCLUSÃO REF\.?\s*SUBSTITUIÇÃO/i) || cleanLine.match(/SUBSTITUIÇÃO/i)) {
+                    const hasX = cleanLine.includes('X') || cleanLine.includes('x');
+                    if (hasX) {
                         substituicao = true;
-                        console.log(`✅ Nome Substituído: ${nomeSubstituidoStr}`);
+                        console.log(`✅ Substituição detectada: ${substituicao}`);
                     }
                 }
                 
-                // ===== OBSERVAÇÕES =====
-                if (cleanLine.match(/^OBSERVAÇÕES\s*:?$/i) || cleanLine.match(/^OBSERVAÇÕES\s*:/i)) {
+                // ===== NOME DO SUBSTITUÍDO =====
+                if (cleanLine.match(/NOME DO PROFISSIONAL SUBSTITUÍDO/i)) {
+                    let nomeSubst = cleanLine.replace(/NOME DO PROFISSIONAL SUBSTITUÍDO:?/i, '').trim();
+                    if (!nomeSubst && nextLine) {
+                        nomeSubst = nextLine;
+                    }
+                    nomeSubst = nomeSubst.replace(/\(Confidencial\)/gi, '').trim();
+                    if (nomeSubst && nomeSubst !== 'XXX') {
+                        nomeSubstituidoStr = nomeSubst;
+                        substituicao = true;
+                        console.log(`✅ Nome substituído: ${nomeSubstituidoStr}`);
+                    }
+                }
+                
+                // ===== FATURÁVEL =====
+                if (cleanLine.match(/^FATURÁVEL$/i) || cleanLine.match(/NÃO FATURÁVEL/i)) {
+                    if (cleanLine.includes('NÃO')) {
+                        faturavel = false;
+                    }
+                }
+                
+                // ===== 🔧 FIX v1.0: OBSERVAÇÕES =====
+                if (cleanLine.match(/^OBSERVA[ÇC][ÕO]ES:?$/i)) {
                     console.log(`🔍 Encontrado label OBSERVAÇÕES na linha ${i}`);
-                    let obs = cleanLine.replace(/^OBSERVAÇÕES\s*:?/i, '').trim();
                     
-                    // Capturar próximas linhas até NOTEBOOK ou SMARTPHONE
+                    let obs = '';
                     let j = i + 1;
+                    
+                    // Capturar todas as linhas até encontrar delimitador
                     while (j < lines.length) {
                         const nextObs = lines[j].trim();
                         
-                        // Parar se encontrar NOTEBOOK ou SMARTPHONE
-                        if (nextObs.match(/^NOTEBOOK/i) || nextObs.match(/^SMARTPHONE/i)) {
-                            console.log(`🔍 Observações: parando em "${nextObs}"`);
+                        // Parar se encontrar seção seguinte
+                        if (nextObs.match(/^(EQUIPAMENTOS|NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS HUMANOS)$/i)) {
                             break;
                         }
                         
-                        // Adicionar texto
-                        if (nextObs && nextObs.length > 0) {
-                            obs += ' ' + nextObs;
+                        if (nextObs && nextObs.length > 0 && nextObs !== 'XXX') {
+                            obs += (obs ? ' ' : '') + nextObs;
                         }
                         j++;
                     }
@@ -351,63 +359,37 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== RECURSOS HUMANOS =====
-                // Quando encontrar o header "RECURSOS HUMANOS", buscar o valor correspondente
                 if (cleanLine === 'RECURSOS HUMANOS') {
                     console.log(`🔍 Encontrado header RECURSOS HUMANOS na linha ${i}`);
                     
-                    // A estrutura do PDF no rodapé é:
-                    // DATA EMISSÃO | RECURSOS HUMANOS | GERENTE COMERCIAL | DIRETORIA | GESTÃO DE PESSOAS
-                    // 12/01/2026   | LARISSA CONCEIÇÃO| MESSIAS OLIVEIRA | ...       | PRISCILA
-                    
-                    // Precisamos encontrar a linha com a data e pegar o valor da coluna RECURSOS HUMANOS
-                    // No texto extraído, cada célula é uma linha separada
-                    
-                    // Procurar a data de emissão
                     for (let k = i + 1; k < Math.min(i + 15, lines.length); k++) {
                         const testLine = lines[k].trim();
                         
-                        // Se encontrou a data de emissão
                         if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
                             console.log(`🔍 Data de emissão encontrada na linha ${k}: ${testLine}`);
                             
-                            // O próximo nome (não header) é o valor de RECURSOS HUMANOS
                             if (k + 1 < lines.length) {
-                                const valorRH = lines[k + 1].trim();
-                                // Verificar se é um nome válido
-                                if (valorRH && 
-                                    valorRH.length > 3 &&
-                                    valorRH.match(/^[A-Za-zÀ-ÿ\s]+$/) &&
-                                    !valorRH.match(/^(GERENTE|DIRETORIA|GESTÃO|DATA|RECURSOS|COMERCIAL)/i)) {
-                                    recursosHumanosStr = valorRH;
+                                const possibleRH = lines[k + 1].trim();
+                                if (possibleRH && 
+                                    !possibleRH.match(/^\d/) && 
+                                    !possibleRH.match(/GERENTE|COMERCIAL|DIRETORIA|GESTÃO/i) &&
+                                    possibleRH.length > 3 &&
+                                    possibleRH !== 'XXX') {
+                                    recursosHumanosStr = possibleRH;
                                     console.log(`✅ Recursos Humanos extraído: ${recursosHumanosStr}`);
+                                    break;
                                 }
                             }
-                            break;
                         }
                     }
                 }
             }
+
+            // ===== 🔧 FIX v1.0: FALLBACKS MELHORADOS =====
             
-            // ===== FALLBACKS =====
-            
-            // Fallback para Nome
-            if (!consultantName) {
-                const allLines = text.split('\n');
-                for (const line of allLines) {
-                    if (line.match(/^NOME:\s*[A-Za-zÀ-ÿ]/i) && !line.match(/SOLICITANTE|BANCO|EMERGÊNCIA/i)) {
-                        const extracted = line.replace(/^NOME:/i, '').trim();
-                        if (extracted && extracted !== 'XXX' && extracted.length > 3) {
-                            consultantName = extracted;
-                            console.log(`✅ Nome extraído (fallback): ${consultantName}`);
-                            break;
-                        }
-                    }
-                }
-            }
-            
-            // Fallback para Email
+            // Fallback para EMAIL
             if (!emailStr) {
-                const emailMatches = text.match(/[a-zA-Z0-9._%+-]+@(gmail|hotmail|outlook|yahoo|live|uol|bol|terra|ig|globo|icloud)\.[a-zA-Z]{2,}/gi);
+                const emailMatches = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi);
                 if (emailMatches && emailMatches.length > 0) {
                     emailStr = emailMatches[0].toLowerCase();
                     console.log(`✅ Email extraído (fallback): ${emailStr}`);
@@ -416,7 +398,6 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             
             // Fallback para DATA DE INÍCIO
             if (!startDateStr) {
-                // Buscar especificamente "DATA DE INÍCIO" seguido de data
                 const dataMatch = text.match(/DATA\s*(?:DE\s*)?INÍCIO[\s\n]*(\d{2}\/\d{2}\/\d{4})/i);
                 if (dataMatch) {
                     startDateStr = dataMatch[1];
@@ -424,19 +405,75 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // Fallback para VALOR PAGAMENTO
+            // 🔧 FIX v1.0: Fallback MELHORADO para VALOR PAGAMENTO
             if (!valorPagamentoStr) {
-                // Buscar na seção DADOS PAGAMENTO
-                const pagamentoMatch = text.match(/DADOS PAGAMENTO[\s\S]*?VALOR[\s\n]*R?\$?\s*([\d.,]+)/i);
-                if (pagamentoMatch) {
-                    valorPagamentoStr = pagamentoMatch[1];
-                    console.log(`✅ Valor Pagamento extraído (fallback): ${valorPagamentoStr}`);
+                console.log('🔄 Tentando fallback para valor_pagamento...');
+                
+                // Método 1: Buscar "R$" seguido de número no formato brasileiro
+                const valorMatchBR = text.match(/R\$\s*([\d.]+,\d{2})/);
+                if (valorMatchBR) {
+                    valorPagamentoStr = valorMatchBR[1];
+                    console.log(`✅ Valor Pagamento extraído (R$ format): ${valorPagamentoStr}`);
+                }
+                
+                // Método 2: Buscar valor na seção DADOS PAGAMENTO
+                if (!valorPagamentoStr) {
+                    const pagamentoMatch = text.match(/DADOS PAGAMENTO[\s\S]*?VALOR[\s\n]*([\d.]+,\d{2})/i);
+                    if (pagamentoMatch) {
+                        valorPagamentoStr = pagamentoMatch[1];
+                        console.log(`✅ Valor Pagamento extraído (seção): ${valorPagamentoStr}`);
+                    }
+                }
+                
+                // Método 3: Buscar qualquer valor monetário após "VALOR"
+                if (!valorPagamentoStr) {
+                    const valorGenerico = text.match(/VALOR[\s\n]*(?:NOVO[\s\n]*)?([\d.]+,\d{2})/i);
+                    if (valorGenerico) {
+                        valorPagamentoStr = valorGenerico[1];
+                        console.log(`✅ Valor Pagamento extraído (genérico): ${valorPagamentoStr}`);
+                    }
+                }
+            }
+            
+            // 🔧 FIX v1.0: Fallback MELHORADO para OBSERVAÇÕES
+            if (!observacoesStr) {
+                console.log('🔄 Tentando fallback para observações...');
+                
+                // Método 1: Buscar texto típico de observações
+                const obsPatterns = [
+                    /ATUARÁ[^.]+\./gi,
+                    /GESTÃO DE PESSOAS FAVOR[^.]+\./gi,
+                    /UTILIZARÁ[^.]+\./gi
+                ];
+                
+                let obsTextos: string[] = [];
+                for (const pattern of obsPatterns) {
+                    const matches = text.match(pattern);
+                    if (matches) {
+                        obsTextos.push(...matches);
+                    }
+                }
+                
+                if (obsTextos.length > 0) {
+                    observacoesStr = obsTextos.join(' ').replace(/\s+/g, ' ').trim();
+                    console.log(`✅ Observações extraídas (padrões): ${observacoesStr.substring(0, 100)}...`);
+                }
+                
+                // Método 2: Buscar após "OBSERVAÇÕES:" até encontrar delimitador
+                if (!observacoesStr) {
+                    const obsMatch = text.match(/OBSERVA[ÇC][ÕO]ES:?\s*([^]+?)(?=EQUIPAMENTOS|NOTEBOOK|DATA EMISSÃO|RECURSOS HUMANOS|$)/i);
+                    if (obsMatch && obsMatch[1]) {
+                        const obsText = obsMatch[1].trim();
+                        if (obsText.length > 20) {
+                            observacoesStr = obsText.replace(/\s+/g, ' ').trim().substring(0, 500);
+                            console.log(`✅ Observações extraídas (seção): ${observacoesStr.substring(0, 100)}...`);
+                        }
+                    }
                 }
             }
             
             // Fallback para RECURSOS HUMANOS
             if (!recursosHumanosStr) {
-                // Procurar no texto o padrão de tabela
                 const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s*\n\s*([A-Za-zÀ-ÿ\s]+?)(?:\n|GERENTE|MESSIAS)/i);
                 if (rhMatch && rhMatch[2]) {
                     const nome = rhMatch[2].trim();
@@ -497,7 +534,12 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
 
             const parseMoneyBR = (value: string): number | null => {
                 if (!value) return null;
-                const cleaned = value.replace(/[^\d,.-]/g, '').replace(',', '.');
+                // Remove R$, espaços, e converte formato BR (X.XXX,XX) para float
+                const cleaned = value
+                    .replace(/R\$\s*/g, '')
+                    .replace(/\s/g, '')
+                    .replace(/\./g, '')  // Remove pontos de milhar
+                    .replace(',', '.');   // Converte vírgula decimal para ponto
                 const num = parseFloat(cleaned);
                 return isNaN(num) ? null : num;
             };
