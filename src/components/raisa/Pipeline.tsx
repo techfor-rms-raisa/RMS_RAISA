@@ -7,7 +7,10 @@
  * - Indicador de analistas atribuídos
  * - Estatísticas de candidatos por analista
  * 
- * 🆕 v2.2: Alteração de Status
+ * 🆕 v2.3: Oculta botão "Configurar Distribuição" em vagas encerradas
+ *       - Não exibe em: Finalizadas, Perdidas, Canceladas
+ * 
+ * v2.2: Alteração de Status
  *       - Removido: "Em Seleção" 
  *       - Adicionado: "Perdida" (entre Finalizada e Cancelada)
  * 
@@ -188,17 +191,19 @@ const Pipeline: React.FC<PipelineProps> = ({ currentUserId }) => {
         </div>
       )}
 
-      {/* Botão de Distribuição */}
-      <button
-        onClick={() => handleAbrirDistribuicao(vaga)}
-        className={`w-full py-2 px-3 rounded text-sm font-medium transition-colors ${
-          vaga.analistas_count > 0 
-            ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
-            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-        }`}
-      >
-        {vaga.analistas_count > 0 ? '👥 Gerenciar Distribuição' : '+ Configurar Distribuição'}
-      </button>
+      {/* Botão de Distribuição - 🆕 v2.3: Oculto em vagas encerradas */}
+      {!['finalizada', 'perdida', 'cancelada'].includes(vaga.status) && (
+        <button
+          onClick={() => handleAbrirDistribuicao(vaga)}
+          className={`w-full py-2 px-3 rounded text-sm font-medium transition-colors ${
+            vaga.analistas_count > 0 
+              ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          {vaga.analistas_count > 0 ? '👥 Gerenciar Distribuição' : '+ Configurar Distribuição'}
+        </button>
+      )}
     </div>
   );
 
