@@ -13,6 +13,7 @@ interface DashboardProps {
   currentUser: User;
   users: User[];
   loadConsultantReports: (consultantId: number) => Promise<ConsultantReport[]>;
+  deleteConsultantReport?: (reportId: string) => Promise<void>; // 🆕 v2.5
   onNavigateToAtividades: (clientName?: string, consultantName?: string) => void;
   getRHActionsByConsultant?: (consultantId: number) => Promise<RHAction[]>;  // ✅ v3.2
   rhActions?: RHAction[];  // 🆕 v57.0: Lista de ações para verificar existência
@@ -26,6 +27,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   currentUser, 
   users,
   loadConsultantReports,
+  deleteConsultantReport, // 🆕 v2.5
   onNavigateToAtividades,
   getRHActionsByConsultant,  // ✅ v3.2
   rhActions = []  // 🆕 v57.0: Lista de ações para verificar existência
@@ -346,6 +348,31 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   // ============================================================================
+  // 🆕 v2.5: Handler para excluir relatório
+  // ============================================================================
+  const handleDeleteReport = async (reportId: string) => {
+    if (!deleteConsultantReport) return;
+    
+    try {
+      await deleteConsultantReport(reportId);
+      
+      // Atualizar a lista de relatórios no modal
+      if (selectedMonthReports) {
+        const updatedReports = selectedMonthReports.reports.filter(
+          (r: any) => String(r.id) !== reportId
+        );
+        setSelectedMonthReports({
+          ...selectedMonthReports,
+          reports: updatedReports
+        });
+      }
+    } catch (error) {
+      console.error('❌ Erro ao excluir relatório:', error);
+      throw error;
+    }
+  };
+
+  // ============================================================================
   // EARLY RETURN - DEPOIS DE TODOS OS HOOKS
   // ============================================================================
   if (consultants.length === 0 || clients.length === 0) {
@@ -600,6 +627,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             setShowMonthlyReportsModal(false);
             setSelectedMonthReports(null);
           }}
+          onDelete={deleteConsultantReport ? handleDeleteReport : undefined} // 🆕 v2.5
         />
       )}
       

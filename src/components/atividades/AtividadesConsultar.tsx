@@ -1,9 +1,11 @@
 /**
  * AtividadesConsultar.tsx - Consulta de Relatórios de Atividades
  * 
+ * 🆕 v2.5: Exclusão de relatórios do mês atual (21/01/2026)
+ * - Botão Excluir no modal para relatórios do mês corrente
+ * 
  * 🆕 v2.4: Ordenação por data mais recente (21/01/2026)
  * - Relatórios ordenados por data de criação (descendente)
- * - Suporte a edição de relatórios via onEdit callback
  */
 
 import React, { useState, useMemo } from 'react';
@@ -15,8 +17,8 @@ interface AtividadesConsultarProps {
     consultants: Consultant[];
     usuariosCliente: UsuarioCliente[];
     loadConsultantReports?: (consultantId: number) => Promise<ConsultantReport[]>;
-    onEditReport?: (report: ConsultantReport) => void; // 🆕 v2.4: Callback para edição
-    currentUserName?: string; // 🆕 v2.4: Nome do usuário atual
+    deleteConsultantReport?: (reportId: string) => Promise<void>; // 🆕 v2.5
+    currentUserName?: string;
 }
 
 const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
@@ -24,8 +26,8 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     consultants,
     usuariosCliente,
     loadConsultantReports,
-    onEditReport, // 🆕 v2.4
-    currentUserName, // 🆕 v2.4
+    deleteConsultantReport, // 🆕 v2.5
+    currentUserName,
 }) => {
     const [selectedClient, setSelectedClient] = useState<string>('all');
     const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
@@ -300,6 +302,29 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
         }
     };
 
+    // 🆕 v2.5: Handler para excluir relatório
+    const handleDeleteReport = async (reportId: string) => {
+        if (!deleteConsultantReport) return;
+        
+        try {
+            await deleteConsultantReport(reportId);
+            
+            // Atualizar a lista de relatórios no modal
+            if (modalData) {
+                const updatedReports = modalData.reports.filter(
+                    (r: any) => String(r.id) !== reportId
+                );
+                setModalData({
+                    ...modalData,
+                    reports: updatedReports
+                });
+            }
+        } catch (error) {
+            console.error('❌ Erro ao excluir relatório:', error);
+            throw error;
+        }
+    };
+
     return (
         <>
             <div className="w-full mx-auto">
@@ -448,8 +473,8 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                     month={modalData.month}
                     reports={modalData.reports}
                     onClose={() => setShowModal(false)}
-                    onEdit={onEditReport} // 🆕 v2.4
-                    currentUserName={currentUserName} // 🆕 v2.4
+                    onDelete={deleteConsultantReport ? handleDeleteReport : undefined} // 🆕 v2.5
+                    currentUserName={currentUserName}
                 />
             )}
         </>

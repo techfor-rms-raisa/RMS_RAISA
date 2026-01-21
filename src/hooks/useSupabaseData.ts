@@ -204,6 +204,7 @@ export const useSupabaseData = () => {
     batchAddConsultants: consultantsHook.batchAddConsultants,
     inactivateConsultant: consultantsHook.inactivateConsultant,
     loadConsultantReports: consultantsHook.loadConsultantReports,
+    deleteConsultantReport: consultantsHook.deleteConsultantReport, // 🆕 v2.5
 
     // Gestores de Clientes (✅ Completo)
     usuariosCliente: gestoresHook.usuariosCliente,

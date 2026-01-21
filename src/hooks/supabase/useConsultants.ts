@@ -3,12 +3,14 @@
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui lazy loading de relatórios
  * 
+ * 🆕 VERSÃO 2.5 - EXCLUSÃO DE RELATÓRIOS (21/01/2026)
+ * - NOVO: deleteConsultantReport para excluir relatórios do mês atual
+ * 
  * 🆕 VERSÃO 2.4 - EDIÇÃO DE RELATÓRIOS (21/01/2026)
- * - NOVO: updateConsultantReport salva alterado_por e data_alteracao
- * - NOVO: loadConsultantReports ordena por data mais recente (descendente)
+ * - updateConsultantReport salva alterado_por e data_alteracao
+ * - loadConsultantReports ordena por data mais recente (descendente)
  * 
  * ✅ ATUALIZADO v2.3: Suporte completo a todos os campos da tabela consultants
- * - Adicionado: modalidade_contrato, substituicao, nome_substituido, observacoes, faturavel
  */
 
 import { useState } from 'react';
@@ -512,6 +514,46 @@ export const useConsultants = () => {
     }
   };
 
+  /**
+   * 🆕 v2.5: Exclui um relatório mensal do consultor
+   * Apenas relatórios do mês atual podem ser excluídos
+   */
+  const deleteConsultantReport = async (reportId: string) => {
+    try {
+      console.log('🗑️ Excluindo relatório:', reportId);
+
+      const { error } = await supabase
+        .from('consultant_reports')
+        .delete()
+        .eq('id', reportId);
+
+      if (error) throw error;
+
+      // Atualizar estado local removendo o relatório
+      setConsultants(prev => prev.map(c => {
+        if (c.consultant_reports) {
+          return {
+            ...c,
+            consultant_reports: c.consultant_reports.filter((r: any) => String(r.id) !== reportId)
+          };
+        }
+        if (c.reports) {
+          return {
+            ...c,
+            reports: c.reports.filter((r: any) => String(r.id) !== reportId)
+          };
+        }
+        return c;
+      }));
+
+      console.log('✅ Relatório excluído com sucesso');
+      return true;
+    } catch (err: any) {
+      console.error('❌ Erro ao excluir relatório:', err);
+      throw err;
+    }
+  };
+
   return {
     consultants,
     loading,
@@ -523,6 +565,7 @@ export const useConsultants = () => {
     inactivateConsultant,
     loadConsultantReports,
     updateConsultantReport,
+    deleteConsultantReport, // 🆕 v2.5
     setConsultants
   };
 };

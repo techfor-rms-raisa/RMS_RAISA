@@ -109,6 +109,7 @@ const App: React.FC = () => {
     vagas, pessoas, candidaturas, // RAISA Data
     updateConsultantScore, processReportAnalysis, 
     loadConsultantReports, // 🔥 Lazy loading de relatórios
+    deleteConsultantReport, // 🆕 v2.5: Exclusão de relatórios
     addClient, updateClient, batchAddClients,
     addConsultant, updateConsultant, batchAddConsultants,
     addUser, updateUser,
@@ -293,7 +294,13 @@ const App: React.FC = () => {
             preSelectedConsultant={contextualConsultant}
           />;
       case 'atividades_consultar':
-          return <AtividadesConsultar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} loadConsultantReports={memoizedLoadConsultantReports} />;
+          return <AtividadesConsultar 
+            clients={clients} 
+            consultants={consultants} 
+            usuariosCliente={usuariosCliente} 
+            loadConsultantReports={memoizedLoadConsultantReports}
+            deleteConsultantReport={deleteConsultantReport} // 🆕 v2.5
+          />;
       case 'atividades_exportar':
           return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} users={users} loadConsultantReports={memoizedLoadConsultantReports} />;
       
@@ -384,7 +391,8 @@ const App: React.FC = () => {
           coordenadoresCliente={coordenadoresCliente} 
           users={users} 
           currentUser={currentUser!} 
-          loadConsultantReports={loadConsultantReports} 
+          loadConsultantReports={loadConsultantReports}
+          deleteConsultantReport={deleteConsultantReport} // 🆕 v2.5
           onNavigateToAtividades={handleNavigateToAtividades}
           getRHActionsByConsultant={getRHActionsByConsultant}
           rhActions={rhActions}

@@ -1,9 +1,9 @@
 // src/components/MonthlyReportsModal.tsx
-// ✅ VERSÃO 2.0 - Exibe conteúdo original, Criado/Alterado por, Botão Editar (mês atual)
-// 🆕 v2.0: Adicionado "Criado por" e "Alterado por" no rodapé
-// 🆕 v2.0: Botão Editar visível apenas para relatórios do mês corrente
+// ✅ VERSÃO 2.1 - Botão Excluir para relatórios do mês atual
+// 🆕 v2.1: Removido botão Editar, adicionado botão Excluir
+// 🆕 v2.1: Confirmação antes de excluir
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Consultant, ConsultantReport } from '@/types';
 
 interface MonthlyReportsModalProps {
@@ -11,8 +11,8 @@ interface MonthlyReportsModalProps {
   month: number;
   reports: ConsultantReport[];
   onClose: () => void;
-  onEdit?: (report: ConsultantReport) => void; // 🆕 Callback para edição
-  currentUserName?: string; // 🆕 Nome do usuário atual (para edição)
+  onDelete?: (reportId: string) => Promise<void>; // 🆕 Callback para exclusão
+  currentUserName?: string;
 }
 
 const months = [
@@ -25,9 +25,28 @@ const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({
     month, 
     reports, 
     onClose,
-    onEdit,
+    onDelete,
     currentUserName 
 }) => {
+    // 🆕 v2.1: Estado para confirmação de exclusão
+    const [deletingReportId, setDeletingReportId] = useState<string | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    // 🆕 v2.1: Handler para excluir relatório
+    const handleDelete = async (reportId: string) => {
+        if (!onDelete) return;
+        
+        setIsDeleting(true);
+        try {
+            await onDelete(reportId);
+            setDeletingReportId(null);
+        } catch (error) {
+            console.error('Erro ao excluir relatório:', error);
+            alert('Erro ao excluir relatório. Tente novamente.');
+        } finally {
+            setIsDeleting(false);
+        }
+    };
 
     // 🆕 v2.0: Verificar se relatório é do mês atual (pode editar)
     const isCurrentMonth = (reportMonth: number | undefined, reportYear: number | undefined): boolean => {
@@ -182,7 +201,7 @@ const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({
                                             </div>
                                         )}
 
-                                        {/* 🆕 v2.0: Rodapé com Criado por / Alterado por / Botão Editar */}
+                                        {/* 🆕 v2.1: Rodapé com Criado por / Alterado por / Botão Excluir */}
                                         <div className="mt-4 pt-3 border-t border-gray-200 flex flex-wrap justify-between items-center gap-2">
                                             <div className="text-xs text-gray-500 space-y-1">
                                                 {/* Criado por */}
@@ -202,14 +221,37 @@ const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({
                                                 )}
                                             </div>
 
-                                            {/* Botão Editar - só aparece no mês atual */}
-                                            {onEdit && isCurrentMonth(reportMonth, reportYear) && (
-                                                <button
-                                                    onClick={() => onEdit(report)}
-                                                    className="px-3 py-1.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-lg hover:bg-amber-200 transition flex items-center gap-1"
-                                                >
-                                                    ✏️ Editar
-                                                </button>
+                                            {/* 🆕 v2.1: Botão Excluir - só aparece no mês atual */}
+                                            {onDelete && isCurrentMonth(reportMonth, reportYear) && (
+                                                <div className="flex items-center gap-2">
+                                                    {deletingReportId === String(report.id) ? (
+                                                        // Confirmação de exclusão
+                                                        <div className="flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-lg border border-red-200">
+                                                            <span className="text-xs text-red-700">Confirmar exclusão?</span>
+                                                            <button
+                                                                onClick={() => handleDelete(String(report.id))}
+                                                                disabled={isDeleting}
+                                                                className="px-2 py-1 bg-red-600 text-white text-xs font-medium rounded hover:bg-red-700 transition disabled:bg-gray-400"
+                                                            >
+                                                                {isDeleting ? '...' : 'Sim'}
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setDeletingReportId(null)}
+                                                                disabled={isDeleting}
+                                                                className="px-2 py-1 bg-gray-200 text-gray-700 text-xs font-medium rounded hover:bg-gray-300 transition"
+                                                            >
+                                                                Não
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <button
+                                                            onClick={() => setDeletingReportId(String(report.id))}
+                                                            className="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-medium rounded-lg hover:bg-red-200 transition flex items-center gap-1"
+                                                        >
+                                                            🗑️ Excluir
+                                                        </button>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
                                     </div>
