@@ -8,7 +8,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { Client, Consultant, UsuarioCliente, ConsultantReport, RiskScore } from '@/types';
-import MonthlyReportsModal from './MonthlyReportsModal';
+import MonthlyReportsModal from '../MonthlyReportsModal'; // 🆕 v2.4: Usar versão do diretório pai
 
 interface AtividadesConsultarProps {
     clients: Client[];
