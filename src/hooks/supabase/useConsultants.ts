@@ -3,6 +3,10 @@
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui lazy loading de relatórios
  * 
+ * 🆕 VERSÃO 2.4 - EDIÇÃO DE RELATÓRIOS (21/01/2026)
+ * - NOVO: updateConsultantReport salva alterado_por e data_alteracao
+ * - NOVO: loadConsultantReports ordena por data mais recente (descendente)
+ * 
  * ✅ ATUALIZADO v2.3: Suporte completo a todos os campos da tabela consultants
  * - Adicionado: modalidade_contrato, substituicao, nome_substituido, observacoes, faturavel
  */
@@ -437,6 +441,7 @@ export const useConsultants = () => {
 
   /**
    * Carrega relatórios de um consultor específico (lazy loading)
+   * 🆕 v2.4: Ordenação por data mais recente (descendente)
    */
   const loadConsultantReports = async (consultantId: number): Promise<ConsultantReport[]> => {
     try {
@@ -444,7 +449,7 @@ export const useConsultants = () => {
         .from('consultant_reports')
         .select('*')
         .eq('consultant_id', consultantId)
-        .order('month', { ascending: true });
+        .order('created_at', { ascending: false }); // 🆕 Mais recente primeiro
 
       if (error) throw error;
 
@@ -465,12 +470,24 @@ export const useConsultants = () => {
 
   /**
    * Atualiza um relatório mensal do consultor
+   * 🆕 v2.4: Aceita alteradoPor para rastrear quem editou
    */
-  const updateConsultantReport = async (reportId: number, updates: Partial<ConsultantReport>) => {
+  const updateConsultantReport = async (
+    reportId: number, 
+    updates: Partial<ConsultantReport>,
+    alteradoPor?: string // 🆕 v2.4: Nome do usuário que está alterando
+  ) => {
     try {
+      // 🆕 v2.4: Adicionar campos de alteração
+      const updatesWithTracking = {
+        ...updates,
+        alterado_por: alteradoPor || 'Sistema',
+        data_alteracao: new Date().toISOString()
+      };
+
       const { data, error } = await supabase
         .from('consultant_reports')
-        .update(updates)
+        .update(updatesWithTracking)
         .eq('id', reportId)
         .select()
         .single();

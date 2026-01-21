@@ -3,6 +3,10 @@
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui integração com Gemini AI e notificações de risco crítico
  * 
+ * 🆕 VERSÃO 2.4 - CAMPO CRIADO_POR (21/01/2026)
+ * - NOVO: Salva criado_por ao criar relatório em consultant_reports
+ * - Rastreamento de quem criou cada relatório
+ * 
  * ✅ VERSÃO 2.3 - INTEGRAÇÃO COMPLIANCE (31/12/2024)
  * - NOVO: Criação automática de rh_actions para scores 4 e 5
  * - NOVO: Ações aparecem em "Tarefas Críticas" no Compliance Dashboard
@@ -266,6 +270,7 @@ export const useReportAnalysis = () => {
    * Dispara notificações de risco crítico quando necessário
    * 
    * ✅ v2.2: UPDATE com validação robusta e logs detalhados
+   * 🆕 v2.4: Adicionado parâmetro criadoPor para rastreamento
    */
   const updateConsultantScore = async (
     result: AIAnalysisResult,
@@ -274,7 +279,8 @@ export const useReportAnalysis = () => {
     users: User[],
     usuariosCliente: UsuarioCliente[],
     clients: Client[],
-    _originalContent?: string // ✅ DEPRECATED: Não usar mais - manter para compatibilidade
+    _originalContent?: string, // ✅ DEPRECATED: Não usar mais - manter para compatibilidade
+    criadoPor?: string // 🆕 v2.4: Nome do usuário que criou o relatório
   ) => {
     try {
       console.log('═══════════════════════════════════════════════════════');
@@ -382,13 +388,13 @@ export const useReportAnalysis = () => {
         
         console.log(`✅ Consultor encontrado no Supabase: ${exactMatch.nome_consultores} (ID: ${exactMatch.id}, Ano: ${exactMatch.ano_vigencia})`);
         // Continuar com o ID do banco
-        await performUpdate(exactMatch.id, result, users, usuariosCliente, clients, setConsultants);
+        await performUpdate(exactMatch.id, result, users, usuariosCliente, clients, setConsultants, undefined, criadoPor);
         return;
       }
       
       console.log(`✅ Consultor encontrado no estado: ${consultant.nome_consultores} (ID: ${consultant.id})`);
       
-      await performUpdate(consultant.id, result, users, usuariosCliente, clients, setConsultants, consultant);
+      await performUpdate(consultant.id, result, users, usuariosCliente, clients, setConsultants, consultant, criadoPor);
       
     } catch (err: any) {
       console.error('═══════════════════════════════════════════════════════');
@@ -401,6 +407,7 @@ export const useReportAnalysis = () => {
   /**
    * ✅ v2.2: Função auxiliar para fazer o UPDATE no banco
    * Separada para permitir reuso com ID do estado local ou ID buscado do Supabase
+   * 🆕 v2.4: Adicionado parâmetro criadoPor para rastreamento
    */
   const performUpdate = async (
     consultantId: number,
@@ -409,7 +416,8 @@ export const useReportAnalysis = () => {
     usuariosCliente: UsuarioCliente[],
     clients: Client[],
     setConsultants: React.Dispatch<React.SetStateAction<Consultant[]>>,
-    localConsultant?: Consultant
+    localConsultant?: Consultant,
+    criadoPor?: string // 🆕 v2.4: Nome do usuário que criou o relatório
   ) => {
     // Preparar campo do mês (parecer_1_consultor, parecer_2_consultor, etc)
     const monthField = `parecer_${result.reportMonth}_consultor`;
@@ -512,7 +520,8 @@ export const useReportAnalysis = () => {
         recommendations: JSON.stringify(newReport.recommendations),
         content: newReport.content,
         generated_by: newReport.generatedBy,
-        ai_justification: newReport.aiJustification
+        ai_justification: newReport.aiJustification,
+        criado_por: criadoPor || 'Sistema' // 🆕 v2.4: Quem criou o relatório
       }])
       .select('id');
     

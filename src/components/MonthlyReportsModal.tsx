@@ -1,5 +1,7 @@
 // src/components/MonthlyReportsModal.tsx
-// ✅ VERSÃO CORRIGIDA - Exibe conteúdo original do relatório (não apenas resumo)
+// ✅ VERSÃO 2.0 - Exibe conteúdo original, Criado/Alterado por, Botão Editar (mês atual)
+// 🆕 v2.0: Adicionado "Criado por" e "Alterado por" no rodapé
+// 🆕 v2.0: Botão Editar visível apenas para relatórios do mês corrente
 
 import React from 'react';
 import { Consultant, ConsultantReport } from '@/types';
@@ -9,6 +11,8 @@ interface MonthlyReportsModalProps {
   month: number;
   reports: ConsultantReport[];
   onClose: () => void;
+  onEdit?: (report: ConsultantReport) => void; // 🆕 Callback para edição
+  currentUserName?: string; // 🆕 Nome do usuário atual (para edição)
 }
 
 const months = [
@@ -16,7 +20,35 @@ const months = [
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
 ];
 
-const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ consultant, month, reports, onClose }) => {
+const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ 
+    consultant, 
+    month, 
+    reports, 
+    onClose,
+    onEdit,
+    currentUserName 
+}) => {
+
+    // 🆕 v2.0: Verificar se relatório é do mês atual (pode editar)
+    const isCurrentMonth = (reportMonth: number | undefined, reportYear: number | undefined): boolean => {
+        if (!reportMonth || !reportYear) return false;
+        const now = new Date();
+        return reportMonth === (now.getMonth() + 1) && reportYear === now.getFullYear();
+    };
+
+    // 🆕 v2.0: Formatar data curta (dd/mm/yy)
+    const formatShortDate = (dateString: string | undefined) => {
+        if (!dateString) return null;
+        try {
+            return new Date(dateString).toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: '2-digit'
+            });
+        } catch {
+            return null;
+        }
+    };
 
     // ✅ CORREÇÃO: Formatar data de criação do registro
     const formatCreatedDate = (dateString: string | undefined) => {
@@ -149,6 +181,37 @@ const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ consultant, m
                                                 <p className="text-red-600 mt-1">{report.predictive_alert}</p>
                                             </div>
                                         )}
+
+                                        {/* 🆕 v2.0: Rodapé com Criado por / Alterado por / Botão Editar */}
+                                        <div className="mt-4 pt-3 border-t border-gray-200 flex flex-wrap justify-between items-center gap-2">
+                                            <div className="text-xs text-gray-500 space-y-1">
+                                                {/* Criado por */}
+                                                {(report.criado_por || report.created_at) && (
+                                                    <p>
+                                                        <span className="font-medium">Criado por:</span>{' '}
+                                                        {report.criado_por || 'Sistema'} 
+                                                        {report.created_at && ` em ${formatShortDate(report.created_at)}`}
+                                                    </p>
+                                                )}
+                                                {/* Alterado por */}
+                                                {report.alterado_por && report.data_alteracao && (
+                                                    <p>
+                                                        <span className="font-medium">Alterado por:</span>{' '}
+                                                        {report.alterado_por} em {formatShortDate(report.data_alteracao)}
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            {/* Botão Editar - só aparece no mês atual */}
+                                            {onEdit && isCurrentMonth(reportMonth, reportYear) && (
+                                                <button
+                                                    onClick={() => onEdit(report)}
+                                                    className="px-3 py-1.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-lg hover:bg-amber-200 transition flex items-center gap-1"
+                                                >
+                                                    ✏️ Editar
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 );
                             })}

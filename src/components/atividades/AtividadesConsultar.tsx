@@ -1,3 +1,11 @@
+/**
+ * AtividadesConsultar.tsx - Consulta de Relatórios de Atividades
+ * 
+ * 🆕 v2.4: Ordenação por data mais recente (21/01/2026)
+ * - Relatórios ordenados por data de criação (descendente)
+ * - Suporte a edição de relatórios via onEdit callback
+ */
+
 import React, { useState, useMemo } from 'react';
 import { Client, Consultant, UsuarioCliente, ConsultantReport, RiskScore } from '@/types';
 import MonthlyReportsModal from './MonthlyReportsModal';
@@ -7,6 +15,8 @@ interface AtividadesConsultarProps {
     consultants: Consultant[];
     usuariosCliente: UsuarioCliente[];
     loadConsultantReports?: (consultantId: number) => Promise<ConsultantReport[]>;
+    onEditReport?: (report: ConsultantReport) => void; // 🆕 v2.4: Callback para edição
+    currentUserName?: string; // 🆕 v2.4: Nome do usuário atual
 }
 
 const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
@@ -14,6 +24,8 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     consultants,
     usuariosCliente,
     loadConsultantReports,
+    onEditReport, // 🆕 v2.4
+    currentUserName, // 🆕 v2.4
 }) => {
     const [selectedClient, setSelectedClient] = useState<string>('all');
     const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
@@ -244,6 +256,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     };
 
     // ✅ LAZY LOADING: Carrega relatórios apenas quando o usuário clica
+    // 🆕 v2.4: Ordenação por data mais recente
     const handleCircleClick = async (consultant: Consultant, month: number) => {
         if (!loadConsultantReports) {
             console.warn('loadConsultantReports não disponível');
@@ -263,10 +276,16 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                 (r as any).month === month && (r as any).year === selectedYear
             );
             
-            console.log(`✅ ${monthReports.length} relatório(s) encontrado(s)`);
+            // 🆕 v2.4: Ordenar por data mais recente (descendente)
+            const sortedReports = [...monthReports].sort((a: any, b: any) => 
+                new Date(b.created_at || b.createdAt || 0).getTime() - 
+                new Date(a.created_at || a.createdAt || 0).getTime()
+            );
             
-            if (monthReports.length > 0) {
-                setModalData({ consultant, month, reports: monthReports });
+            console.log(`✅ ${sortedReports.length} relatório(s) encontrado(s)`);
+            
+            if (sortedReports.length > 0) {
+                setModalData({ consultant, month, reports: sortedReports });
                 setShowModal(true);
             } else {
                 // Mostrar modal vazio ou alerta
@@ -429,6 +448,8 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                     month={modalData.month}
                     reports={modalData.reports}
                     onClose={() => setShowModal(false)}
+                    onEdit={onEditReport} // 🆕 v2.4
+                    currentUserName={currentUserName} // 🆕 v2.4
                 />
             )}
         </>
