@@ -7,12 +7,15 @@
  * - Indicador de analistas atribuídos
  * - Estatísticas de candidatos por analista
  * 
- * Versão: 2.1 - Fix: colunas prioridade/data_abertura não existem
- * Data: 06/01/2026
+ * 🆕 v2.2: Alteração de Status
+ *       - Removido: "Em Seleção" 
+ *       - Adicionado: "Perdida" (entre Finalizada e Cancelada)
  * 
  * v2.1: Corrigido erro "column vagas.prioridade does not exist"
  *       - Substituído prioridade por urgente (boolean)
  *       - Substituído data_abertura por criado_em
+ * 
+ * Data: 21/01/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -25,8 +28,8 @@ interface Vaga {
   status: string;
   cliente_id: number;
   cliente_nome?: string;
-  urgente?: boolean;  // ✅ CORRIGIDO: era prioridade (string)
-  criado_em?: string;  // ✅ CORRIGIDO: era data_abertura
+  urgente?: boolean;
+  criado_em?: string;
   total_candidatos?: number;
   analistas_count?: number;
 }
@@ -43,12 +46,13 @@ interface PipelineProps {
   currentUserId?: number;
 }
 
-// Colunas do Pipeline
+// 🆕 v2.2: Colunas do Pipeline ATUALIZADAS
+// Removido: em_selecao | Adicionado: perdida
 const COLUNAS_PIPELINE = [
   { status: 'aberta', titulo: '📂 Abertas', cor: 'bg-blue-500' },
   { status: 'em_andamento', titulo: '🔄 Em Andamento', cor: 'bg-yellow-500' },
-  { status: 'em_selecao', titulo: '👥 Em Seleção', cor: 'bg-purple-500' },
   { status: 'finalizada', titulo: '✅ Finalizadas', cor: 'bg-green-500' },
+  { status: 'perdida', titulo: '😔 Perdidas', cor: 'bg-orange-500' },
   { status: 'cancelada', titulo: '❌ Canceladas', cor: 'bg-red-500' }
 ];
 
@@ -153,56 +157,42 @@ const Pipeline: React.FC<PipelineProps> = ({ currentUserId }) => {
       key={vaga.id}
       className="bg-white rounded-lg shadow-sm border p-4 mb-3 hover:shadow-md transition-shadow"
     >
-      {/* Header */}
-      <div className="flex justify-between items-start mb-2">
-        <h4 className="font-medium text-gray-800 text-sm line-clamp-2">
-          {vaga.titulo}
-        </h4>
+      {/* Título e Cliente */}
+      <div className="mb-2">
+        <h4 className="font-medium text-gray-800 text-sm line-clamp-2">{vaga.titulo}</h4>
+        <p className="text-xs text-gray-500 mt-1">{vaga.cliente_nome || 'Sem cliente'}</p>
+      </div>
+
+      {/* Indicadores */}
+      <div className="flex items-center justify-between text-xs text-gray-600 mb-3">
+        <span className="flex items-center gap-1">
+          👥 {vaga.total_candidatos} candidatos
+        </span>
         {vaga.urgente && (
-          <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded">
+          <span className="bg-red-100 text-red-600 px-2 py-0.5 rounded">
             🔥 Urgente
           </span>
         )}
       </div>
 
-      {/* Cliente */}
-      <p className="text-xs text-gray-500 mb-3">
-        {vaga.cliente_nome || 'Cliente não informado'}
-      </p>
-
-      {/* Stats */}
-      <div className="flex gap-4 text-xs text-gray-600 mb-3">
-        <span title="Total de candidatos">
-          👤 {vaga.total_candidatos} candidatos
-        </span>
-        <span title="Analistas atribuídos">
-          👥 {vaga.analistas_count} analistas
-        </span>
-      </div>
-
       {/* Analistas atribuídos */}
       {vaga.analistas && vaga.analistas.length > 0 && (
-        <div className="mb-3 p-2 bg-indigo-50 rounded text-xs">
-          <div className="font-medium text-indigo-700 mb-1">Distribuição:</div>
-          <div className="flex flex-wrap gap-1">
-            {vaga.analistas.map(a => (
-              <span 
-                key={a.id}
-                className="bg-white px-2 py-0.5 rounded border border-indigo-200"
-                title={`${a.candidatos_atribuidos} candidatos atribuídos`}
-              >
-                {a.nome.split(' ')[0]} ({a.candidatos_atribuidos})
-              </span>
-            ))}
-          </div>
+        <div className="mb-3 p-2 bg-gray-50 rounded text-xs">
+          <p className="font-medium text-gray-700 mb-1">Analistas:</p>
+          {vaga.analistas.map(a => (
+            <div key={a.id} className="flex justify-between text-gray-600">
+              <span>{a.nome}</span>
+              <span className="text-indigo-600">{a.candidatos_atribuidos} CVs</span>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* Botão Distribuição */}
+      {/* Botão de Distribuição */}
       <button
         onClick={() => handleAbrirDistribuicao(vaga)}
-        className={`w-full py-2 rounded text-sm font-medium transition-colors ${
-          vaga.analistas_count > 0
+        className={`w-full py-2 px-3 rounded text-sm font-medium transition-colors ${
+          vaga.analistas_count > 0 
             ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
             : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
         }`}

@@ -1,8 +1,12 @@
 /**
  * aprovar.ts - API para registrar aprovação/reprovação de candidatura
  * 
+ * 🆕 v2.1: Removido status 'em_selecao' dos mapeamentos
+ *       - 'agendado' agora mapeia para 'em_andamento' (não mais em_selecao)
+ * 
  * Data: 07/01/2026 - CORRIGIDO (lazy initialization)
  * Data: 12/01/2026 - CORRIGIDO: Agora atualiza status_posicao da VAGA conforme decisão
+ * Data: 21/01/2026 - Removido status em_selecao
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -154,11 +158,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       'aguardando_resposta': 'aguardando_cliente'
     };
 
-    // 🆕 CORRIGIDO: Mapear decisão para status geral da VAGA (Pipeline usa este campo!)
+    // 🆕 v2.1: CORRIGIDO - Mapear decisão para status geral da VAGA (Pipeline usa este campo!)
+    // Removido: 'em_selecao' - agora 'agendado' usa 'em_andamento'
     const statusGeralVagaMap: { [key: string]: string | null } = {
       'aprovado': 'finalizada',            // Vaga preenchida!
       'reprovado': null,                   // Não muda - outros podem concorrer
-      'agendado': 'em_selecao',            // 🆕 CORRIGIDO: Entrevista = Em Seleção no Pipeline
+      'agendado': 'em_andamento',          // 🆕 CORRIGIDO: Entrevista = Em Andamento no Pipeline
       'em_analise': null,                  // Não muda
       'aguardando_resposta': null          // Não muda
     };

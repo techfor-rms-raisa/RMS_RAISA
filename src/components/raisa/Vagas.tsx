@@ -1,8 +1,14 @@
 /**
- * Vagas.tsx - RMS RAISA v58.2
+ * Vagas.tsx - RMS RAISA v58.3
  * Componente de Gestão de Vagas
  * 
- * 🆕 v58.2: Botão "Minhas Vagas"
+ * 🆕 v58.3: Revisão de Status + Permissões Gestão Comercial
+ *        - Removido: status "Em Seleção" de todas as interfaces
+ *        - Adicionado: status "Perdida" (entre Finalizada e Cancelada)
+ *        - Liberado: Botões Editar/Excluir para perfil "Gestão Comercial"
+ *        - Nova função podeEditarVagas() em permissions.ts
+ * 
+ * v58.2: Botão "Minhas Vagas"
  *        - Botão azul ao lado de "+ Nova Vaga"
  *        - Filtra vagas onde o analista logado está associado
  *        - Contador de vagas no botão
@@ -48,7 +54,7 @@ import CVMatchingPanel from './CVMatchingPanel';
 import VagaSugestoesIA from './VagaSugestoesIA';
 import { Wand2, Loader2, Plus, X, ChevronDown, ChevronUp, Eye, Users, Calendar, User as UserIcon, Briefcase, MapPin, DollarSign, Clock, FileText, CheckCircle, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
-import { podeInserirVagas, isReadOnly } from '../../utils/permissions';
+import { podeInserirVagas, isReadOnly, podeEditarVagas } from '../../utils/permissions';
 import { supabase } from '../../config/supabase';
 
 // Interface para candidatura com dados expandidos
@@ -153,6 +159,9 @@ const Vagas: React.FC<VagasProps> = ({
     const { user } = useAuth();
     const podeInserir = user ? podeInserirVagas(user.tipo_usuario) : false;
     const apenasLeitura = user ? isReadOnly(user.tipo_usuario, 'raisa') : true;
+    
+    // 🆕 v58.3: Permissão para editar vagas (inclui Gestão Comercial)
+    const podeEditar = user ? podeEditarVagas(user.tipo_usuario) : false;
 
     // Estados do modal
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -855,7 +864,7 @@ const Vagas: React.FC<VagasProps> = ({
                         </select>
                     </div>
 
-                    {/* 🆕 Filtro por Status */}
+                    {/* 🆕 Filtro por Status - v58.3: Removido Em Seleção, adicionado Perdida */}
                     <div className="min-w-[180px]">
                         <label className="text-xs font-semibold text-gray-500 uppercase">Status da Vaga</label>
                         <select
@@ -866,8 +875,8 @@ const Vagas: React.FC<VagasProps> = ({
                             <option value="">Todas</option>
                             <option value="aberta">📂 Aberta</option>
                             <option value="em_andamento">🔄 Em Andamento</option>
-                            <option value="em_selecao">👥 Em Seleção</option>
                             <option value="finalizada">✅ Finalizada</option>
+                            <option value="perdida">😔 Perdida</option>
                             <option value="cancelada">❌ Cancelada</option>
                         </select>
                     </div>
@@ -1101,8 +1110,8 @@ const Vagas: React.FC<VagasProps> = ({
                                         >
                                             🎯 Priorizar
                                         </button>
-                                        {/* 🆕 v57.0: Botões de edição apenas para quem pode */}
-                                        {!apenasLeitura && (
+                                        {/* 🆕 v58.3: Botões de edição - inclui Gestão Comercial */}
+                                        {podeEditar && (
                                             <>
                                                 <button onClick={() => openModal(vaga)} className="text-blue-600 hover:underline text-sm">Editar</button>
                                                 {/* 🆕 Excluir apenas no dia da criação */}
@@ -1240,8 +1249,8 @@ const Vagas: React.FC<VagasProps> = ({
                                             >
                                                 <option value="aberta">Aberta</option>
                                                 <option value="em_andamento">Em Andamento</option>
-                                                <option value="pausada">Pausada</option>
-                                                <option value="fechada">Fechada</option>
+                                                <option value="finalizada">Finalizada</option>
+                                                <option value="perdida">Perdida</option>
                                                 <option value="cancelada">Cancelada</option>
                                             </select>
                                         </div>
@@ -1872,7 +1881,8 @@ const Vagas: React.FC<VagasProps> = ({
                                     )}
                                 </div>
                                 <div className="flex gap-2">
-                                    {!apenasLeitura && (
+                                    {/* 🆕 v58.3: Botão editar - inclui Gestão Comercial */}
+                                    {podeEditar && (
                                         <button
                                             onClick={() => {
                                                 setVagaVisualizacao(null);

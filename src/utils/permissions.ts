@@ -1,9 +1,10 @@
 /**
  * permissions.ts - Sistema Centralizado de Permissões
  * 
+ * 🆕 v58.3: Adicionada função podeEditarVagas() para Gestão Comercial
  * 🆕 v57.0: Matriz de Permissões Implementada
  * 
- * Data: 11/01/2026
+ * Data: 21/01/2026
  */
 
 import { UserRole } from '@/types';
@@ -118,6 +119,14 @@ export function podeInserirVagas(perfilLogado: UserRole): boolean {
   return ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'].includes(perfilLogado);
 }
 
+/**
+ * 🆕 v58.3: Verifica se pode EDITAR/EXCLUIR vagas
+ * Gestão Comercial agora pode editar vagas!
+ */
+export function podeEditarVagas(perfilLogado: UserRole): boolean {
+  return ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'].includes(perfilLogado);
+}
+
 export function podeAcessarConfigPriorizacao(perfilLogado: UserRole): boolean {
   return perfilLogado === 'Administrador';
 }
@@ -174,6 +183,8 @@ export function podeTransferirExclusividade(perfilLogado: UserRole): boolean {
 
 export function isReadOnly(perfilLogado: UserRole, modulo: 'rms' | 'raisa'): boolean {
   if (modulo === 'raisa') {
+    // 🆕 v58.3: Gestão Comercial NÃO é mais read-only para vagas
+    // Mas continua read-only para outros módulos RAISA
     return perfilLogado === 'Gestão Comercial';
   }
   
@@ -182,4 +193,16 @@ export function isReadOnly(perfilLogado: UserRole, modulo: 'rms' | 'raisa'): boo
   }
   
   return false;
+}
+
+/**
+ * 🆕 v58.3: Verificar se é Read-Only APENAS para Vagas
+ * Gestão Comercial pode editar vagas, então retorna false
+ */
+export function isReadOnlyVagas(perfilLogado: UserRole): boolean {
+  // Gestão Comercial pode editar vagas!
+  if (perfilLogado === 'Gestão Comercial') return false;
+  
+  // Outros perfis read-only para RAISA continuam read-only
+  return ['Consulta', 'Cliente'].includes(perfilLogado);
 }

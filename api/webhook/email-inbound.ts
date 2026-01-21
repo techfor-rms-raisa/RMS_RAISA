@@ -1,6 +1,9 @@
 /**
  * email-inbound.ts - Webhook para processar emails recebidos via Resend
  * 
+ * 🆕 v58.3: Removido status 'em_selecao' do statusVagaMap
+ *        - 'agendamento' agora mapeia para 'em_andamento' (não mais 'em_selecao')
+ * 
  * FLUXO:
  * 1. Resend recebe email em raisa@techfortirms.online
  * 2. Resend dispara webhook para esta API
@@ -993,11 +996,12 @@ async function processarRespostaCliente(
     'duvida': 'aguardando_cliente'
   };
 
-  // 🆕 CORRIGIDO: Mapear tipo de resposta para status da VAGA (Pipeline usa este!)
+  // 🆕 v58.3: Mapear tipo de resposta para status da VAGA (Pipeline usa este!)
+  // NOTA: Removido status 'em_selecao' - agora usa 'em_andamento'
   const statusVagaMap: Record<string, string | null> = {
     'visualizado': null,              // Não muda
     'em_analise': null,               // Não muda
-    'agendamento': 'em_selecao',      // 🆕 CORRIGIDO: Entrevista = Em Seleção no Pipeline
+    'agendamento': 'em_andamento',    // 🆕 v58.3: Entrevista = Em Andamento (removido em_selecao)
     'aprovado': 'finalizada',         // 🆕 Vaga finalizada com sucesso!
     'reprovado': null,                // Não muda - outros candidatos podem concorrer
     'duvida': null                    // Não muda
