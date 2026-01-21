@@ -161,7 +161,8 @@ const App: React.FC = () => {
   };
 
   const handleAnalysisComplete = (results: AIAnalysisResult[]) => {
-      results.forEach(result => updateConsultantScore(result));
+      // 🆕 v2.4: Passa nome do usuário logado para rastreamento
+      results.forEach(result => updateConsultantScore(result, undefined, currentUser?.nome_usuario));
   };
 
   // ============================================
@@ -195,8 +196,9 @@ const App: React.FC = () => {
           console.log(`✅ ${results.length} relatório(s) analisado(s). Atualizando consultores...`);
           
           // ✅ CORREÇÃO v2.1: Atualizar score de cada consultor passando o texto original
+          // 🆕 v2.4: Passa nome do usuário logado para rastreamento
           for (const result of results) {
-              await updateConsultantScore(result, text); // ✅ Passa texto original
+              await updateConsultantScore(result, text, currentUser?.nome_usuario);
           }
           
           alert(`✅ Análise concluída com sucesso!\n\n${results.length} consultor(es) atualizado(s).\n\nVerifique o Dashboard para ver os resultados.`);

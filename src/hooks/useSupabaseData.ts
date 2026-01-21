@@ -2,8 +2,9 @@
  * useSupabaseData Hook - ORQUESTRADOR PRINCIPAL
  * Combina todos os hooks modulares para manter compatibilidade com o código existente
  * 
- * Versão: 3.1 - Modularizado + Bug Fix Data Relatório
+ * Versão: 3.2 - Rastreamento Criado Por (21/01/2026)
  * 
+ * 🆕 v3.2: updateConsultantScore aceita criadoPor para rastreamento
  * ✅ CORREÇÃO: Passa mês/ano extraídos para processReportAnalysis
  * 
  * ESTRUTURA DE MÓDULOS:
@@ -156,9 +157,14 @@ export const useSupabaseData = () => {
   // ============================================
   // WRAPPER PARA updateConsultantScore
   // ✅ v2.1: Aceita originalContent para salvar texto original do relatório
+  // 🆕 v2.4: Aceita criadoPor para rastrear quem criou o relatório
   // ============================================
   
-  const updateConsultantScore = async (result: AIAnalysisResult, originalContent?: string) => {
+  const updateConsultantScore = async (
+    result: AIAnalysisResult, 
+    originalContent?: string,
+    criadoPor?: string // 🆕 v2.4: Nome do usuário que criou o relatório
+  ) => {
     return reportAnalysisHook.updateConsultantScore(
       result,
       consultantsHook.consultants,
@@ -166,7 +172,8 @@ export const useSupabaseData = () => {
       usersHook.users,
       gestoresHook.usuariosCliente,
       clientsHook.clients,
-      originalContent // ✅ NOVO: Passa texto original
+      originalContent, // ✅ Passa texto original
+      criadoPor // 🆕 v2.4: Passa nome do criador
     );
   };
 
