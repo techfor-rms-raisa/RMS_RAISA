@@ -80,6 +80,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
     
     // ✅ NOVO: Verificar se o ano selecionado permite edição (apenas ano atual)
     const isYearReadOnly = selectedYearFilter < ANO_ATUAL;
+    
     const [formData, setFormData] = useState({
         ano_vigencia: new Date().getFullYear(),
         nome_consultores: '',
@@ -154,7 +155,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                 // ✅ CORREÇÃO v3.0: Formatar datas para input type="date"
                 data_inclusao_consultores: formatDateForInput(editingConsultant.data_inclusao_consultores),
                 data_saida: formatDateForInput(editingConsultant.data_saida),
-                dt_aniversario: formatDateForInput(editingConsultant.dt_aniversario),
+                dt_aniversario: formatDateForInput((editingConsultant as any).dt_aniversario),
                 id_cliente: clientId,
                 gestor_imediato_id: String(editingConsultant.gestor_imediato_id || ''),
                 coordenador_id: editingConsultant.coordenador_id ? String(editingConsultant.coordenador_id) : '',
@@ -165,8 +166,8 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                 id_gestao_de_pessoas: editingConsultant.id_gestao_de_pessoas || '',
                 valor_faturamento: editingConsultant.valor_faturamento?.toString() || '',
                 valor_pagamento: editingConsultant.valor_pagamento?.toString() || '',
-                cnpj_consultor: editingConsultant.cnpj_consultor || '',
-                empresa_consultor: editingConsultant.empresa_consultor || '',
+                cnpj_consultor: (editingConsultant as any).cnpj_consultor || '',
+                empresa_consultor: (editingConsultant as any).empresa_consultor || '',
                 // ✅ NOVOS CAMPOS
                 modalidade_contrato: (editingConsultant as any).modalidade_contrato || 'PJ',
                 substituicao: (editingConsultant as any).substituicao || false,
@@ -348,16 +349,6 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                     ))}
                 </select>
                 
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                    <input
-                        type="text"
-                        placeholder="Buscar consultores..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-                    />
-                </div>
                 <select
                     value={selectedClientFilter}
                     onChange={(e) => setSelectedClientFilter(e.target.value)}
@@ -368,28 +359,35 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                         <option key={client} value={client}>{client}</option>
                     ))}
                 </select>
-                <div className="text-right text-sm text-gray-500 self-center">
+                
+                <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                    <input
+                        type="text"
+                        placeholder="Buscar consultor..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                </div>
+                
+                <div className="text-sm text-gray-500 flex items-center">
                     {filteredConsultants.length} consultor(es) encontrado(s)
+                    {isYearReadOnly && (
+                        <span className="ml-2 px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs flex items-center gap-1">
+                            <Lock className="w-3 h-3" />
+                            Modo Histórico
+                        </span>
+                    )}
                 </div>
             </div>
-            
-            {/* ✅ NOVO: Aviso de modo somente leitura para anos anteriores */}
-            {isYearReadOnly && (
-                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-3">
-                    <Lock className="w-5 h-5 text-amber-600" />
-                    <div>
-                        <p className="text-amber-800 font-medium">Modo Histórico - Somente Leitura</p>
-                        <p className="text-amber-600 text-sm">Registros de {selectedYearFilter} não podem ser alterados. Selecione o ano atual para editar.</p>
-                    </div>
-                </div>
-            )}
 
-            {/* Formulário Modal */}
+            {/* Modal Formulário */}
             {isFormOpen && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-                        <div className="sticky top-0 bg-gradient-to-r from-indigo-600 to-indigo-700 p-6 rounded-t-xl">
-                            <h3 className="text-2xl font-bold text-white">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+                        <div className="sticky top-0 bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-6 rounded-t-xl">
+                            <h3 className="text-2xl font-bold">
                                 {editingConsultant ? 'Editar Consultor' : 'Novo Consultor'}
                             </h3>
                         </div>
@@ -442,21 +440,31 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Data de Nascimento</label>
-                                        <input
-                                            type="date"
-                                            value={formData.dt_aniversario}
-                                            onChange={(e) => setFormData({...formData, dt_aniversario: e.target.value})}
-                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                                        />
-                                    </div>
-                                    <div>
                                         <label className="block text-sm font-medium text-gray-700 mb-1">Cargo *</label>
                                         <input
                                             type="text"
                                             required
                                             value={formData.cargo_consultores}
                                             onChange={(e) => setFormData({...formData, cargo_consultores: e.target.value})}
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Especialidade</label>
+                                        <input
+                                            type="text"
+                                            value={formData.especialidade}
+                                            onChange={(e) => setFormData({...formData, especialidade: e.target.value})}
+                                            placeholder="Ex: Java, Python, SAP..."
+                                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Data de Nascimento</label>
+                                        <input
+                                            type="date"
+                                            value={formData.dt_aniversario}
+                                            onChange={(e) => setFormData({...formData, dt_aniversario: e.target.value})}
                                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                                         />
                                     </div>
@@ -508,15 +516,17 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                             </label>
                                         </div>
                                     </div>
+                                    {/* ✅ CORREÇÃO 1: Label alterado de "É Substituição?" para "Substituição?" */}
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">É Substituição?</label>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Substituição?</label>
                                         <div className="flex items-center gap-4 mt-2">
                                             <label className="flex items-center gap-2 cursor-pointer">
                                                 <input
                                                     type="radio"
                                                     name="substituicao"
                                                     checked={formData.substituicao === false}
-                                                    onChange={() => setFormData({...formData, substituicao: false, nome_substituido: ''})}
+                                                    // ✅ CORREÇÃO 2: Removido "nome_substituido: ''" para preservar o valor
+                                                    onChange={() => setFormData({...formData, substituicao: false})}
                                                     className="w-4 h-4 text-indigo-600"
                                                 />
                                                 <span className="text-sm">Não</span>
@@ -604,14 +614,14 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                             onChange={(e) => setFormData({...formData, id_cliente: e.target.value, gestor_imediato_id: '', coordenador_id: ''})}
                                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                                         >
-                                            <option value="">Selecione...</option>
-                                            {clients.map(c => (
+                                            <option value="">Selecione um cliente...</option>
+                                            {clients.filter(c => c.ativo_cliente).map(c => (
                                                 <option key={c.id} value={c.id}>{c.razao_social_cliente}</option>
                                             ))}
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Gestor *</label>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Gestor Imediato *</label>
                                         <select
                                             required
                                             value={formData.gestor_imediato_id}
@@ -721,14 +731,14 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                                 Motivo do Desligamento *
                                             </label>
                                             <select
-                                                required={formData.status !== 'Ativo'}
+                                                required={(formData.status !== 'Ativo' || !formData.ativo_consultor)}
                                                 value={formData.motivo_desligamento}
                                                 onChange={(e) => setFormData({...formData, motivo_desligamento: e.target.value as TerminationReason})}
                                                 className="w-full px-4 py-2 border border-red-300 rounded-lg focus:ring-2 focus:ring-red-500"
                                             >
-                                                <option value="">Selecione o motivo...</option>
-                                                {TERMINATION_REASONS.map(r => (
-                                                    <option key={r.value} value={r.value}>{r.value}</option>
+                                                <option value="">Selecione um motivo...</option>
+                                                {TERMINATION_REASONS.map(reason => (
+                                                    <option key={reason.value} value={reason.value}>{reason.value}</option>
                                                 ))}
                                             </select>
                                         </div>
@@ -736,7 +746,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                 )}
                             </div>
 
-                            {/* Seção: Financeiro */}
+                            {/* Seção: Valores Financeiros */}
                             <div className="border-b pb-6">
                                 <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
                                     <DollarSign className="w-5 h-5 text-indigo-600" />
@@ -744,22 +754,22 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                 </h4>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Valor Faturamento (R$/hora)</label>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Valor Faturamento/h</label>
                                         <input
                                             type="text"
                                             value={formData.valor_faturamento}
                                             onChange={(e) => setFormData({...formData, valor_faturamento: e.target.value})}
-                                            placeholder="0,00"
+                                            placeholder="R$ 0,00"
                                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Valor Pagamento (R$/hora)</label>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Valor Pagamento/h</label>
                                         <input
                                             type="text"
                                             value={formData.valor_pagamento}
                                             onChange={(e) => setFormData({...formData, valor_pagamento: e.target.value})}
-                                            placeholder="0,00"
+                                            placeholder="R$ 0,00"
                                             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                                         />
                                     </div>
@@ -767,7 +777,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                             </div>
 
                             {/* Seção: Responsáveis Internos */}
-                            <div>
+                            <div className="border-b pb-6">
                                 <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
                                     <UserIcon className="w-5 h-5 text-indigo-600" />
                                     Responsáveis Internos
@@ -861,27 +871,14 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                                             (consultant as any).modalidade_contrato === 'CLT' 
                                                 ? 'bg-blue-100 text-blue-700' 
                                                 : (consultant as any).modalidade_contrato === 'Temporário'
-                                                    ? 'bg-yellow-100 text-yellow-700'
+                                                    ? 'bg-amber-100 text-amber-700'
                                                     : 'bg-purple-100 text-purple-700'
                                         }`}>
                                             {(consultant as any).modalidade_contrato || 'PJ'}
                                         </span>
-                                        {/* ✅ NOVO: Badge de Faturável */}
-                                        {(consultant as any).faturavel === false && (
-                                            <span className="px-2 py-0.5 text-xs rounded-full bg-gray-100 text-gray-700">
-                                                Não Faturável
-                                            </span>
-                                        )}
-                                        {/* ✅ NOVO: Badge de substituição */}
-                                        {(consultant as any).substituicao && (
-                                            <span className="px-2 py-0.5 text-xs rounded-full bg-orange-100 text-orange-700 flex items-center gap-1">
-                                                <RefreshCw className="w-3 h-3" />
-                                                Substituição
-                                            </span>
-                                        )}
                                     </div>
-                                    <p className="text-sm text-gray-600">{consultant.cargo_consultores}</p>
-                                    <div className="flex flex-wrap gap-4 mt-2 text-sm text-gray-500">
+                                    <p className="text-gray-600 mb-2">{consultant.cargo_consultores}</p>
+                                    <div className="flex flex-wrap gap-4 text-sm text-gray-500">
                                         <span className="flex items-center gap-1">
                                             <Building2 className="w-4 h-4" />
                                             {getClientName(consultant)}
