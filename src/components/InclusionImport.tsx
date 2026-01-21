@@ -174,8 +174,20 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== NOME DO PROFISSIONAL =====
-                if (cleanLine.startsWith('NOME:') && inDadosProfissional) {
-                    consultantName = cleanLine.replace('NOME:', '').trim();
+                // Capturar NOME: mas ignorar "NOME DO BANCO", "NOME SOLICITANTE", etc.
+                if (cleanLine.startsWith('NOME:') && 
+                    !cleanLine.includes('BANCO') && 
+                    !cleanLine.includes('SOLICITANTE') &&
+                    !cleanLine.includes('SUBSTITUÍDO')) {
+                    const nomePotencial = cleanLine.replace('NOME:', '').trim();
+                    // Ignorar nomes que parecem ser de outras seções
+                    if (nomePotencial && 
+                        nomePotencial.length > 3 && 
+                        !nomePotencial.includes('Elaine') && // Nome de emergência
+                        !nomePotencial.match(/^[A-Z]{2,}$/)) { // Não é sigla
+                        consultantName = nomePotencial;
+                        console.log(`✅ Nome do consultor extraído: ${consultantName}`);
+                    }
                 }
                 
                 // ===== FUNÇÃO =====
@@ -328,35 +340,9 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // ===== 🔧 FIX v1.0: OBSERVAÇÕES =====
-                if (cleanLine.match(/^OBSERVA[ÇC][ÕO]ES:?$/i)) {
-                    console.log(`🔍 Encontrado label OBSERVAÇÕES na linha ${i}`);
-                    
-                    let obs = '';
-                    let j = i + 1;
-                    
-                    // Capturar todas as linhas até encontrar delimitador
-                    while (j < lines.length) {
-                        const nextObs = lines[j].trim();
-                        
-                        // Parar se encontrar seção seguinte
-                        if (nextObs.match(/^(EQUIPAMENTOS|NOTEBOOK|SMARTPHONE|DATA EMISSÃO|RECURSOS HUMANOS)$/i)) {
-                            break;
-                        }
-                        
-                        if (nextObs && nextObs.length > 0 && nextObs !== 'XXX') {
-                            obs += (obs ? ' ' : '') + nextObs;
-                        }
-                        j++;
-                    }
-                    
-                    obs = obs.replace(/\s+/g, ' ').trim();
-                    
-                    if (obs && obs.length > 10) {
-                        observacoesStr = obs;
-                        console.log(`✅ Observações extraídas (${obs.length} chars): ${observacoesStr.substring(0, 100)}...`);
-                    }
-                }
+                // ===== 🔧 FIX v1.1: OBSERVAÇÕES =====
+                // NÃO usar extração por label aqui - usar apenas fallback por padrões
+                // porque a estrutura do PDF mistura seções
                 
                 // ===== RECURSOS HUMANOS =====
                 if (cleanLine === 'RECURSOS HUMANOS') {
@@ -385,7 +371,35 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
 
-            // ===== 🔧 FIX v1.0: FALLBACKS MELHORADOS =====
+            // ===== 🔧 FIX v1.1: FALLBACKS MELHORADOS =====
+            
+            // Fallback para NOME DO CONSULTOR
+            if (!consultantName) {
+                console.log('🔄 Tentando fallback para nome do consultor...');
+                
+                // Método 1: Buscar "NOME:" seguido de nome próprio (não banco, não solicitante)
+                const nomeMatch = text.match(/NOME:\s*([A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+)+)/);
+                if (nomeMatch) {
+                    const nomePotencial = nomeMatch[1].trim();
+                    // Validar que não é outro tipo de NOME
+                    if (nomePotencial.length > 5 && 
+                        !nomePotencial.includes('Banco') &&
+                        !nomePotencial.includes('Fernando') && // Nome do solicitante
+                        !nomePotencial.includes('Elaine')) { // Nome de emergência
+                        consultantName = nomePotencial;
+                        console.log(`✅ Nome do consultor extraído (fallback): ${consultantName}`);
+                    }
+                }
+                
+                // Método 2: Buscar após "DADOS DO PROFISSIONAL"
+                if (!consultantName) {
+                    const dadosProfMatch = text.match(/DADOS DO PROFISSIONAL[\s\S]*?NOME:\s*([A-Za-zÀ-ÿ\s]+?)(?=DT|LOCAL|EMPRESA|CPF|\n[A-Z]{2,}:)/i);
+                    if (dadosProfMatch && dadosProfMatch[1]) {
+                        consultantName = dadosProfMatch[1].trim();
+                        console.log(`✅ Nome do consultor extraído (seção DADOS): ${consultantName}`);
+                    }
+                }
+            }
             
             // Fallback para EMAIL
             if (!emailStr) {
@@ -435,40 +449,41 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // 🔧 FIX v1.0: Fallback MELHORADO para OBSERVAÇÕES
+            // 🔧 FIX v1.1: Fallback MELHORADO para OBSERVAÇÕES
+            // Usar APENAS padrões específicos - não usar seção genérica
             if (!observacoesStr) {
-                console.log('🔄 Tentando fallback para observações...');
+                console.log('🔄 Extraindo observações por padrões específicos...');
                 
-                // Método 1: Buscar texto típico de observações
+                // Padrões típicos de observações na Ficha de Inclusão
                 const obsPatterns = [
                     /ATUARÁ[^.]+\./gi,
                     /GESTÃO DE PESSOAS FAVOR[^.]+\./gi,
-                    /UTILIZARÁ[^.]+\./gi
+                    /UTILIZARÁ[^.]+\./gi,
+                    /HORÁRIO DE TRABALHO[^.]+\./gi,
+                    /EM CASO DE[^.]+\./gi
                 ];
                 
                 let obsTextos: string[] = [];
                 for (const pattern of obsPatterns) {
                     const matches = text.match(pattern);
                     if (matches) {
-                        obsTextos.push(...matches);
+                        for (const match of matches) {
+                            // Filtrar matches que não são observações reais
+                            if (!match.includes('NOTEBOOK') && 
+                                !match.includes('SMARTPHONE') &&
+                                !match.includes('CERTIFICAÇÃO') &&
+                                match.length > 20) {
+                                obsTextos.push(match.trim());
+                            }
+                        }
                     }
                 }
                 
                 if (obsTextos.length > 0) {
-                    observacoesStr = obsTextos.join(' ').replace(/\s+/g, ' ').trim();
+                    // Remover duplicatas e juntar
+                    const uniqueObs = [...new Set(obsTextos)];
+                    observacoesStr = uniqueObs.join(' ').replace(/\s+/g, ' ').trim();
                     console.log(`✅ Observações extraídas (padrões): ${observacoesStr.substring(0, 100)}...`);
-                }
-                
-                // Método 2: Buscar após "OBSERVAÇÕES:" até encontrar delimitador
-                if (!observacoesStr) {
-                    const obsMatch = text.match(/OBSERVA[ÇC][ÕO]ES:?\s*([^]+?)(?=EQUIPAMENTOS|NOTEBOOK|DATA EMISSÃO|RECURSOS HUMANOS|$)/i);
-                    if (obsMatch && obsMatch[1]) {
-                        const obsText = obsMatch[1].trim();
-                        if (obsText.length > 20) {
-                            observacoesStr = obsText.replace(/\s+/g, ' ').trim().substring(0, 500);
-                            console.log(`✅ Observações extraídas (seção): ${observacoesStr.substring(0, 100)}...`);
-                        }
-                    }
                 }
             }
             
