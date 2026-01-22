@@ -1,9 +1,12 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v1.0
+ * VERSÃO: Fix v1.1 - 22/01/2026
  * 
  * CORREÇÕES:
+ * - ✅ v1.1: ano_vigencia agora usa ANO ATUAL (new Date().getFullYear()) em vez do ano da data do PDF
+ *   → Resolve erro 409 "duplicate key violates unique constraint consultants_cpf_ano_unique"
+ *   → Permite reinserir consultores que existiam em anos anteriores
  * - Melhorada extração de VALOR (valor_pagamento) para formato brasileiro (R$ X.XXX,XX)
  * - Melhorada extração de OBSERVAÇÕES com múltiplos fallbacks
  * - Adicionados logs detalhados para debug
@@ -701,8 +704,10 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            const startDateObj = new Date(startDate);
-            const anoVigencia = startDateObj.getFullYear();
+            // ✅ CORREÇÃO v1.1: Usar ANO ATUAL para permitir reinserção de consultores de anos anteriores
+            // A constraint UNIQUE é (cpf, ano_vigencia), então um consultor de 2025 pode ser inserido em 2026
+            const anoVigencia = new Date().getFullYear();
+            console.log(`📅 Ano vigência definido como ANO ATUAL: ${anoVigencia}`);
 
             // ===== CONSTRUCT DATA =====
             const newConsultantData = {
