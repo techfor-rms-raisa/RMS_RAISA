@@ -1,11 +1,15 @@
 /**
- * RelatorioVagasTab.tsx - RMS RAISA v1.0
+ * RelatorioVagasTab.tsx - RMS RAISA v1.1
  * Componente de Relatório de Vagas com Candidaturas
  * 
  * Funcionalidades:
  * - Visualização em lista das vagas com candidaturas expandidas (sublinha sempre visível)
  * - Filtros: Status, Período, Cliente, Analista R&S
  * - Exportação PDF e XLS
+ * 
+ * v1.1 (26/01/2026):
+ * - Corrigido: Import do jspdf-autotable para funcionar corretamente
+ * - Corrigido: Filtro de Analistas mostra apenas tipo_usuario = 'Analista de R&S'
  * 
  * Data: 26/01/2026
  */
@@ -21,7 +25,7 @@ import { Vaga, Client } from '../../types/types_index';
 import { supabase } from '../../config/supabase';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 
 // ============================================
 // TIPOS
@@ -132,11 +136,12 @@ const RelatorioVagasTab: React.FC<RelatorioVagasTabProps> = ({
   const carregarDados = async () => {
     setLoading(true);
     try {
-      // 1. Carregar analistas
+      // 1. Carregar analistas - APENAS tipo_usuario = 'Analista de R&S'
       const { data: analistasData } = await supabase
         .from('app_users')
         .select('id, nome_usuario')
-        .in('tipo_usuario', ['Administrador', 'Gestão de R&S', 'Analista de R&S'])
+        .eq('tipo_usuario', 'Analista de R&S')
+        .eq('ativo_usuario', true)
         .order('nome_usuario');
 
       if (analistasData) {
@@ -428,7 +433,7 @@ const RelatorioVagasTab: React.FC<RelatorioVagasTabProps> = ({
       });
 
       // Gerar tabela
-      (doc as any).autoTable({
+      autoTable(doc, {
         startY: 35,
         head: [['', 'Vaga / Candidato', 'Status', 'Data', 'Analista R&S', 'Tipo', 'Urg.']],
         body: tableData,
