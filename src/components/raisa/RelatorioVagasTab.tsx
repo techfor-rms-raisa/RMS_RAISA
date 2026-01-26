@@ -1,11 +1,17 @@
 /**
- * RelatorioVagasTab.tsx - RMS RAISA v1.1
+ * RelatorioVagasTab.tsx - RMS RAISA v1.2
  * Componente de Relatório de Vagas com Candidaturas
  * 
  * Funcionalidades:
  * - Visualização em lista das vagas com candidaturas expandidas (sublinha sempre visível)
  * - Filtros: Status, Período, Cliente, Analista R&S
  * - Exportação PDF e XLS
+ * - Paginação com 20 vagas por página
+ * 
+ * v1.2 (26/01/2026):
+ * - Corrigido: Caracteres especiais/emojis no PDF substituídos por texto ASCII
+ * - Adicionado: Paginação com 20 vagas por página
+ * - Adicionado: Navegação << < > >> no rodapé
  * 
  * v1.1 (26/01/2026):
  * - Corrigido: Import do jspdf-autotable para funcionar corretamente
@@ -19,7 +25,7 @@ import {
   FileText, Download, Filter, Calendar, Building2, User, 
   Briefcase, AlertCircle, CheckCircle, Clock, XCircle,
   ChevronDown, ChevronUp, Loader2, FileSpreadsheet, Printer,
-  Users, Zap, RefreshCw
+  Users, Zap, RefreshCw, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight
 } from 'lucide-react';
 import { Vaga, Client } from '../../types/types_index';
 import { supabase } from '../../config/supabase';
@@ -125,6 +131,9 @@ const RelatorioVagasTab: React.FC<RelatorioVagasTabProps> = ({
   const [dataInicio, setDataInicio] = useState<string>('');
   const [dataFim, setDataFim] = useState<string>('');
 
+  // 🆕 Estado de paginação
+  const [paginaAtual, setPaginaAtual] = useState<number>(1);
+  const ITENS_POR_PAGINA = 20;
   // ============================================
   // CARREGAR DADOS
   // ============================================
@@ -392,7 +401,7 @@ const RelatorioVagasTab: React.FC<RelatorioVagasTabProps> = ({
       // Título
       doc.setFontSize(18);
       doc.setFont('helvetica', 'bold');
-      doc.text('Relatório de Vagas e Candidaturas', pageWidth / 2, 15, { align: 'center' });
+      doc.text('Relatorio de Vagas e Candidaturas', pageWidth / 2, 15, { align: 'center' });
       
       // Subtítulo com data
       doc.setFontSize(10);
@@ -407,21 +416,21 @@ const RelatorioVagasTab: React.FC<RelatorioVagasTabProps> = ({
       const tableData: any[] = [];
 
       vagasFiltradas.forEach(vaga => {
-        // Linha da vaga
+        // Linha da vaga (sem emojis)
         tableData.push([
-          { content: '📁', styles: { fontStyle: 'bold' } },
+          { content: '[V]', styles: { fontStyle: 'bold' } },
           { content: vaga.titulo, styles: { fontStyle: 'bold' } },
           STATUS_VAGA_CONFIG[vaga.status]?.label || vaga.status,
           vaga.criado_em ? new Date(vaga.criado_em).toLocaleDateString('pt-BR') : '-',
           vaga.analistas_nomes?.join(', ') || '-',
-          vaga.status_posicao === 'substituicao' ? 'Subst.' : 'Nova',
-          vaga.urgente ? '⚡' : ''
+          vaga.tipo_de_vaga === 'Substituicao' ? 'Subst.' : 'Nova',
+          vaga.urgente ? 'SIM' : ''
         ]);
 
         // Linhas das candidaturas
         vaga.candidaturas.forEach(cand => {
           tableData.push([
-            { content: '  └─', styles: { textColor: [150, 150, 150] } },
+            { content: '  |--', styles: { textColor: [150, 150, 150] } },
             { content: cand.candidato_nome || cand.pessoa?.nome || '-', styles: { textColor: [80, 80, 80] } },
             STATUS_CANDIDATURA_CONFIG[cand.status]?.label || cand.status,
             cand.created_at ? new Date(cand.created_at).toLocaleDateString('pt-BR') : '-',
@@ -487,7 +496,26 @@ const RelatorioVagasTab: React.FC<RelatorioVagasTabProps> = ({
     setFiltroAnalista('todos');
     setDataInicio('');
     setDataFim('');
+    setPaginaAtual(1); // Resetar paginação
   };
+
+  // 🆕 Resetar página quando filtros mudam
+  const handleFiltroChange = (setter: (val: string) => void, valor: string) => {
+    setter(valor);
+    setPaginaAtual(1);
+  };
+
+  // 🆕 Cálculos de paginação
+  const totalPaginas = Math.ceil(vagasFiltradas.length / ITENS_POR_PAGINA);
+  const indiceInicio = (paginaAtual - 1) * ITENS_POR_PAGINA;
+  const indiceFim = indiceInicio + ITENS_POR_PAGINA;
+  const vagasPaginadas = vagasFiltradas.slice(indiceInicio, indiceFim);
+
+  // Funções de navegação
+  const irParaPrimeira = () => setPaginaAtual(1);
+  const irParaAnterior = () => setPaginaAtual(prev => Math.max(1, prev - 1));
+  const irParaProxima = () => setPaginaAtual(prev => Math.min(totalPaginas, prev + 1));
+  const irParaUltima = () => setPaginaAtual(totalPaginas);
 
   const temFiltrosAtivos = filtroStatus !== 'todos' || filtroPeriodo !== 'todos' || 
                           filtroCliente !== 'todos' || filtroAnalista !== 'todos';
@@ -679,7 +707,7 @@ const RelatorioVagasTab: React.FC<RelatorioVagasTabProps> = ({
           </div>
         ) : (
           <div className="divide-y divide-gray-100">
-            {vagasFiltradas.map((vaga) => (
+            {vagasPaginadas.map((vaga) => (
               <div key={vaga.id} className="hover:bg-gray-50 transition-colors">
                 {/* Linha da Vaga */}
                 <div className="p-4 flex items-center gap-4">
@@ -731,11 +759,11 @@ const RelatorioVagasTab: React.FC<RelatorioVagasTabProps> = ({
 
                   {/* Tipo Posição */}
                   <span className={`px-2 py-1 text-xs rounded ${
-                    vaga.status_posicao === 'substituicao' 
+                    vaga.tipo_de_vaga === 'Substituicao' 
                       ? 'bg-purple-100 text-purple-700' 
                       : 'bg-blue-100 text-blue-700'
                   }`}>
-                    {vaga.status_posicao === 'substituicao' ? 'Substituição' : 'Nova Posição'}
+                    {vaga.tipo_de_vaga === 'Substituicao' ? 'Substituição' : 'Nova Posição'}
                   </span>
 
                   {/* Contador Candidaturas */}
@@ -795,6 +823,64 @@ const RelatorioVagasTab: React.FC<RelatorioVagasTabProps> = ({
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* 🆕 RODAPÉ COM PAGINAÇÃO */}
+        {vagasFiltradas.length > ITENS_POR_PAGINA && (
+          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 flex items-center justify-between">
+            {/* Info de registros */}
+            <div className="text-sm text-gray-600">
+              Mostrando <strong>{indiceInicio + 1}</strong> a <strong>{Math.min(indiceFim, vagasFiltradas.length)}</strong> de <strong>{vagasFiltradas.length}</strong> vagas
+            </div>
+
+            {/* Navegação */}
+            <div className="flex items-center gap-1">
+              {/* Primeira página */}
+              <button
+                onClick={irParaPrimeira}
+                disabled={paginaAtual === 1}
+                className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Primeira página"
+              >
+                <ChevronsLeft className="w-5 h-5 text-gray-600" />
+              </button>
+
+              {/* Página anterior */}
+              <button
+                onClick={irParaAnterior}
+                disabled={paginaAtual === 1}
+                className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Página anterior"
+              >
+                <ChevronLeft className="w-5 h-5 text-gray-600" />
+              </button>
+
+              {/* Indicador de página */}
+              <span className="px-4 py-2 text-sm font-medium text-gray-700">
+                Página <strong>{paginaAtual}</strong> de <strong>{totalPaginas}</strong>
+              </span>
+
+              {/* Próxima página */}
+              <button
+                onClick={irParaProxima}
+                disabled={paginaAtual === totalPaginas}
+                className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Próxima página"
+              >
+                <ChevronRight className="w-5 h-5 text-gray-600" />
+              </button>
+
+              {/* Última página */}
+              <button
+                onClick={irParaUltima}
+                disabled={paginaAtual === totalPaginas}
+                className="p-2 rounded-lg hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                title="Última página"
+              >
+                <ChevronsRight className="w-5 h-5 text-gray-600" />
+              </button>
+            </div>
           </div>
         )}
       </div>
