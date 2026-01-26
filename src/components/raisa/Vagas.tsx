@@ -1,6 +1,12 @@
 /**
- * Vagas.tsx - RMS RAISA v58.3
+ * Vagas.tsx - RMS RAISA v58.4
  * Componente de Gestão de Vagas
+ * 
+ * 🆕 v58.4: Sistema de Abas (Cards/Lista)
+ *        - Nova aba "Lista/Relatório" com visualização em tabela
+ *        - Filtros específicos: Status, Período, Cliente, Analista R&S
+ *        - Exportação PDF e XLS
+ *        - Candidaturas sempre visíveis em sublinha
  * 
  * 🆕 v58.3: Revisão de Status + Permissões Gestão Comercial
  *        - Removido: status "Em Seleção" de todas as interfaces
@@ -52,10 +58,11 @@ import { Vaga, Client, UsuarioCliente, User } from '../../types/types_index';
 import VagaPriorizacaoManager from './VagaPriorizacaoManager';
 import CVMatchingPanel from './CVMatchingPanel';
 import VagaSugestoesIA from './VagaSugestoesIA';
-import { Wand2, Loader2, Plus, X, ChevronDown, ChevronUp, Eye, Users, Calendar, User as UserIcon, Briefcase, MapPin, DollarSign, Clock, FileText, CheckCircle, AlertCircle } from 'lucide-react';
+import { Wand2, Loader2, Plus, X, ChevronDown, ChevronUp, Eye, Users, Calendar, User as UserIcon, Briefcase, MapPin, DollarSign, Clock, FileText, CheckCircle, AlertCircle, LayoutGrid, List } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { podeInserirVagas, isReadOnly, podeEditarVagas } from '../../utils/permissions';
 import { supabase } from '../../config/supabase';
+import RelatorioVagasTab from './RelatorioVagasTab';
 
 // Interface para candidatura com dados expandidos
 interface CandidaturaExpandida {
@@ -198,6 +205,9 @@ const Vagas: React.FC<VagasProps> = ({
     const [selectedGestorId, setSelectedGestorId] = useState<number | null>(null);
     const [selectedStatus, setSelectedStatus] = useState<string>(''); // 🆕 Filtro por status
     const [searchTerm, setSearchTerm] = useState<string>(''); // 🆕 v58.0: Filtro por nome da vaga
+    
+    // 🆕 v58.4: Estado para controle de abas (Cards/Relatório)
+    const [abaAtiva, setAbaAtiva] = useState<'cards' | 'relatorio'>('cards');
     
     // Estado para expandir/colapsar seções do modal
     const [expandedSections, setExpandedSections] = useState({
@@ -808,9 +818,43 @@ const Vagas: React.FC<VagasProps> = ({
 
     return (
         <div className="p-6 bg-gray-50 min-h-full">
-            {/* Header com Filtros */}
+            {/* Header com Filtros e Abas */}
             <div className="mb-6">
-                <h1 className="text-3xl font-bold text-gray-800 mb-4">Gestão de Vagas</h1>
+                <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-4">
+                    <div className="flex items-center gap-4">
+                        <h1 className="text-3xl font-bold text-gray-800">Gestão de Vagas</h1>
+                        
+                        {/* 🆕 v58.4: Abas Cards/Relatório */}
+                        <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                            <button
+                                onClick={() => setAbaAtiva('cards')}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                                    abaAtiva === 'cards'
+                                        ? 'bg-white text-orange-600 shadow-sm'
+                                        : 'text-gray-600 hover:text-gray-800'
+                                }`}
+                            >
+                                <LayoutGrid size={16} />
+                                Cards
+                            </button>
+                            <button
+                                onClick={() => setAbaAtiva('relatorio')}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
+                                    abaAtiva === 'relatorio'
+                                        ? 'bg-white text-orange-600 shadow-sm'
+                                        : 'text-gray-600 hover:text-gray-800'
+                                }`}
+                            >
+                                <List size={16} />
+                                Lista/Relatório
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                {/* Filtros - Só aparecem na aba Cards */}
+                {abaAtiva === 'cards' && (
+                <>
                 
                 <div className="flex flex-wrap gap-4 items-center bg-white p-4 rounded-lg shadow-sm">
                     {/* 🆕 v58.0: Busca por Nome da Vaga */}
@@ -976,8 +1020,21 @@ const Vagas: React.FC<VagasProps> = ({
                         </button>
                     </div>
                 )}
+                </>
+                )}
             </div>
 
+            {/* 🆕 v58.4: Conteúdo condicional por aba */}
+            {abaAtiva === 'relatorio' ? (
+                <RelatorioVagasTab 
+                    vagas={safeVagas}
+                    clients={safeClients}
+                    onReload={() => {
+                        // Trigger para recarregar dados se necessário
+                    }}
+                />
+            ) : (
+            <>
             {/* Grid de Vagas */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {vagasFiltradas.length === 0 ? (
@@ -1127,6 +1184,9 @@ const Vagas: React.FC<VagasProps> = ({
                     })
                 )}
             </div>
+
+            </>
+            )}
 
             {/* ==================== MODAL COMPLETO ==================== */}
             {isModalOpen && (
