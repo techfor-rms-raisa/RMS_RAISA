@@ -4,26 +4,22 @@
  * Endpoint para receber dados do LinkedIn (via extensão Chrome)
  * e salvar diretamente na tabela PESSOAS (Banco de Talentos)
  * 
- * 🆕 v57.0: PLANO B - Removida validação obrigatória de analista_id
- * O analista será atribuído posteriormente via CRUD do Banco de Talentos
+ * 🆕 v57.11: CORREÇÃO COMPLETA DE EXPERIÊNCIAS
+ * - Agora recebe data_inicio e data_fim parseados da extensão
+ * - Salva descrição das experiências
+ * - Fallback: parseia período se datas não vierem
  * 
- * 🔧 v57.4: Padronização de skills
- * - Campo nivel: 'intermediario' (sem acento, minúsculo) - igual ao CVImportIA
- * - Fallback de inserção individual em caso de erro em lote
- * - Validação de categorias contra lista
+ * Histórico:
+ * - v57.0: Removida validação obrigatória de analista_id
+ * - v57.4: Padronização de skills
+ * - v57.5: Extração de Skills via IA (Gemini)
+ * - v57.6: Correção do SDK Gemini
+ * - v57.8: Limitar campos a 200 chars
+ * - v57.9: Filtrar skills inválidas
+ * - v57.10: Truncar TODOS os campos texto
+ * - v57.11: Processar datas e descrição de experiências
  * 
- * 🆕 v57.5: Extração de Skills via IA (Gemini)
- * - Analisa texto das experiências com Gemini
- * - Extrai skills técnicas e de negócio automaticamente
- * - Combina com skills do LinkedIn e headline
- * - Corrigido: criado_em → created_at
- * 
- * 🔧 v57.6: Correção do SDK Gemini
- * - Usa @google/genai igual ao resto do sistema
- * - Modelo: gemini-2.0-flash
- * - Padrão getAI() lazy initialization
- * 
- * Data: 20/01/2026
+ * Data: 27/01/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -47,7 +43,7 @@ function getAI(): GoogleGenAI {
       throw new Error('API_KEY não configurada.');
     }
     
-    console.log('✅ API_KEY carregada para LinkedIn Import');
+    console.log('✅ API_KEY carregada para LinkedIn Import v57.11');
     aiInstance = new GoogleGenAI({ apiKey });
   }
   return aiInstance;
@@ -68,7 +64,10 @@ function getSupabaseAdmin() {
   return createClient(supabaseUrl, supabaseKey);
 }
 
-// Interface dos dados recebidos do LinkedIn
+// ============================================
+// 🆕 v57.11: Interface atualizada com datas
+// ============================================
+
 interface LinkedInData {
   nome: string;
   headline?: string;
@@ -81,6 +80,8 @@ interface LinkedInData {
     empresa: string;
     cargo: string;
     periodo: string;
+    data_inicio?: string | null;  // 🆕 v57.11
+    data_fim?: string | null;     // 🆕 v57.11
     descricao?: string;
     atual?: boolean;
   }>;
@@ -96,196 +97,288 @@ interface LinkedInData {
   analista_id?: number;
 }
 
-// Calcular anos de experiência baseado nas experiências
-function calcularAnosExperiencia(experiencias: LinkedInData['experiencias']): number {
-  if (!experiencias || experiencias.length === 0) return 0;
+// ============================================
+// 🆕 v57.11: PARSER DE PERÍODO (FALLBACK)
+// ============================================
+
+/**
+ * Parseia período do LinkedIn para extrair datas
+ * Usado como fallback quando a extensão não envia datas parseadas
+ */
+function parsePeriodo(periodo: string | undefined): { 
+  data_inicio: string | null; 
+  data_fim: string | null; 
+  atual: boolean; 
+} {
+  if (!periodo) return { data_inicio: null, data_fim: null, atual: false };
   
-  let totalMeses = 0;
-  const anoAtual = new Date().getFullYear();
-  const mesAtual = new Date().getMonth() + 1;
-  
-  const meses: Record<string, number> = {
-    'jan': 1, 'janeiro': 1, 'january': 1,
-    'fev': 2, 'fevereiro': 2, 'february': 2, 'feb': 2,
-    'mar': 3, 'março': 3, 'march': 3,
-    'abr': 4, 'abril': 4, 'april': 4, 'apr': 4,
-    'mai': 5, 'maio': 5, 'may': 5,
-    'jun': 6, 'junho': 6, 'june': 6,
-    'jul': 7, 'julho': 7, 'july': 7,
-    'ago': 8, 'agosto': 8, 'august': 8, 'aug': 8,
-    'set': 9, 'setembro': 9, 'september': 9, 'sep': 9,
-    'out': 10, 'outubro': 10, 'october': 10, 'oct': 10,
-    'nov': 11, 'novembro': 11, 'november': 11,
-    'dez': 12, 'dezembro': 12, 'december': 12, 'dec': 12
+  const meses: Record<string, string> = {
+    'jan': '01', 'fev': '02', 'mar': '03', 'abr': '04', 'mai': '05', 'jun': '06',
+    'jul': '07', 'ago': '08', 'set': '09', 'out': '10', 'nov': '11', 'dez': '12',
+    'feb': '02', 'apr': '04', 'may': '05', 'aug': '08', 'sep': '09', 'oct': '10', 'dec': '12'
   };
   
-  for (const exp of experiencias) {
-    if (!exp.periodo) continue;
+  // Limpar período - remover duração (depois do ·)
+  const periodoLimpo = periodo.split('·')[0].trim();
+  
+  // Verificar se é atual
+  const atual = /atual|present|momento|current/i.test(periodo);
+  
+  // Regex para extrair datas
+  const regex = /(\w{3})\.?\s*(?:de\s+)?(\d{4})\s*[-–]\s*(?:(\w{3})\.?\s*(?:de\s+)?(\d{4})|o momento|presente|atual|present|current)?/i;
+  const match = periodoLimpo.match(regex);
+  
+  let data_inicio: string | null = null;
+  let data_fim: string | null = null;
+  
+  if (match) {
+    const mesInicio = meses[match[1].toLowerCase().substring(0, 3)] || '01';
+    const anoInicio = match[2];
+    data_inicio = `${anoInicio}-${mesInicio}-01`;
     
-    const periodoLower = exp.periodo.toLowerCase();
-    const anosMatch = periodoLower.match(/(\d{4})/g);
-    const mesAnoRegex = /(\w+)\s*(\d{4})/g;
-    const matches = [...periodoLower.matchAll(mesAnoRegex)];
-    
-    let mesInicio = 1, anoInicio = 0;
-    let mesFim = mesAtual, anoFim = anoAtual;
-    
-    if (matches.length >= 1) {
-      const mesNome = matches[0][1];
-      mesInicio = meses[mesNome] || 1;
-      anoInicio = parseInt(matches[0][2]);
-      
-      if (matches.length >= 2) {
-        const mesFimNome = matches[1][1];
-        mesFim = meses[mesFimNome] || mesAtual;
-        anoFim = parseInt(matches[1][2]);
-      } else if (periodoLower.includes('presente') || periodoLower.includes('atual') || periodoLower.includes('present') || exp.atual) {
-        mesFim = mesAtual;
-        anoFim = anoAtual;
-      }
-    } else if (anosMatch && anosMatch.length >= 1) {
-      anoInicio = parseInt(anosMatch[0]);
-      anoFim = anosMatch.length > 1 ? parseInt(anosMatch[1]) : anoAtual;
+    if (match[3] && match[4]) {
+      const mesFim = meses[match[3].toLowerCase().substring(0, 3)] || '12';
+      const anoFim = match[4];
+      data_fim = `${anoFim}-${mesFim}-01`;
     }
+  } else {
+    // Tentar formato apenas anos: "2020 - 2022"
+    const regexAnos = /(\d{4})\s*[-–]\s*(\d{4}|atual|presente|present)?/i;
+    const matchAnos = periodoLimpo.match(regexAnos);
     
-    if (anoInicio > 0) {
-      const mesesExp = (anoFim - anoInicio) * 12 + (mesFim - mesInicio);
-      totalMeses += Math.max(0, mesesExp);
+    if (matchAnos) {
+      data_inicio = `${matchAnos[1]}-01-01`;
+      if (matchAnos[2] && /\d{4}/.test(matchAnos[2])) {
+        data_fim = `${matchAnos[2]}-12-01`;
+      }
     }
   }
   
-  const totalAnos = Math.round(totalMeses / 12);
-  console.log(`📊 Total experiência calculada: ${totalMeses} meses = ${totalAnos} anos`);
+  console.log(`   📅 Período parseado: "${periodo}" → inicio: ${data_inicio}, fim: ${data_fim}, atual: ${atual}`);
   
-  return totalAnos;
+  return { data_inicio, data_fim, atual };
 }
 
-function estimarSenioridade(anos: number): string {
-  if (anos >= 10) return 'Especialista';
-  if (anos >= 6) return 'Senior';
-  if (anos >= 3) return 'Pleno';
-  return 'Junior';
+// ============================================
+// FUNÇÕES AUXILIARES
+// ============================================
+
+function calcularAnosExperiencia(experiencias?: LinkedInData['experiencias']): number {
+  if (!experiencias || experiencias.length === 0) return 0;
+  
+  let totalMeses = 0;
+  const hoje = new Date();
+  
+  for (const exp of experiencias) {
+    // Usar datas parseadas se disponíveis
+    if (exp.data_inicio) {
+      const inicio = new Date(exp.data_inicio);
+      const fim = exp.data_fim ? new Date(exp.data_fim) : hoje;
+      totalMeses += Math.max(0, (fim.getFullYear() - inicio.getFullYear()) * 12 + (fim.getMonth() - inicio.getMonth()));
+    } else if (exp.periodo) {
+      // Fallback: extrair do texto do período
+      const match = exp.periodo.match(/(\d+)\s*anos?/i);
+      if (match) totalMeses += parseInt(match[1]) * 12;
+      
+      const matchMeses = exp.periodo.match(/(\d+)\s*mes(?:es)?/i);
+      if (matchMeses) totalMeses += parseInt(matchMeses[1]);
+    }
+  }
+  
+  return Math.round(totalMeses / 12);
+}
+
+function estimarSenioridade(anosExperiencia: number): string {
+  if (anosExperiencia >= 10) return 'especialista';
+  if (anosExperiencia >= 6) return 'senior';
+  if (anosExperiencia >= 3) return 'pleno';
+  return 'junior';
 }
 
 function parseLocalizacao(localizacao: string): { cidade: string; estado: string } {
   if (!localizacao) return { cidade: '', estado: '' };
   
-  const partes = localizacao.split(',').map(p => p.trim());
+  const parts = localizacao.split(',').map(p => p.trim());
   
-  const estadosParaSigla: Record<string, string> = {
-    'acre': 'AC', 'alagoas': 'AL', 'amapá': 'AP', 'amazonas': 'AM',
-    'bahia': 'BA', 'ceará': 'CE', 'distrito federal': 'DF', 'espírito santo': 'ES',
-    'goiás': 'GO', 'maranhão': 'MA', 'mato grosso': 'MT', 'mato grosso do sul': 'MS',
-    'minas gerais': 'MG', 'pará': 'PA', 'paraíba': 'PB', 'paraná': 'PR',
-    'pernambuco': 'PE', 'piauí': 'PI', 'rio de janeiro': 'RJ', 'rio grande do norte': 'RN',
-    'rio grande do sul': 'RS', 'rondônia': 'RO', 'roraima': 'RR', 'santa catarina': 'SC',
-    'são paulo': 'SP', 'sergipe': 'SE', 'tocantins': 'TO'
-  };
-  
-  let cidade = '';
-  let estado = '';
-  
-  if (partes.length >= 2) {
-    cidade = partes[0];
-    const estadoRaw = partes[1].toLowerCase();
-    if (estadosParaSigla[estadoRaw]) {
-      estado = estadosParaSigla[estadoRaw];
-    } else if (partes[1].length === 2) {
-      estado = partes[1].toUpperCase();
-    } else {
-      estado = '';
-    }
-  } else if (partes.length === 1) {
-    cidade = partes[0];
+  if (parts.length >= 2) {
+    return { cidade: parts[0], estado: parts[1] };
   }
   
-  return { cidade: cidade.substring(0, 100), estado };
+  return { cidade: parts[0] || '', estado: '' };
+}
+
+function categorizarSkill(skill: string): string {
+  const skillLower = skill.toLowerCase();
+  
+  // SAP
+  if (/sap|abap|fiori|hana|s\/4|ecc|bw|bi|bpc|ariba|successfactor/i.test(skillLower)) {
+    return 'sap';
+  }
+  
+  // Frontend
+  if (/react|angular|vue|javascript|typescript|html|css|sass|tailwind|next|nuxt|svelte|jquery/i.test(skillLower)) {
+    return 'frontend';
+  }
+  
+  // Backend
+  if (/node|python|java|c#|\.net|php|ruby|go|rust|spring|django|fastapi|express|nest/i.test(skillLower)) {
+    return 'backend';
+  }
+  
+  // Database
+  if (/sql|postgres|mysql|mongodb|redis|oracle|firebase|dynamo|cassandra|elastic/i.test(skillLower)) {
+    return 'database';
+  }
+  
+  // DevOps/Cloud
+  if (/docker|kubernetes|aws|azure|gcp|ci\/cd|jenkins|terraform|ansible|linux|devops/i.test(skillLower)) {
+    return 'devops';
+  }
+  
+  // Cloud específico
+  if (/cloud|multicloud|aws|azure|gcp/i.test(skillLower)) {
+    return 'cloud';
+  }
+  
+  // Mobile
+  if (/android|ios|swift|kotlin|flutter|react native|mobile/i.test(skillLower)) {
+    return 'mobile';
+  }
+  
+  // Data
+  if (/machine learning|ml|data science|pandas|tensorflow|pytorch|ia|ai|llm|rag|big data/i.test(skillLower)) {
+    return 'data';
+  }
+  
+  // Soft Skills
+  if (/scrum|kanban|agile|gestão|liderança|comunicação|negociação|teamwork|management/i.test(skillLower)) {
+    return 'soft_skill';
+  }
+  
+  // Tools
+  if (/git|jira|confluence|figma|postman|vscode|slack|teams/i.test(skillLower)) {
+    return 'tool';
+  }
+  
+  // Methodology
+  if (/tdd|ddd|solid|clean|design pattern|microservice|rest|graphql/i.test(skillLower)) {
+    return 'methodology';
+  }
+  
+  return 'outro';
 }
 
 // ============================================
-// 🆕 v57.6: EXTRAIR SKILLS VIA GEMINI (SDK)
+// FUNÇÃO: Extrair Skills do Headline
 // ============================================
 
-async function extrairSkillsComIA(
-  resumo: string | undefined,
-  experiencias: LinkedInData['experiencias'],
-  headline: string | undefined
-): Promise<string[]> {
+function extrairSkillsDoHeadline(headline: string): string[] {
+  if (!headline) return [];
   
-  // Montar texto para análise
-  let textoParaAnalise = '';
+  const skillsConhecidas = [
+    'PHP', 'Java', 'Python', 'C#', '.NET', 'Node', 'Node.js', 'NodeJS',
+    'Ruby', 'Go', 'Golang', 'Rust', 'Spring', 'Laravel', 'Django', 'FastAPI',
+    'Express', 'NestJS',
+    'React', 'React.js', 'ReactJS', 'Vue', 'Vue.js', 'VueJS',
+    'Angular', 'JavaScript', 'TypeScript', 'HTML', 'CSS', 'Sass', 'Tailwind',
+    'Next.js', 'NextJS', 'Nuxt', 'Nuxt.js',
+    'React Native', 'Flutter', 'Swift', 'Kotlin', 'Android', 'iOS',
+    'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'Oracle', 'Firebase',
+    'Docker', 'Kubernetes', 'AWS', 'Azure', 'GCP', 'CI/CD', 'Jenkins', 'Git',
+    'Linux', 'Terraform',
+    'Scrum', 'Kanban', 'Agile', 'Clean Code', 'Clean Architecture', 'SOLID',
+    'TDD', 'DDD', 'Design Patterns',
+    'SAP', 'ABAP', 'Fiori', 'HANA', 'S/4HANA', 'BW', 'BI', 'BPC'
+  ];
   
-  if (headline) {
-    textoParaAnalise += `Título: ${headline}\n\n`;
-  }
+  const skillsEncontradas: string[] = [];
   
-  if (resumo) {
-    textoParaAnalise += `Resumo: ${resumo}\n\n`;
-  }
-  
-  if (experiencias && experiencias.length > 0) {
-    textoParaAnalise += 'Experiências:\n';
-    for (const exp of experiencias) {
-      textoParaAnalise += `- ${exp.cargo} na ${exp.empresa}`;
-      if (exp.descricao) {
-        textoParaAnalise += `: ${exp.descricao}`;
-      }
-      textoParaAnalise += '\n';
+  for (const skill of skillsConhecidas) {
+    const regex = new RegExp(`(^|[\\s|,./\\-])${skill.replace(/[.+]/g, '\\$&')}([\\s|,./\\-]|$)`, 'i');
+    if (regex.test(headline)) {
+      skillsEncontradas.push(skill);
     }
   }
   
-  // Se não tem texto suficiente, retornar vazio
-  if (textoParaAnalise.length < 50) {
-    console.log('⚠️ Texto insuficiente para extração de skills via IA');
-    return [];
-  }
-  
-  console.log(`🤖 Enviando ${textoParaAnalise.length} caracteres para Gemini extrair skills...`);
-  
+  return skillsEncontradas;
+}
+
+// ============================================
+// FUNÇÃO: Extrair Skills via IA (Gemini)
+// ============================================
+
+async function extrairSkillsComIA(
+  resumo?: string,
+  experiencias?: LinkedInData['experiencias'],
+  headline?: string
+): Promise<string[]> {
   try {
-    const prompt = `Analise o seguinte perfil profissional e extraia TODAS as skills, competências e tecnologias mencionadas ou implícitas.
+    // Montar texto para análise
+    let textoParaAnalise = '';
+    
+    if (headline) {
+      textoParaAnalise += `Título: ${headline}\n\n`;
+    }
+    
+    if (resumo) {
+      textoParaAnalise += `Resumo: ${resumo}\n\n`;
+    }
+    
+    if (experiencias && experiencias.length > 0) {
+      textoParaAnalise += 'Experiências:\n';
+      for (const exp of experiencias.slice(0, 5)) {
+        textoParaAnalise += `- ${exp.cargo} na ${exp.empresa}`;
+        if (exp.descricao) {
+          textoParaAnalise += `: ${exp.descricao.substring(0, 500)}`;
+        }
+        textoParaAnalise += '\n';
+      }
+    }
+    
+    if (textoParaAnalise.length < 50) {
+      console.log('⚠️ Texto muito curto para análise de IA');
+      return [];
+    }
+    
+    const ai = getAI();
+    
+    const prompt = `Analise o perfil profissional abaixo e extraia APENAS as skills técnicas e de negócio mencionadas ou claramente implícitas.
+
+REGRAS:
+- Liste entre 5 e 20 skills
+- Skills devem ser termos técnicos específicos (tecnologias, ferramentas, metodologias)
+- NÃO inclua descrições ou frases
+- Cada skill deve ter no máximo 40 caracteres
+- Retorne um JSON array de strings
 
 PERFIL:
 ${textoParaAnalise}
 
-INSTRUÇÕES:
-1. Extraia skills técnicas (tecnologias, ferramentas, linguagens)
-2. Extraia skills de negócio (metodologias, áreas de conhecimento, certificações)
-3. Extraia skills do mercado financeiro se houver (CVM, Anbima, BACEN, tipos de fundos, etc.)
-4. NÃO invente skills que não estejam no texto
-5. Retorne APENAS um JSON array de strings, sem explicações
+RESPOSTA (apenas JSON array):`;
 
-EXEMPLO DE RESPOSTA:
-["Python", "React", "Scrum", "Gestão de Projetos", "CVM 175", "Fundos de Investimento"]
-
-RESPOSTA (apenas o JSON array):`;
-
-    // 🔧 v57.6: Usar SDK @google/genai igual ao resto do sistema
-    const result = await getAI().models.generateContent({
+    const response = await ai.models.generateContent({
       model: GEMINI_MODEL,
       contents: prompt
     });
     
-    const textoResposta = result.text || '';
+    const textoResposta = response.text || '';
     
-    console.log('📝 Resposta Gemini (raw):', textoResposta.substring(0, 200));
-    
-    // Extrair JSON da resposta
+    // Tentar parsear JSON
     let skills: string[] = [];
     
-    try {
-      // Limpar a resposta (remover markdown code blocks se houver)
-      let jsonStr = textoResposta.trim();
-      jsonStr = jsonStr.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '');
-      
-      // Encontrar o array JSON na resposta
-      const arrayMatch = jsonStr.match(/\[[\s\S]*\]/);
-      if (arrayMatch) {
-        skills = JSON.parse(arrayMatch[0]);
+    // Buscar array JSON na resposta
+    const jsonMatch = textoResposta.match(/\[[\s\S]*?\]/);
+    if (jsonMatch) {
+      try {
+        skills = JSON.parse(jsonMatch[0]);
+      } catch {
+        // Se falhar, tentar extrair skills por regex
+        const skillMatches = textoResposta.match(/"([^"]+)"/g);
+        if (skillMatches) {
+          skills = skillMatches.map(s => s.replace(/"/g, ''));
+        }
       }
-    } catch (parseError) {
-      console.warn('⚠️ Erro ao parsear resposta Gemini:', parseError);
-      
+    } else {
       // Fallback: tentar extrair skills por regex
       const skillMatches = textoResposta.match(/"([^"]+)"/g);
       if (skillMatches) {
@@ -331,7 +424,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const supabase = getSupabaseAdmin();
     const data: LinkedInData = req.body;
 
-    console.log('📥 Recebendo dados do LinkedIn:', data.nome);
+    console.log('📥 Recebendo dados do LinkedIn v57.11:', data.nome);
 
     if (!data.nome) {
       return res.status(400).json({ 
@@ -395,17 +488,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // INSERIR OU ATUALIZAR PESSOA
     // ============================================
     
-    // 🔧 v57.10: Truncar TODOS os campos de texto para evitar erro varchar(200)
     const tituloProfissional = (data.headline || ultimoCargo || 'Profissional de TI').substring(0, 200);
-    const linkedinUrl = (data.linkedin_url || '').substring(0, 500); // URL pode ser maior
+    const linkedinUrl = (data.linkedin_url || '').substring(0, 500);
     const nomeCompleto = (data.nome || '').substring(0, 255);
-    const resumoProfissional = data.resumo || null; // TEXT, sem limite
+    const resumoProfissional = data.resumo || null;
     
     console.log(`📏 Tamanhos dos campos:`);
     console.log(`   nome: ${nomeCompleto.length} chars`);
     console.log(`   titulo_profissional: ${tituloProfissional.length} chars`);
     console.log(`   linkedin_url: ${linkedinUrl.length} chars`);
-    console.log(`   cidade: ${(cidade || '').length} chars`);
     
     const pessoaData: any = {
       nome: nomeCompleto,
@@ -486,7 +577,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const skillsDoLinkedIn = data.skills || [];
     const skillsDoHeadline = extrairSkillsDoHeadline(data.headline || '');
     
-    // 🆕 v57.6: Extrair skills via Gemini das experiências
+    // Extrair skills via Gemini das experiências
     const skillsDaIA = await extrairSkillsComIA(data.resumo, data.experiencias, data.headline);
     
     // Combinar e remover duplicatas
@@ -515,37 +606,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const categoriasValidas = ['frontend', 'backend', 'database', 'devops', 'cloud', 'mobile', 'sap', 'soft_skill', 'tool', 'methodology', 'other', 'data', 'outro', 'finance'];
       
-      // 🔧 v57.9: Filtrar skills inválidas ANTES de processar
+      // Filtrar skills inválidas
       const skillsFiltradas = todasSkills.filter(skill => {
         const s = String(skill).trim();
-        // Rejeitar skills muito longas (provavelmente descrições)
-        if (s.length > 80) {
-          console.log(`⚠️ Skill rejeitada (muito longa ${s.length} chars): ${s.substring(0, 50)}...`);
-          return false;
-        }
-        // Rejeitar URLs
-        if (s.startsWith('http') || s.includes('://')) {
-          console.log(`⚠️ Skill rejeitada (URL): ${s.substring(0, 50)}`);
-          return false;
-        }
-        // Rejeitar textos que parecem descrições
-        if (s.includes(' tem como objetivo') || s.includes('Programa de') || s.includes('Tive o privilégio')) {
-          console.log(`⚠️ Skill rejeitada (descrição): ${s.substring(0, 50)}...`);
-          return false;
-        }
+        if (s.length > 80) return false;
+        if (s.startsWith('http') || s.includes('://')) return false;
+        if (s.includes(' tem como objetivo') || s.includes('Programa de') || s.includes('Tive o privilégio')) return false;
         return s.length >= 2;
       });
-      
-      console.log(`📊 Skills após filtro: ${skillsFiltradas.length} (de ${todasSkills.length})`);
       
       const skillsData = skillsFiltradas.map(skill => {
         const categoria = categorizarSkill(skill);
         const skillNome = String(skill).trim().substring(0, 100);
-        console.log(`   💾 Skill: "${skillNome}" (${skillNome.length} chars) → ${categoria}`);
         return {
           pessoa_id,
           skill_nome: skillNome,
-          skill_categoria: categoriasValidas.includes(categoria) ? categoria : 'other',
+          skill_categoria: categoriasValidas.includes(categoria) ? categoria : 'outro',
           nivel: 'intermediario',
           anos_experiencia: 0,
           certificado: false
@@ -558,25 +634,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (error) {
         console.warn('⚠️ Erro ao salvar skills em lote:', error.message);
-        console.log('🔄 Tentando inserir skills individualmente...');
         
         for (const skill of skillsData.slice(0, 100)) {
           const { error: errIndividual } = await supabase.from('pessoa_skills').insert(skill);
           if (!errIndividual) {
             skillsSalvas++;
-          } else {
-            console.warn(`⚠️ Falha ao salvar skill "${skill.skill_nome}":`, errIndividual.message);
           }
         }
         console.log(`✅ Skills salvas individualmente: ${skillsSalvas}/${skillsData.length}`);
       } else {
-        skillsSalvas = todasSkills.length;
-        console.log(`✅ ${todasSkills.length} skills salvas`);
+        skillsSalvas = skillsFiltradas.length;
+        console.log(`✅ ${skillsFiltradas.length} skills salvas`);
       }
     }
 
     // ============================================
-    // SALVAR EXPERIÊNCIAS
+    // 🆕 v57.11: SALVAR EXPERIÊNCIAS COM DATAS
     // ============================================
     
     if (data.experiencias && data.experiencias.length > 0) {
@@ -587,17 +660,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('pessoa_id', pessoa_id);
       }
 
-      const expData = data.experiencias.map((exp, index) => ({
-        pessoa_id,
-        empresa: (exp.empresa || '').substring(0, 200), // 🔧 v57.8: Limitar a 200 chars
-        cargo: (exp.cargo || '').substring(0, 200),     // 🔧 v57.8: Limitar a 200 chars
-        data_inicio: null, // LinkedIn não envia data formatada
-        data_fim: null,
-        atual: exp.atual || false,
-        descricao: exp.descricao || null,
-        tecnologias_usadas: [],
-        ordem: index
-      }));
+      const expData = data.experiencias.map((exp, index) => {
+        // 🆕 v57.11: Usar datas da extensão, ou parsear como fallback
+        let dataInicio = exp.data_inicio || null;
+        let dataFim = exp.data_fim || null;
+        let atual = exp.atual || false;
+        
+        // Fallback: se não veio data_inicio, tentar parsear do período
+        if (!dataInicio && exp.periodo) {
+          const parsed = parsePeriodo(exp.periodo);
+          dataInicio = parsed.data_inicio;
+          dataFim = parsed.data_fim;
+          atual = parsed.atual || atual;
+        }
+        
+        console.log(`   💼 Exp ${index + 1}: ${(exp.cargo || '').substring(0, 30)}...`);
+        console.log(`      └─ inicio: ${dataInicio}, fim: ${dataFim}, atual: ${atual}`);
+        console.log(`      └─ descrição: ${exp.descricao ? exp.descricao.substring(0, 50) + '...' : 'N/A'}`);
+        
+        return {
+          pessoa_id,
+          empresa: (exp.empresa || '').substring(0, 200),
+          cargo: (exp.cargo || '').substring(0, 200),
+          data_inicio: dataInicio,
+          data_fim: dataFim,
+          atual: atual,
+          descricao: exp.descricao || null,
+          tecnologias_usadas: [],
+          ordem: index
+        };
+      });
 
       const { error } = await supabase
         .from('pessoa_experiencias')
@@ -606,7 +698,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (error) {
         console.warn('Aviso ao salvar experiências:', error.message);
       } else {
-        console.log(`✅ ${data.experiencias.length} experiências salvas`);
+        console.log(`✅ ${data.experiencias.length} experiências salvas com datas`);
       }
     }
 
@@ -624,9 +716,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const formData = data.formacoes.map(form => ({
         pessoa_id,
-        tipo: 'graduacao', // Campo obrigatório - default para LinkedIn
-        instituicao: (form.instituicao || '').substring(0, 200), // 🔧 v57.10: Truncar
-        curso: (form.curso || '').substring(0, 200),              // 🔧 v57.10: Truncar
+        tipo: 'graduacao',
+        instituicao: (form.instituicao || '').substring(0, 200),
+        curso: (form.curso || '').substring(0, 200),
         ano_conclusao: null,
         em_andamento: false
       }));
@@ -683,93 +775,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       error: error.message || 'Erro interno do servidor'
     });
   }
-}
-
-// ============================================
-// FUNÇÃO AUXILIAR: Extrair Skills do Headline
-// ============================================
-
-function extrairSkillsDoHeadline(headline: string): string[] {
-  if (!headline) return [];
-  
-  const skillsConhecidas = [
-    'PHP', 'Java', 'Python', 'C#', '.NET', 'Node', 'Node.js', 'Node JS', 'NodeJS',
-    'Ruby', 'Go', 'Golang', 'Rust', 'Spring', 'Laravel', 'Django', 'FastAPI',
-    'Express', 'NestJS', 'Nest.js',
-    'React', 'React.js', 'ReactJS', 'React JS', 'Vue', 'Vue.js', 'VueJS', 'Vue JS',
-    'Angular', 'JavaScript', 'TypeScript', 'HTML', 'CSS', 'Sass', 'Tailwind',
-    'Next.js', 'NextJS', 'Nuxt', 'Nuxt.js',
-    'React Native', 'Flutter', 'Swift', 'Kotlin', 'Android', 'iOS',
-    'SQL', 'PostgreSQL', 'MySQL', 'MongoDB', 'Redis', 'Oracle', 'Firebase',
-    'Docker', 'Kubernetes', 'AWS', 'Azure', 'GCP', 'CI/CD', 'Jenkins', 'Git',
-    'Linux', 'Terraform',
-    'Scrum', 'Kanban', 'Agile', 'Clean Code', 'Clean Architecture', 'SOLID',
-    'TDD', 'DDD', 'Design Patterns'
-  ];
-  
-  const skillsEncontradas: string[] = [];
-  
-  for (const skill of skillsConhecidas) {
-    const skillUpper = skill.toUpperCase();
-    const regex = new RegExp(`(^|[\\s|,./\\-])${skillUpper.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s|,./\\-])`, 'i');
-    
-    if (regex.test(headline)) {
-      let skillNormalizada = skill;
-      
-      if (['Node', 'Node.js', 'Node JS', 'NodeJS'].includes(skill)) skillNormalizada = 'Node.js';
-      if (['Vue', 'Vue.js', 'Vue JS', 'VueJS'].includes(skill)) skillNormalizada = 'Vue.js';
-      if (['React.js', 'ReactJS', 'React JS'].includes(skill)) skillNormalizada = 'React';
-      if (['Next.js', 'NextJS'].includes(skill)) skillNormalizada = 'Next.js';
-      if (['Nuxt.js'].includes(skill)) skillNormalizada = 'Nuxt.js';
-      
-      if (!skillsEncontradas.includes(skillNormalizada)) {
-        skillsEncontradas.push(skillNormalizada);
-      }
-    }
-  }
-  
-  console.log(`🔍 Skills extraídas do headline: ${skillsEncontradas.join(', ')}`);
-  return skillsEncontradas;
-}
-
-// ============================================
-// FUNÇÃO AUXILIAR: Categorizar Skill
-// ============================================
-
-function categorizarSkill(skill: string): string {
-  const skillLower = skill.toLowerCase();
-  
-  if (['react', 'vue', 'angular', 'javascript', 'typescript', 'html', 'css', 'sass', 'tailwind', 'next.js', 'nuxt'].some(s => skillLower.includes(s))) {
-    return 'frontend';
-  }
-  
-  if (['node', 'python', 'java', 'c#', '.net', 'php', 'ruby', 'go', 'rust', 'spring', 'django', 'fastapi', 'express'].some(s => skillLower.includes(s))) {
-    return 'backend';
-  }
-  
-  if (['sql', 'postgres', 'mysql', 'mongodb', 'redis', 'elasticsearch', 'oracle', 'firebase'].some(s => skillLower.includes(s))) {
-    return 'database';
-  }
-  
-  if (['docker', 'kubernetes', 'aws', 'azure', 'gcp', 'ci/cd', 'jenkins', 'terraform', 'ansible', 'linux'].some(s => skillLower.includes(s))) {
-    return 'devops';
-  }
-  
-  if (['android', 'ios', 'swift', 'kotlin', 'flutter', 'react native', 'xamarin'].some(s => skillLower.includes(s))) {
-    return 'mobile';
-  }
-  
-  if (['machine learning', 'data science', 'pandas', 'numpy', 'tensorflow', 'pytorch', 'spark', 'hadoop', 'power bi', 'tableau'].some(s => skillLower.includes(s))) {
-    return 'data';
-  }
-  
-  if (['cvm', 'anbima', 'bacen', 'fundo', 'fidc', 'fip', 'fii', 'fiagro', 'renda fixa', 'renda variável', 'derivativo', 'câmbio', 'tesouraria', 'custódia', 'b3', 'bovespa'].some(s => skillLower.includes(s))) {
-    return 'finance';
-  }
-  
-  if (['comunicação', 'liderança', 'agile', 'scrum', 'kanban', 'gestão', 'management', 'análise de negócio', 'product owner', 'po'].some(s => skillLower.includes(s))) {
-    return 'soft_skill';
-  }
-  
-  return 'outro';
 }
