@@ -1,6 +1,8 @@
 /**
  * useVagas Hook - Gerenciamento de Vagas (RAISA)
  * Módulo separado do useSupabaseData para melhor organização
+ * 
+ * 🆕 v58.5: Adicionado campo id_solicitante (Gestor do Cliente)
  */
 
 import { useState } from 'react';
@@ -34,7 +36,7 @@ export const useVagas = () => {
         salario_min: vaga.salario_min,
         salario_max: vaga.salario_max,
         status: vaga.status,
-        status_posicao: vaga.status_posicao || 'triagem', // 🆕 Posição no funil
+        status_posicao: vaga.status_posicao || 'triagem',
         requisitos_obrigatorios: vaga.requisitos_obrigatorios,
         requisitos_desejaveis: vaga.requisitos_desejaveis,
         regime_contratacao: vaga.regime_contratacao,
@@ -43,10 +45,10 @@ export const useVagas = () => {
         beneficios: vaga.beneficios,
         analista_id: vaga.analista_id,
         cliente_id: vaga.cliente_id,
+        id_solicitante: vaga.id_solicitante,  // 🆕 v58.5
         urgente: vaga.urgente,
         prazo_fechamento: vaga.prazo_fechamento,
         faturamento_mensal: vaga.faturamento_mensal,
-        // ✅ CAMPOS FALTANTES
         ocorrencia: vaga.ocorrencia,
         tipo_de_vaga: vaga.tipo_de_vaga,
         vaga_faturavel: vaga.vaga_faturavel,
@@ -83,7 +85,7 @@ export const useVagas = () => {
           salario_min: newVaga.salario_min,
           salario_max: newVaga.salario_max,
           status: newVaga.status || 'aberta',
-          status_posicao: newVaga.status_posicao || 'triagem', // 🆕 Posição no funil
+          status_posicao: newVaga.status_posicao || 'triagem',
           requisitos_obrigatorios: newVaga.requisitos_obrigatorios,
           requisitos_desejaveis: newVaga.requisitos_desejaveis,
           regime_contratacao: newVaga.regime_contratacao,
@@ -92,10 +94,10 @@ export const useVagas = () => {
           beneficios: newVaga.beneficios,
           analista_id: newVaga.analista_id,
           cliente_id: newVaga.cliente_id,
+          id_solicitante: (newVaga as any).id_solicitante || null,  // 🆕 v58.5
           urgente: newVaga.urgente || false,
           prazo_fechamento: newVaga.prazo_fechamento,
           faturamento_mensal: newVaga.faturamento_mensal,
-          // ✅ CAMPOS FALTANTES
           ocorrencia: (newVaga as any).ocorrencia || null,
           tipo_de_vaga: (newVaga as any).tipo_de_vaga || 'Nova Posição',
           vaga_faturavel: (newVaga as any).vaga_faturavel !== false
@@ -114,7 +116,7 @@ export const useVagas = () => {
         salario_min: data.salario_min,
         salario_max: data.salario_max,
         status: data.status,
-        status_posicao: data.status_posicao || 'triagem', // 🆕 Posição no funil
+        status_posicao: data.status_posicao || 'triagem',
         requisitos_obrigatorios: data.requisitos_obrigatorios,
         requisitos_desejaveis: data.requisitos_desejaveis,
         regime_contratacao: data.regime_contratacao,
@@ -123,10 +125,10 @@ export const useVagas = () => {
         beneficios: data.beneficios,
         analista_id: data.analista_id,
         cliente_id: data.cliente_id,
+        id_solicitante: data.id_solicitante,  // 🆕 v58.5
         urgente: data.urgente,
         prazo_fechamento: data.prazo_fechamento,
         faturamento_mensal: data.faturamento_mensal,
-        // ✅ CAMPOS FALTANTES
         ocorrencia: data.ocorrencia,
         tipo_de_vaga: data.tipo_de_vaga,
         vaga_faturavel: data.vaga_faturavel,
@@ -162,7 +164,7 @@ export const useVagas = () => {
           salario_min: updates.salario_min,
           salario_max: updates.salario_max,
           status: updates.status,
-          status_posicao: updates.status_posicao, // 🆕 Posição no funil
+          status_posicao: updates.status_posicao,
           requisitos_obrigatorios: updates.requisitos_obrigatorios,
           requisitos_desejaveis: updates.requisitos_desejaveis,
           regime_contratacao: updates.regime_contratacao,
@@ -171,10 +173,10 @@ export const useVagas = () => {
           beneficios: updates.beneficios,
           analista_id: updates.analista_id,
           cliente_id: updates.cliente_id,
+          id_solicitante: (updates as any).id_solicitante,  // 🆕 v58.5
           urgente: updates.urgente,
           prazo_fechamento: updates.prazo_fechamento,
           faturamento_mensal: updates.faturamento_mensal,
-          // ✅ CAMPOS FALTANTES
           ocorrencia: (updates as any).ocorrencia,
           tipo_de_vaga: (updates as any).tipo_de_vaga,
           vaga_faturavel: (updates as any).vaga_faturavel,
@@ -195,7 +197,7 @@ export const useVagas = () => {
         salario_min: data.salario_min,
         salario_max: data.salario_max,
         status: data.status,
-        status_posicao: data.status_posicao || 'triagem', // 🆕 Posição no funil
+        status_posicao: data.status_posicao || 'triagem',
         requisitos_obrigatorios: data.requisitos_obrigatorios,
         requisitos_desejaveis: data.requisitos_desejaveis,
         regime_contratacao: data.regime_contratacao,
@@ -204,10 +206,10 @@ export const useVagas = () => {
         beneficios: data.beneficios,
         analista_id: data.analista_id,
         cliente_id: data.cliente_id,
+        id_solicitante: data.id_solicitante,  // 🆕 v58.5
         urgente: data.urgente,
         prazo_fechamento: data.prazo_fechamento,
         faturamento_mensal: data.faturamento_mensal,
-        // ✅ CAMPOS FALTANTES
         ocorrencia: data.ocorrencia,
         tipo_de_vaga: data.tipo_de_vaga,
         vaga_faturavel: data.vaga_faturavel,

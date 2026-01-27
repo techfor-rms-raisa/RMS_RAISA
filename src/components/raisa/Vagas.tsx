@@ -1,6 +1,10 @@
 /**
- * Vagas.tsx - RMS RAISA v58.4
+ * Vagas.tsx - RMS RAISA v58.5
  * Componente de Gestão de Vagas
+ * 
+ * 🆕 v58.5: Persistência do Solicitante (Gestor do Cliente)
+ *        - Campo id_solicitante salvo na tabela vagas
+ *        - Dropdown "Gestor do Cliente" agora persiste no banco
  * 
  * 🆕 v58.4: Sistema de Abas (Cards/Lista)
  *        - Nova aba "Lista/Relatório" com visualização em tabela
@@ -531,7 +535,7 @@ const Vagas: React.FC<VagasProps> = ({
                 status: vaga.status || 'aberta',
                 status_posicao: vaga.status_posicao || 'triagem', // 🆕 Posição no funil
                 cliente_id: vaga.cliente_id,
-                gestor_cliente_id: null,
+                gestor_cliente_id: (vaga as any).id_solicitante || null,  // 🆕 v58.5: Carregar solicitante
                 // Campos adicionais
                 tipo_de_vaga: vaga.tipo_de_vaga || 'Nova Posição',
                 ocorrencia: vaga.ocorrencia || null,
@@ -645,6 +649,7 @@ const Vagas: React.FC<VagasProps> = ({
             status: formData.status,
             status_posicao: formData.status_posicao || 'triagem', // 🆕 Posição no funil
             cliente_id: formData.cliente_id,
+            id_solicitante: formData.gestor_cliente_id || null,  // 🆕 v58.5: Gestor do Cliente
             // Campos adicionais
             tipo_de_vaga: formData.tipo_de_vaga,
             ocorrencia: formData.ocorrencia,
