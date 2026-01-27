@@ -24,7 +24,7 @@ importers:
         specifier: ^2.5.2
         version: 2.5.2
       jspdf-autotable:
-        specifier: ^5.0.2
+        specifier: ^5.0.7
         version: 5.0.7(jspdf@2.5.2)
       lucide-react:
         specifier: ^0.300.0
@@ -45,7 +45,7 @@ importers:
         specifier: ^6.6.0
         version: 6.7.0
       xlsx:
-        specifier: 0.18.5
+        specifier: ^0.18.5
         version: 0.18.5
     devDependencies:
       '@types/node':
