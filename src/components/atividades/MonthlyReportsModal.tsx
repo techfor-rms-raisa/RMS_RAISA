@@ -1,3 +1,8 @@
+// src/components/MonthlyReportsModal.tsx
+// ✅ VERSÃO 2.0 - Exibe conteúdo original, Criado/Alterado por, Botão Editar (mês atual)
+// 🆕 v2.0: Adicionado "Criado por" e "Alterado por" no rodapé
+// 🆕 v2.0: Botão Editar visível apenas para relatórios do mês corrente
+
 import React from 'react';
 import { Consultant, ConsultantReport } from '@/types';
 
@@ -6,6 +11,8 @@ interface MonthlyReportsModalProps {
   month: number;
   reports: ConsultantReport[];
   onClose: () => void;
+  onEdit?: (report: ConsultantReport) => void; // 🆕 Callback para edição
+  currentUserName?: string; // 🆕 Nome do usuário atual (para edição)
 }
 
 const months = [
@@ -13,7 +20,35 @@ const months = [
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
 ];
 
-const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ consultant, month, reports, onClose }) => {
+const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ 
+    consultant, 
+    month, 
+    reports, 
+    onClose,
+    onEdit,
+    currentUserName 
+}) => {
+
+    // 🆕 v2.0: Verificar se relatório é do mês atual (pode editar)
+    const isCurrentMonth = (reportMonth: number | undefined, reportYear: number | undefined): boolean => {
+        if (!reportMonth || !reportYear) return false;
+        const now = new Date();
+        return reportMonth === (now.getMonth() + 1) && reportYear === now.getFullYear();
+    };
+
+    // 🆕 v2.0: Formatar data curta (dd/mm/yy)
+    const formatShortDate = (dateString: string | undefined) => {
+        if (!dateString) return null;
+        try {
+            return new Date(dateString).toLocaleDateString('pt-BR', {
+                day: '2-digit',
+                month: '2-digit',
+                year: '2-digit'
+            });
+        } catch {
+            return null;
+        }
+    };
 
     // ✅ CORREÇÃO: Formatar data de criação do registro
     const formatCreatedDate = (dateString: string | undefined) => {
@@ -65,9 +100,16 @@ const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ consultant, m
 
                     {reports.length > 0 ? (
                         <div className="space-y-4">
-                            {reports.map(report => {
-                                const reportPeriod = formatReportPeriod(report.month, report.year);
+                            {reports.map((report: any) => {
+                                // ✅ Acessar campos do Supabase (snake_case)
+                                const reportMonth = report.month;
+                                const reportYear = report.year;
+                                const reportPeriod = formatReportPeriod(reportMonth, reportYear);
                                 const createdDate = formatCreatedDate(report.created_at);
+                                const riskScore = report.risk_score;
+                                
+                                // ✅ CORREÇÃO: Priorizar content (original) sobre summary (resumo)
+                                const conteudoExibir = report.content || report.summary || 'Nenhum conteúdo disponível.';
                                 
                                 return (
                                     <div key={report.id} className="border border-gray-200 rounded-lg p-4">
@@ -88,31 +130,41 @@ const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ consultant, m
                                         </div>
                                         
                                         {/* Score de Risco */}
-                                        {report.risk_score && (
+                                        {riskScore && (
                                             <div className="mb-3">
                                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                                                    report.risk_score === 1 ? 'bg-green-100 text-green-800' :
-                                                    report.risk_score === 2 ? 'bg-blue-100 text-blue-800' :
-                                                    report.risk_score === 3 ? 'bg-yellow-100 text-yellow-800' :
-                                                    report.risk_score === 4 ? 'bg-orange-100 text-orange-800' :
+                                                    riskScore === 1 ? 'bg-green-100 text-green-800' :
+                                                    riskScore === 2 ? 'bg-blue-100 text-blue-800' :
+                                                    riskScore === 3 ? 'bg-yellow-100 text-yellow-800' :
+                                                    riskScore === 4 ? 'bg-orange-100 text-orange-800' :
                                                     'bg-red-100 text-red-800'
                                                 }`}>
-                                                    Risco: {report.risk_score} - {
-                                                        report.risk_score === 1 ? 'Excelente' :
-                                                        report.risk_score === 2 ? 'Bom' :
-                                                        report.risk_score === 3 ? 'Médio' :
-                                                        report.risk_score === 4 ? 'Alto' :
+                                                    Risco: {riskScore} - {
+                                                        riskScore === 1 ? 'Excelente' :
+                                                        riskScore === 2 ? 'Bom' :
+                                                        riskScore === 3 ? 'Médio' :
+                                                        riskScore === 4 ? 'Alto' :
                                                         'Crítico'
                                                     }
                                                 </span>
                                             </div>
                                         )}
                                         
+                                        {/* ✅ CORREÇÃO: Exibir conteúdo original do relatório */}
                                         <h3 className="font-bold text-gray-800 mb-2">Relatório de Atividade</h3>
-                                        <div 
-                                            className="prose prose-sm max-w-none text-gray-700"
-                                            dangerouslySetInnerHTML={{ __html: report.summary || report.content || '<p>Nenhum conteúdo disponível.</p>' }}
-                                        ></div>
+                                        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                            {conteudoExibir}
+                                        </div>
+                                        
+                                        {/* ✅ NOVO: Mostrar resumo da IA separadamente se diferente do conteúdo */}
+                                        {report.summary && report.content && report.summary !== report.content && (
+                                            <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                                                <h4 className="text-xs font-semibold text-blue-700 uppercase mb-1">
+                                                    🤖 Resumo da IA
+                                                </h4>
+                                                <p className="text-sm text-blue-800">{report.summary}</p>
+                                            </div>
+                                        )}
                                         
                                         {/* Padrão Negativo */}
                                         {report.negative_pattern && report.negative_pattern !== 'Nenhum' && (
@@ -129,6 +181,37 @@ const MonthlyReportsModal: React.FC<MonthlyReportsModalProps> = ({ consultant, m
                                                 <p className="text-red-600 mt-1">{report.predictive_alert}</p>
                                             </div>
                                         )}
+
+                                        {/* 🆕 v2.0: Rodapé com Criado por / Alterado por / Botão Editar */}
+                                        <div className="mt-4 pt-3 border-t border-gray-200 flex flex-wrap justify-between items-center gap-2">
+                                            <div className="text-xs text-gray-500 space-y-1">
+                                                {/* Criado por */}
+                                                {(report.criado_por || report.created_at) && (
+                                                    <p>
+                                                        <span className="font-medium">Criado por:</span>{' '}
+                                                        {report.criado_por || 'Sistema'} 
+                                                        {report.created_at && ` em ${formatShortDate(report.created_at)}`}
+                                                    </p>
+                                                )}
+                                                {/* Alterado por */}
+                                                {report.alterado_por && report.data_alteracao && (
+                                                    <p>
+                                                        <span className="font-medium">Alterado por:</span>{' '}
+                                                        {report.alterado_por} em {formatShortDate(report.data_alteracao)}
+                                                    </p>
+                                                )}
+                                            </div>
+
+                                            {/* Botão Editar - só aparece no mês atual */}
+                                            {onEdit && isCurrentMonth(reportMonth, reportYear) && (
+                                                <button
+                                                    onClick={() => onEdit(report)}
+                                                    className="px-3 py-1.5 bg-amber-100 text-amber-700 text-xs font-medium rounded-lg hover:bg-amber-200 transition flex items-center gap-1"
+                                                >
+                                                    ✏️ Editar
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 );
                             })}
