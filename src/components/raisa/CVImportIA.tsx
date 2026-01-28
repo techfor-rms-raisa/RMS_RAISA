@@ -298,8 +298,8 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       return;
     }
 
-    if (file.size > 4 * 1024 * 1024) {
-      setErro('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
+    if (file.size > 10 * 1024 * 1024) {
+      setErro('Tamanho do arquivo excede a capacidade de processamento da IA (10MB), tente um arquivo menor ou TXT.');
       return;
     }
 
@@ -318,8 +318,8 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       }
 
       // Verificar tamanho do base64 antes de enviar
-      if (texto.length > 5 * 1024 * 1024) {
-        throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
+      if (texto.length > 15 * 1024 * 1024) {
+        throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA (10MB), tente um arquivo menor ou TXT.');
       }
 
       setTextoCV(texto);
