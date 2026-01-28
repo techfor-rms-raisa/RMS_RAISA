@@ -1,5 +1,5 @@
 /**
- * EntrevistaTecnicaInteligente.tsx - RMS RAISA v2.9
+ * EntrevistaTecnicaInteligente.tsx - RMS RAISA v2.9.2
  * Componente de Entrevista Técnica com IA
  * 
  * NOVO FLUXO:
@@ -10,6 +10,16 @@
  * 5. Análise das respostas vs perguntas
  * 6. Score e recomendação
  * 7. Decisão do analista
+ * 
+ * NOVIDADES v2.9.2 (28/01/2026):
+ * - 🔧 CORREÇÃO CRÍTICA: Usar String() na comparação de analista_id
+ *   • Evita problemas de tipo (number vs string)
+ *   • Removido campo criado_por que trazia candidaturas extras
+ *   • Adicionado console.log para debug
+ * 
+ * NOVIDADES v2.9.1 (28/01/2026):
+ * - 🔧 CORREÇÃO CRÍTICA: Dropdown agora filtra candidaturas pelo analista logado
+ *   • Mostra apenas candidaturas onde analista_id = currentUserId
  * 
  * NOVIDADES v2.9 (19/01/2025):
  * - 🔧 CORREÇÃO CRÍTICA: Função salvarDecisao agora ATUALIZA O STATUS DA CANDIDATURA
@@ -23,7 +33,7 @@
  * - 🔧 CORREÇÃO: Perguntas geradas agora são SALVAS no Supabase
  *   para persistência entre sessões (tabela analise_adequacao)
  * 
- * Data: 19/01/2025
+ * Data: 28/01/2026
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
@@ -172,16 +182,38 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   );
 
   // Filtrar candidaturas elegíveis (em fase de entrevista)
-  const candidaturasElegiveis = useMemo(() => 
-    candidaturasComVaga.filter(c => 
-      c.status === 'entrevista' || 
-      c.status === 'triagem' || 
-      c.status === 'teste_tecnico' ||
-      c.status === 'cv_enviado' ||
-      c.status === 'aprovado' ||
-      c.status === 'aprovado_interno'
-    ),
-    [candidaturasComVaga]
+  // 🔧 v2.9.2 (28/01/2026): CORREÇÃO - Usar String() para comparação de tipos
+  const candidaturasElegiveis = useMemo(() => {
+    console.log('🔍 [Entrevista] Filtrando candidaturas para analista:', currentUserId);
+    console.log('🔍 [Entrevista] Total de candidaturas recebidas:', candidaturasComVaga.length);
+    
+    const filtradas = candidaturasComVaga.filter(c => {
+      // 1. Filtrar apenas candidaturas do analista logado
+      // 🔧 v2.9.2: Usar String() para evitar problemas de tipo (number vs string)
+      const candidaturaAny = c as any;
+      const analistaIdCandidatura = String(candidaturaAny.analista_id || '');
+      const analistaLogado = String(currentUserId || '');
+      
+      const isMinhasCandidaturas = analistaIdCandidatura === analistaLogado;
+      
+      // 2. Filtrar por status elegível para entrevista
+      const statusElegivel = (
+        c.status === 'entrevista' || 
+        c.status === 'triagem' || 
+        c.status === 'teste_tecnico' ||
+        c.status === 'cv_enviado' ||
+        c.status === 'aprovado' ||
+        c.status === 'aprovado_interno' ||
+        c.status === 'enviado_cliente'
+      );
+      
+      return isMinhasCandidaturas && statusElegivel;
+    });
+    
+    console.log('✅ [Entrevista] Candidaturas filtradas:', filtradas.length);
+    return filtradas;
+  },
+    [candidaturasComVaga, currentUserId]
   );
 
   // ============================================

@@ -12,7 +12,7 @@ interface AtividadesInserirProps {
     coordenadoresCliente?: CoordenadorCliente[];
     allReports?: ConsultantReport[];
     loadConsultantReports?: (consultantId: number) => Promise<ConsultantReport[]>;
-    onManualReport: (text: string, gestorName?: string, extractedMonth?: number, extractedYear?: number) => Promise<void>;
+    onManualReport: (text: string, gestorName?: string, extractedMonth?: number, extractedYear?: number, selectedConsultantName?: string) => Promise<void>;
     preSelectedClient?: string;
     preSelectedConsultant?: string;
 }
@@ -351,11 +351,11 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             const manager = consultant ? usuariosCliente.find(u => u.id === consultant.gestor_imediato_id) : null;
             const client = clients.find(c => c.razao_social_cliente === selectedClient);
             
-            const reportText = `◆ ${consultant?.nome_consultores || ''} | ${client?.razao_social_cliente || ''}\n${activities}`;
+            const reportText = activities;
             const gestorName = manager?.nome_gestor_cliente || 'Não especificado';
 
-            // Passa o mês selecionado manualmente
-            await onManualReport(reportText, gestorName, month, new Date().getFullYear());
+            // 🔧 v2.6: Passa o nome do consultor selecionado para evitar busca da IA
+            await onManualReport(reportText, gestorName, month, new Date().getFullYear(), selectedConsultant);
 
             setActivities('');
             setSelectedConsultant('');
@@ -656,3 +656,4 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
 };
 
 export default AtividadesInserir;
+
