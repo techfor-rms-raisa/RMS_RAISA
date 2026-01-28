@@ -188,13 +188,15 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       );
       
       // 2. Filtrar por status elegível para entrevista
+      // 🔧 v2.9.1: Adicionado 'enviado_cliente' para permitir entrevistas pós-envio
       const statusElegivel = (
         c.status === 'entrevista' || 
         c.status === 'triagem' || 
         c.status === 'teste_tecnico' ||
         c.status === 'cv_enviado' ||
         c.status === 'aprovado' ||
-        c.status === 'aprovado_interno'
+        c.status === 'aprovado_interno' ||
+        c.status === 'enviado_cliente'
       );
       
       return isMinhasCandidaturas && statusElegivel;

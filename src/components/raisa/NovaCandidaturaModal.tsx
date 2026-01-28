@@ -1,6 +1,11 @@
 /**
  * NovaCandidaturaModal.tsx - Modal de Nova Candidatura
  * 
+ * 🔧 v57.8 (28/01/2026) - CORREÇÃO STATUS:
+ * - Status padrão corrigido: Aquisição → 'triagem' (antes era 'enviado_cliente')
+ * - Status indicação: 'indicacao_aprovada' (fluxo especial)
+ * - Candidatos agora aparecem no filtro de entrevista técnica
+ * 
  * 🆕 v57.7 - SIMPLIFICADO:
  * - "Meus Candidatos" busca DIRETO do banco (pessoas.id_analista_rs = analista_logado)
  * - NÃO depende de match de skills para exibir candidatos
@@ -8,11 +13,12 @@
  * - Mais simples e intuitivo para o analista
  * 
  * HISTÓRICO:
+ * - v57.8 (28/01/2026): CORREÇÃO - Status padrão 'triagem' em vez de 'enviado_cliente'
  * - v57.7 (15/01/2026): Meus Candidatos busca direto do banco, sem match
  * - v57.5: Minhas Vagas inclui vaga_analista_distribuicao
  * - v57.4: Corrigido filtro para usar id_analista_rs
  * 
- * Data: 15/01/2026
+ * Data: 28/01/2026
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -65,10 +71,11 @@ type FiltroEscopo = 'minhas' | 'todas';
 const ITEMS_PER_PAGE = 8;
 
 // ============================================
-// FUNÇÃO: Criar candidatura com status enviado_cliente
+// FUNÇÃO: Criar candidatura com status correto
+// 🔧 v57.8 (28/01/2026): CORREÇÃO - Status padrão 'triagem'
 // ============================================
 
-async function criarCandidaturaComStatusEnviado(
+async function criarCandidatura(
   pessoaId: number,
   vagaId: number | string,
   analistaId: number,
@@ -88,13 +95,19 @@ async function criarCandidaturaComStatusEnviado(
       .eq('id', pessoaId)
       .single();
 
+    // 🔧 v57.8: Determinar status correto baseado na origem
+    // - Aquisição → 'triagem' (fluxo normal de seleção)
+    // - Indicação cliente → 'indicacao_aprovada' (fluxo especial)
+    const statusCorreto = dados?.status_inicial 
+      || (dados?.origem === 'indicacao_cliente' ? 'indicacao_aprovada' : 'triagem');
+
     // Criar candidatura
     const { data, error } = await supabase
       .from('candidaturas')
       .insert({
         pessoa_id: pessoaId,
         vaga_id: Number(vagaId),
-        status: dados?.status_inicial || 'enviado_cliente',
+        status: statusCorreto,
         analista_id: analistaId,
         candidato_nome: pessoa?.nome || '',
         candidato_email: pessoa?.email || '',
@@ -409,6 +422,7 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   };
 
   // Criar candidatura
+  // 🔧 v57.8 (28/01/2026): CORREÇÃO - Remover status_inicial hardcoded
   const handleCriarCandidatura = async () => {
     if (!candidatoSelecionado || !vagaSelecionada) return;
     
@@ -416,18 +430,19 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     setCriandoCandidatura(pessoaId);
     
     try {
+      // 🔧 v57.8: Não passar status_inicial - usar default da função
+      // - Aquisição → 'triagem'
+      // - Indicação → 'indicacao_aprovada'
       const dadosIndicacao = origem === 'indicacao_cliente' ? {
         origem: 'indicacao_cliente' as const,
         indicado_por_nome: indicadoPorNome || undefined,
         indicado_por_cargo: indicadoPorCargo || undefined,
-        indicacao_observacoes: indicacaoObservacoes || undefined,
-        status_inicial: 'enviado_cliente'
+        indicacao_observacoes: indicacaoObservacoes || undefined
       } : {
-        origem: 'aquisicao' as const,
-        status_inicial: 'enviado_cliente'
+        origem: 'aquisicao' as const
       };
 
-      const candidatura = await criarCandidaturaComStatusEnviado(
+      const candidatura = await criarCandidatura(
         pessoaId,
         vagaSelecionada.id,
         currentUserId,
@@ -436,7 +451,8 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       
       if (candidatura) {
         const tipoMsg = origem === 'indicacao_cliente' ? '(Indicação)' : '(Aquisição)';
-        alert(`✅ Candidatura criada com sucesso! ${tipoMsg}\nStatus: Enviado ao Cliente`);
+        const statusMsg = origem === 'indicacao_cliente' ? 'Indicação Aprovada' : 'Triagem';
+        alert(`✅ Candidatura criada com sucesso! ${tipoMsg}\nStatus: ${statusMsg}`);
         
         if (onCandidaturaCriada) {
           onCandidaturaCriada(candidatura.id);
@@ -917,7 +933,7 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
         {/* ============================================ */}
         <div className="bg-gray-50 px-5 py-3 flex justify-between items-center border-t">
           <p className="text-xs text-gray-500">
-            💡 Candidaturas são criadas com status <strong>"Enviado ao Cliente"</strong>
+            💡 Candidaturas são criadas com status <strong>"Triagem"</strong> (Aquisição) ou <strong>"Indicação Aprovada"</strong> (Indicação)
           </p>
           <button
             onClick={handleFechar}
