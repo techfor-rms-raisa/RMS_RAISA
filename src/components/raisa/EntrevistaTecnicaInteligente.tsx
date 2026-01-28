@@ -1,5 +1,5 @@
 /**
- * EntrevistaTecnicaInteligente.tsx - RMS RAISA v2.9.1
+ * EntrevistaTecnicaInteligente.tsx - RMS RAISA v2.9.2
  * Componente de Entrevista Técnica com IA
  * 
  * NOVO FLUXO:
@@ -11,10 +11,15 @@
  * 6. Score e recomendação
  * 7. Decisão do analista
  * 
+ * NOVIDADES v2.9.2 (28/01/2026):
+ * - 🔧 CORREÇÃO CRÍTICA: Usar String() na comparação de analista_id
+ *   • Evita problemas de tipo (number vs string)
+ *   • Removido campo criado_por que trazia candidaturas extras
+ *   • Adicionado console.log para debug
+ * 
  * NOVIDADES v2.9.1 (28/01/2026):
  * - 🔧 CORREÇÃO CRÍTICA: Dropdown agora filtra candidaturas pelo analista logado
  *   • Mostra apenas candidaturas onde analista_id = currentUserId
- *   • OU onde criado_por = currentUserId
  * 
  * NOVIDADES v2.9 (19/01/2025):
  * - 🔧 CORREÇÃO CRÍTICA: Função salvarDecisao agora ATUALIZA O STATUS DA CANDIDATURA
@@ -177,18 +182,21 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   );
 
   // Filtrar candidaturas elegíveis (em fase de entrevista)
-  // 🔧 v2.9.1 (28/01/2026): Adicionado filtro por analista logado (CORREÇÃO)
-  const candidaturasElegiveis = useMemo(() => 
-    candidaturasComVaga.filter(c => {
+  // 🔧 v2.9.2 (28/01/2026): CORREÇÃO - Usar String() para comparação de tipos
+  const candidaturasElegiveis = useMemo(() => {
+    console.log('🔍 [Entrevista] Filtrando candidaturas para analista:', currentUserId);
+    console.log('🔍 [Entrevista] Total de candidaturas recebidas:', candidaturasComVaga.length);
+    
+    const filtradas = candidaturasComVaga.filter(c => {
       // 1. Filtrar apenas candidaturas do analista logado
+      // 🔧 v2.9.2: Usar String() para evitar problemas de tipo (number vs string)
       const candidaturaAny = c as any;
-      const isMinhasCandidaturas = (
-        candidaturaAny.analista_id === currentUserId ||
-        candidaturaAny.criado_por === currentUserId
-      );
+      const analistaIdCandidatura = String(candidaturaAny.analista_id || '');
+      const analistaLogado = String(currentUserId || '');
+      
+      const isMinhasCandidaturas = analistaIdCandidatura === analistaLogado;
       
       // 2. Filtrar por status elegível para entrevista
-      // 🔧 v2.9.1: Adicionado 'enviado_cliente' para permitir entrevistas pós-envio
       const statusElegivel = (
         c.status === 'entrevista' || 
         c.status === 'triagem' || 
@@ -200,7 +208,11 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       );
       
       return isMinhasCandidaturas && statusElegivel;
-    }),
+    });
+    
+    console.log('✅ [Entrevista] Candidaturas filtradas:', filtradas.length);
+    return filtradas;
+  },
     [candidaturasComVaga, currentUserId]
   );
 
