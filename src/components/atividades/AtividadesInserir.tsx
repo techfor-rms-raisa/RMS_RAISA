@@ -351,7 +351,7 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             const manager = consultant ? usuariosCliente.find(u => u.id === consultant.gestor_imediato_id) : null;
             const client = clients.find(c => c.razao_social_cliente === selectedClient);
             
-            const reportText = `◆ ${consultant?.nome_consultores || ''} | ${client?.razao_social_cliente || ''}\n${activities}`;
+            const reportText = activities;
             const gestorName = manager?.nome_gestor_cliente || 'Não especificado';
 
             // Passa o mês selecionado manualmente
