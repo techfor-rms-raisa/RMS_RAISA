@@ -169,12 +169,14 @@ const App: React.FC = () => {
   // ============================================
   // ✅ CORREÇÃO DO BUG: Agora recebe e passa extractedMonth e extractedYear
   // ✅ v2.1: Salva texto original do relatório em 'content'
+  // 🔧 v2.6: Aceita selectedConsultantName para digitação manual
   // ============================================
   const handleManualAnalysis = async (
     text: string, 
     gestorName?: string,
     extractedMonth?: number,  // ✅ NOVO PARÂMETRO
-    extractedYear?: number    // ✅ NOVO PARÂMETRO
+    extractedYear?: number,   // ✅ NOVO PARÂMETRO
+    selectedConsultantName?: string // 🔧 v2.6: Nome do consultor selecionado via dropdown
   ) => {
       try {
           console.log('📊 Iniciando análise de relatórios...');
@@ -185,6 +187,58 @@ const App: React.FC = () => {
           }
           if (extractedYear) {
               console.log(`📅 Ano extraído recebido no App.tsx: ${extractedYear}`);
+          }
+          
+          // 🔧 v2.6: Se consultor foi selecionado via dropdown, usar nome direto
+          if (selectedConsultantName) {
+              console.log(`👤 Consultor selecionado manualmente: ${selectedConsultantName}`);
+              
+              // Chama a API para análise do texto
+              const results = await processReportAnalysis(text, gestorName, extractedMonth, extractedYear);
+              
+              // Se a API não retornou resultados, perguntar ao usuário
+              if (results.length === 0) {
+                  const confirmar = window.confirm(
+                      `⚠️ A IA não conseguiu gerar uma análise automática do texto.\n\n` +
+                      `Deseja salvar o relatório com Score 3 (Médio) como padrão?\n\n` +
+                      `Clique "OK" para salvar ou "Cancelar" para revisar o texto.`
+                  );
+                  
+                  if (!confirmar) {
+                      console.log('❌ Usuário cancelou - texto será revisado');
+                      return; // Usuário vai revisar o texto
+                  }
+                  
+                  console.log(`⚠️ Usuário confirmou score padrão 3 (Médio)`);
+              }
+              
+              // Cria resultado com nome do consultor selecionado
+              const finalResult: AIAnalysisResult = results.length > 0 
+                  ? {
+                      ...results[0],
+                      consultantName: selectedConsultantName // 🔧 Usa nome selecionado
+                  }
+                  : {
+                      // Resultado padrão quando usuário confirma
+                      consultantName: selectedConsultantName,
+                      managerName: gestorName || 'Não especificado',
+                      reportMonth: extractedMonth || new Date().getMonth() + 1,
+                      reportYear: extractedYear || new Date().getFullYear(),
+                      riskScore: 3, // Score padrão "Médio" - mais conservador
+                      summary: `Relatório manual: ${text.substring(0, 150)}${text.length > 150 ? '...' : ''}`,
+                      negativePattern: null,
+                      predictiveAlert: null,
+                      recommendations: [],
+                      details: text
+                  };
+              
+              if (results.length > 0) {
+                  console.log(`✅ Análise IA concluída. Score: ${finalResult.riskScore}`);
+              }
+              
+              await updateConsultantScore(finalResult, text, currentUser?.nome_usuario);
+              alert(`✅ Análise concluída com sucesso!\n\n1 consultor(es) atualizado(s).\n\nVerifique o Dashboard para ver os resultados.`);
+              return;
           }
           
           const results = await processReportAnalysis(text, gestorName, extractedMonth, extractedYear);
