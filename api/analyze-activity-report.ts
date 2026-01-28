@@ -318,3 +318,4 @@ function safeJsonParse(jsonText: string): any {
   console.error('❌ Todas as tentativas de parse falharam');
   return [];
 }
+
