@@ -3,6 +3,10 @@
  * Módulo separado do useSupabaseData para melhor organização
  * Inclui integração com Gemini AI e notificações de risco crítico
  * 
+ * 🔧 VERSÃO 2.5 - CORREÇÃO BUG CONTENT (28/01/2026)
+ * - CORRIGIDO: Campo content agora recebe texto original digitado pelo usuário
+ * - CORRIGIDO: Parâmetro _originalContent agora é passado para performUpdate
+ * 
  * 🆕 VERSÃO 2.4 - CAMPO CRIADO_POR (21/01/2026)
  * - NOVO: Salva criado_por ao criar relatório em consultant_reports
  * - Rastreamento de quem criou cada relatório
@@ -279,7 +283,7 @@ export const useReportAnalysis = () => {
     users: User[],
     usuariosCliente: UsuarioCliente[],
     clients: Client[],
-    _originalContent?: string, // ✅ DEPRECATED: Não usar mais - manter para compatibilidade
+    _originalContent?: string, // 🔧 v2.5: Texto original digitado pelo usuário (usado no campo content)
     criadoPor?: string // 🆕 v2.4: Nome do usuário que criou o relatório
   ) => {
     try {
@@ -388,13 +392,13 @@ export const useReportAnalysis = () => {
         
         console.log(`✅ Consultor encontrado no Supabase: ${exactMatch.nome_consultores} (ID: ${exactMatch.id}, Ano: ${exactMatch.ano_vigencia})`);
         // Continuar com o ID do banco
-        await performUpdate(exactMatch.id, result, users, usuariosCliente, clients, setConsultants, undefined, criadoPor);
+        await performUpdate(exactMatch.id, result, users, usuariosCliente, clients, setConsultants, undefined, criadoPor, _originalContent);
         return;
       }
       
       console.log(`✅ Consultor encontrado no estado: ${consultant.nome_consultores} (ID: ${consultant.id})`);
       
-      await performUpdate(consultant.id, result, users, usuariosCliente, clients, setConsultants, consultant, criadoPor);
+      await performUpdate(consultant.id, result, users, usuariosCliente, clients, setConsultants, consultant, criadoPor, _originalContent);
       
     } catch (err: any) {
       console.error('═══════════════════════════════════════════════════════');
@@ -417,7 +421,8 @@ export const useReportAnalysis = () => {
     clients: Client[],
     setConsultants: React.Dispatch<React.SetStateAction<Consultant[]>>,
     localConsultant?: Consultant,
-    criadoPor?: string // 🆕 v2.4: Nome do usuário que criou o relatório
+    criadoPor?: string, // 🆕 v2.4: Nome do usuário que criou o relatório
+    _originalContent?: string // 🔧 v2.5: Texto original digitado pelo usuário
   ) => {
     // Preparar campo do mês (parecer_1_consultor, parecer_2_consultor, etc)
     const monthField = `parecer_${result.reportMonth}_consultor`;
@@ -438,8 +443,8 @@ export const useReportAnalysis = () => {
       return;
     }
     
-    // ✅ v2.2: Usar trechoOriginal da IA
-    const conteudoOriginal = (result as any).trechoOriginal || result.details || result.summary;
+    // 🔧 v2.5 CORREÇÃO: Priorizar _originalContent (texto digitado pelo usuário)
+    const conteudoOriginal = _originalContent || (result as any).trechoOriginal || result.details || result.summary;
     
     // ============================================================================
     // PASSO 1: Atualizar parecer no consultor
