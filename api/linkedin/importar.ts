@@ -4,10 +4,10 @@
  * Endpoint para receber dados do LinkedIn (via extensão Chrome)
  * e salvar diretamente na tabela PESSOAS (Banco de Talentos)
  * 
- * 🆕 v57.12: CORREÇÃO DE ESTADO (VARCHAR(2))
- * - Normaliza estado para sigla de 2 caracteres (SP, RJ, MG...)
- * - Função parseLocalizacao aprimorada para extrair UF corretamente
- * - Validação de tamanho antes de inserir
+ * 🆕 v57.13: CORREÇÃO COLUNAS pessoa_skills
+ * - Corrigido: skill → skill_nome
+ * - Corrigido: categoria → skill_categoria
+ * - Removido: certificado (não existe na tabela)
  * 
  * Histórico:
  * - v57.0: Removida validação obrigatória de analista_id
@@ -19,6 +19,7 @@
  * - v57.10: Truncar TODOS os campos texto
  * - v57.11: Processar datas e descrição de experiências
  * - v57.12: Normalização de estado para UF (2 chars)
+ * - v57.13: Correção nomes de colunas pessoa_skills
  * 
  * Data: 29/01/2026
  */
@@ -44,7 +45,7 @@ function getAI(): GoogleGenAI {
       throw new Error('API_KEY não configurada.');
     }
     
-    console.log('✅ API_KEY carregada para LinkedIn Import v57.12');
+    console.log('✅ API_KEY carregada para LinkedIn Import v57.13');
     aiInstance = new GoogleGenAI({ apiKey });
   }
   return aiInstance;
@@ -643,11 +644,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (skillsFiltradas.length > 0) {
       const skillsData = skillsFiltradas.slice(0, 100).map(skill => ({
         pessoa_id,
-        skill: skill.substring(0, 100),
-        categoria: categorizarSkill(skill),
+        skill_nome: skill.substring(0, 100),
+        skill_categoria: categorizarSkill(skill),
         nivel: 'intermediario',
-        anos_experiencia: 0,
-        certificado: false
+        anos_experiencia: 0
       }));
 
       const { error } = await supabase
