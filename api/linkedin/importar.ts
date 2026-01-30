@@ -4,10 +4,9 @@
  * Endpoint para receber dados do LinkedIn (via extensão Chrome)
  * e salvar diretamente na tabela PESSOAS (Banco de Talentos)
  * 
- * 🆕 v57.13: CORREÇÃO COLUNAS pessoa_skills
- * - Corrigido: skill → skill_nome
- * - Corrigido: categoria → skill_categoria
- * - Removido: certificado (não existe na tabela)
+ * 🆕 v57.14: GARANTIA estado VARCHAR(2)
+ * - Adicionado .substring(0, 2) no momento do insert
+ * - Garante que NUNCA exceda 2 caracteres
  * 
  * Histórico:
  * - v57.0: Removida validação obrigatória de analista_id
@@ -20,8 +19,9 @@
  * - v57.11: Processar datas e descrição de experiências
  * - v57.12: Normalização de estado para UF (2 chars)
  * - v57.13: Correção nomes de colunas pessoa_skills
+ * - v57.14: Garantia absoluta estado max 2 chars
  * 
- * Data: 29/01/2026
+ * Data: 30/01/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -45,7 +45,7 @@ function getAI(): GoogleGenAI {
       throw new Error('API_KEY não configurada.');
     }
     
-    console.log('✅ API_KEY carregada para LinkedIn Import v57.13');
+    console.log('✅ API_KEY carregada para LinkedIn Import v57.14');
     aiInstance = new GoogleGenAI({ apiKey });
   }
   return aiInstance;
@@ -513,7 +513,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       resumo_profissional: resumoProfissional,
       linkedin_url: linkedinUrl || null,
       cidade: cidade,
-      estado: estado,  // 🆕 v57.12: Agora sempre 2 chars (UF)
+      estado: estado.substring(0, 2),  // 🆕 v57.14: GARANTIDO max 2 chars
       disponibilidade: 'A combinar',
       modalidade_preferida: 'Remoto',
       ativo: true,
@@ -798,3 +798,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 }
+

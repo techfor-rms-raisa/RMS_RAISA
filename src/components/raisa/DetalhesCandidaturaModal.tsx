@@ -17,8 +17,8 @@
  * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
  * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
  * 
- * Versão: 2.0 - Integração com Análise de Adequação de Perfil
- * Data: 08/01/2026
+ * Versão: 2.1 - Exibição de descrição das experiências
+ * Data: 30/01/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -962,17 +962,43 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                 <div className="bg-gray-50 rounded-xl p-5">
                   <h3 className="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                     <Briefcase className="w-5 h-5 text-green-600" />
-                    Últimas Experiências
+                    Últimas Experiências ({dadosExtras.experiencias.length})
                   </h3>
                   <div className="space-y-3">
-                    {dadosExtras.experiencias.slice(0, 3).map((exp, i) => (
-                      <div key={i} className="bg-white rounded-lg p-3 border">
-                        <p className="font-medium text-gray-800">{exp.cargo}</p>
-                        <p className="text-sm text-gray-600">{exp.empresa}</p>
-                        {exp.atual && (
-                          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded mt-1 inline-block">
-                            Atual
-                          </span>
+                    {dadosExtras.experiencias.slice(0, 5).map((exp, i) => (
+                      <div key={i} className="bg-white rounded-lg p-4 border">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <p className="font-medium text-gray-800">{exp.cargo}</p>
+                            <p className="text-sm text-gray-600">{exp.empresa}</p>
+                          </div>
+                          {exp.atual && (
+                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
+                              Atual
+                            </span>
+                          )}
+                        </div>
+                        {/* 🆕 v2.1: Período */}
+                        {(exp.data_inicio || exp.data_fim) && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            {exp.data_inicio || '?'} - {exp.atual ? 'Atual' : (exp.data_fim || '?')}
+                          </p>
+                        )}
+                        {/* 🆕 v2.1: DESCRIÇÃO - NOVA FUNCIONALIDADE */}
+                        {exp.descricao && (
+                          <p className="text-sm text-gray-600 mt-2 line-clamp-3">
+                            {exp.descricao}
+                          </p>
+                        )}
+                        {/* 🆕 v2.1: Tecnologias */}
+                        {exp.tecnologias_usadas && exp.tecnologias_usadas.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            {exp.tecnologias_usadas.slice(0, 5).map((tech: string, j: number) => (
+                              <span key={j} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">
+                                {tech}
+                              </span>
+                            ))}
+                          </div>
                         )}
                       </div>
                     ))}
