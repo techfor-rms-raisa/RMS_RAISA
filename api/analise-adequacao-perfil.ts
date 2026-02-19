@@ -234,17 +234,82 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.error('❌ Erro ao parsear resposta Gemini:', parseError);
       console.error('Resposta bruta (primeiros 2000 chars):', responseText.substring(0, 2000));
       
-      // Tentar criar resposta mínima de fallback
+      // 🔧 v2.1: Tentar recuperar JSON truncado
       try {
+        // Tentar extrair dados parciais do JSON truncado
+        const scoreMatch = responseText.match(/"score_geral"\s*:\s*(\d+)/);
+        const nivelMatch = responseText.match(/"nivel_adequacao_geral"\s*:\s*"([^"]+)"/);
+        const recomendacaoMatch = responseText.match(/"recomendacao"\s*:\s*"([^"]+)"/);
+        
+        if (scoreMatch && nivelMatch) {
+          console.log('⚠️ Recuperando dados parciais do JSON truncado...');
+          
+          // Extrair pontos fortes e gaps do texto parcial
+          const pontosFortes: string[] = [];
+          const gapsCriticos: string[] = [];
+          
+          // Buscar evidências encontradas
+          const evidenciasMatch = responseText.matchAll(/"evidencias_encontradas"\s*:\s*\[(.*?)\]/gs);
+          for (const match of evidenciasMatch) {
+            const evidencias = match[1].match(/"([^"]+)"/g);
+            if (evidencias) {
+              pontosFortes.push(...evidencias.slice(0, 2).map(e => e.replace(/"/g, '')));
+            }
+          }
+          
+          // Buscar evidências ausentes (gaps)
+          const ausentesMatch = responseText.matchAll(/"evidencias_ausentes"\s*:\s*\[(.*?)\]/gs);
+          for (const match of ausentesMatch) {
+            const ausentes = match[1].match(/"([^"]+)"/g);
+            if (ausentes) {
+              gapsCriticos.push(...ausentes.slice(0, 2).map(e => e.replace(/"/g, '')));
+            }
+          }
+          
+          result = {
+            candidato_nome: candidato.nome || 'Candidato',
+            vaga_titulo: vaga.titulo || 'Vaga',
+            data_analise: new Date().toISOString(),
+            score_geral: parseInt(scoreMatch[1]),
+            nivel_adequacao_geral: nivelMatch[1] as any,
+            confianca_analise: 70,
+            requisitos_imprescindiveis: [],
+            requisitos_muito_desejaveis: [],
+            requisitos_desejaveis: [],
+            resumo_executivo: {
+              principais_pontos_fortes: pontosFortes.length > 0 ? pontosFortes.slice(0, 3) : ['Análise parcial - verificar detalhes'],
+              gaps_criticos: gapsCriticos.length > 0 ? gapsCriticos.slice(0, 3) : [],
+              gaps_investigar: ['Validar competências na entrevista'],
+              diferenciais_candidato: []
+            },
+            perguntas_entrevista: [{
+              categoria: 'Validação Técnica',
+              icone: '💻',
+              perguntas: [{
+                pergunta: 'Descreva sua experiência mais relevante para esta vaga.',
+                objetivo: 'Validar fit técnico',
+                o_que_avaliar: ['Experiência', 'Conhecimento técnico'],
+                red_flags: ['Respostas vagas']
+              }]
+            }],
+            avaliacao_final: {
+              recomendacao: (recomendacaoMatch?.[1] as any) || 'ENTREVISTAR',
+              justificativa: 'Análise parcial recuperada. Recomenda-se entrevista para validação completa.',
+              proximos_passos: ['Agendar entrevista técnica'],
+              riscos_identificados: ['Análise incompleta devido a limitação técnica'],
+              pontos_atencao_entrevista: ['Validar requisitos principais']
+            }
+          };
+          
+          console.log(`✅ Dados parciais recuperados - Score: ${result.score_geral}%`);
+        } else {
+          // Fallback completo
+          result = criarRespostaFallback(candidato, vaga);
+          console.log('⚠️ Usando resposta fallback devido a erro de parse');
+        }
+      } catch {
         result = criarRespostaFallback(candidato, vaga);
         console.log('⚠️ Usando resposta fallback devido a erro de parse');
-      } catch {
-        return res.status(500).json({ 
-          error: '❌ Erro na API Gemini (gemini-2.0-flash): Resposta inválida',
-          tipo: 'PARSE_ERROR',
-          acao: 'O modelo retornou dados mal formatados. Tente novamente.',
-          detalhes: 'JSON inválido na resposta'
-        });
       }
     }
 
@@ -545,9 +610,15 @@ Retorne um JSON com esta estrutura EXATA:
 
 ## ⚠️ IMPORTANTE:
 
-1. Analise CADA requisito mencionado na vaga (imprescindíveis E desejáveis)
-2. Para competências funcionais, busque evidências nas DESCRIÇÕES das experiências
-3. Referencie experiências ESPECÍFICAS do candidato nas evidências
+1. Analise no MÁXIMO 5 requisitos imprescindíveis e 3 desejáveis (os mais importantes)
+2. Seja CONCISO nas justificativas (máximo 2 frases)
+3. Liste no máximo 2 evidências por requisito
+4. Crie no máximo 3 categorias de perguntas com 2 perguntas cada
+5. O JSON deve ser COMPACTO - evite textos longos
+6. Referencie experiências ESPECÍFICAS do candidato
+7. Score geral deve refletir a média ponderada (imprescindíveis pesam mais)
+
+Responda APENAS com o JSON, sem texto adicional ou markdown.
 4. Crie perguntas que mencionem experiências do CV (ex: "Na sua atuação na DATINFO...")
 5. Agrupe perguntas por TEMA (Documentação, Testes, Metodologias, APIs, etc.)
 6. Seja justo: se há evidência parcial, classifique como ATENDE_PARCIALMENTE, não como GAP
