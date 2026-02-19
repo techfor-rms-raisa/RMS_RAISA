@@ -335,7 +335,7 @@ export function AnaliseCVPanel({
           {/* Seções colapsáveis */}
           <div className="space-y-2">
             {/* Pontos Fortes */}
-            {analise.pontos_fortes.length > 0 && (
+            {analise.pontos_fortes && analise.pontos_fortes.length > 0 && (
               <SecaoColapsavel
                 titulo="Pontos Fortes"
                 icon={<TrendingUp className="w-4 h-4 text-green-600" />}
@@ -355,7 +355,7 @@ export function AnaliseCVPanel({
             )}
 
             {/* Fatores de Risco */}
-            {analise.fatores_risco.length > 0 && (
+            {analise.fatores_risco && analise.fatores_risco.length > 0 && (
               <SecaoColapsavel
                 titulo={`Fatores de Risco (${analise.fatores_risco.length})`}
                 icon={<AlertTriangle className="w-4 h-4 text-orange-600" />}
@@ -372,7 +372,7 @@ export function AnaliseCVPanel({
             )}
 
             {/* Pontos de Atenção */}
-            {analise.pontos_atencao.length > 0 && (
+            {analise.pontos_atencao && analise.pontos_atencao.length > 0 && (
               <SecaoColapsavel
                 titulo="Pontos de Atenção"
                 icon={<AlertCircle className="w-4 h-4 text-yellow-600" />}
@@ -401,7 +401,7 @@ export function AnaliseCVPanel({
                 onToggle={() => toggleSecao('skills')}
               >
                 <div className="space-y-3">
-                  {analise.skills_match.atendidas.length > 0 && (
+                  {analise.skills_match?.atendidas && analise.skills_match.atendidas.length > 0 && (
                     <div>
                       <p className="text-xs font-medium text-green-600 mb-1">✅ Skills Atendidas</p>
                       <div className="flex flex-wrap gap-1">
@@ -414,7 +414,7 @@ export function AnaliseCVPanel({
                     </div>
                   )}
                   
-                  {analise.skills_match.parciais.length > 0 && (
+                  {analise.skills_match?.parciais && analise.skills_match.parciais.length > 0 && (
                     <div>
                       <p className="text-xs font-medium text-yellow-600 mb-1">⚡ Skills Parciais</p>
                       <div className="flex flex-wrap gap-1">
@@ -427,7 +427,7 @@ export function AnaliseCVPanel({
                     </div>
                   )}
                   
-                  {analise.skills_match.faltantes.length > 0 && (
+                  {analise.skills_match?.faltantes && analise.skills_match.faltantes.length > 0 && (
                     <div>
                       <p className="text-xs font-medium text-red-600 mb-1">❌ Skills Faltantes</p>
                       <div className="flex flex-wrap gap-1">
