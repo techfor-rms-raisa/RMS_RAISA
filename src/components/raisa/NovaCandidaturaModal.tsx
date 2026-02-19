@@ -88,10 +88,11 @@ async function criarCandidatura(
   }
 ): Promise<any> {
   try {
-    // Buscar dados da pessoa
+    // Buscar dados da pessoa (incluindo CV para análise de adequação)
+    // 🔧 v57.9 (19/02/2026): Adicionado cv_texto_original
     const { data: pessoa } = await supabase
       .from('pessoas')
-      .select('nome, email')
+      .select('nome, email, cv_texto_original')
       .eq('id', pessoaId)
       .single();
 
@@ -111,6 +112,7 @@ async function criarCandidatura(
         analista_id: analistaId,
         candidato_nome: pessoa?.nome || '',
         candidato_email: pessoa?.email || '',
+        curriculo_texto: pessoa?.cv_texto_original || null,  // 🆕 v57.9: CV para análise
         origem: dados?.origem || 'aquisicao',
         indicado_por_nome: dados?.indicado_por_nome,
         indicado_por_cargo: dados?.indicado_por_cargo,
