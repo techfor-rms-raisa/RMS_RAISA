@@ -469,8 +469,14 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
     const resultado = await analisarAdequacao(dadosCandidato, dadosVaga);
     
     if (resultado) {
-      // Salvar no banco automaticamente
-      await salvarAnaliseAdequacao(parseInt(candidatura.id));
+      // Salvar no banco automaticamente - passando resultado diretamente
+      await salvarAnaliseAdequacao(
+        parseInt(candidatura.id),                                            // candidaturaId
+        candidatura.pessoa_id ? Number(candidatura.pessoa_id) : undefined,   // pessoaId
+        vaga?.id ? parseInt(String(vaga.id)) : undefined,                    // vagaId
+        currentUserId,                                                       // userId
+        resultado                                                            // resultado da análise
+      );
       // Expandir painel para mostrar resultado
       setMostrarAnaliseAdequacao(true);
     }

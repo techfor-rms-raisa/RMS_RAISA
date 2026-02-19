@@ -4,6 +4,10 @@
 // ============================================================
 // Hook React para gerenciar análise de adequação de perfil
 // Inclui cache, loading states e persistência opcional
+// 
+// 🔧 CORREÇÃO 19/02/2026:
+// - salvarAnalise agora aceita resultado como 5º parâmetro
+// - Usa .maybeSingle() em vez de .single() para evitar erro 406
 // ============================================================
 
 import { useState, useCallback } from 'react';
@@ -38,8 +42,8 @@ export interface UseAnaliseAdequacaoReturn {
   estatisticas: ReturnType<typeof calcularEstatisticas> | null;
   desqualificacao: ReturnType<typeof verificarDesqualificacao> | null;
   
-  // Persistência
-  salvarAnalise: (candidaturaId?: number, pessoaId?: number, vagaId?: number, userId?: number) => Promise<{ success: boolean; analiseId?: number }>;
+  // Persistência - aceita resultado como 5º parâmetro
+  salvarAnalise: (candidaturaId?: number, pessoaId?: number, vagaId?: number, userId?: number, resultadoAnalise?: AnaliseAdequacaoPerfil) => Promise<{ success: boolean; analiseId?: number }>;
   carregarAnalise: (candidaturaId?: number, pessoaId?: number, vagaId?: number) => Promise<AnaliseAdequacaoPerfil | null>;
   buscarPerguntasEntrevista: (candidaturaId?: number, pessoaId?: number, vagaId?: number) => Promise<any[] | null>;
 }
@@ -95,50 +99,103 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
   }, []);
 
   // Salvar análise no banco de dados (tabela analise_adequacao)
+  // 🔧 CORRIGIDO: Aceita resultadoAnalise como 5º parâmetro
   const salvarAnalise = useCallback(async (
     candidaturaId?: number,
     pessoaId?: number,
     vagaId?: number,
-    userId?: number
+    userId?: number,
+    resultadoAnalise?: AnaliseAdequacaoPerfil
   ): Promise<{ success: boolean; analiseId?: number }> => {
-    if (!analise) {
-      console.warn('[useAnaliseAdequacao] Nenhuma análise para salvar');
+    
+    // Usar o parâmetro se fornecido, senão usar o estado
+    const analiseParaSalvar = resultadoAnalise || analise;
+    
+    if (!analiseParaSalvar) {
+      console.warn('⚠️ [useAnaliseAdequacao] Nenhuma análise para salvar');
       return { success: false };
     }
 
     try {
       console.log(`💾 [useAnaliseAdequacao] Salvando análise...`);
+      console.log(`   Score: ${analiseParaSalvar.score_geral}%`);
 
-      // Salvar na nova tabela analise_adequacao
+      // Verificar se já existe análise para esta candidatura
+      if (candidaturaId) {
+        const { data: existente } = await supabase
+          .from('analise_adequacao')
+          .select('id')
+          .eq('candidatura_id', candidaturaId)
+          .limit(1)
+          .maybeSingle();
+
+        if (existente?.id) {
+          // Atualizar registro existente
+          const { error: updateError } = await supabase
+            .from('analise_adequacao')
+            .update({
+              score_geral: analiseParaSalvar.score_geral,
+              nivel_adequacao: analiseParaSalvar.nivel_adequacao_geral,
+              confianca_analise: analiseParaSalvar.confianca_analise,
+              recomendacao: analiseParaSalvar.avaliacao_final?.recomendacao,
+              perguntas_entrevista: analiseParaSalvar.perguntas_entrevista,
+              requisitos_analisados: [
+                ...(analiseParaSalvar.requisitos_imprescindiveis || []),
+                ...(analiseParaSalvar.requisitos_muito_desejaveis || []),
+                ...(analiseParaSalvar.requisitos_desejaveis || [])
+              ],
+              resumo_executivo: analiseParaSalvar.resumo_executivo,
+              avaliacao_final: analiseParaSalvar.avaliacao_final,
+              resultado_completo: analiseParaSalvar,
+              modelo_ia: (analiseParaSalvar as any)._metadata?.modelo || 'gemini-2.0-flash',
+              tempo_processamento_ms: (analiseParaSalvar as any)._metadata?.tempo_ms,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', existente.id);
+
+          if (updateError) throw updateError;
+
+          console.log(`✅ [useAnaliseAdequacao] Análise ATUALIZADA - ID: ${existente.id}`);
+          return { success: true, analiseId: existente.id };
+        }
+      }
+
+      // Inserir novo registro
       const { data, error: dbError } = await supabase
         .from('analise_adequacao')
         .insert({
           pessoa_id: pessoaId || null,
           vaga_id: vagaId || null,
           candidatura_id: candidaturaId || null,
-          score_geral: analise.score_geral,
-          nivel_adequacao: analise.nivel_adequacao_geral,
-          confianca_analise: analise.confianca_analise,
-          recomendacao: analise.avaliacao_final?.recomendacao,
-          perguntas_entrevista: analise.perguntas_entrevista,
+          score_geral: analiseParaSalvar.score_geral,
+          nivel_adequacao: analiseParaSalvar.nivel_adequacao_geral,
+          confianca_analise: analiseParaSalvar.confianca_analise,
+          recomendacao: analiseParaSalvar.avaliacao_final?.recomendacao,
+          perguntas_entrevista: analiseParaSalvar.perguntas_entrevista,
           requisitos_analisados: [
-            ...(analise.requisitos_imprescindiveis || []),
-            ...(analise.requisitos_muito_desejaveis || []),
-            ...(analise.requisitos_desejaveis || [])
+            ...(analiseParaSalvar.requisitos_imprescindiveis || []),
+            ...(analiseParaSalvar.requisitos_muito_desejaveis || []),
+            ...(analiseParaSalvar.requisitos_desejaveis || [])
           ],
-          resumo_executivo: analise.resumo_executivo,
-          avaliacao_final: analise.avaliacao_final,
-          resultado_completo: analise,
-          modelo_ia: (analise as any)._metadata?.modelo || 'gemini-2.0-flash',
-          tempo_processamento_ms: (analise as any)._metadata?.tempo_ms,
+          resumo_executivo: analiseParaSalvar.resumo_executivo,
+          avaliacao_final: analiseParaSalvar.avaliacao_final,
+          resultado_completo: analiseParaSalvar,
+          modelo_ia: (analiseParaSalvar as any)._metadata?.modelo || 'gemini-2.0-flash',
+          tempo_processamento_ms: (analiseParaSalvar as any)._metadata?.tempo_ms,
           created_by: userId || null
         })
         .select('id')
         .single();
 
-      if (dbError) throw dbError;
+      if (dbError) {
+        if (dbError.code === '23505') {
+          console.warn('⚠️ Registro já existe, tentando atualizar...');
+          return salvarAnalise(candidaturaId, pessoaId, vagaId, userId, analiseParaSalvar);
+        }
+        throw dbError;
+      }
 
-      console.log(`✅ [useAnaliseAdequacao] Análise salva com ID: ${data?.id}`);
+      console.log(`✅ [useAnaliseAdequacao] Análise INSERIDA - ID: ${data?.id}`);
       return { success: true, analiseId: data?.id };
 
     } catch (err: any) {
@@ -160,7 +217,6 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
         .from('analise_adequacao')
         .select('*');
 
-      // Buscar por candidatura OU por pessoa+vaga
       if (candidaturaId) {
         query = query.eq('candidatura_id', candidaturaId);
       } else if (pessoaId && vagaId) {
@@ -173,17 +229,19 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
       const { data, error: dbError } = await query
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (dbError) {
-        if (dbError.code === 'PGRST116') {
-          console.log('[useAnaliseAdequacao] Nenhuma análise encontrada');
-          return null;
-        }
-        throw dbError;
+        console.error('❌ [useAnaliseAdequacao] Erro ao carregar:', dbError.message);
+        return null;
       }
 
-      const analiseCarregada = data?.resultado_completo as AnaliseAdequacaoPerfil;
+      if (!data) {
+        console.log('[useAnaliseAdequacao] Nenhuma análise encontrada');
+        return null;
+      }
+
+      const analiseCarregada = data.resultado_completo as AnaliseAdequacaoPerfil;
       
       if (analiseCarregada) {
         setAnalise(analiseCarregada);
@@ -202,7 +260,7 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
   const estatisticas = analise ? calcularEstatisticas(analise) : null;
   const desqualificacao = analise ? verificarDesqualificacao(analise) : null;
 
-  // Buscar perguntas de entrevista de uma análise salva
+  // Buscar perguntas de entrevista
   const buscarPerguntasEntrevista = useCallback(async (
     candidaturaId?: number,
     pessoaId?: number,
@@ -224,7 +282,7 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
       const { data, error } = await query
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (error || !data) return null;
 
@@ -235,20 +293,13 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
   }, []);
 
   return {
-    // Estado
     analise,
     loading,
     error,
-    
-    // Ações
     analisar,
     limpar,
-    
-    // Helpers
     estatisticas,
     desqualificacao,
-    
-    // Persistência
     salvarAnalise,
     carregarAnalise,
     buscarPerguntasEntrevista
@@ -256,7 +307,7 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
 }
 
 // ============================================================
-// HOOK SIMPLIFICADO: Apenas buscar análise existente
+// HOOK SIMPLIFICADO
 // ============================================================
 
 export function useAnaliseAdequacaoExistente(candidaturaId: number | null) {
@@ -269,17 +320,17 @@ export function useAnaliseAdequacaoExistente(candidaturaId: number | null) {
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from('candidatura_analises')
-        .select('analise_completa')
+        .from('analise_adequacao')
+        .select('resultado_completo')
         .eq('candidatura_id', candidaturaId)
-        .eq('tipo_analise', 'adequacao_perfil')
-        .single();
+        .limit(1)
+        .maybeSingle();
 
-      if (!error && data?.analise_completa) {
-        setAnalise(data.analise_completa as AnaliseAdequacaoPerfil);
+      if (!error && data?.resultado_completo) {
+        setAnalise(data.resultado_completo as AnaliseAdequacaoPerfil);
       }
     } catch {
-      // Silenciar erro se não encontrar
+      // Silenciar erro
     } finally {
       setLoading(false);
     }
@@ -287,9 +338,5 @@ export function useAnaliseAdequacaoExistente(candidaturaId: number | null) {
 
   return { analise, loading, carregar };
 }
-
-// ============================================================
-// EXPORT DEFAULT
-// ============================================================
 
 export default useAnaliseAdequacao;
