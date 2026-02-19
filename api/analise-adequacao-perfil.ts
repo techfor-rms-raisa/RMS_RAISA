@@ -385,6 +385,15 @@ ${i + 1}. **${exp.cargo}** na **${exp.empresa}**
     .map((s: any) => typeof s === 'string' ? s : `${s.nome} (${s.nivel || 'N/A'})`)
     .join(', ');
 
+  // 🆕 v2.1: Incluir texto completo do CV se disponível
+  const textoCV = candidato.curriculo_texto || '';
+  const secaoCV = textoCV ? `
+**📄 TEXTO COMPLETO DO CURRÍCULO:**
+\`\`\`
+${textoCV.substring(0, 8000)}
+\`\`\`
+` : '';
+
   return `
 ## ANÁLISE DE ADEQUAÇÃO DE PERFIL
 
@@ -439,7 +448,7 @@ ${(candidato.idiomas || []).map((i: any) => `${i.idioma}: ${i.nivel}`).join(', '
 
 **Certificações:**
 ${(candidato.certificacoes || []).map((c: any) => c.nome || c).join(', ') || 'Não informadas'}
-
+${secaoCV}
 ---
 
 ## 🎯 SUA TAREFA
@@ -447,6 +456,8 @@ ${(candidato.certificacoes || []).map((c: any) => c.nome || c).join(', ') || 'N�
 Analise **cada requisito** da vaga individualmente e avalie o nível de adequação do candidato.
 
 Para requisitos que envolvem **competências funcionais** (como "escrever histórias de usuário", "conduzir homologação", etc.), busque evidências nas descrições das experiências, não apenas nas skills listadas.
+
+${textoCV ? '**IMPORTANTE:** Analise também o TEXTO COMPLETO DO CURRÍCULO acima para encontrar evidências adicionais.' : ''}
 
 Retorne um JSON com esta estrutura EXATA:
 
