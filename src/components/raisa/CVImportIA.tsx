@@ -553,7 +553,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           .select('id, nome, email, cpf, titulo_profissional, created_at')
           .or(`cpf.eq.${cpfNormalizado},cpf.eq.${cpfFormatado}`)
           .limit(1)
-          .single();
+          .maybeSingle();
         
         if (duplicadoCpf) {
           console.log('⚠️ Candidato duplicado encontrado por CPF:', duplicadoCpf.nome);
@@ -575,7 +575,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           .select('id, nome, email, cpf, titulo_profissional, created_at')
           .eq('email', emailNormalizado)
           .limit(1)
-          .single();
+          .maybeSingle();
         
         if (duplicadoEmail) {
           console.log('⚠️ Candidato duplicado encontrado por EMAIL:', duplicadoEmail.nome);
