@@ -176,7 +176,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ],
           config: {
             temperature: 0.3,
-            maxOutputTokens: 8192,
+            maxOutputTokens: 16384,  // 🔧 v2.1: Aumentado de 8192 para 16384
           }
         });
         
