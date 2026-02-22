@@ -1,4 +1,4 @@
-﻿/**
+/**
  * CVGeneratorV2.tsx - Gerador de CV Padronizado v2.1
  * 
  * Baseado nos templates reais:
@@ -329,55 +329,48 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
     }
   };
 
-  // 🆕 v3.0: Função para baixar CV em DOCX (Word) com papel timbrado real
-  const handleBaixarDocx = async () => {
-    setLoading(true);
-    setError(null);
+  // 🆕 Função para baixar/imprimir PDF
+  const handleBaixarPDF = () => {
+    if (!htmlPreview) {
+      alert('Nenhum CV gerado para baixar.');
+      return;
+    }
 
-    try {
-      const response = await fetch('/api/cv-generator-docx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dados: dados,
-          template: templateSelecionado === 'tsystems' ? 'tsystems' : 'techfor'
-        })
-      });
+    // Criar HTML completo com estilos de impressão
+    const htmlCompleto = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>CV - ${dados.nome || candidatoNome}</title>
+          <style>
+            @media print {
+              body { margin: 0; padding: 0; }
+              @page { size: A4; margin: 10mm; }
+            }
+          </style>
+        </head>
+        <body>
+          ${htmlCapa ? htmlCapa + '<div style="page-break-after: always;"></div>' : ''}
+          ${htmlPreview}
+        </body>
+      </html>
+    `;
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Erro ao gerar DOCX');
-      }
-
-      const result = await response.json();
+    // Abrir em nova janela e imprimir
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(htmlCompleto);
+      printWindow.document.close();
       
-      // Converter base64 para blob e iniciar download
-      const byteCharacters = atob(result.docx_base64);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { 
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
-      });
-
-      // Criar link de download
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = result.filename || `CV_${(dados.nome || 'Candidato').replace(/\s+/g, '_')}_Techfor.docx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-
-      console.log('✅ DOCX baixado: ' + result.size + ' bytes');
-    } catch (err: any) {
-      console.error('❌ Erro ao gerar DOCX:', err);
-      setError(err.message || 'Erro ao gerar documento Word');
-    } finally {
-      setLoading(false);
+      // Aguardar carregamento e abrir diálogo de impressão
+      printWindow.onload = () => {
+        setTimeout(() => {
+          printWindow.print();
+        }, 500);
+      };
+    } else {
+      alert('Popup bloqueado. Por favor, permita popups para este site.');
     }
   };
 
@@ -1026,11 +1019,10 @@ Recomendamos o(a) [NOME]..."
                     </button>
                   )}
                   <button 
-                    onClick={handleBaixarDocx}
-                    disabled={loading}
-                    className="text-green-600 hover:underline text-sm disabled:opacity-50"
+                    onClick={handleBaixarPDF}
+                    className="text-green-600 hover:underline text-sm"
                   >
-                    {loading ? '⏳ Gerando...' : '📥 Baixar DOCX'}
+                    🖨️ Imprimir/PDF
                   </button>
                   <button onClick={() => setEtapa('parecer')} className="text-blue-600 hover:underline text-sm">
                     ← Voltar e editar
@@ -1071,11 +1063,10 @@ Recomendamos o(a) [NOME]..."
 
               <div className="flex justify-center gap-4 flex-wrap">
                 <button 
-                  onClick={handleBaixarDocx}
-                  disabled={loading}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  onClick={handleBaixarPDF}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 >
-                  {loading ? '⏳ Gerando DOCX...' : '📥 Baixar DOCX (Word)'}
+                  📥 Baixar PDF
                 </button>
                 <button 
                   onClick={() => setEtapa('preview')}
