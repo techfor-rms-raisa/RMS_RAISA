@@ -19,7 +19,7 @@ import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
   ImageRun, Header, AlignmentType, BorderStyle, WidthType, ShadingType
 } from 'docx';
-import { TECHFOR_BG_BASE64 } from './cv-generator-docx-bg';
+import { TECHFOR_BG_BASE64 } from './cv-generator-docx-bg.js';
 
 // ============================================
 // CONSTANTES
