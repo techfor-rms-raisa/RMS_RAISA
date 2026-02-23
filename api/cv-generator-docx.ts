@@ -163,13 +163,20 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
     const bgBuffer = Buffer.from(TECHFOR_BG_BASE64, 'base64');
     console.log('📐 Background buffer size:', bgBuffer.length);
     
+    // Dimensões extraídas do modelo original (Modelo_2_de_CV_Tech_For.docx):
+    // cx=7560056 EMU, cy=10692003 EMU → A4 completa (210mm × 297mm)
+    // 1 EMU = 1/914400 polegada; 1pt = 12700 EMU
+    // 7560056 EMU / 12700 = 595.28pt; 10692003 EMU / 12700 = 841.89pt
+    const BG_WIDTH_PT = 595.28;
+    const BG_HEIGHT_PT = 841.89;
+
     headerWithBg = new Header({
       children: [
         new Paragraph({
           children: [
             new ImageRun({
               data: bgBuffer,
-              transformation: { width: 595, height: 842 },
+              transformation: { width: BG_WIDTH_PT, height: BG_HEIGHT_PT },
               type: 'jpg',
               floating: {
                 horizontalPosition: { relative: 'page', offset: 0 },
@@ -464,7 +471,7 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
     properties: {
       page: {
         size: { width: A4_WIDTH, height: A4_HEIGHT },
-        margin: { top: 720, right: 1134, bottom: 720, left: 1560 }
+        margin: { top: 1640, right: 566, bottom: 280, left: 1560 }
       }
     },
     children
