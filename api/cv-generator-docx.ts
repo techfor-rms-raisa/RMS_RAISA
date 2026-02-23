@@ -56,22 +56,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const templateType = template || 'techfor';
 
     if (templateType === 'techfor') {
-      const buffer = await gerarDocxTechfor(dados);
+      const result = await gerarDocxTechfor(dados);
+      
+      // Garantir que é um Buffer real (Vercel pode retornar Uint8Array)
+      const realBuffer = Buffer.isBuffer(result) ? result : Buffer.from(result);
       
       // Retornar como base64 para o frontend baixar
-      const base64 = buffer.toString('base64');
+      const base64 = realBuffer.toString('base64');
+      const filename = `CV_${(dados.nome || 'Candidato').replace(/[^a-zA-Z0-9_\-\s]/g, '').replace(/\s+/g, '_')}_Techfor.docx`;
+      
       return res.status(200).json({ 
         docx_base64: base64,
-        filename: `CV_${(dados.nome || 'Candidato').replace(/\s+/g, '_')}_Techfor.docx`,
-        size: buffer.length
+        filename,
+        size: realBuffer.length
       });
     }
 
     return res.status(400).json({ error: `Template '${templateType}' não suportado para DOCX ainda` });
 
   } catch (error: any) {
-    console.error('❌ Erro cv-generator-docx:', error);
-    return res.status(500).json({ error: error.message });
+    console.error('❌ Erro cv-generator-docx:', error?.message || error);
+    console.error('❌ Stack:', error?.stack);
+    return res.status(500).json({ 
+      error: error?.message || 'Erro interno ao gerar DOCX',
+      details: process.env.NODE_ENV === 'development' ? error?.stack : undefined
+    });
   }
 }
 
@@ -147,31 +156,39 @@ function sectionBoldTitle(text: string): Paragraph {
 // GERADOR DOCX TECHFOR
 // ============================================
 async function gerarDocxTechfor(dados: any): Promise<Buffer> {
-  // Decodificar imagem de background
-  const bgBuffer = Buffer.from(TECHFOR_BG_BASE64, 'base64');
-
-  // Build header com background que repete em todas as páginas
-  const headerWithBg = new Header({
-    children: [
-      new Paragraph({
-        children: [
-          new ImageRun({
-            data: bgBuffer,
-            transformation: { width: 595, height: 842 },
-            type: 'jpg',
-            floating: {
-              horizontalPosition: { relative: 'page', offset: 0 },
-              verticalPosition: { relative: 'page', offset: 0 },
-              wrap: { type: 'none' },
-              behindDocument: true,
-              lockAnchor: true,
-              allowOverlap: true
-            }
-          })
-        ]
-      })
-    ]
-  });
+  // Tentar montar header com background, se falhar, gerar sem
+  let headerWithBg: Header | undefined;
+  
+  try {
+    const bgBuffer = Buffer.from(TECHFOR_BG_BASE64, 'base64');
+    console.log('📐 Background buffer size:', bgBuffer.length);
+    
+    headerWithBg = new Header({
+      children: [
+        new Paragraph({
+          children: [
+            new ImageRun({
+              data: bgBuffer,
+              transformation: { width: 595, height: 842 },
+              type: 'jpg',
+              floating: {
+                horizontalPosition: { relative: 'page', offset: 0 },
+                verticalPosition: { relative: 'page', offset: 0 },
+                wrap: { type: 'none' },
+                behindDocument: true,
+                lockAnchor: true,
+                allowOverlap: true
+              }
+            })
+          ]
+        })
+      ]
+    });
+    console.log('✅ Header com background criado');
+  } catch (bgError: any) {
+    console.warn('⚠️ Não foi possível criar background, gerando sem papel timbrado:', bgError.message);
+    headerWithBg = undefined;
+  }
 
   // Construir conteúdo
   const children: any[] = [];
@@ -443,6 +460,21 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
   }
 
   // Criar documento
+  const sectionProps: any = {
+    properties: {
+      page: {
+        size: { width: A4_WIDTH, height: A4_HEIGHT },
+        margin: { top: 720, right: 1134, bottom: 720, left: 1560 }
+      }
+    },
+    children
+  };
+  
+  // Adicionar header com background apenas se criou com sucesso
+  if (headerWithBg) {
+    sectionProps.headers = { default: headerWithBg };
+  }
+
   const doc = new Document({
     styles: {
       default: {
@@ -451,17 +483,10 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
         }
       }
     },
-    sections: [{
-      properties: {
-        page: {
-          size: { width: A4_WIDTH, height: A4_HEIGHT },
-          margin: { top: 720, right: 1134, bottom: 720, left: 1560 }
-        }
-      },
-      headers: { default: headerWithBg },
-      children
-    }]
+    sections: [sectionProps]
   });
 
-  return await Packer.toBuffer(doc) as unknown as Buffer;
+  // Gerar buffer - garantir compatibilidade com diferentes ambientes
+  const packerResult = await Packer.toBuffer(doc);
+  return Buffer.isBuffer(packerResult) ? packerResult : Buffer.from(packerResult);
 }
