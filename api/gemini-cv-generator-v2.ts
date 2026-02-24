@@ -531,7 +531,7 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
     ` : ''}
     
     <!-- Hard Skills Tabela -->
-    ${dados.hard_skills_tabela && dados.hard_skills_tabela.length > 0 && !dados.requisitos_match ? `
+    ${dados.hard_skills_tabela && dados.hard_skills_tabela.length > 0 ? `
     <div class="secao">
       <div class="secao-titulo">Hard Skills</div>
       <table class="tabela-skills">

@@ -278,12 +278,7 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
 
   // --- REQUISITOS DIFERENCIAIS ---
   const reqsDiferenciais = (dados.requisitos_match || []).filter((r: any) => r.tipo === 'diferencial' || r.tipo === 'desejavel');
-  const hardSkills = dados.hard_skills_tabela || [];
-  const diffItems = reqsDiferenciais.length > 0
-    ? reqsDiferenciais.map((r: any) => ({ tec: r.tecnologia, tempo: r.tempo_experiencia }))
-    : hardSkills.map((s: any) => ({ tec: s.tecnologia, tempo: s.tempo_experiencia }));
-
-  if (diffItems.length > 0) {
+  if (reqsDiferenciais.length > 0) {
     children.push(sectionBoldTitle('Requisitos Diferenciais'));
     
     const colWidths = [6500, 2526];
@@ -295,9 +290,31 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
           makeHeaderCell('Tecnologia', colWidths[0]),
           makeHeaderCell('Tempo de Experiência', colWidths[1])
         ]}),
-        ...diffItems.map((i: any) => new TableRow({ children: [
-          makeDataCell(i.tec, colWidths[0], 18),
-          makeDataCell(i.tempo, colWidths[1], 18)
+        ...reqsDiferenciais.map((r: any) => new TableRow({ children: [
+          makeDataCell(r.tecnologia, colWidths[0], 18),
+          makeDataCell(r.tempo_experiencia, colWidths[1], 18)
+        ]}))
+      ]
+    }));
+  }
+
+  // --- HARD SKILLS (sempre exibida se houver dados) ---
+  const hardSkills = dados.hard_skills_tabela || [];
+  if (hardSkills.length > 0) {
+    children.push(sectionTitle('Hard Skills'));
+    
+    const colWidths = [6500, 2526];
+    children.push(new Table({
+      width: { size: CONTENT_WIDTH, type: WidthType.DXA },
+      columnWidths: colWidths,
+      rows: [
+        new TableRow({ children: [
+          makeHeaderCell('Tecnologia', colWidths[0]),
+          makeHeaderCell('Tempo de Experiência', colWidths[1])
+        ]}),
+        ...hardSkills.map((s: any) => new TableRow({ children: [
+          makeDataCell(s.tecnologia, colWidths[0], 18),
+          makeDataCell(s.tempo_experiencia, colWidths[1], 18)
         ]}))
       ]
     }));
