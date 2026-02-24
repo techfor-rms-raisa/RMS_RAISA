@@ -415,25 +415,50 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
         }));
       }
 
-      // "Principais Atividades:"
+      // "Principais Atividades:" label
       children.push(new Paragraph({
         spacing: { after: 20 },
-        children: [new TextRun({ text: 'Principais Atividades:', size: 20, font: FONT })]
+        children: [new TextRun({ text: 'Principais atividades:', size: 20, font: FONT })]
       }));
 
-      // Atividades como bullets (usar texto com "• " para evitar problemas de numbering)
-      const atividades = exp.principais_atividades 
-        || (exp.descricao ? exp.descricao.split('\n').filter((a: string) => a.trim()) : []);
-      atividades.forEach((a: string) => {
+      // Descrição completa como texto corrido (prioridade) ou fallback para bullets
+      if (exp.descricao && exp.descricao.trim()) {
+        // Texto descritivo completo (mesmo comportamento do preview HTML)
+        const paragrafos = exp.descricao.split('\n').filter((p: string) => p.trim());
+        paragrafos.forEach((paragrafo: string) => {
+          children.push(new Paragraph({
+            spacing: { after: 40 },
+            alignment: AlignmentType.JUSTIFIED,
+            children: [
+              new TextRun({ text: paragrafo.trim(), size: 18, font: FONT })
+            ]
+          }));
+        });
+      } else if (exp.principais_atividades && exp.principais_atividades.length > 0) {
+        // Fallback: atividades como bullets (quando não há descricao)
+        exp.principais_atividades.forEach((a: string) => {
+          children.push(new Paragraph({
+            spacing: { after: 20 },
+            indent: { left: 360 },
+            children: [
+              new TextRun({ text: '• ', size: 20, font: FONT }),
+              new TextRun({ text: a.trim().replace(/^[-•]\s*/, ''), size: 18, font: FONT })
+            ]
+          }));
+        });
+      }
+
+      // Tecnologias utilizadas (se houver)
+      const techs = exp.tecnologias || [];
+      if (techs.length > 0) {
         children.push(new Paragraph({
-          spacing: { after: 20 },
-          indent: { left: 360 },
+          spacing: { before: 40, after: 40 },
           children: [
-            new TextRun({ text: '• ', size: 20, font: FONT }),
-            new TextRun({ text: a.trim().replace(/^[-•]\s*/, ''), size: 18, font: FONT })
+            new TextRun({ text: 'Tecnologias utilizadas: ', bold: true, size: 18, font: FONT }),
+            new TextRun({ text: techs.join(', '), size: 18, font: FONT })
           ]
         }));
-      });
+      }
 
       // Motivo de saída
       if (exp.motivo_saida) {
