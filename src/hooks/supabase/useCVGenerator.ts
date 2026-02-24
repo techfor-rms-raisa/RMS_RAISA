@@ -167,26 +167,46 @@ export const useCVGenerator = () => {
         diferencas = calcularDiferencas(cvAtual.dados_processados, input.dados_processados);
       }
 
-      // Inserir novo CV
-      const { data, error: insertError } = await supabase
-        .from('cv_gerado')
-        .insert({
-          candidatura_id: input.candidatura_id,
-          template_id: input.template_id,
-          cv_original_url: input.cv_original_url,
-          dados_processados: input.dados_processados,
-          cv_padronizado_url: input.cv_padronizado_url,
-          cv_html: input.cv_html,
-          aprovado: false,
-          gerado_por: input.gerado_por,
-          versao: novaVersao,
-          diferencas: diferencas,
-          metadados: input.metadados
-        })
-        .select()
-        .single();
+      // Dados do CV para salvar
+      const cvData = {
+        candidatura_id: input.candidatura_id,
+        template_id: input.template_id,
+        cv_original_url: input.cv_original_url,
+        dados_processados: input.dados_processados,
+        cv_padronizado_url: input.cv_padronizado_url,
+        cv_html: input.cv_html,
+        aprovado: false,
+        gerado_por: input.gerado_por,
+        versao: novaVersao,
+        diferencas: diferencas,
+        metadados: input.metadados
+      };
 
-      if (insertError) throw insertError;
+      let data: any;
+      let saveError: any;
+
+      if (existente) {
+        // UPDATE: já existe CV para esta candidatura (constraint UNIQUE em candidatura_id)
+        const result = await supabase
+          .from('cv_gerado')
+          .update(cvData)
+          .eq('candidatura_id', input.candidatura_id)
+          .select()
+          .single();
+        data = result.data;
+        saveError = result.error;
+      } else {
+        // INSERT: primeiro CV para esta candidatura
+        const result = await supabase
+          .from('cv_gerado')
+          .insert(cvData)
+          .select()
+          .single();
+        data = result.data;
+        saveError = result.error;
+      }
+
+      if (saveError) throw saveError;
 
       const cvSalvo = mapCVFromDB(data);
       setCvAtual(cvSalvo);
