@@ -164,8 +164,7 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
     console.log('📐 Background buffer size:', bgBuffer.length);
     
     // Dimensões para a lib docx-js (transformation usa PIXELS, conversão interna: EMU = px * 9525)
-    // Modelo original: cx=7560056, cy=10692003 EMU → 7560056/9525 = 793.7px, 10692003/9525 = 1122.5px
-    // Isso cobre a página A4 inteira (210mm × 297mm)
+    // Modelo original: cx=7560056, cy=10692003 EMU → 793.7px × 1122.5px = A4 completa
     const BG_WIDTH_PX = 793.7;
     const BG_HEIGHT_PX = 1122.5;
 
@@ -470,7 +469,7 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
     properties: {
       page: {
         size: { width: A4_WIDTH, height: A4_HEIGHT },
-        margin: { top: 1640, right: 566, bottom: 280, left: 1560 }
+        margin: { top: 1640, right: 566, bottom: 1418, left: 1560 }
       }
     },
     children
