@@ -168,14 +168,38 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
    * Converte texto livre de requisitos (separados por ;, \n, •, -, números)
    * em array de RequisitoMatch para pré-preencher o form
    */
-  const parsearRequisitosTexto = (texto: string | undefined, tipo: 'mandatorio' | 'desejavel'): RequisitoMatch[] => {
-    if (!texto || texto.trim() === '') return [];
+  const parsearRequisitosTexto = (texto: string | undefined | string[], tipo: 'mandatorio' | 'desejavel'): RequisitoMatch[] => {
+    if (!texto) return [];
 
-    // Separar por: quebra de linha, ponto e vírgula, bullet points, números com ponto
-    const itens = texto
-      .split(/[\n;•·]|(?:\d+\.\s)/)
-      .map(item => item.replace(/^[-–—\s*]+/, '').trim())
-      .filter(item => item.length > 2); // Ignorar fragmentos muito curtos
+    let itens: string[] = [];
+
+    // Caso 1: Já é um array (veio parseado do Supabase)
+    if (Array.isArray(texto)) {
+      itens = texto.map(item => String(item).trim()).filter(item => item.length > 2);
+    } else {
+      const textoStr = String(texto).trim();
+      if (textoStr === '') return [];
+
+      // Caso 2: É uma string JSON de array → parsear ["item1", "item2"]
+      if (textoStr.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(textoStr);
+          if (Array.isArray(parsed)) {
+            itens = parsed.map((item: any) => String(item).trim()).filter((item: string) => item.length > 2);
+          }
+        } catch {
+          // Se falhar o parse JSON, tratar como texto livre
+        }
+      }
+      
+      // Caso 3: Texto livre → separar por \n ; • · números
+      if (itens.length === 0) {
+        itens = textoStr
+          .split(/[\n;•·]|(?:\d+\.\s)/)
+          .map(item => item.replace(/^[-–—\s*]+/, '').trim())
+          .filter(item => item.length > 2);
+      }
+    }
 
     return itens.map(item => {
       // Tentar extrair tempo de experiência do texto (ex: "Java +5 anos", "SAP ABAP (3 anos)")
@@ -199,20 +223,42 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
   };
 
   /**
-   * Converte stack_tecnologica (string separada por vírgula) em hard_skills_tabela
+   * Converte stack_tecnologica (string, array ou JSON) em hard_skills_tabela
    */
-  const parsearStackEmHardSkills = (stack: string | undefined): { tecnologia: string; tempo_experiencia: string; observacao?: string }[] => {
-    if (!stack || stack.trim() === '') return [];
+  const parsearStackEmHardSkills = (stack: string | undefined | string[]): { tecnologia: string; tempo_experiencia: string; observacao?: string }[] => {
+    if (!stack) return [];
 
-    return stack
-      .split(/[,;]/)
-      .map(item => item.trim())
-      .filter(item => item.length > 0)
-      .map(item => ({
-        tecnologia: item,
-        tempo_experiencia: '',
-        observacao: ''
-      }));
+    let itens: string[] = [];
+
+    if (Array.isArray(stack)) {
+      itens = stack.map(item => String(item).trim()).filter(item => item.length > 0);
+    } else {
+      const stackStr = String(stack).trim();
+      if (stackStr === '') return [];
+
+      // Tentar parse JSON
+      if (stackStr.startsWith('[')) {
+        try {
+          const parsed = JSON.parse(stackStr);
+          if (Array.isArray(parsed)) {
+            itens = parsed.map((item: any) => String(item).trim()).filter((item: string) => item.length > 0);
+          }
+        } catch {
+          // fallback
+        }
+      }
+
+      // Fallback: separar por vírgula/ponto e vírgula
+      if (itens.length === 0) {
+        itens = stackStr.split(/[,;]/).map(item => item.trim()).filter(item => item.length > 0);
+      }
+    }
+
+    return itens.map(item => ({
+      tecnologia: item,
+      tempo_experiencia: '',
+      observacao: ''
+    }));
   };
 
   // ============================================
