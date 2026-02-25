@@ -57,7 +57,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (dados.experiencias && dados.experiencias.length > 0) {
       console.log('📋 DOCX: Total experiências:', dados.experiencias.length);
       dados.experiencias.forEach((exp: any, i: number) => {
-        console.log(`  [${i}] ${exp.empresa} → motivo_saida: "${exp.motivo_saida || '(VAZIO)'}"`);
+        const keys = Object.keys(exp).filter(k => k.toLowerCase().includes('motivo'));
+        console.log(`  [${i}] ${exp.empresa} → motivo_saida: "${exp.motivo_saida || '(VAZIO)'}" | motivoSaida: "${exp.motivoSaida || '(VAZIO)'}" | keys com motivo: [${keys.join(',')}]`);
       });
     }
 
@@ -486,12 +487,13 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
       }
 
       // Motivo de saída
-      if (exp.motivo_saida) {
+      const motivoSaida = (exp.motivo_saida || exp.motivoSaida || exp.motivo || '').toString().trim();
+      if (motivoSaida) {
         children.push(new Paragraph({
           spacing: { before: 40, after: 40 },
           children: [
             new TextRun({ text: 'Motivo de saída: ', bold: true, italics: true, size: 18, font: FONT, color: '555555' }),
-            new TextRun({ text: exp.motivo_saida, italics: true, size: 18, font: FONT, color: '555555' })
+            new TextRun({ text: motivoSaida, italics: true, size: 18, font: FONT, color: '555555' })
           ]
         }));
       }
