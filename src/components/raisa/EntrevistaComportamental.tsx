@@ -54,6 +54,7 @@ interface EntrevistaComportamentalProps {
     cliente?: string;
     gestor?: string;
     requisitos?: string;
+    requisitos_desejaveis?: string;
     stack_tecnologica?: string;
   };
   currentUserId?: number;
@@ -160,6 +161,61 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
   };
 
   // ============================================
+  // PARSER: Texto livre → Itens de requisitos
+  // ============================================
+
+  /**
+   * Converte texto livre de requisitos (separados por ;, \n, •, -, números)
+   * em array de RequisitoMatch para pré-preencher o form
+   */
+  const parsearRequisitosTexto = (texto: string | undefined, tipo: 'mandatorio' | 'desejavel'): RequisitoMatch[] => {
+    if (!texto || texto.trim() === '') return [];
+
+    // Separar por: quebra de linha, ponto e vírgula, bullet points, números com ponto
+    const itens = texto
+      .split(/[\n;•·]|(?:\d+\.\s)/)
+      .map(item => item.replace(/^[-–—\s*]+/, '').trim())
+      .filter(item => item.length > 2); // Ignorar fragmentos muito curtos
+
+    return itens.map(item => {
+      // Tentar extrair tempo de experiência do texto (ex: "Java +5 anos", "SAP ABAP (3 anos)")
+      const tempoMatch = item.match(/[+>]?\s*(\d+)\s*(?:anos?|years?|a\.)/i);
+      const tempo = tempoMatch ? `+ ${tempoMatch[1]} anos` : '';
+      
+      // Remover o tempo do nome da tecnologia para ficar limpo
+      const tecnologia = item
+        .replace(/[+>]?\s*\d+\s*(?:anos?|years?|a\.)\s*/gi, '')
+        .replace(/\(?\s*\)?$/g, '')
+        .trim();
+
+      return {
+        tecnologia,
+        tempo_experiencia: tempo,
+        observacao: '',
+        tipo,
+        atendido: false
+      } as RequisitoMatch;
+    });
+  };
+
+  /**
+   * Converte stack_tecnologica (string separada por vírgula) em hard_skills_tabela
+   */
+  const parsearStackEmHardSkills = (stack: string | undefined): { tecnologia: string; tempo_experiencia: string; observacao?: string }[] => {
+    if (!stack || stack.trim() === '') return [];
+
+    return stack
+      .split(/[,;]/)
+      .map(item => item.trim())
+      .filter(item => item.length > 0)
+      .map(item => ({
+        tecnologia: item,
+        tempo_experiencia: '',
+        observacao: ''
+      }));
+  };
+
+  // ============================================
   // CARREGAR DADOS INICIAIS
   // ============================================
 
@@ -223,6 +279,23 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       if (cvExistente) {
         setDados(cvExistente.dados_processados);
         console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ')');
+      } else {
+        // ✅ CV NÃO existe: Pré-preencher requisitos a partir da vaga
+        console.log('🔧 CV não encontrado, pré-preenchendo requisitos da vaga...');
+        
+        const requisitosMandatorios = parsearRequisitosTexto(vagaInfo?.requisitos, 'mandatorio');
+        const requisitosDesejaveis = parsearRequisitosTexto(vagaInfo?.requisitos_desejaveis, 'desejavel');
+        const hardSkills = parsearStackEmHardSkills(vagaInfo?.stack_tecnologica);
+
+        if (requisitosMandatorios.length > 0 || requisitosDesejaveis.length > 0 || hardSkills.length > 0) {
+          setDados(prev => ({
+            ...prev,
+            requisitos_match: requisitosMandatorios.length > 0 ? requisitosMandatorios : prev.requisitos_match,
+            requisitos_desejaveis: requisitosDesejaveis.length > 0 ? requisitosDesejaveis : prev.requisitos_desejaveis,
+            hard_skills_tabela: hardSkills.length > 0 ? hardSkills : prev.hard_skills_tabela
+          }));
+          console.log(`✅ Pré-preenchido: ${requisitosMandatorios.length} mandatórios, ${requisitosDesejaveis.length} desejáveis, ${hardSkills.length} hard skills`);
+        }
       }
     };
     init();

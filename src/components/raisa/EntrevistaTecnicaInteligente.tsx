@@ -1722,6 +1722,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
                 cliente: (vagaAtual as any).cliente_nome,
                 gestor: (vagaAtual as any).gestor_nome,
                 requisitos: vagaAtual.requisitos_obrigatorios as string,
+                requisitos_desejaveis: vagaAtual.requisitos_desejaveis as string,
                 stack_tecnologica: Array.isArray(vagaAtual.stack_tecnologica) 
                   ? vagaAtual.stack_tecnologica.join(', ') 
                   : vagaAtual.stack_tecnologica as string
