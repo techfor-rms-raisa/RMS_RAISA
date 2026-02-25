@@ -1,5 +1,5 @@
 /**
- * AnaliseRisco.tsx - RMS RAISA v4.3
+ * AnaliseRisco.tsx - RMS RAISA v4.4
  * Componente de Análise de Currículo com IA
  * 
  * HISTÓRICO:
@@ -25,6 +25,10 @@
  *   • Verifica duplicata por CPF > Email > Nome ANTES de inserir
  *   • Se encontrar duplicata, faz UPDATE em vez de INSERT
  *   • Evita criação de registros duplicados no banco
+ * - v4.4 (25/02/2026): Correção extração estruturada com PDF original
+ *   • base64PDF agora é persistido no state para re-uso nas análises
+ *   • Triagem e Adequação enviam PDF original à Gemini (não apenas texto plano)
+ *   • Resolve bug de Skills: 0 / Experiências: 0 em CVs com tabelas complexas
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -159,6 +163,7 @@ const AnaliseRisco: React.FC = () => {
   // Estados da aba Triagem
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [textoExtraido, setTextoExtraido] = useState<string>('');
+  const [base64Original, setBase64Original] = useState<string>(''); // 🆕 v4.4: Manter PDF original para re-extração estruturada
   const [isExtraindo, setIsExtraindo] = useState(false);
   const [isAnalisando, setIsAnalisando] = useState(false);
   const [analise, setAnalise] = useState<AnaliseTriagem | null>(null);
@@ -310,6 +315,7 @@ const AnaliseRisco: React.FC = () => {
     setAnalise(null);
     setAnaliseAdequacao(null);
     setSalvouBanco(false);
+    setBase64Original(''); // 🆕 v4.4: Limpar base64 anterior
     
     await extrairTexto(file);
   };
@@ -320,6 +326,7 @@ const AnaliseRisco: React.FC = () => {
 
     try {
       const base64 = await fileToBase64(file);
+      setBase64Original(base64); // 🆕 v4.4: Persistir para re-uso nas análises
       
       const response = await fetch('/api/gemini-analyze', {
         method: 'POST',
@@ -418,7 +425,7 @@ const AnaliseRisco: React.FC = () => {
           action: 'extrair_cv',
           payload: {
             textoCV: textoExtraido,
-            base64PDF: ''
+            base64PDF: base64Original || '' // 🆕 v4.4: Reenviar PDF original para extração estruturada precisa
           }
         })
       });
@@ -1054,6 +1061,7 @@ const AnaliseRisco: React.FC = () => {
       // ========================================
       // PASSO 1: Extrair dados do CV via Gemini
       // (Mesmo padrão do CVImportIA.tsx)
+      // 🆕 v4.4: Envia base64PDF original para extração precisa de tabelas
       // ========================================
       console.log('🤖 Extraindo dados do CV via Gemini...');
       
@@ -1064,7 +1072,7 @@ const AnaliseRisco: React.FC = () => {
           action: 'extrair_cv',
           payload: {
             textoCV: textoExtraido,
-            base64PDF: ''
+            base64PDF: base64Original || '' // 🆕 v4.4: PDF original para Gemini ler tabelas corretamente
           }
         })
       });
