@@ -48,6 +48,7 @@ import {
 } from 'lucide-react';
 import { Candidatura, Vaga } from '@/types';
 import jsPDF from 'jspdf';
+import EntrevistaComportamental from './EntrevistaComportamental';
 
 // ============================================
 // TIPOS
@@ -130,6 +131,9 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // ============================================
   // ESTADOS
   // ============================================
+  
+  // 🆕 v3.0: Aba ativa (Comportamental / Técnica)
+  const [abaAtiva, setAbaAtiva] = useState<'comportamental' | 'tecnica'>('comportamental');
   
   // Seleção
   const [selectedCandidaturaId, setSelectedCandidaturaId] = useState<number | null>(null);
@@ -1566,42 +1570,164 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   return (
     <div className="bg-white rounded-xl shadow-lg p-6">
       {/* Título */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <Brain className="text-purple-600" />
-            Entrevista Técnica Inteligente
+            Entrevista Inteligente
           </h2>
           <p className="text-sm text-gray-500">
             Integrado com Supabase • Powered by Gemini AI
           </p>
         </div>
         
-        {/* Steps Indicator */}
-        <div className="flex items-center gap-2">
-          {[1, 2, 3, 4, 5].map(step => (
-            <div
-              key={step}
-              className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
-                step === currentStep
-                  ? 'bg-blue-600 text-white'
-                  : step < currentStep
-                  ? 'bg-green-500 text-white'
-                  : 'bg-gray-200 text-gray-500'
-              }`}
-            >
-              {step < currentStep ? <CheckCircle size={16} /> : step}
-            </div>
-          ))}
-        </div>
+        {/* Steps Indicator - só mostra na aba técnica quando já selecionou candidatura */}
+        {abaAtiva === 'tecnica' && selectedCandidaturaId && (
+          <div className="flex items-center gap-2">
+            {[2, 3, 4, 5].map(step => (
+              <div
+                key={step}
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
+                  step === currentStep
+                    ? 'bg-blue-600 text-white'
+                    : step < currentStep
+                    ? 'bg-green-500 text-white'
+                    : 'bg-gray-200 text-gray-500'
+                }`}
+              >
+                {step < currentStep ? <CheckCircle size={16} /> : step - 1}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* Conteúdo por Step */}
-      {currentStep === 1 && renderStep1()}
-      {currentStep === 2 && renderStep2()}
-      {currentStep === 3 && renderStep3()}
-      {currentStep === 4 && renderStep4()}
-      {currentStep === 5 && renderStep5()}
+      {/* ============================================ */}
+      {/* SELEÇÃO DE CANDIDATURA (COMPARTILHADA) */}
+      {/* ============================================ */}
+      {!selectedCandidaturaId ? (
+        <div className="space-y-6">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <h3 className="font-semibold text-blue-800 flex items-center gap-2 mb-2">
+              <FileText size={20} />
+              Selecione o Candidato para Entrevista
+            </h3>
+            <p className="text-sm text-blue-700">
+              A candidatura selecionada será usada tanto na Entrevista Comportamental quanto na Técnica.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Candidatura:
+            </label>
+            <select
+              value=""
+              onChange={(e) => {
+                const val = e.target.value ? parseInt(e.target.value) : null;
+                setSelectedCandidaturaId(val);
+                if (val) setCurrentStep(2);
+              }}
+              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">-- Selecione uma candidatura --</option>
+              {candidaturasElegiveis.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.candidato_nome} - {c.vaga?.titulo || 'Vaga não identificada'} ({c.status})
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-1">
+              {candidaturasElegiveis.length} candidatura(s) elegível(is) para entrevista
+            </p>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* ============================================ */}
+          {/* INFO DO CANDIDATO + BOTÃO TROCAR */}
+          {/* ============================================ */}
+          <div className="bg-gray-50 rounded-lg p-3 mb-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <User size={18} className="text-gray-500" />
+              <div>
+                <p className="font-semibold text-gray-900 text-sm">{candidaturaAtual?.candidato_nome}</p>
+                <p className="text-xs text-gray-500">{vagaAtual?.titulo} ({candidaturaAtual?.status})</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setSelectedCandidaturaId(null);
+                setCurrentStep(1);
+                setAbaAtiva('comportamental');
+              }}
+              className="text-sm text-blue-600 hover:underline"
+            >
+              Trocar candidatura
+            </button>
+          </div>
+
+          {/* ============================================ */}
+          {/* ABAS: COMPORTAMENTAL / TÉCNICA */}
+          {/* ============================================ */}
+          <div className="flex border-b mb-6">
+            <button
+              onClick={() => setAbaAtiva('comportamental')}
+              className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                abaAtiva === 'comportamental'
+                  ? 'border-red-600 text-red-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              📋 Entrevista Comportamental
+            </button>
+            <button
+              onClick={() => setAbaAtiva('tecnica')}
+              className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${
+                abaAtiva === 'tecnica'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              🧠 Entrevista Técnica Inteligente
+            </button>
+          </div>
+
+          {/* ============================================ */}
+          {/* CONTEÚDO DA ABA ATIVA */}
+          {/* ============================================ */}
+          {abaAtiva === 'comportamental' ? (
+            <EntrevistaComportamental
+              candidaturaId={parseInt(String(selectedCandidaturaId))}
+              candidatoNome={candidaturaAtual?.candidato_nome || 'Candidato'}
+              pessoaId={candidaturaAtual?.pessoa_id ? parseInt(String(candidaturaAtual.pessoa_id)) : undefined}
+              vagaInfo={vagaAtual ? {
+                id: parseInt(String(vagaAtual.id)),
+                titulo: vagaAtual.titulo || '',
+                codigo: (vagaAtual as any).codigo,
+                cliente: (vagaAtual as any).cliente_nome,
+                gestor: (vagaAtual as any).gestor_nome,
+                requisitos: vagaAtual.requisitos_obrigatorios as string,
+                stack_tecnologica: Array.isArray(vagaAtual.stack_tecnologica) 
+                  ? vagaAtual.stack_tecnologica.join(', ') 
+                  : vagaAtual.stack_tecnologica as string
+              } : undefined}
+              currentUserId={currentUserId}
+              onEntrevistaFinalizada={(cvId) => {
+                console.log('✅ CV parcial salvo, ID:', cvId);
+              }}
+            />
+          ) : (
+            <>
+              {/* Conteúdo original da Entrevista Técnica (Steps 2-5) */}
+              {currentStep === 2 && renderStep2()}
+              {currentStep === 3 && renderStep3()}
+              {currentStep === 4 && renderStep4()}
+              {currentStep === 5 && renderStep5()}
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 };
