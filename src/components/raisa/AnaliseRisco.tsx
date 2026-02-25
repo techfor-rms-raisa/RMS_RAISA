@@ -1,5 +1,5 @@
 /**
- * AnaliseRisco.tsx - RMS RAISA v4.4
+ * AnaliseRisco.tsx - RMS RAISA v4.5
  * Componente de Análise de Currículo com IA
  * 
  * HISTÓRICO:
@@ -29,6 +29,11 @@
  *   • base64PDF agora é persistido no state para re-uso nas análises
  *   • Triagem e Adequação enviam PDF original à Gemini (não apenas texto plano)
  *   • Resolve bug de Skills: 0 / Experiências: 0 em CVs com tabelas complexas
+ * - v4.5 (25/02/2026): Persistência da Análise de Adequação
+ *   • Análise completa (score, requisitos, gaps, perguntas) salva em analise_adequacao
+ *   • Vinculação por pessoa_id + vaga_id (candidatura_id atualizado depois)
+ *   • Perguntas de entrevista ficam disponíveis para Entrevista Técnica
+ *   • Upsert: se já existe análise para pessoa+vaga, atualiza em vez de duplicar
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -1181,12 +1186,15 @@ const AnaliseRisco: React.FC = () => {
       // PASSO 4: PERSISTIR NO BANCO (SE SCORE >= 40%)
       // 🆕 v4.1: Só salva automaticamente se score for adequado
       // ========================================
+      let pessoaSalvaId: number | null = null;
+
       if (scoreGeral >= SCORE_MINIMO_SALVAR) {
         console.log(`💾 Score ${scoreGeral}% >= ${SCORE_MINIMO_SALVAR}% - Salvando candidato...`);
         
         const pessoaSalva = await salvarCandidatoNoBanco(candidato, dados, textoOriginal);
         
         if (pessoaSalva) {
+          pessoaSalvaId = pessoaSalva.id;
           console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
           setSalvouBanco(true);
         }
@@ -1194,6 +1202,82 @@ const AnaliseRisco: React.FC = () => {
         console.log(`⚠️ Score ${scoreGeral}% < ${SCORE_MINIMO_SALVAR}% - Candidato NÃO salvo automaticamente`);
         // Guardar dados para salvamento manual opcional
         setDadosParaSalvarManual({ candidato, dados, textoOriginal, analiseResult: data });
+      }
+
+      // ========================================
+      // PASSO 5: PERSISTIR ANÁLISE DE ADEQUAÇÃO
+      // 🆕 v4.5: Salvar score, requisitos, gaps, perguntas na tabela analise_adequacao
+      // Vinculado por pessoa_id + vaga_id (candidatura_id será preenchido quando candidatura for criada)
+      // ========================================
+      if (pessoaSalvaId && vagaSelecionada?.id) {
+        try {
+          console.log('💾 Persistindo análise de adequação na tabela analise_adequacao...');
+
+          // Verificar se já existe análise para este par pessoa+vaga (upsert)
+          const { data: analiseExistente } = await supabase
+            .from('analise_adequacao')
+            .select('id')
+            .eq('pessoa_id', pessoaSalvaId)
+            .eq('vaga_id', vagaSelecionada.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          const dadosAnalise = {
+            pessoa_id: pessoaSalvaId,
+            vaga_id: vagaSelecionada.id,
+            candidatura_id: null, // Será preenchido quando a candidatura for criada
+            score_geral: scoreGeral,
+            nivel_adequacao: data.nivel_adequacao_geral || 'PARCIALMENTE_COMPATIVEL',
+            confianca_analise: data.confianca_analise || 0,
+            recomendacao: data.avaliacao_final?.recomendacao || 'ENTREVISTAR',
+            perguntas_entrevista: data.perguntas_entrevista || [],
+            requisitos_analisados: [
+              ...(data.requisitos_imprescindiveis || []),
+              ...(data.requisitos_muito_desejaveis || []),
+              ...(data.requisitos_desejaveis || [])
+            ],
+            resumo_executivo: data.resumo_executivo || {},
+            avaliacao_final: data.avaliacao_final || {},
+            resultado_completo: data,
+            modelo_ia: 'claude-sonnet',
+            status: 'concluida',
+            updated_at: new Date().toISOString()
+          };
+
+          if (analiseExistente?.id) {
+            // UPDATE - análise já existe para este par pessoa+vaga
+            const { error: updateErr } = await supabase
+              .from('analise_adequacao')
+              .update(dadosAnalise)
+              .eq('id', analiseExistente.id);
+
+            if (updateErr) {
+              console.warn('⚠️ Erro ao atualizar analise_adequacao:', updateErr.message);
+            } else {
+              console.log(`✅ Análise de adequação ATUALIZADA (ID: ${analiseExistente.id}) - pessoa_id: ${pessoaSalvaId}, vaga_id: ${vagaSelecionada.id}`);
+            }
+          } else {
+            // INSERT - nova análise
+            const { data: novaAnalise, error: insertErr } = await supabase
+              .from('analise_adequacao')
+              .insert({
+                ...dadosAnalise,
+                created_by: user?.id || null
+              })
+              .select('id')
+              .single();
+
+            if (insertErr) {
+              console.warn('⚠️ Erro ao inserir analise_adequacao:', insertErr.message);
+            } else {
+              console.log(`✅ Análise de adequação CRIADA (ID: ${novaAnalise?.id}) - pessoa_id: ${pessoaSalvaId}, vaga_id: ${vagaSelecionada.id}`);
+            }
+          }
+        } catch (errAnalise: any) {
+          // Não bloqueia o fluxo principal se falhar
+          console.warn('⚠️ Erro ao persistir análise de adequação:', errAnalise.message);
+        }
       }
 
     } catch (err: any) {
@@ -1591,6 +1675,53 @@ const AnaliseRisco: React.FC = () => {
         console.log('✅ Candidato salvo manualmente com ID:', pessoaSalva.id);
         setSalvouBanco(true);
         setDadosParaSalvarManual(null);
+
+        // 🆕 v4.5: Persistir análise de adequação no salvamento manual também
+        if (analiseAdequacao && vagaSelecionada?.id && analiseResult) {
+          try {
+            console.log('💾 [Manual] Persistindo análise de adequação...');
+            
+            const { data: analiseExistente } = await supabase
+              .from('analise_adequacao')
+              .select('id')
+              .eq('pessoa_id', pessoaSalva.id)
+              .eq('vaga_id', vagaSelecionada.id)
+              .limit(1)
+              .maybeSingle();
+
+            const dadosAnalise = {
+              pessoa_id: pessoaSalva.id,
+              vaga_id: vagaSelecionada.id,
+              candidatura_id: null,
+              score_geral: analiseAdequacao.score_geral,
+              nivel_adequacao: analiseResult.nivel_adequacao_geral || 'PARCIALMENTE_COMPATIVEL',
+              confianca_analise: analiseAdequacao.nivel_confianca || 0,
+              recomendacao: analiseResult.avaliacao_final?.recomendacao || 'ENTREVISTAR',
+              perguntas_entrevista: analiseResult.perguntas_entrevista || [],
+              requisitos_analisados: [
+                ...(analiseResult.requisitos_imprescindiveis || []),
+                ...(analiseResult.requisitos_muito_desejaveis || []),
+                ...(analiseResult.requisitos_desejaveis || [])
+              ],
+              resumo_executivo: analiseResult.resumo_executivo || {},
+              avaliacao_final: analiseResult.avaliacao_final || {},
+              resultado_completo: analiseResult,
+              modelo_ia: 'claude-sonnet',
+              status: 'concluida',
+              updated_at: new Date().toISOString()
+            };
+
+            if (analiseExistente?.id) {
+              await supabase.from('analise_adequacao').update(dadosAnalise).eq('id', analiseExistente.id);
+              console.log(`✅ [Manual] Análise de adequação ATUALIZADA (ID: ${analiseExistente.id})`);
+            } else {
+              await supabase.from('analise_adequacao').insert({ ...dadosAnalise, created_by: user?.id || null });
+              console.log('✅ [Manual] Análise de adequação CRIADA');
+            }
+          } catch (errAnalise: any) {
+            console.warn('⚠️ [Manual] Erro ao persistir análise:', errAnalise.message);
+          }
+        }
       }
     } catch (err: any) {
       console.error('❌ Erro ao salvar manualmente:', err);
