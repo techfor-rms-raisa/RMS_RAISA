@@ -9,8 +9,10 @@
  * - Atualizar template existente
  * - Ativar/desativar template
  * 
- * Versão: 1.0
- * Data: 27/12/2024
+ * 🔧 v1.1 (25/02/2026): Corrigido erro 406 (.single() → .limit(1) + [0])
+ * 
+ * Versão: 1.1
+ * Data: 25/02/2026
  * Sprint: 1 - Integração Geração de CV
  */
 
@@ -63,40 +65,37 @@ export interface CVTemplateInput {
 }
 
 // ============================================
-// TEMPLATES PADRÃO (Techfor e T-Systems)
+// TEMPLATES PADRÃO
 // ============================================
 
-export const TEMPLATES_PADRAO: Partial<CVTemplate>[] = [
+const TEMPLATES_PADRAO: Partial<CVTemplate>[] = [
   {
-    nome: 'Techfor Padrão',
-    descricao: 'Template padrão Techfor com cores vermelhas',
-    cor_primaria: '#DC2626',
-    cor_secundaria: '#991B1B',
-    fonte: 'Arial',
+    nome: 'Techfor',
+    descricao: 'Template padrão Techfor - Vermelho com requisitos e parecer',
+    cor_primaria: '#CC0000',
+    cor_secundaria: '#333333',
+    fonte: 'Calibri',
     secoes: [
-      { id: 'header', nome: 'Cabeçalho', ordem: 1, obrigatoria: true, tipo: 'texto' },
-      { id: 'dados_pessoais', nome: 'Dados Pessoais', ordem: 2, obrigatoria: true, tipo: 'texto' },
-      { id: 'resumo', nome: 'Resumo Profissional', ordem: 3, obrigatoria: true, tipo: 'texto' },
-      { id: 'requisitos', nome: 'Tabela de Requisitos', ordem: 4, obrigatoria: false, tipo: 'tabela' },
-      { id: 'hard_skills', nome: 'Hard Skills', ordem: 5, obrigatoria: true, tipo: 'tabela' },
-      { id: 'experiencias', nome: 'Experiência Profissional', ordem: 6, obrigatoria: true, tipo: 'experiencias' },
-      { id: 'formacao', nome: 'Formação Acadêmica', ordem: 7, obrigatoria: true, tipo: 'formacao' },
-      { id: 'cursos', nome: 'Cursos e Certificações', ordem: 8, obrigatoria: false, tipo: 'lista' },
-      { id: 'idiomas', nome: 'Idiomas', ordem: 9, obrigatoria: false, tipo: 'idiomas' },
-      { id: 'parecer', nome: 'Parecer de Seleção', ordem: 10, obrigatoria: true, tipo: 'texto' }
+      { id: 'dados', nome: 'Dados Pessoais', ordem: 1, obrigatoria: true, tipo: 'texto' },
+      { id: 'requisitos_mand', nome: 'Requisitos Mandatórios', ordem: 2, obrigatoria: true, tipo: 'tabela' },
+      { id: 'requisitos_des', nome: 'Requisitos Desejáveis', ordem: 3, obrigatoria: false, tipo: 'tabela' },
+      { id: 'hard_skills', nome: 'Hard Skills', ordem: 4, obrigatoria: true, tipo: 'tabela' },
+      { id: 'experiencias', nome: 'Experiência Profissional', ordem: 5, obrigatoria: true, tipo: 'experiencias' },
+      { id: 'formacao', nome: 'Formação Acadêmica', ordem: 6, obrigatoria: true, tipo: 'formacao' },
+      { id: 'cursos', nome: 'Cursos e Certificações', ordem: 7, obrigatoria: false, tipo: 'lista' },
+      { id: 'idiomas', nome: 'Idiomas', ordem: 8, obrigatoria: false, tipo: 'idiomas' },
+      { id: 'parecer', nome: 'Parecer de Seleção', ordem: 9, obrigatoria: true, tipo: 'texto' }
     ]
   },
   {
     nome: 'T-Systems',
-    descricao: 'Template T-Systems com capa e cores magenta',
+    descricao: 'Template T-Systems - Magenta com capa',
     cor_primaria: '#E20074',
-    cor_secundaria: '#B8005C',
+    cor_secundaria: '#666666',
     fonte: 'Calibri',
     secoes: [
       { id: 'capa', nome: 'Capa', ordem: 0, obrigatoria: true, tipo: 'texto' },
-      { id: 'header', nome: 'Cabeçalho', ordem: 1, obrigatoria: true, tipo: 'texto' },
-      { id: 'dados_pessoais', nome: 'Dados Pessoais', ordem: 2, obrigatoria: true, tipo: 'texto' },
-      { id: 'resumo', nome: 'Resumo Profissional', ordem: 3, obrigatoria: true, tipo: 'texto' },
+      { id: 'dados', nome: 'Dados Pessoais', ordem: 1, obrigatoria: true, tipo: 'texto' },
       { id: 'hard_skills', nome: 'Hard Skills', ordem: 4, obrigatoria: true, tipo: 'tabela' },
       { id: 'experiencias', nome: 'Experiência Profissional', ordem: 5, obrigatoria: true, tipo: 'experiencias' },
       { id: 'formacao', nome: 'Formação Acadêmica', ordem: 6, obrigatoria: true, tipo: 'formacao' },
@@ -169,6 +168,7 @@ export const useCVTemplates = () => {
 
   /**
    * Busca um template por ID
+   * 🔧 v1.1: Corrigido .single() → .limit(1) para evitar erro 406
    */
   const getTemplateById = useCallback(async (id: number): Promise<CVTemplate | null> => {
     try {
@@ -176,11 +176,11 @@ export const useCVTemplates = () => {
         .from('cv_template')
         .select('*')
         .eq('id', id)
-        .single();
+        .limit(1);
 
       if (err) throw err;
 
-      return data as CVTemplate;
+      return (data && data[0]) ? data[0] as CVTemplate : null;
 
     } catch (err: any) {
       console.error('❌ Erro ao buscar template:', err);
@@ -190,6 +190,7 @@ export const useCVTemplates = () => {
 
   /**
    * Busca template por nome
+   * 🔧 v1.1: Corrigido .single() → .limit(1) para evitar erro 406
    */
   const getTemplateByNome = useCallback(async (nome: string): Promise<CVTemplate | null> => {
     try {
@@ -198,12 +199,11 @@ export const useCVTemplates = () => {
         .select('*')
         .ilike('nome', `%${nome}%`)
         .eq('ativo', true)
-        .limit(1)
-        .single();
+        .limit(1);
 
-      if (err && err.code !== 'PGRST116') throw err;
+      if (err) throw err;
 
-      return data as CVTemplate || null;
+      return (data && data[0]) ? data[0] as CVTemplate : null;
 
     } catch (err: any) {
       console.error('❌ Erro ao buscar template por nome:', err);

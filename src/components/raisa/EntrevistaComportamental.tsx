@@ -246,6 +246,14 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 
   // Extrair dados do CV com IA
   const handleExtrairDados = async () => {
+    // Se CV já foi carregado do banco (versão existente), pular extração IA
+    if (cvAtual && cvAtual.dados_processados) {
+      console.log('📋 CV já carregado do banco, pulando extração IA');
+      setEtapa('dados');
+      return;
+    }
+
+    // Se não tem texto do CV original, ir direto para dados (preenchimento manual)
     if (!cvOriginalTexto) {
       setEtapa('dados');
       return;
@@ -278,7 +286,10 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       }));
       setEtapa('dados');
     } catch (err: any) {
-      setError(err.message);
+      // Se falhar a extração, não bloquear - permitir edição manual
+      console.warn('⚠️ Extração IA falhou, permitindo edição manual:', err.message);
+      setError('Extração automática falhou. Você pode preencher os dados manualmente.');
+      setEtapa('dados');
     } finally {
       setLoading(false);
     }
