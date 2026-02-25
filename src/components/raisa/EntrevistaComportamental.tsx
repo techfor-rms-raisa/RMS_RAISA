@@ -172,7 +172,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       if (pessoaId) {
         const { data: pessoa } = await supabase
           .from('pessoas')
-          .select('nome, email, telefone, cidade, estado, nome_anoni_parcial, nome_anoni_total, cv_texto_original')
+          .select('nome, email, telefone, cidade, estado, bairro, cep, cpf, rg, data_nascimento, pretensao_salarial, nome_anoni_parcial, nome_anoni_total, cv_texto_original')
           .eq('id', pessoaId)
           .single();
 
@@ -187,6 +187,18 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
           });
           setCvOriginalTexto(pessoa.cv_texto_original || '');
           
+          // Calcular idade a partir da data de nascimento
+          let idadeCalculada: number | undefined;
+          if (pessoa.data_nascimento) {
+            const nascimento = new Date(pessoa.data_nascimento);
+            const hoje = new Date();
+            idadeCalculada = hoje.getFullYear() - nascimento.getFullYear();
+            const m = hoje.getMonth() - nascimento.getMonth();
+            if (m < 0 || (m === 0 && hoje.getDate() < nascimento.getDate())) {
+              idadeCalculada--;
+            }
+          }
+          
           // Atualizar dados iniciais com info da pessoa
           setDados(prev => ({
             ...prev,
@@ -194,7 +206,14 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             email: pessoa.email || '',
             telefone: pessoa.telefone || '',
             cidade: pessoa.cidade || '',
-            estado: pessoa.estado || ''
+            estado: pessoa.estado || '',
+            bairro: pessoa.bairro || '',
+            cep: pessoa.cep || '',
+            cpf: pessoa.cpf || '',
+            rg: pessoa.rg || '',
+            data_nascimento: pessoa.data_nascimento || '',
+            idade: idadeCalculada,
+            pretensao_salarial: pessoa.pretensao_salarial ? String(pessoa.pretensao_salarial) : ''
           }));
         }
       }
@@ -334,6 +353,39 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       const templateDB = await getTemplateByNome(templateNome);
       if (templateDB) {
         templateId = templateDB.id;
+      }
+
+      // ✅ Persistir novos campos na tabela pessoas (UPDATE)
+      if (pessoaId) {
+        const pessoaUpdate: Record<string, any> = {
+          cidade: dados.cidade || null,
+          estado: dados.estado || null,
+          bairro: dados.bairro || null,
+          cep: dados.cep || null,
+          cpf: dados.cpf || null,
+          rg: dados.rg || null,
+          data_nascimento: dados.data_nascimento || null,
+          valor_hora_atual: dados.valor_hora_atual || null,
+          pretensao_valor_hora: dados.pretensao_valor_hora || null,
+          ja_trabalhou_pj: dados.ja_trabalhou_pj || false,
+          aceita_pj: dados.aceita_pj || false,
+          possui_empresa: dados.possui_empresa || false,
+          aceita_abrir_empresa: dados.aceita_abrir_empresa || false,
+          telefone: dados.telefone || null,
+          email: dados.email || null,
+          atualizado_em: new Date().toISOString()
+        };
+
+        const { error: errPessoa } = await supabase
+          .from('pessoas')
+          .update(pessoaUpdate)
+          .eq('id', pessoaId);
+
+        if (errPessoa) {
+          console.warn('⚠️ Erro ao atualizar pessoa (não bloqueante):', errPessoa);
+        } else {
+          console.log('✅ Dados da pessoa atualizados no Supabase');
+        }
       }
 
       // Salvar CV parcial no Supabase
@@ -541,7 +593,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             Valide e complemente os dados durante a entrevista comportamental.
           </p>
           
-          <div className="grid grid-cols-2 gap-4">
+          {/* Linha 1: Nome / Email / Telefone */}
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Nome</label>
               <input
@@ -569,24 +622,77 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
                 className="w-full border rounded-lg p-2.5 text-sm"
               />
             </div>
+          </div>
+          
+          {/* Linha 2: Cidade / Bairro / UF / CEP */}
+          <div className="grid grid-cols-12 gap-4">
+            <div className="col-span-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Cidade</label>
+              <input
+                type="text"
+                value={dados.cidade || ''}
+                onChange={e => updateDados('cidade', e.target.value)}
+                className="w-full border rounded-lg p-2.5 text-sm"
+                placeholder="Cidade"
+              />
+            </div>
+            <div className="col-span-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Bairro</label>
+              <input
+                type="text"
+                value={dados.bairro || ''}
+                onChange={e => updateDados('bairro', e.target.value)}
+                className="w-full border rounded-lg p-2.5 text-sm"
+                placeholder="Bairro"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">UF</label>
+              <input
+                type="text"
+                value={dados.estado || ''}
+                onChange={e => updateDados('estado', e.target.value)}
+                className="w-full border rounded-lg p-2.5 text-sm"
+                placeholder="UF"
+                maxLength={2}
+              />
+            </div>
+            <div className="col-span-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">CEP</label>
+              <input
+                type="text"
+                value={dados.cep || ''}
+                onChange={e => updateDados('cep', e.target.value)}
+                className="w-full border rounded-lg p-2.5 text-sm"
+                placeholder="00000-000"
+              />
+            </div>
+          </div>
+
+          {/* Linha 3: Data Nascimento / Idade / Estado Civil */}
+          <div className="grid grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Cidade / UF</label>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={dados.cidade || ''}
-                  onChange={e => updateDados('cidade', e.target.value)}
-                  className="flex-1 border rounded-lg p-2.5 text-sm"
-                  placeholder="Cidade"
-                />
-                <input
-                  type="text"
-                  value={dados.estado || ''}
-                  onChange={e => updateDados('estado', e.target.value)}
-                  className="w-20 border rounded-lg p-2.5 text-sm"
-                  placeholder="UF"
-                />
-              </div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Data de Nascimento</label>
+              <input
+                type="date"
+                value={dados.data_nascimento || ''}
+                onChange={e => {
+                  const dataNasc = e.target.value;
+                  updateDados('data_nascimento', dataNasc);
+                  // Calcular idade automaticamente
+                  if (dataNasc) {
+                    const nascimento = new Date(dataNasc);
+                    const hoje = new Date();
+                    let idadeCalc = hoje.getFullYear() - nascimento.getFullYear();
+                    const m = hoje.getMonth() - nascimento.getMonth();
+                    if (m < 0 || (m === 0 && hoje.getDate() < nascimento.getDate())) {
+                      idadeCalc--;
+                    }
+                    updateDados('idade', idadeCalc);
+                  }
+                }}
+                className="w-full border rounded-lg p-2.5 text-sm"
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Idade</label>
@@ -594,7 +700,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
                 type="number"
                 value={dados.idade || ''}
                 onChange={e => updateDados('idade', parseInt(e.target.value) || undefined)}
-                className="w-full border rounded-lg p-2.5 text-sm"
+                className="w-full border rounded-lg p-2.5 text-sm bg-gray-50"
+                readOnly={!!dados.data_nascimento}
               />
             </div>
             <div>
@@ -610,6 +717,126 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
                 ))}
               </select>
             </div>
+          </div>
+
+          {/* Linha 4: CPF / RG */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">C.P.F.</label>
+              <input
+                type="text"
+                value={dados.cpf || ''}
+                onChange={e => updateDados('cpf', e.target.value)}
+                className="w-full border rounded-lg p-2.5 text-sm"
+                placeholder="000.000.000-00"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">R.G.</label>
+              <input
+                type="text"
+                value={dados.rg || ''}
+                onChange={e => updateDados('rg', e.target.value)}
+                className="w-full border rounded-lg p-2.5 text-sm"
+                placeholder="00.000.000-0"
+              />
+            </div>
+          </div>
+
+          {/* Linha 5: Valor Hora Atual / Pretensão */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Valor Hora/Salário Atual (R$)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">R$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={dados.valor_hora_atual || ''}
+                  onChange={e => updateDados('valor_hora_atual', parseFloat(e.target.value) || undefined)}
+                  className="w-full border rounded-lg p-2.5 pl-10 text-sm"
+                  placeholder="0,00"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Pretensão Valor Hora/Salário (R$)</label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">R$</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={dados.pretensao_valor_hora || ''}
+                  onChange={e => updateDados('pretensao_valor_hora', parseFloat(e.target.value) || undefined)}
+                  className="w-full border rounded-lg p-2.5 pl-10 text-sm"
+                  placeholder="0,00"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Linha 6: Flags PJ - Já trabalhou / Aceita */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center gap-6 border rounded-lg p-2.5">
+              <label className="block text-sm font-medium text-gray-700">Já trabalhou como PJ?</label>
+              <div className="flex gap-3">
+                <label className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input type="radio" name="ja_pj" checked={dados.ja_trabalhou_pj === true}
+                    onChange={() => updateDados('ja_trabalhou_pj', true)} className="text-blue-600" /> Sim
+                </label>
+                <label className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input type="radio" name="ja_pj" checked={dados.ja_trabalhou_pj === false || dados.ja_trabalhou_pj === undefined}
+                    onChange={() => updateDados('ja_trabalhou_pj', false)} className="text-blue-600" /> Não
+                </label>
+              </div>
+            </div>
+            <div className="flex items-center gap-6 border rounded-lg p-2.5">
+              <label className="block text-sm font-medium text-gray-700">Aceita trabalhar como PJ?</label>
+              <div className="flex gap-3">
+                <label className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input type="radio" name="aceita_pj" checked={dados.aceita_pj === true}
+                    onChange={() => updateDados('aceita_pj', true)} className="text-blue-600" /> Sim
+                </label>
+                <label className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input type="radio" name="aceita_pj" checked={dados.aceita_pj === false || dados.aceita_pj === undefined}
+                    onChange={() => updateDados('aceita_pj', false)} className="text-blue-600" /> Não
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Linha 7: Flags PJ - Possui empresa / Aceita abrir */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex items-center gap-6 border rounded-lg p-2.5">
+              <label className="block text-sm font-medium text-gray-700">Possui empresa aberta?</label>
+              <div className="flex gap-3">
+                <label className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input type="radio" name="possui_emp" checked={dados.possui_empresa === true}
+                    onChange={() => updateDados('possui_empresa', true)} className="text-blue-600" /> Sim
+                </label>
+                <label className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input type="radio" name="possui_emp" checked={dados.possui_empresa === false || dados.possui_empresa === undefined}
+                    onChange={() => updateDados('possui_empresa', false)} className="text-blue-600" /> Não
+                </label>
+              </div>
+            </div>
+            <div className="flex items-center gap-6 border rounded-lg p-2.5">
+              <label className="block text-sm font-medium text-gray-700">Aceita abrir empresa?</label>
+              <div className="flex gap-3">
+                <label className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input type="radio" name="aceita_abrir" checked={dados.aceita_abrir_empresa === true}
+                    onChange={() => updateDados('aceita_abrir_empresa', true)} className="text-blue-600" /> Sim
+                </label>
+                <label className="flex items-center gap-1 text-sm cursor-pointer">
+                  <input type="radio" name="aceita_abrir" checked={dados.aceita_abrir_empresa === false || dados.aceita_abrir_empresa === undefined}
+                    onChange={() => updateDados('aceita_abrir_empresa', false)} className="text-blue-600" /> Não
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Linha 8: Disponibilidade / Modalidade */}
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Disponibilidade</label>
               <input
@@ -929,7 +1156,18 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
                     className="w-28 border rounded p-2 text-sm"
                     placeholder="+ X anos"
                   />
-                  <label className="flex items-center gap-1 text-xs">
+                  <input
+                    type="text"
+                    value={req.observacao || ''}
+                    onChange={e => {
+                      const novos = [...(dados.requisitos_match || [])];
+                      novos[idx] = { ...novos[idx], observacao: e.target.value };
+                      updateDados('requisitos_match', novos);
+                    }}
+                    className="flex-1 border rounded p-2 text-sm"
+                    placeholder="Observações"
+                  />
+                  <label className="flex items-center gap-1 text-xs whitespace-nowrap">
                     <input
                       type="checkbox"
                       checked={req.atendido || false}
@@ -962,7 +1200,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
               <label className="text-sm font-medium text-gray-700">Requisitos Desejáveis</label>
               <button
                 onClick={() => updateDados('requisitos_desejaveis', [...(dados.requisitos_desejaveis || []), {
-                  tecnologia: '', tempo_experiencia: '', atendido: false
+                  tecnologia: '', tempo_experiencia: '', atendido: false, observacao: ''
                 }])}
                 className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
               >
@@ -994,7 +1232,18 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
                     className="w-28 border rounded p-2 text-sm"
                     placeholder="+ X anos"
                   />
-                  <label className="flex items-center gap-1 text-xs">
+                  <input
+                    type="text"
+                    value={req.observacao || ''}
+                    onChange={e => {
+                      const novos = [...(dados.requisitos_desejaveis || [])];
+                      novos[idx] = { ...novos[idx], observacao: e.target.value };
+                      updateDados('requisitos_desejaveis', novos);
+                    }}
+                    className="flex-1 border rounded p-2 text-sm"
+                    placeholder="Observações"
+                  />
+                  <label className="flex items-center gap-1 text-xs whitespace-nowrap">
                     <input
                       type="checkbox"
                       checked={req.atendido || false}
@@ -1027,7 +1276,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
               <label className="text-sm font-medium text-gray-700">Hard Skills</label>
               <button
                 onClick={() => updateDados('hard_skills_tabela', [...(dados.hard_skills_tabela || []), {
-                  tecnologia: '', tempo_experiencia: ''
+                  tecnologia: '', tempo_experiencia: '', observacao: ''
                 }])}
                 className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
               >
@@ -1035,14 +1284,23 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
               </button>
             </div>
             <div className="space-y-2">
-              {(dados.hard_skills_tabela || []).map((skill, idx) => (
-                <div key={idx} className="flex gap-2 items-center">
+              {[...(dados.hard_skills_tabela || [])]
+                .map((skill, originalIdx) => ({ ...skill, originalIdx }))
+                .sort((a, b) => {
+                  const parseAnos = (str: string) => {
+                    const match = str?.match(/(\d+)/);
+                    return match ? parseInt(match[1]) : 0;
+                  };
+                  return parseAnos(b.tempo_experiencia) - parseAnos(a.tempo_experiencia);
+                })
+                .map((skill) => (
+                <div key={skill.originalIdx} className="flex gap-2 items-center">
                   <input
                     type="text"
                     value={skill.tecnologia || ''}
                     onChange={e => {
                       const novos = [...(dados.hard_skills_tabela || [])];
-                      novos[idx] = { ...novos[idx], tecnologia: e.target.value };
+                      novos[skill.originalIdx] = { ...novos[skill.originalIdx], tecnologia: e.target.value };
                       updateDados('hard_skills_tabela', novos);
                     }}
                     className="flex-1 border rounded p-2 text-sm"
@@ -1053,16 +1311,27 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
                     value={skill.tempo_experiencia || ''}
                     onChange={e => {
                       const novos = [...(dados.hard_skills_tabela || [])];
-                      novos[idx] = { ...novos[idx], tempo_experiencia: e.target.value };
+                      novos[skill.originalIdx] = { ...novos[skill.originalIdx], tempo_experiencia: e.target.value };
                       updateDados('hard_skills_tabela', novos);
                     }}
                     className="w-28 border rounded p-2 text-sm"
                     placeholder="+ X anos"
                   />
+                  <input
+                    type="text"
+                    value={skill.observacao || ''}
+                    onChange={e => {
+                      const novos = [...(dados.hard_skills_tabela || [])];
+                      novos[skill.originalIdx] = { ...novos[skill.originalIdx], observacao: e.target.value };
+                      updateDados('hard_skills_tabela', novos);
+                    }}
+                    className="flex-1 border rounded p-2 text-sm"
+                    placeholder="Observações"
+                  />
                   <button
                     onClick={() => {
                       const novos = [...(dados.hard_skills_tabela || [])];
-                      novos.splice(idx, 1);
+                      novos.splice(skill.originalIdx, 1);
                       updateDados('hard_skills_tabela', novos);
                     }}
                     className="text-red-400 hover:text-red-600"
@@ -1090,8 +1359,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             <div key={idx} className="border rounded-lg p-3 bg-gray-50">
               <div className="flex items-center gap-2 mb-2">
                 <span className={`w-2 h-2 rounded-full ${req.atendido ? 'bg-green-500' : 'bg-red-500'}`} />
-                <span className="font-medium text-sm">{req.tecnologia || `Requisito ${idx + 1}`}</span>
-                <span className="text-xs text-gray-500">({req.tempo_experiencia})</span>
+                <span className="font-medium text-sm">Requisitos</span>
+                <span className="text-xs text-gray-500">— {req.tecnologia || 'Sem nome'} ({req.tempo_experiencia})</span>
               </div>
               <textarea
                 value={req.observacao || ''}

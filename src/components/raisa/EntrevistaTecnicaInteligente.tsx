@@ -1312,6 +1312,20 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           Voltar
         </button>
         <button
+          onClick={async () => {
+            // Finalizar Entrevista - salvar CV parcial diretamente
+            if (!selectedCandidaturaId) return;
+            const confirmou = window.confirm('Deseja finalizar a entrevista e salvar o CV parcial?');
+            if (!confirmou) return;
+            // Troca para aba comportamental para finalizar lá
+            setAbaAtiva('comportamental');
+          }}
+          className="flex-1 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 
+                     flex items-center justify-center gap-2"
+        >
+          ✅ Finalizar Entrevista
+        </button>
+        <button
           onClick={() => setCurrentStep(4)}
           disabled={!audioFile}
           className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 
