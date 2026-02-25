@@ -175,6 +175,25 @@ const AnaliseRisco: React.FC = () => {
   const [salvouBanco, setSalvouBanco] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ✅ Helper: Mensagem amigável para erros de API
+  const formatarErroAPI = (err: any): string => {
+    const msg = err?.message || String(err) || '';
+    if (msg.includes('429') || msg.includes('Too Many Requests') || 
+        msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota') || msg.includes('rate')) {
+      return '⏳ A IA está temporariamente sobrecarregada (limite de requisições atingido). Aguarde 1-2 minutos e tente novamente.';
+    }
+    if (msg.includes('timeout') || msg.includes('DEADLINE_EXCEEDED')) {
+      return '⏱️ O processamento demorou mais que o esperado. Tente novamente em alguns instantes.';
+    }
+    if (msg.includes('401') || msg.includes('403') || msg.includes('API key') || msg.includes('PERMISSION_DENIED')) {
+      return '🔑 Erro de autenticação com a IA. Contate o administrador do sistema.';
+    }
+    if (msg.includes('Resposta vazia') || msg.includes('EMPTY_RESPONSE')) {
+      return '📭 A IA não retornou dados. Aguarde 1 minuto e tente novamente.';
+    }
+    return msg;
+  };
   
   // 🆕 v4.0: Estados para análise de adequação
   const [vagas, setVagas] = useState<VagaSimples[]>([]);
@@ -358,7 +377,7 @@ const AnaliseRisco: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Erro ao extrair texto:', err);
-      setErro(`Erro ao extrair texto: ${err.message}`);
+      setErro(formatarErroAPI(err));
       setTextoExtraido('');
     } finally {
       setIsExtraindo(false);
@@ -1282,7 +1301,7 @@ const AnaliseRisco: React.FC = () => {
 
     } catch (err: any) {
       console.error('❌ Erro na análise de adequação:', err);
-      setErro(`Erro na análise: ${err.message}`);
+      setErro(formatarErroAPI(err));
     } finally {
       setIsAnalisandoAdequacao(false);
     }
