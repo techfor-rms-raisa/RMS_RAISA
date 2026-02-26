@@ -53,15 +53,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'dados is required' });
     }
 
-    // 🔍 LOG DIAGNÓSTICO - motivo_saida nas experiências
-    if (dados.experiencias && dados.experiencias.length > 0) {
-      console.log('📋 DOCX: Total experiências:', dados.experiencias.length);
-      dados.experiencias.forEach((exp: any, i: number) => {
-        const keys = Object.keys(exp).filter(k => k.toLowerCase().includes('motivo'));
-        console.log(`  [${i}] ${exp.empresa} → motivo_saida: "${exp.motivo_saida || '(VAZIO)'}" | motivoSaida: "${exp.motivoSaida || '(VAZIO)'}" | keys com motivo: [${keys.join(',')}]`);
-      });
-    }
-
     const templateType = template || 'techfor';
 
     if (templateType === 'techfor') {
