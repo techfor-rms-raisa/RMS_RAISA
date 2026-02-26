@@ -916,7 +916,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
 
       // Salvar no banco
       try {
-        const { data: entrevista } = await supabase
+        const { data: entrevista, error: dbError } = await supabase
           .from('entrevista_tecnica')
           .insert({
             candidatura_id: parseInt(candidaturaAtual.id),
@@ -929,13 +929,17 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             score_geral: resultadoFormatado.score_geral,
             recomendacao_ia: resultadoFormatado.recomendacao,
             justificativa_ia: resultadoFormatado.justificativa,
+            deteccao_ia: dados.deteccao_ia || null,
             entrevistador_id: currentUserId
           })
           .select('id')
           .single();
 
-        if (entrevista?.id) {
+        if (dbError) {
+          console.error('❌ Erro ao salvar entrevista no banco:', dbError);
+        } else if (entrevista?.id) {
           setEntrevistaId(entrevista.id);
+          console.log(`✅ Entrevista salva com id: ${entrevista.id}`);
         }
       } catch (dbErr) {
         console.warn('Aviso: erro ao salvar entrevista no banco:', dbErr);
@@ -1173,20 +1177,55 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // ============================================
   
   const salvarDecisao = async () => {
-    if (!entrevistaId || !decisaoAnalista || !selectedCandidaturaId) return;
+    if (!decisaoAnalista || !selectedCandidaturaId) return;
 
     setSalvando(true);
     try {
-      // 1. Atualizar registro da entrevista
-      await supabase
-        .from('entrevista_tecnica')
-        .update({
-          decisao_analista: decisaoAnalista,
-          observacoes_analista: observacoesAnalista,
-          decidido_em: new Date().toISOString(),
-          decidido_por: currentUserId
-        })
-        .eq('id', entrevistaId);
+      let entrevistaIdAtual = entrevistaId;
+
+      // Se não temos entrevistaId (ex: insert anterior falhou), criar registro agora
+      if (!entrevistaIdAtual && candidaturaAtual) {
+        console.log('⚠️ entrevistaId ausente, criando registro da entrevista...');
+        const { data: novaEntrevista, error: insertError } = await supabase
+          .from('entrevista_tecnica')
+          .insert({
+            candidatura_id: parseInt(String(selectedCandidaturaId)),
+            status: 'concluida',
+            transcricao_texto: transcricao || '',
+            transcricao_confianca: modoEntrada === 'texto' ? 100 : 90,
+            fonte_respostas: modoEntrada === 'texto' ? 'texto_escrito' : 'audio',
+            score_tecnico: analiseResultado?.score_tecnico || 0,
+            score_comunicacao: analiseResultado?.score_comunicacao || 0,
+            score_geral: analiseResultado?.score_geral || 0,
+            recomendacao_ia: analiseResultado?.recomendacao || 'REAVALIAR',
+            justificativa_ia: analiseResultado?.justificativa || '',
+            deteccao_ia: deteccaoIA || null,
+            entrevistador_id: currentUserId
+          })
+          .select('id')
+          .single();
+
+        if (insertError) {
+          console.error('❌ Erro ao criar registro da entrevista:', insertError);
+        } else if (novaEntrevista?.id) {
+          entrevistaIdAtual = novaEntrevista.id;
+          setEntrevistaId(novaEntrevista.id);
+          console.log(`✅ Entrevista criada com id: ${novaEntrevista.id}`);
+        }
+      }
+
+      // 1. Atualizar registro da entrevista com a decisão do analista
+      if (entrevistaIdAtual) {
+        await supabase
+          .from('entrevista_tecnica')
+          .update({
+            decisao_analista: decisaoAnalista,
+            observacoes_analista: observacoesAnalista,
+            decidido_em: new Date().toISOString(),
+            decidido_por: currentUserId
+          })
+          .eq('id', entrevistaIdAtual);
+      }
 
       // =====================================================
       // 🆕 CORREÇÃO: ATUALIZAR STATUS DA CANDIDATURA
