@@ -54,6 +54,7 @@ interface PessoaExpanded extends Pessoa {
     total_skills?: number;
     total_experiencias?: number;
     origem?: string;
+    total_candidaturas?: number;  // 🆕 Para controlar botão excluir
     linkedin_url?: string;
 }
 
@@ -250,6 +251,17 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
 
     // Excluir pessoa
     const handleDelete = async (pessoa: PessoaExpanded) => {
+        // 🆕 Verificar se tem candidaturas antes de excluir
+        const { count } = await supabase
+            .from('candidaturas')
+            .select('*', { count: 'exact', head: true })
+            .eq('pessoa_id', parseInt(pessoa.id));
+
+        if (count && count > 0) {
+            alert(`Não é possível excluir ${pessoa.nome}.\n\nEste candidato possui ${count} candidatura(s) ativa(s). Remova as candidaturas primeiro.`);
+            return;
+        }
+
         if (!confirm(`Excluir ${pessoa.nome}?`)) return;
         
         if (deletePessoa) {
@@ -297,6 +309,14 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 .eq('pessoa_id', parseInt(pessoa.id));
             
             setDetailsIdiomas(idiomas || []);
+
+            // 🆕 Carregar contagem de candidaturas (para controlar botão excluir)
+            const { count: totalCandidaturas } = await supabase
+                .from('candidaturas')
+                .select('*', { count: 'exact', head: true })
+                .eq('pessoa_id', parseInt(pessoa.id));
+
+            setDetailsPessoa(prev => prev ? { ...prev, total_candidaturas: totalCandidaturas || 0 } : prev);
 
         } catch (err) {
             console.error('Erro ao carregar detalhes:', err);
