@@ -85,6 +85,7 @@ interface ExperienciaInfo {
     atual: boolean;
     descricao: string;
     tecnologias: string[];
+    motivo_saida?: string;
 }
 
 // ============================================
@@ -1120,7 +1121,7 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                             ) : (
                                 <>
                                     {/* Info básica */}
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                                         <div>
                                             <span className="text-xs text-gray-500">Senioridade</span>
                                             <p className="font-medium capitalize">{detailsPessoa.senioridade || '-'}</p>
@@ -1132,10 +1133,6 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                         <div>
                                             <span className="text-xs text-gray-500">Modalidade</span>
                                             <p className="font-medium capitalize">{detailsPessoa.modalidade_preferida || '-'}</p>
-                                        </div>
-                                        <div>
-                                            <span className="text-xs text-gray-500">Pretensão Salarial</span>
-                                            <p className="font-medium">{formatarSalario(detailsPessoa.pretensao_salarial)}</p>
                                         </div>
                                     </div>
 
@@ -1189,7 +1186,11 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                     {/* 🆕 Valores e Regime */}
                                     <div className="bg-gray-50 rounded-lg p-4 space-y-3">
                                         <h4 className="font-bold text-gray-700 text-sm">💰 Valores e Regime de Contratação</h4>
-                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div>
+                                                <span className="text-xs text-gray-500">Pretensão Salarial</span>
+                                                <p className="text-sm font-medium">{formatarSalario(detailsPessoa.pretensao_salarial)}</p>
+                                            </div>
                                             <div>
                                                 <span className="text-xs text-gray-500">Valor Hora Atual</span>
                                                 <p className="text-sm font-medium">
@@ -1401,6 +1402,11 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                                                     </span>
                                                                 ))}
                                                             </div>
+                                                        )}
+                                                        {exp.motivo_saida && (
+                                                            <p className="text-sm text-orange-600 mt-2 italic">
+                                                                📋 Motivo da saída: {exp.motivo_saida}
+                                                            </p>
                                                         )}
                                                     </div>
                                                 ))}
