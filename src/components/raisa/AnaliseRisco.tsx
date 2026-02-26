@@ -449,7 +449,7 @@ const AnaliseRisco: React.FC = () => {
           action: 'extrair_cv',
           payload: {
             textoCV: textoExtraido,
-            base64PDF: base64Original || '' // 🆕 v4.4: Reenviar PDF original para extração estruturada precisa
+            base64PDF: '' // ✅ Texto já extraído no upload, não reenviar PDF (evita timeout)
           }
         })
       });
@@ -1096,7 +1096,7 @@ const AnaliseRisco: React.FC = () => {
           action: 'extrair_cv',
           payload: {
             textoCV: textoExtraido,
-            base64PDF: base64Original || '' // 🆕 v4.4: PDF original para Gemini ler tabelas corretamente
+            base64PDF: '' // ✅ Texto já extraído no upload, não reenviar PDF (evita timeout)
           }
         })
       });
