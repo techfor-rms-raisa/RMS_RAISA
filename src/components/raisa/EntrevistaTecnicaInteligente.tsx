@@ -153,6 +153,13 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = React.useRef<HTMLAudioElement>(null);
   
+  // 🆕 Modo de entrada: áudio ou respostas escritas
+  const [modoEntrada, setModoEntrada] = useState<'audio' | 'texto'>('audio');
+  const [textoRespostas, setTextoRespostas] = useState<string>('');
+  const [arquivoTexto, setArquivoTexto] = useState<File | null>(null);
+  const [extraindoTexto, setExtraindoTexto] = useState(false);
+  const [deteccaoIA, setDeteccaoIA] = useState<{ probabilidade: number; evidencias: string[]; veredicto: string } | null>(null);
+  
   // Processamento
   const [uploading, setUploading] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
@@ -713,6 +720,70 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     setAudioDuration(0);
   };
 
+  // 🆕 Handler para arquivo de respostas (TXT/DOCX)
+  const handleTextoFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!['txt', 'docx', 'doc'].includes(ext || '')) {
+      setError('Formato não suportado. Use TXT ou DOCX.');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Arquivo muito grande. Máximo 5MB.');
+      return;
+    }
+
+    setArquivoTexto(file);
+    setError(null);
+
+    try {
+      if (ext === 'txt') {
+        const texto = await file.text();
+        setTextoRespostas(texto);
+      } else {
+        // DOCX - enviar para Gemini extrair texto
+        setExtraindoTexto(true);
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64 = (reader.result as string).split(',')[1];
+          try {
+            const response = await fetch('/api/gemini-analyze', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'extrair_cv',
+                payload: { base64PDF: base64, textoCV: '' }
+              })
+            });
+            const result = await response.json();
+            if (result.success && result.data?.texto_original) {
+              setTextoRespostas(result.data.texto_original);
+            } else {
+              setError('Erro ao extrair texto do DOCX. Tente colar o texto manualmente.');
+            }
+          } catch {
+            setError('Erro ao processar DOCX. Tente colar o texto manualmente.');
+          } finally {
+            setExtraindoTexto(false);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch {
+      setError('Erro ao ler arquivo.');
+      setExtraindoTexto(false);
+    }
+  };
+
+  const handleRemoveTexto = () => {
+    setArquivoTexto(null);
+    setTextoRespostas('');
+    setDeteccaoIA(null);
+  };
+
   const togglePlayPause = () => {
     if (!audioRef.current) return;
     if (isPlaying) {
@@ -741,7 +812,149 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     return mimeMap[ext || ''] || file.type || 'audio/mpeg';
   };
 
+  // ============================================
+  // 🆕 PROCESSAR RESPOSTAS ESCRITAS (TEXTO/DOCX)
+  // ============================================
+
+  const processarRespostasEscritas = async () => {
+    if (!textoRespostas || textoRespostas.trim().length < 50 || !candidaturaAtual) return;
+
+    setError(null);
+    setProgress(0);
+    setProgressMessage('');
+
+    try {
+      setAnalyzing(true);
+      setCurrentStep(4);
+      setProgress(10);
+      setProgressMessage('Preparando análise das respostas escritas...');
+
+      // Formatar perguntas para análise
+      const perguntasFlat = perguntas.flatMap(cat => 
+        cat.perguntas.map((p: any) => ({
+          pergunta: p.pergunta,
+          categoria: cat.categoria,
+          peso: 1
+        }))
+      );
+
+      const stackFormatada = Array.isArray(vagaAtual?.stack_tecnologica) 
+        ? vagaAtual.stack_tecnologica 
+        : vagaAtual?.stack_tecnologica 
+          ? [vagaAtual.stack_tecnologica] 
+          : [];
+
+      setProgress(30);
+      setProgressMessage('Verificando autenticidade e analisando respostas com IA...');
+
+      // Chamar API com action específica para respostas escritas
+      const analyzeResponse = await fetch('/api/gemini-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'analisar_respostas_escritas',
+          payload: {
+            respostas_texto: textoRespostas,
+            perguntas: perguntasFlat,
+            vaga: vagaAtual ? {
+              titulo: vagaAtual.titulo,
+              requisitos_obrigatorios: vagaAtual.requisitos_obrigatorios,
+              stack_tecnologica: stackFormatada
+            } : null,
+            candidato: {
+              nome: candidaturaAtual.candidato_nome
+            }
+          }
+        })
+      });
+
+      const analyzeResult = await analyzeResponse.json();
+
+      if (!analyzeResult.success) {
+        throw new Error(analyzeResult.error || 'Erro na análise');
+      }
+
+      setProgress(80);
+      setProgressMessage('Processando resultados...');
+
+      const dados = analyzeResult.data || analyzeResult;
+
+      // Extrair detecção de IA
+      if (dados.deteccao_ia) {
+        setDeteccaoIA(dados.deteccao_ia);
+      }
+
+      // Montar resultado no formato padrão (ResultadoAnalise)
+      const resultadoFormatado: ResultadoAnalise = {
+        resumo: dados.resumo || '',
+        pontos_fortes: dados.pontos_fortes || [],
+        pontos_atencao: dados.pontos_atencao || [],
+        red_flags: dados.red_flags || [],
+        respostas_identificadas: dados.respostas_identificadas || [],
+        score_tecnico: dados.score_tecnico || 0,
+        score_comunicacao: dados.score_comunicacao || 0,
+        score_geral: dados.score_geral || 0,
+        recomendacao: dados.recomendacao || 'REAVALIAR',
+        justificativa: dados.justificativa || ''
+      };
+
+      // Se IA detectada com alta probabilidade, sobrescrever recomendação
+      if (dados.deteccao_ia?.probabilidade >= 75) {
+        resultadoFormatado.recomendacao = 'REPROVAR';
+        resultadoFormatado.red_flags = [
+          `⚠️ DETECÇÃO DE IA (${dados.deteccao_ia.probabilidade}%): ${dados.deteccao_ia.veredicto}`,
+          ...resultadoFormatado.red_flags
+        ];
+      }
+
+      setAnaliseResultado(resultadoFormatado);
+      setTranscricao(textoRespostas);
+      setProgress(100);
+      setProgressMessage('Análise concluída!');
+      setAnalyzing(false);
+
+      // Salvar no banco
+      try {
+        const { data: entrevista } = await supabase
+          .from('entrevista_tecnica')
+          .insert({
+            candidatura_id: parseInt(candidaturaAtual.id),
+            status: 'concluida',
+            transcricao_texto: textoRespostas,
+            transcricao_confianca: 100,
+            fonte_respostas: 'texto_escrito',
+            score_tecnico: resultadoFormatado.score_tecnico,
+            score_comunicacao: resultadoFormatado.score_comunicacao,
+            score_geral: resultadoFormatado.score_geral,
+            recomendacao_ia: resultadoFormatado.recomendacao,
+            justificativa_ia: resultadoFormatado.justificativa,
+            entrevistador_id: currentUserId
+          })
+          .select('id')
+          .single();
+
+        if (entrevista?.id) {
+          setEntrevistaId(entrevista.id);
+        }
+      } catch (dbErr) {
+        console.warn('Aviso: erro ao salvar entrevista no banco:', dbErr);
+      }
+
+      setCurrentStep(5);
+
+    } catch (err: any) {
+      console.error('Erro no processamento de texto:', err);
+      setError(err.message || 'Erro ao processar respostas escritas');
+      setProgressMessage('');
+      setAnalyzing(false);
+    }
+  };
+
   const processarEntrevista = async () => {
+    // 🆕 Desviar para processamento de texto se modo for texto
+    if (modoEntrada === 'texto') {
+      return processarRespostasEscritas();
+    }
     if (!audioFile || !candidaturaAtual) return;
 
     setError(null);
@@ -1219,7 +1432,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   );
 
   // ============================================
-  // RENDER - STEP 3: UPLOAD ÁUDIO
+  // RENDER - STEP 3: UPLOAD ÁUDIO OU RESPOSTAS ESCRITAS
   // ============================================
   
   const renderStep3 = () => {
@@ -1231,70 +1444,191 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         <p className="text-sm text-gray-600">{vagaAtual?.titulo}</p>
       </div>
 
-      {/* Instruções */}
-      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-        <h4 className="font-medium text-yellow-800 mb-2">📋 Antes de enviar:</h4>
-        <ul className="text-sm text-yellow-700 space-y-1 list-disc ml-4">
-          <li>Conduza a entrevista usando as perguntas do passo anterior</li>
-          <li>Grave toda a conversa em áudio (MP3, WAV, M4A, WebM ou OGG)</li>
-          <li>O áudio deve ter boa qualidade para transcrição</li>
-          <li><strong>Tamanho máximo: 100MB</strong> (entrevistas de até ~1 hora)</li>
-        </ul>
-        <p className="text-xs text-yellow-600 mt-2 italic">
-          💡 Powered by Gemini File API - processamento direto sem necessidade de divisão
-        </p>
+      {/* 🆕 Toggle: Áudio ou Respostas Escritas */}
+      <div className="flex bg-gray-100 rounded-lg p-1">
+        <button
+          onClick={() => setModoEntrada('audio')}
+          className={`flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+            modoEntrada === 'audio' 
+              ? 'bg-white text-blue-700 shadow-sm' 
+              : 'text-gray-600 hover:text-gray-800'
+          }`}
+        >
+          <Mic size={16} />
+          Upload de Áudio
+        </button>
+        <button
+          onClick={() => setModoEntrada('texto')}
+          className={`flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+            modoEntrada === 'texto' 
+              ? 'bg-white text-blue-700 shadow-sm' 
+              : 'text-gray-600 hover:text-gray-800'
+          }`}
+        >
+          <FileText size={16} />
+          Respostas Escritas
+        </button>
       </div>
 
-      {/* Upload Area */}
-      {!audioFile ? (
-        <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed 
-                          border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-          <div className="flex flex-col items-center justify-center pt-5 pb-6">
-            <Upload size={40} className="text-gray-400 mb-3" />
-            <p className="mb-2 text-sm text-gray-500">
-              <span className="font-semibold">Clique para enviar</span> ou arraste o arquivo
+      {/* ==================== MODO ÁUDIO ==================== */}
+      {modoEntrada === 'audio' && (
+        <>
+          {/* Instruções Áudio */}
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <h4 className="font-medium text-yellow-800 mb-2">📋 Antes de enviar:</h4>
+            <ul className="text-sm text-yellow-700 space-y-1 list-disc ml-4">
+              <li>Conduza a entrevista usando as perguntas do passo anterior</li>
+              <li>Grave toda a conversa em áudio (MP3, WAV, M4A, WebM ou OGG)</li>
+              <li>O áudio deve ter boa qualidade para transcrição</li>
+              <li><strong>Tamanho máximo: 100MB</strong> (entrevistas de até ~1 hora)</li>
+            </ul>
+            <p className="text-xs text-yellow-600 mt-2 italic">
+              💡 Powered by Gemini File API - processamento direto sem necessidade de divisão
             </p>
-            <p className="text-xs text-gray-500">MP3, WAV, M4A, WebM, OGG (máx. 100MB)</p>
           </div>
-          <input 
-            type="file" 
-            className="hidden" 
-            accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg"
-            onChange={handleAudioSelect}
-          />
-        </label>
-      ) : (
-        <div className="border rounded-lg p-4 space-y-4">
-          {/* Player */}
-          <div className="flex items-center gap-4">
-            <button
-              onClick={togglePlayPause}
-              className="w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700"
-            >
-              {isPlaying ? <Pause size={24} /> : <Play size={24} />}
-            </button>
-            <div className="flex-1">
-              <p className="font-medium truncate">{audioFile.name}</p>
-              <p className="text-sm text-gray-500">
-                {formatDuration(audioDuration)} • {(audioFile.size / 1024 / 1024).toFixed(1)}MB
+
+          {/* Upload Area */}
+          {!audioFile ? (
+            <label className="flex flex-col items-center justify-center w-full h-48 border-2 border-dashed 
+                              border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+              <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                <Upload size={40} className="text-gray-400 mb-3" />
+                <p className="mb-2 text-sm text-gray-500">
+                  <span className="font-semibold">Clique para enviar</span> ou arraste o arquivo
+                </p>
+                <p className="text-xs text-gray-500">MP3, WAV, M4A, WebM, OGG (máx. 100MB)</p>
+              </div>
+              <input 
+                type="file" 
+                className="hidden" 
+                accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg"
+                onChange={handleAudioSelect}
+              />
+            </label>
+          ) : (
+            <div className="border rounded-lg p-4 space-y-4">
+              {/* Player */}
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={togglePlayPause}
+                  className="w-12 h-12 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700"
+                >
+                  {isPlaying ? <Pause size={24} /> : <Play size={24} />}
+                </button>
+                <div className="flex-1">
+                  <p className="font-medium truncate">{audioFile.name}</p>
+                  <p className="text-sm text-gray-500">
+                    {formatDuration(audioDuration)} • {(audioFile.size / 1024 / 1024).toFixed(1)}MB
+                  </p>
+                </div>
+                <button
+                  onClick={handleRemoveAudio}
+                  className="p-2 text-red-600 hover:bg-red-50 rounded"
+                >
+                  <Trash2 size={20} />
+                </button>
+              </div>
+              
+              <audio 
+                ref={audioRef} 
+                src={audioUrl || undefined} 
+                onEnded={() => setIsPlaying(false)}
+                className="w-full"
+                controls
+              />
+            </div>
+          )}
+        </>
+      )}
+
+      {/* ==================== MODO TEXTO ==================== */}
+      {modoEntrada === 'texto' && (
+        <>
+          {/* Instruções Texto */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <h4 className="font-medium text-blue-800 mb-2">📝 Respostas Escritas do Candidato:</h4>
+            <ul className="text-sm text-blue-700 space-y-1 list-disc ml-4">
+              <li>Faça upload de arquivo <strong>TXT</strong> ou <strong>DOCX</strong> com as respostas</li>
+              <li>Ou cole diretamente o texto das respostas no campo abaixo</li>
+              <li>A IA irá analisar cada resposta e cruzar com as perguntas geradas</li>
+            </ul>
+            <div className="mt-3 p-2 bg-orange-50 border border-orange-200 rounded">
+              <p className="text-xs text-orange-700 font-medium">
+                ⚠️ <strong>Detecção de IA:</strong> O sistema verificará automaticamente se as respostas 
+                foram geradas por inteligência artificial (ChatGPT, Gemini, etc). Candidatos que usarem 
+                IA para responder receberão recomendação de <strong>Desqualificação</strong>.
               </p>
             </div>
-            <button
-              onClick={handleRemoveAudio}
-              className="p-2 text-red-600 hover:bg-red-50 rounded"
-            >
-              <Trash2 size={20} />
-            </button>
           </div>
-          
-          <audio 
-            ref={audioRef} 
-            src={audioUrl || undefined} 
-            onEnded={() => setIsPlaying(false)}
-            className="w-full"
-            controls
-          />
-        </div>
+
+          {/* Upload de Arquivo Texto */}
+          {!arquivoTexto && !textoRespostas && (
+            <label className="flex flex-col items-center justify-center w-full h-36 border-2 border-dashed 
+                              border-blue-300 rounded-lg cursor-pointer hover:bg-blue-50 transition-colors">
+              <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                <Upload size={32} className="text-blue-400 mb-2" />
+                <p className="mb-1 text-sm text-gray-500">
+                  <span className="font-semibold">Clique para enviar</span> arquivo com respostas
+                </p>
+                <p className="text-xs text-gray-500">TXT ou DOCX (máx. 5MB)</p>
+              </div>
+              <input 
+                type="file" 
+                className="hidden" 
+                accept=".txt,.docx,.doc"
+                onChange={handleTextoFileSelect}
+              />
+            </label>
+          )}
+
+          {/* Arquivo carregado */}
+          {arquivoTexto && (
+            <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+              <FileText size={20} className="text-green-600" />
+              <div className="flex-1">
+                <p className="font-medium text-sm">{arquivoTexto.name}</p>
+                <p className="text-xs text-gray-500">
+                  {(arquivoTexto.size / 1024).toFixed(1)} KB
+                  {extraindoTexto && <span className="ml-2 text-blue-600">Extraindo texto...</span>}
+                  {textoRespostas && <span className="ml-2 text-green-600">✓ {textoRespostas.length} caracteres extraídos</span>}
+                </p>
+              </div>
+              <button onClick={handleRemoveTexto} className="text-red-500 hover:text-red-700 p-1">
+                <Trash2 size={16} />
+              </button>
+            </div>
+          )}
+
+          {/* Divisor OU */}
+          {!arquivoTexto && !textoRespostas && (
+            <div className="flex items-center gap-3">
+              <div className="flex-1 border-t border-gray-200"></div>
+              <span className="text-sm text-gray-400 font-medium">OU COLE O TEXTO</span>
+              <div className="flex-1 border-t border-gray-200"></div>
+            </div>
+          )}
+
+          {/* Área de texto para colar respostas */}
+          <div>
+            <label className="text-sm font-medium text-gray-700 mb-1 block">
+              Respostas do Candidato
+              {textoRespostas && (
+                <span className="ml-2 text-gray-400 font-normal">({textoRespostas.length} caracteres)</span>
+              )}
+            </label>
+            <textarea
+              className="w-full border rounded-lg p-3 text-sm min-h-[200px] focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder={`Cole aqui as respostas do candidato às perguntas técnicas...\n\nExemplo:\n1. Sobre Vue.js: Na ART IT, enfrentei desafios como...\n2. Sobre MySQL: A query mais complexa que otimizei foi...`}
+              value={textoRespostas}
+              onChange={e => setTextoRespostas(e.target.value)}
+            />
+            {textoRespostas && textoRespostas.trim().length < 50 && (
+              <p className="text-xs text-orange-600 mt-1">
+                Mínimo de 50 caracteres para análise. Atual: {textoRespostas.trim().length}
+              </p>
+            )}
+          </div>
+        </>
       )}
 
       {error && (
@@ -1327,11 +1661,11 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         </button>
         <button
           onClick={() => setCurrentStep(4)}
-          disabled={!audioFile}
+          disabled={modoEntrada === 'audio' ? !audioFile : (!textoRespostas || textoRespostas.trim().length < 50)}
           className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 
                      disabled:bg-gray-300 flex items-center justify-center gap-2"
         >
-          Processar Entrevista <Brain size={20} />
+          {modoEntrada === 'audio' ? 'Processar Entrevista' : 'Analisar Respostas'} <Brain size={20} />
         </button>
       </div>
     </div>
@@ -1354,7 +1688,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         <h3 className="text-lg font-semibold text-gray-900 mb-2">
           {uploading && 'Enviando áudio...'}
           {transcribing && 'Transcrevendo entrevista...'}
-          {analyzing && 'Analisando respostas...'}
+          {analyzing && (modoEntrada === 'texto' ? 'Analisando respostas escritas...' : 'Analisando respostas...')}
           {!uploading && !transcribing && !analyzing && 'Pronto para processar'}
         </h3>
 
@@ -1364,7 +1698,10 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             <>
               {uploading && 'Fazendo upload do arquivo de áudio'}
               {transcribing && 'A IA está convertendo o áudio em texto'}
-              {analyzing && 'Comparando respostas com as perguntas esperadas'}
+              {analyzing && (modoEntrada === 'texto' 
+                ? 'Verificando autenticidade e analisando respostas' 
+                : 'Comparando respostas com as perguntas esperadas'
+              )}
             </>
           )}
         </p>
@@ -1380,21 +1717,43 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
 
       {/* Etapas */}
       <div className="space-y-3">
-        <StepIndicator 
-          done={progress > 20} 
-          active={uploading} 
-          label="Upload e registro" 
-        />
-        <StepIndicator 
-          done={progress > 65} 
-          active={transcribing} 
-          label="Transcrição (Gemini File API)"
-        />
-        <StepIndicator 
-          done={progress >= 100} 
-          active={analyzing} 
-          label="Análise das respostas" 
-        />
+        {modoEntrada === 'audio' ? (
+          <>
+            <StepIndicator 
+              done={progress > 20} 
+              active={uploading} 
+              label="Upload e registro" 
+            />
+            <StepIndicator 
+              done={progress > 65} 
+              active={transcribing} 
+              label="Transcrição (Gemini File API)"
+            />
+            <StepIndicator 
+              done={progress >= 100} 
+              active={analyzing} 
+              label="Análise das respostas" 
+            />
+          </>
+        ) : (
+          <>
+            <StepIndicator 
+              done={progress > 20} 
+              active={progress <= 20 && analyzing} 
+              label="Preparando texto das respostas" 
+            />
+            <StepIndicator 
+              done={progress > 50} 
+              active={progress > 20 && progress <= 50 && analyzing} 
+              label="Detecção de IA (autenticidade)" 
+            />
+            <StepIndicator 
+              done={progress >= 100} 
+              active={progress > 50 && analyzing} 
+              label="Análise técnica das respostas" 
+            />
+          </>
+        )}
       </div>
 
       {error && (
@@ -1458,6 +1817,85 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             {analiseResultado.recomendacao === 'REPROVAR' && <ThumbsDown size={18} />}
             {analiseResultado.recomendacao === 'REAVALIAR' && <HelpCircle size={18} />}
             Recomendação: {analiseResultado.recomendacao}
+          </div>
+        </div>
+      )}
+
+      {/* 🆕 Alerta de Detecção de IA */}
+      {deteccaoIA && (
+        <div className={`rounded-xl p-5 border-2 ${
+          deteccaoIA.probabilidade >= 75 
+            ? 'bg-red-50 border-red-300' 
+            : deteccaoIA.probabilidade >= 40 
+              ? 'bg-orange-50 border-orange-300' 
+              : 'bg-green-50 border-green-300'
+        }`}>
+          <div className="flex items-start gap-3">
+            <div className={`p-2 rounded-full ${
+              deteccaoIA.probabilidade >= 75 ? 'bg-red-100' : 
+              deteccaoIA.probabilidade >= 40 ? 'bg-orange-100' : 'bg-green-100'
+            }`}>
+              <Brain size={24} className={
+                deteccaoIA.probabilidade >= 75 ? 'text-red-600' : 
+                deteccaoIA.probabilidade >= 40 ? 'text-orange-600' : 'text-green-600'
+              } />
+            </div>
+            <div className="flex-1">
+              <div className="flex items-center gap-3 mb-2">
+                <h4 className={`font-bold text-lg ${
+                  deteccaoIA.probabilidade >= 75 ? 'text-red-800' : 
+                  deteccaoIA.probabilidade >= 40 ? 'text-orange-800' : 'text-green-800'
+                }`}>
+                  🤖 Detecção de IA: {deteccaoIA.probabilidade}%
+                </h4>
+                <span className={`text-xs px-3 py-1 rounded-full font-semibold ${
+                  deteccaoIA.probabilidade >= 75 
+                    ? 'bg-red-200 text-red-800' 
+                    : deteccaoIA.probabilidade >= 40 
+                      ? 'bg-orange-200 text-orange-800'
+                      : 'bg-green-200 text-green-800'
+                }`}>
+                  {deteccaoIA.probabilidade >= 75 ? '⛔ ALTA PROBABILIDADE' : 
+                   deteccaoIA.probabilidade >= 40 ? '⚠️ PROBABILIDADE MODERADA' : 
+                   '✅ BAIXA PROBABILIDADE'}
+                </span>
+              </div>
+              
+              <p className={`text-sm mb-3 ${
+                deteccaoIA.probabilidade >= 75 ? 'text-red-700' : 
+                deteccaoIA.probabilidade >= 40 ? 'text-orange-700' : 'text-green-700'
+              }`}>
+                {deteccaoIA.veredicto}
+              </p>
+
+              {deteccaoIA.evidencias?.length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-sm font-medium text-gray-600 hover:text-gray-800">
+                    Ver evidências ({deteccaoIA.evidencias.length})
+                  </summary>
+                  <ul className="mt-2 space-y-1">
+                    {deteccaoIA.evidencias.map((ev: string, i: number) => (
+                      <li key={i} className="text-sm text-gray-600 flex items-start gap-2">
+                        <span className="mt-1 text-gray-400">•</span>
+                        {ev}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+
+              {deteccaoIA.probabilidade >= 75 && (
+                <div className="mt-3 p-3 bg-red-100 rounded-lg">
+                  <p className="text-sm font-bold text-red-800">
+                    ⛔ RECOMENDAÇÃO: DESQUALIFICAR CANDIDATO
+                  </p>
+                  <p className="text-xs text-red-700 mt-1">
+                    As respostas apresentam fortes indícios de terem sido geradas por inteligência artificial. 
+                    Recomenda-se desqualificar o candidato ou solicitar nova entrevista presencial/por vídeo.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
