@@ -1181,8 +1181,7 @@ async function analisarRespostasEscritas(payload: {
   console.log(`   Texto: ${respostas_texto.length} caracteres`);
   console.log(`   Perguntas: ${perguntas.length}`);
 
-  const API_KEY = process.env.GEMINI_API_KEY;
-  if (!API_KEY) throw new Error('GEMINI_API_KEY não configurada');
+  const ai = getAI();
 
   const perguntasFormatadas = perguntas.map((p, i) => 
     `${i + 1}. [${p.categoria}] ${p.pergunta}`
@@ -1282,30 +1281,17 @@ RESPONDA EXCLUSIVAMENTE em JSON válido (sem markdown, sem backticks):
 }`;
 
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 8192,
-            responseMimeType: 'application/json'
-          }
-        })
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+      config: {
+        temperature: 0.3,
+        maxOutputTokens: 8192,
+        responseMimeType: 'application/json'
       }
-    );
+    });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ [analisarRespostasEscritas] Erro Gemini:', errorText);
-      throw new Error(`Erro na API Gemini: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    const text = result.text || '';
 
     if (!text) {
       throw new Error('Resposta vazia da Gemini');
