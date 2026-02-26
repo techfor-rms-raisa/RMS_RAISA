@@ -323,7 +323,28 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       // 3. Carregar CV existente (se houver)
       const cvExistente = await loadCVByCandidatura(candidaturaId);
       if (cvExistente) {
-        setDados(cvExistente.dados_processados);
+        // Mesclar: dados do CV salvo + dados frescos da pessoa (email, telefone, etc.)
+        // Prioridade: CV salvo para campos de conteúdo, pessoa para dados de contato vazios
+        setDados(prev => {
+          const cvDados = cvExistente.dados_processados;
+          return {
+            ...prev,          // dados iniciais (email, telefone da pessoa)
+            ...cvDados,       // dados do CV salvo (experiencias, requisitos, etc.)
+            // Garantir que dados de contato da pessoa prevaleçam se estiverem vazios no CV salvo
+            email: cvDados.email || prev.email || '',
+            telefone: cvDados.telefone || prev.telefone || '',
+            cidade: cvDados.cidade || prev.cidade || '',
+            estado: cvDados.estado || prev.estado || '',
+            bairro: cvDados.bairro || prev.bairro || '',
+            cep: cvDados.cep || prev.cep || '',
+            cpf: cvDados.cpf || prev.cpf || '',
+            rg: cvDados.rg || prev.rg || '',
+            data_nascimento: cvDados.data_nascimento || prev.data_nascimento || '',
+            idade: cvDados.idade || prev.idade,
+            pretensao_salarial: cvDados.pretensao_salarial || prev.pretensao_salarial || '',
+            estado_civil: cvDados.estado_civil || prev.estado_civil || ''
+          };
+        });
         console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ')');
       } else {
         // ✅ CV NÃO existe: Pré-preencher requisitos a partir da vaga
