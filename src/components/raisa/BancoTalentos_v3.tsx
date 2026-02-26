@@ -1106,8 +1106,84 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                             <p className="font-medium capitalize">{detailsPessoa.modalidade_preferida || '-'}</p>
                                         </div>
                                         <div>
-                                            <span className="text-xs text-gray-500">Pretensão</span>
+                                            <span className="text-xs text-gray-500">Pretensão Salarial</span>
                                             <p className="font-medium">{formatarSalario(detailsPessoa.pretensao_salarial)}</p>
+                                        </div>
+                                    </div>
+
+                                    {/* 🆕 Dados Pessoais Detalhados */}
+                                    <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                                        <h4 className="font-bold text-gray-700 text-sm">👤 Dados Pessoais</h4>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div>
+                                                <span className="text-xs text-gray-500">Data Nascimento</span>
+                                                <p className="text-sm font-medium">
+                                                    {detailsPessoa.data_nascimento 
+                                                        ? new Date(detailsPessoa.data_nascimento + 'T00:00:00').toLocaleDateString('pt-BR')
+                                                        : '-'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Estado Civil</span>
+                                                <p className="text-sm font-medium capitalize">{detailsPessoa.estado_civil || '-'}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">CPF</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.cpf || '-'}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">RG</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.rg || '-'}</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div>
+                                                <span className="text-xs text-gray-500">Cidade/UF</span>
+                                                <p className="text-sm font-medium">
+                                                    {detailsPessoa.cidade ? `${detailsPessoa.cidade}/${detailsPessoa.estado}` : '-'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Bairro</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.bairro || '-'}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">CEP</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.cep || '-'}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Telefone</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.telefone || '-'}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 🆕 Valores e Regime */}
+                                    <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                                        <h4 className="font-bold text-gray-700 text-sm">💰 Valores e Regime de Contratação</h4>
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                            <div>
+                                                <span className="text-xs text-gray-500">Valor Hora Atual</span>
+                                                <p className="text-sm font-medium">
+                                                    {detailsPessoa.valor_hora_atual ? `R$ ${detailsPessoa.valor_hora_atual}` : '-'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Pretensão Valor Hora</span>
+                                                <p className="text-sm font-medium">
+                                                    {detailsPessoa.pretensao_valor_hora ? `R$ ${detailsPessoa.pretensao_valor_hora}` : '-'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Regime PJ</span>
+                                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                                    {detailsPessoa.ja_trabalhou_pj && <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded">Já trabalhou PJ</span>}
+                                                    {detailsPessoa.aceita_pj && <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded">Aceita PJ</span>}
+                                                    {detailsPessoa.possui_empresa && <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded">Possui empresa</span>}
+                                                    {detailsPessoa.aceita_abrir_empresa && <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded">Aceita abrir</span>}
+                                                    {!detailsPessoa.ja_trabalhou_pj && !detailsPessoa.aceita_pj && <span className="text-xs text-gray-400">Não informado</span>}
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 
