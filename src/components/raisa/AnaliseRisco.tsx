@@ -785,7 +785,8 @@ const AnaliseRisco: React.FC = () => {
           data_fim: formatarData(e.data_fim),
           atual: e.atual || false,
           descricao: e.descricao || '',
-          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : []
+          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : [],
+          motivo_saida: e.motivo_saida || null
         }));
         
         await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
@@ -997,7 +998,8 @@ const AnaliseRisco: React.FC = () => {
           data_fim: formatarData(e.data_fim),
           atual: e.atual || false,
           descricao: e.descricao || '',
-          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : []
+          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : [],
+          motivo_saida: e.motivo_saida || null
         }));
         
         await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
@@ -1503,7 +1505,8 @@ const AnaliseRisco: React.FC = () => {
           data_fim: formatarData(e.data_fim),
           atual: e.atual || false,
           descricao: e.descricao || '',
-          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : []
+          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : [],
+          motivo_saida: e.motivo_saida || null
         }));
         
         const { error: errExp } = await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);

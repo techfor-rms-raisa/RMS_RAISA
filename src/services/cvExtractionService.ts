@@ -533,6 +533,7 @@ async function salvarExperienciasPessoa(
       atual: e.atual,
       descricao: e.descricao,
       tecnologias_usadas: e.tecnologias,
+      motivo_saida: e.motivo_saida || null,
       criado_em: new Date().toISOString()
     }));
 
