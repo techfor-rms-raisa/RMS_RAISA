@@ -84,6 +84,8 @@ interface ExperienciaInfo {
     atual: boolean;
     descricao: string;
     tecnologias: string[];
+    tecnologias_usadas?: string[];
+    motivo_saida?: string;
 }
 
 // ============================================
@@ -1358,6 +1360,11 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                                         </p>
                                                         {exp.descricao && (
                                                             <p className="text-sm text-gray-600 mt-2">{exp.descricao}</p>
+                                                        )}
+                                                        {exp.motivo_saida && (
+                                                            <p className="text-sm text-gray-500 mt-2 italic">
+                                                                <span className="font-medium">Motivo de saída:</span> {exp.motivo_saida}
+                                                            </p>
                                                         )}
                                                         {exp.tecnologias_usadas && exp.tecnologias_usadas.length > 0 && (
                                                             <div className="flex flex-wrap gap-1 mt-2">
