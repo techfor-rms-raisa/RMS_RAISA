@@ -529,6 +529,38 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
         } else {
           console.log('✅ Dados da pessoa atualizados no Supabase');
         }
+
+        // ✅ Atualizar motivo_saida nas experiências (pessoa_experiencias)
+        if (dados.experiencias && dados.experiencias.length > 0) {
+          // Buscar experiências existentes no banco para fazer match por empresa+cargo
+          const { data: expExistentes } = await supabase
+            .from('pessoa_experiencias')
+            .select('id, empresa, cargo')
+            .eq('pessoa_id', pessoaId)
+            .order('data_inicio', { ascending: false });
+
+          if (expExistentes && expExistentes.length > 0) {
+            for (const exp of dados.experiencias) {
+              if (exp.motivo_saida) {
+                // Match por empresa (normalizado) para encontrar o registro correto
+                const match = expExistentes.find(e => 
+                  e.empresa?.toLowerCase().trim() === exp.empresa?.toLowerCase().trim() &&
+                  e.cargo?.toLowerCase().trim() === exp.cargo?.toLowerCase().trim()
+                ) || expExistentes.find(e => 
+                  e.empresa?.toLowerCase().trim() === exp.empresa?.toLowerCase().trim()
+                );
+
+                if (match) {
+                  await supabase
+                    .from('pessoa_experiencias')
+                    .update({ motivo_saida: exp.motivo_saida })
+                    .eq('id', match.id);
+                  console.log(`✅ motivo_saida atualizado para exp ${match.empresa}: "${exp.motivo_saida}"`);
+                }
+              }
+            }
+          }
+        }
       }
 
       // Salvar CV parcial no Supabase
