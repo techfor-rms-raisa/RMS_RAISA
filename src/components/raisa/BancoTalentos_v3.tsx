@@ -47,6 +47,17 @@ interface PessoaExpanded extends Pessoa {
     pretensao_salarial?: number;
     cidade?: string;
     estado?: string;
+    bairro?: string;
+    cep?: string;
+    rg?: string;
+    data_nascimento?: string;
+    estado_civil?: string;
+    valor_hora_atual?: number;
+    pretensao_valor_hora?: number;
+    ja_trabalhou_pj?: boolean;
+    aceita_pj?: boolean;
+    possui_empresa?: boolean;
+    aceita_abrir_empresa?: boolean;
     cv_processado?: boolean;
     cv_processado_em?: string;
     resumo_profissional?: string;
@@ -140,6 +151,17 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
         pretensao_salarial: undefined,
         cidade: '',
         estado: '',
+        bairro: '',
+        cep: '',
+        rg: '',
+        data_nascimento: '',
+        estado_civil: '',
+        valor_hora_atual: undefined,
+        pretensao_valor_hora: undefined,
+        ja_trabalhou_pj: false,
+        aceita_pj: false,
+        possui_empresa: false,
+        aceita_abrir_empresa: false,
         id_analista_rs: undefined  // 🆕 v57.0: Campo de analista para exclusividade
     });
 
@@ -223,6 +245,17 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 pretensao_salarial: p.pretensao_salarial,
                 cidade: p.cidade || '',
                 estado: p.estado || '',
+                bairro: p.bairro || '',
+                cep: p.cep || '',
+                rg: p.rg || '',
+                data_nascimento: p.data_nascimento || '',
+                estado_civil: p.estado_civil || '',
+                valor_hora_atual: p.valor_hora_atual,
+                pretensao_valor_hora: p.pretensao_valor_hora,
+                ja_trabalhou_pj: p.ja_trabalhou_pj || false,
+                aceita_pj: p.aceita_pj || false,
+                possui_empresa: p.possui_empresa || false,
+                aceita_abrir_empresa: p.aceita_abrir_empresa || false,
                 id_analista_rs: p.id_analista_rs || undefined  // 🆕 v57.0: Manter analista existente
             });
         } else {
@@ -231,7 +264,11 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 nome: '', email: '', telefone: '', cpf: '', linkedin_url: '',
                 titulo_profissional: '', senioridade: '', disponibilidade: '',
                 modalidade_preferida: '', pretensao_salarial: undefined,
-                cidade: '', estado: '',
+                cidade: '', estado: '', bairro: '', cep: '', rg: '',
+                data_nascimento: '', estado_civil: '',
+                valor_hora_atual: undefined, pretensao_valor_hora: undefined,
+                ja_trabalhou_pj: false, aceita_pj: false,
+                possui_empresa: false, aceita_abrir_empresa: false,
                 id_analista_rs: user?.id  // 🆕 v57.0: Novo cadastro usa analista logado
             });
         }
@@ -762,6 +799,38 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                             onChange={e => setFormData({...formData, linkedin_url: e.target.value})} 
                                         />
                                     </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700">RG</label>
+                                        <input 
+                                            className="w-full border p-2 rounded mt-1" 
+                                            value={formData.rg} 
+                                            onChange={e => setFormData({...formData, rg: e.target.value})} 
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700">Data de Nascimento</label>
+                                        <input 
+                                            type="date"
+                                            className="w-full border p-2 rounded mt-1" 
+                                            value={formData.data_nascimento} 
+                                            onChange={e => setFormData({...formData, data_nascimento: e.target.value})} 
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700">Estado Civil</label>
+                                        <select 
+                                            className="w-full border p-2 rounded mt-1"
+                                            value={formData.estado_civil} 
+                                            onChange={e => setFormData({...formData, estado_civil: e.target.value})}
+                                        >
+                                            <option value="">Selecione</option>
+                                            <option value="solteiro">Solteiro(a)</option>
+                                            <option value="casado">Casado(a)</option>
+                                            <option value="divorciado">Divorciado(a)</option>
+                                            <option value="viuvo">Viúvo(a)</option>
+                                            <option value="uniao_estavel">União Estável</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </div>
 
@@ -829,13 +898,33 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                             onChange={e => setFormData({...formData, pretensao_salarial: e.target.value ? Number(e.target.value) : undefined})} 
                                         />
                                     </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700">Valor Hora/Salário Atual (R$)</label>
+                                        <input 
+                                            type="number"
+                                            className="w-full border p-2 rounded mt-1" 
+                                            placeholder="Ex: 65"
+                                            value={formData.valor_hora_atual || ''} 
+                                            onChange={e => setFormData({...formData, valor_hora_atual: e.target.value ? Number(e.target.value) : undefined})} 
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700">Pretensão Valor Hora (R$)</label>
+                                        <input 
+                                            type="number"
+                                            className="w-full border p-2 rounded mt-1" 
+                                            placeholder="Ex: 75"
+                                            value={formData.pretensao_valor_hora || ''} 
+                                            onChange={e => setFormData({...formData, pretensao_valor_hora: e.target.value ? Number(e.target.value) : undefined})} 
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
                             {/* Localização */}
                             <div className="border-t pt-4">
                                 <h4 className="font-medium text-gray-700 mb-3">Localização</h4>
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                     <div>
                                         <label className="text-sm font-medium text-gray-700">Cidade</label>
                                         <input 
@@ -854,6 +943,66 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                             onChange={e => setFormData({...formData, estado: e.target.value.toUpperCase()})} 
                                         />
                                     </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700">Bairro</label>
+                                        <input 
+                                            className="w-full border p-2 rounded mt-1" 
+                                            value={formData.bairro} 
+                                            onChange={e => setFormData({...formData, bairro: e.target.value})} 
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-sm font-medium text-gray-700">CEP</label>
+                                        <input 
+                                            className="w-full border p-2 rounded mt-1" 
+                                            placeholder="00000-000"
+                                            value={formData.cep} 
+                                            onChange={e => setFormData({...formData, cep: e.target.value})} 
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Regime de Contratação */}
+                            <div className="border-t pt-4">
+                                <h4 className="font-medium text-gray-700 mb-3">Regime de Contratação</h4>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <label className="flex items-center gap-2 cursor-pointer p-2 border rounded-lg hover:bg-gray-50">
+                                        <input 
+                                            type="checkbox"
+                                            checked={formData.ja_trabalhou_pj || false}
+                                            onChange={e => setFormData({...formData, ja_trabalhou_pj: e.target.checked})}
+                                            className="w-4 h-4 text-blue-600 rounded"
+                                        />
+                                        <span className="text-sm text-gray-700">Já trabalhou PJ</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer p-2 border rounded-lg hover:bg-gray-50">
+                                        <input 
+                                            type="checkbox"
+                                            checked={formData.aceita_pj || false}
+                                            onChange={e => setFormData({...formData, aceita_pj: e.target.checked})}
+                                            className="w-4 h-4 text-blue-600 rounded"
+                                        />
+                                        <span className="text-sm text-gray-700">Aceita trabalhar PJ</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer p-2 border rounded-lg hover:bg-gray-50">
+                                        <input 
+                                            type="checkbox"
+                                            checked={formData.possui_empresa || false}
+                                            onChange={e => setFormData({...formData, possui_empresa: e.target.checked})}
+                                            className="w-4 h-4 text-blue-600 rounded"
+                                        />
+                                        <span className="text-sm text-gray-700">Possui empresa</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer p-2 border rounded-lg hover:bg-gray-50">
+                                        <input 
+                                            type="checkbox"
+                                            checked={formData.aceita_abrir_empresa || false}
+                                            onChange={e => setFormData({...formData, aceita_abrir_empresa: e.target.checked})}
+                                            className="w-4 h-4 text-blue-600 rounded"
+                                        />
+                                        <span className="text-sm text-gray-700">Aceita abrir empresa</span>
+                                    </label>
                                 </div>
                             </div>
 
@@ -967,8 +1116,68 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                             <p className="font-medium capitalize">{detailsPessoa.modalidade_preferida || '-'}</p>
                                         </div>
                                         <div>
-                                            <span className="text-xs text-gray-500">Pretensão</span>
+                                            <span className="text-xs text-gray-500">Pretensão Salarial</span>
                                             <p className="font-medium">{formatarSalario(detailsPessoa.pretensao_salarial)}</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Dados Pessoais Detalhados */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-50 p-4 rounded-lg">
+                                        <div>
+                                            <span className="text-xs text-gray-500">Data Nascimento</span>
+                                            <p className="font-medium">{detailsPessoa.data_nascimento ? new Date(detailsPessoa.data_nascimento + 'T00:00:00').toLocaleDateString('pt-BR') : '-'}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-500">Estado Civil</span>
+                                            <p className="font-medium capitalize">{detailsPessoa.estado_civil?.replace('_', ' ') || '-'}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-500">CPF</span>
+                                            <p className="font-medium">{detailsPessoa.cpf || '-'}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-500">RG</span>
+                                            <p className="font-medium">{detailsPessoa.rg || '-'}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-500">Cidade/UF</span>
+                                            <p className="font-medium">{[detailsPessoa.cidade, detailsPessoa.estado].filter(Boolean).join('/') || '-'}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-500">Bairro</span>
+                                            <p className="font-medium">{detailsPessoa.bairro || '-'}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-500">CEP</span>
+                                            <p className="font-medium">{detailsPessoa.cep || '-'}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-500">Telefone</span>
+                                            <p className="font-medium">{detailsPessoa.telefone || '-'}</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Valores e Regime */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                        <div>
+                                            <span className="text-xs text-gray-500">Valor Hora Atual</span>
+                                            <p className="font-medium">{formatarSalario(detailsPessoa.valor_hora_atual)}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-500">Pretensão Valor Hora</span>
+                                            <p className="font-medium">{formatarSalario(detailsPessoa.pretensao_valor_hora)}</p>
+                                        </div>
+                                        <div className="md:col-span-2">
+                                            <span className="text-xs text-gray-500">Regime de Contratação</span>
+                                            <div className="flex flex-wrap gap-2 mt-1">
+                                                {detailsPessoa.ja_trabalhou_pj && <span className="px-2 py-0.5 bg-blue-50 text-blue-700 text-xs rounded">Já trabalhou PJ</span>}
+                                                {detailsPessoa.aceita_pj && <span className="px-2 py-0.5 bg-green-50 text-green-700 text-xs rounded">Aceita PJ</span>}
+                                                {detailsPessoa.possui_empresa && <span className="px-2 py-0.5 bg-purple-50 text-purple-700 text-xs rounded">Possui empresa</span>}
+                                                {detailsPessoa.aceita_abrir_empresa && <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-xs rounded">Aceita abrir empresa</span>}
+                                                {!detailsPessoa.ja_trabalhou_pj && !detailsPessoa.aceita_pj && !detailsPessoa.possui_empresa && !detailsPessoa.aceita_abrir_empresa && (
+                                                    <span className="text-gray-400 text-sm">Não informado</span>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
 
