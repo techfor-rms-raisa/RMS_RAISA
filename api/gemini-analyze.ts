@@ -111,6 +111,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await generateInterviewQuestions(payload);
         break;
 
+      case 'analisar_respostas_escritas':
+        result = await analisarRespostasEscritas(payload);
+        break;
+
       default:
         return res.status(400).json({ error: `Ação desconhecida: ${action}` });
     }
@@ -1152,5 +1156,170 @@ Responda APENAS com o JSON, sem texto adicional.`;
         ]
       }]
     };
+  }
+}
+
+// ========================================
+// 🆕 ANALISAR RESPOSTAS ESCRITAS + DETECÇÃO DE IA
+// ========================================
+
+async function analisarRespostasEscritas(payload: {
+  respostas_texto: string;
+  perguntas: { pergunta: string; categoria: string; peso: number }[];
+  vaga: { titulo: string; requisitos_obrigatorios?: string; stack_tecnologica?: string[] } | null;
+  candidato: { nome: string };
+}) {
+  const { respostas_texto, perguntas, vaga, candidato } = payload;
+
+  console.log('📝 [analisarRespostasEscritas] Iniciando análise de respostas escritas...');
+  console.log(`   Candidato: ${candidato.nome}`);
+  console.log(`   Vaga: ${vaga?.titulo || 'N/A'}`);
+  console.log(`   Texto: ${respostas_texto.length} caracteres`);
+  console.log(`   Perguntas: ${perguntas.length}`);
+
+  const API_KEY = process.env.GEMINI_API_KEY;
+  if (!API_KEY) throw new Error('GEMINI_API_KEY não configurada');
+
+  const perguntasFormatadas = perguntas.map((p, i) => 
+    `${i + 1}. [${p.categoria}] ${p.pergunta}`
+  ).join('\n');
+
+  const prompt = `Você é um especialista sênior em recrutamento técnico de TI e também um especialista em detecção de textos gerados por IA.
+
+TAREFA: Analisar as respostas escritas de um candidato a uma entrevista técnica, avaliando qualidade técnica E autenticidade.
+
+## DADOS DA VAGA
+- Título: ${vaga?.titulo || 'N/A'}
+- Requisitos: ${vaga?.requisitos_obrigatorios || 'N/A'}
+- Stack: ${vaga?.stack_tecnologica?.join(', ') || 'N/A'}
+
+## CANDIDATO
+- Nome: ${candidato.nome}
+
+## PERGUNTAS DA ENTREVISTA
+${perguntasFormatadas}
+
+## RESPOSTAS DO CANDIDATO
+${respostas_texto}
+
+---
+
+## INSTRUÇÕES DE ANÁLISE
+
+### PARTE 1: DETECÇÃO DE IA
+Analise o texto procurando sinais de que foi gerado por IA (ChatGPT, Gemini, Claude, etc):
+
+**Sinais de texto gerado por IA:**
+- Linguagem excessivamente polida, formal ou "perfeita" sem naturalidade
+- Estrutura muito organizada (intro → desenvolvimento → conclusão em TODAS as respostas)
+- Ausência de erros gramaticais/digitação que seriam naturais em texto humano
+- Vocabulário sofisticado demais para o contexto ou nível declarado
+- Respostas genéricas que poderiam servir para qualquer candidato
+- Falta de exemplos pessoais específicos (nomes de projetos, empresas, colegas, datas)
+- Uso excessivo de bullet points ou enumerações perfeitas
+- Transições artificialmente suaves entre tópicos
+- Frases como "é importante notar", "vale ressaltar", "além disso", "em resumo" repetidamente
+- Respostas longas demais e excessivamente completas para cada pergunta
+- Tom consistentemente neutro sem demonstrar emoção ou personalidade
+- Não menciona dificuldades reais, erros cometidos ou limitações pessoais
+
+**Sinais de texto humano autêntico:**
+- Erros de digitação ou gramática ocasionais
+- Linguagem coloquial ou gírias técnicas
+- Exemplos específicos com nomes de projetos, empresas, tecnologias com versões
+- Menção de dificuldades reais e como foram superadas
+- Tom pessoal com opiniões subjetivas
+- Respostas de tamanho variável (algumas mais curtas, outras mais longas)
+- Referências a contexto específico da experiência declarada no CV
+
+### PARTE 2: ANÁLISE TÉCNICA
+Para cada pergunta, identifique a resposta correspondente e avalie:
+- Qualidade técnica (excelente/boa/regular/fraca/nao_respondeu)
+- Score de 0-100
+- Observação sobre a resposta
+
+### PARTE 3: AVALIAÇÃO GERAL
+- Score técnico (0-100)
+- Score de comunicação escrita (0-100) 
+- Score geral (0-100)
+- Pontos fortes
+- Pontos de atenção
+- Red flags
+- Recomendação: APROVAR / REPROVAR / REAVALIAR
+- Se detecção de IA >= 75%, a recomendação DEVE ser REPROVAR com justificativa clara
+
+---
+
+RESPONDA EXCLUSIVAMENTE em JSON válido (sem markdown, sem backticks):
+{
+  "deteccao_ia": {
+    "probabilidade": <número 0-100>,
+    "veredicto": "<texto explicativo do resultado da análise de autenticidade>",
+    "evidencias": ["<evidência 1>", "<evidência 2>", "..."]
+  },
+  "respostas_identificadas": [
+    {
+      "pergunta_relacionada": "<pergunta original>",
+      "resposta_extraida": "<trecho da resposta identificada>",
+      "qualidade": "excelente|boa|regular|fraca|nao_respondeu",
+      "score": <0-100>,
+      "observacao": "<análise da resposta>"
+    }
+  ],
+  "resumo": "<resumo geral da entrevista>",
+  "pontos_fortes": ["<ponto 1>", "..."],
+  "pontos_atencao": ["<ponto 1>", "..."],
+  "red_flags": ["<flag 1>", "..."],
+  "score_tecnico": <0-100>,
+  "score_comunicacao": <0-100>,
+  "score_geral": <0-100>,
+  "recomendacao": "APROVAR|REPROVAR|REAVALIAR",
+  "justificativa": "<justificativa detalhada da recomendação>"
+}`;
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            temperature: 0.3,
+            maxOutputTokens: 8192,
+            responseMimeType: 'application/json'
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ [analisarRespostasEscritas] Erro Gemini:', errorText);
+      throw new Error(`Erro na API Gemini: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!text) {
+      throw new Error('Resposta vazia da Gemini');
+    }
+
+    // Limpar e parsear JSON
+    const cleanText = text.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const resultado = JSON.parse(cleanText);
+
+    console.log('✅ [analisarRespostasEscritas] Análise concluída!');
+    console.log(`   Score Geral: ${resultado.score_geral}%`);
+    console.log(`   Detecção IA: ${resultado.deteccao_ia?.probabilidade}%`);
+    console.log(`   Recomendação: ${resultado.recomendacao}`);
+
+    return resultado;
+
+  } catch (error: any) {
+    console.error('❌ [analisarRespostasEscritas] Erro:', error.message);
+    throw new Error(`Erro ao analisar respostas escritas: ${error.message}`);
   }
 }
