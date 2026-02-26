@@ -473,9 +473,20 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
     // ========================================
     console.log('🚀 ETAPAS 2-4: Extraindo dados em paralelo...');
 
-    // Conteúdo para análise (PDF ou texto)
+    // ✅ OTIMIZAÇÃO: Após extrair texto na Etapa 1, SEMPRE usar texto nas etapas seguintes
+    // Isso evita enviar o PDF base64 (~3MB) mais 3 vezes à Gemini
+    // Se a Etapa 1 falhou e não temos texto, aí sim usa o PDF como fallback
+    const usarPDFComoFallback = base64PDF && !textoOriginal;
+    
+    if (usarPDFComoFallback) {
+      console.log('⚠️ Texto não extraído na Etapa 1, usando PDF como fallback nas etapas 2-4');
+    } else {
+      console.log(`✅ Usando texto extraído (${textoOriginal.length} chars) nas etapas 2-4 (mais rápido)`);
+    }
+
+    // Conteúdo para análise (texto extraído ou PDF como fallback)
     const criarConteudo = (prompt: string) => {
-      if (base64PDF) {
+      if (usarPDFComoFallback) {
         return [{
           role: 'user',
           parts: [
