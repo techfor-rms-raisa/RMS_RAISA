@@ -323,28 +323,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       // 3. Carregar CV existente (se houver)
       const cvExistente = await loadCVByCandidatura(candidaturaId);
       if (cvExistente) {
-        // Mesclar: dados do CV salvo + dados frescos da pessoa (email, telefone, etc.)
-        // Prioridade: CV salvo para campos de conteúdo, pessoa para dados de contato vazios
-        setDados(prev => {
-          const cvDados = cvExistente.dados_processados;
-          return {
-            ...prev,          // dados iniciais (email, telefone da pessoa)
-            ...cvDados,       // dados do CV salvo (experiencias, requisitos, etc.)
-            // Garantir que dados de contato da pessoa prevaleçam se estiverem vazios no CV salvo
-            email: cvDados.email || prev.email || '',
-            telefone: cvDados.telefone || prev.telefone || '',
-            cidade: cvDados.cidade || prev.cidade || '',
-            estado: cvDados.estado || prev.estado || '',
-            bairro: cvDados.bairro || prev.bairro || '',
-            cep: cvDados.cep || prev.cep || '',
-            cpf: cvDados.cpf || prev.cpf || '',
-            rg: cvDados.rg || prev.rg || '',
-            data_nascimento: cvDados.data_nascimento || prev.data_nascimento || '',
-            idade: cvDados.idade || prev.idade,
-            pretensao_salarial: cvDados.pretensao_salarial || prev.pretensao_salarial || '',
-            estado_civil: cvDados.estado_civil || prev.estado_civil || ''
-          };
-        });
+        setDados(cvExistente.dados_processados);
         console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ')');
       } else {
         // ✅ CV NÃO existe: Pré-preencher requisitos a partir da vaga
@@ -519,8 +498,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
           estado_civil: dados.estado_civil || null,
           disponibilidade: dados.disponibilidade || null,
           modalidade_preferida: dados.modalidade_trabalho || null,
-          valor_hora_atual: dados.valor_hora_atual || null,
-          pretensao_valor_hora: dados.pretensao_valor_hora || null,
+          valor_hora_atual: dados.valor_hora_atual ? Number(dados.valor_hora_atual) : null,
+          pretensao_valor_hora: dados.pretensao_valor_hora ? Number(dados.pretensao_valor_hora) : null,
           pretensao_salarial: dados.pretensao_valor_hora ? Number(dados.pretensao_valor_hora) : null,
           ja_trabalhou_pj: dados.ja_trabalhou_pj || false,
           aceita_pj: dados.aceita_pj || false,
@@ -537,9 +516,9 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
           .eq('id', pessoaId);
 
         if (errPessoa) {
-          console.warn('⚠️ Erro ao atualizar pessoa (não bloqueante):', errPessoa);
+          console.warn('⚠️ Erro ao atualizar pessoa (não bloqueante):', errPessoa.message, errPessoa.details, errPessoa.hint);
         } else {
-          console.log('✅ Dados da pessoa atualizados no Supabase');
+          console.log('✅ Dados da pessoa atualizados no Supabase (id:', pessoaId, ')');
         }
       }
 
