@@ -274,7 +274,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       if (pessoaId) {
         const { data: pessoa } = await supabase
           .from('pessoas')
-          .select('nome, email, telefone, cidade, estado, bairro, cep, cpf, rg, data_nascimento, pretensao_salarial, nome_anoni_parcial, nome_anoni_total, cv_texto_original')
+          .select('nome, email, telefone, cidade, estado, bairro, cep, cpf, rg, data_nascimento, estado_civil, pretensao_salarial, valor_hora_atual, pretensao_valor_hora, disponibilidade, modalidade_preferida, ja_trabalhou_pj, aceita_pj, possui_empresa, aceita_abrir_empresa, nome_anoni_parcial, nome_anoni_total, cv_texto_original')
           .eq('id', pessoaId)
           .single();
 
@@ -314,8 +314,17 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             cpf: pessoa.cpf || '',
             rg: pessoa.rg || '',
             data_nascimento: pessoa.data_nascimento || '',
+            estado_civil: pessoa.estado_civil || '',
             idade: idadeCalculada,
-            pretensao_salarial: pessoa.pretensao_salarial ? String(pessoa.pretensao_salarial) : ''
+            pretensao_salarial: pessoa.pretensao_salarial ? String(pessoa.pretensao_salarial) : '',
+            valor_hora_atual: pessoa.valor_hora_atual ? String(pessoa.valor_hora_atual) : '',
+            pretensao_valor_hora: pessoa.pretensao_valor_hora ? String(pessoa.pretensao_valor_hora) : '',
+            disponibilidade: pessoa.disponibilidade || '',
+            modalidade_trabalho: pessoa.modalidade_preferida || '',
+            ja_trabalhou_pj: pessoa.ja_trabalhou_pj || false,
+            aceita_pj: pessoa.aceita_pj || false,
+            possui_empresa: pessoa.possui_empresa || false,
+            aceita_abrir_empresa: pessoa.aceita_abrir_empresa || false
           }));
         }
       }
@@ -495,8 +504,12 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
           cpf: dados.cpf || null,
           rg: dados.rg || null,
           data_nascimento: dados.data_nascimento || null,
+          estado_civil: dados.estado_civil || null,
           valor_hora_atual: dados.valor_hora_atual || null,
           pretensao_valor_hora: dados.pretensao_valor_hora || null,
+          pretensao_salarial: dados.pretensao_salarial || null,
+          disponibilidade: dados.disponibilidade || null,
+          modalidade_preferida: dados.modalidade_trabalho || null,
           ja_trabalhou_pj: dados.ja_trabalhou_pj || false,
           aceita_pj: dados.aceita_pj || false,
           possui_empresa: dados.possui_empresa || false,
