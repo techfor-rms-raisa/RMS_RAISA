@@ -25,6 +25,13 @@ function getAI(): GoogleGenAI {
   return aiInstance;
 }
 
+// ============================================================
+// CONFIGURAÇÃO VERCEL - Timeout estendido para processamento de PDF
+// ============================================================
+export const config = {
+  maxDuration: 60, // 60 segundos (máximo do plano Pro)
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
