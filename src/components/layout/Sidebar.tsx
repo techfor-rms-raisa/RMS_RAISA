@@ -202,33 +202,33 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
             icon: 'fa-solid fa-magnifying-glass', 
             roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
         },
-        // 3) Importar LinkedIn - Apenas RAISA Total (Gestão Comercial NÃO pode)
-        { 
-            view: 'linkedin_import', 
-            label: 'Importar LinkedIn', 
-            icon: 'fa-brands fa-linkedin', 
-            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S'] 
-        },
-        // 4) Banco de Talentos - RAISA Total + Gestão Comercial (read-only)
-        { 
-            view: 'talentos', 
-            label: 'Banco de Talentos', 
-            icon: 'fa-solid fa-user-graduate', 
-            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
-        },
-        // 5) Candidaturas - RAISA Total + Gestão Comercial (read-only)
+        // 3) Candidaturas - RAISA Total + Gestão Comercial (read-only)
         { 
             view: 'candidaturas', 
             label: 'Candidaturas', 
             icon: 'fa-solid fa-id-card', 
             roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
         },
-        // 6) Entrevista Técnica - RAISA Total + Gestão Comercial (read-only)
+        // 4) Entrevista Técnica - RAISA Total + Gestão Comercial (read-only)
         { 
             view: 'entrevista_tecnica', 
             label: 'Entrevista Técnica', 
             icon: 'fa-solid fa-headset', 
             roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
+        },
+        // 5) Banco de Talentos - RAISA Total + Gestão Comercial (read-only)
+        { 
+            view: 'talentos', 
+            label: 'Banco de Talentos', 
+            icon: 'fa-solid fa-user-graduate', 
+            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
+        },
+        // 6) Importar LinkedIn - Apenas RAISA Total (Gestão Comercial NÃO pode)
+        { 
+            view: 'linkedin_import', 
+            label: 'Importar LinkedIn', 
+            icon: 'fa-brands fa-linkedin', 
+            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S'] 
         },
         // 7) Pipeline - RAISA Total + Gestão Comercial (read-only)
         { 
