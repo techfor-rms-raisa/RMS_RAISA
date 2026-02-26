@@ -495,12 +495,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
           cpf: dados.cpf || null,
           rg: dados.rg || null,
           data_nascimento: dados.data_nascimento || null,
-          estado_civil: dados.estado_civil || null,
-          disponibilidade: dados.disponibilidade || null,
-          modalidade_preferida: dados.modalidade_trabalho || null,
-          valor_hora_atual: dados.valor_hora_atual ? Number(dados.valor_hora_atual) : null,
-          pretensao_valor_hora: dados.pretensao_valor_hora ? Number(dados.pretensao_valor_hora) : null,
-          pretensao_salarial: dados.pretensao_valor_hora ? Number(dados.pretensao_valor_hora) : null,
+          valor_hora_atual: dados.valor_hora_atual || null,
+          pretensao_valor_hora: dados.pretensao_valor_hora || null,
           ja_trabalhou_pj: dados.ja_trabalhou_pj || false,
           aceita_pj: dados.aceita_pj || false,
           possui_empresa: dados.possui_empresa || false,
@@ -516,9 +512,9 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
           .eq('id', pessoaId);
 
         if (errPessoa) {
-          console.warn('⚠️ Erro ao atualizar pessoa (não bloqueante):', errPessoa.message, errPessoa.details, errPessoa.hint);
+          console.warn('⚠️ Erro ao atualizar pessoa (não bloqueante):', errPessoa);
         } else {
-          console.log('✅ Dados da pessoa atualizados no Supabase (id:', pessoaId, ')');
+          console.log('✅ Dados da pessoa atualizados no Supabase');
         }
       }
 
@@ -687,33 +683,6 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             </div>
           </div>
 
-          {/* Config nome/contato */}
-          <div className="bg-gray-50 rounded-lg p-4 max-w-2xl mx-auto">
-            <h4 className="font-semibold text-gray-700 mb-3">Configuração do Nome</h4>
-            <div className="flex gap-4">
-              {(['completo', 'parcial', 'anonimo'] as TipoNomeCV[]).map(tipo => (
-                <label key={tipo} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="tipoNome"
-                    checked={tipoNome === tipo}
-                    onChange={() => setTipoNome(tipo)}
-                    className="text-blue-600"
-                  />
-                  <span className="text-sm capitalize">{tipo}</span>
-                </label>
-              ))}
-            </div>
-            <label className="flex items-center gap-2 mt-3 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={exibirContato}
-                onChange={e => setExibirContato(e.target.checked)}
-                className="text-blue-600"
-              />
-              <span className="text-sm text-gray-600">Exibir dados de contato</span>
-            </label>
-          </div>
         </div>
       )}
 
