@@ -744,7 +744,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         const texto = await file.text();
         setTextoRespostas(texto);
       } else {
-        // DOCX - enviar para Gemini extrair texto
+        // DOCX - enviar como base64 para Gemini extrair texto
         setExtraindoTexto(true);
         const reader = new FileReader();
         reader.onload = async () => {
@@ -754,13 +754,14 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                action: 'extrair_cv',
-                payload: { base64PDF: base64, textoCV: '' }
+                action: 'extrair_texto_docx',
+                payload: { base64Docx: base64 }
               })
             });
             const result = await response.json();
-            if (result.success && result.data?.texto_original) {
-              setTextoRespostas(result.data.texto_original);
+            if (result.success && result.data?.texto) {
+              setTextoRespostas(result.data.texto);
+              console.log(`✅ Texto extraído do DOCX: ${result.data.texto.length} caracteres`);
             } else {
               setError('Erro ao extrair texto do DOCX. Tente colar o texto manualmente.');
             }
@@ -1425,7 +1426,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           className="flex-1 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 
                      disabled:bg-gray-300 flex items-center justify-center gap-2"
         >
-          Próximo: Upload do Áudio <ChevronRight size={20} />
+          Próximo: Upload de Arquivos <ChevronRight size={20} />
         </button>
       </div>
     </div>

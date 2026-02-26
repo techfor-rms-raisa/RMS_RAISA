@@ -115,6 +115,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await analisarRespostasEscritas(payload);
         break;
 
+      case 'extrair_texto_docx':
+        result = await extrairTextoDocx(payload);
+        break;
+
       default:
         return res.status(400).json({ error: `Ação desconhecida: ${action}` });
     }
@@ -1321,5 +1325,70 @@ RESPONDA EXCLUSIVAMENTE em JSON válido (sem markdown, sem backticks):
   } catch (error: any) {
     console.error('❌ [analisarRespostasEscritas] Erro:', error.message);
     throw new Error(`Erro ao analisar respostas escritas: ${error.message}`);
+  }
+}
+
+// ========================================
+// 🆕 EXTRAIR TEXTO DE DOCX VIA GEMINI
+// ========================================
+
+async function extrairTextoDocx(payload: { base64Docx: string }) {
+  const { base64Docx } = payload;
+
+  console.log('📄 [extrairTextoDocx] Extraindo texto de DOCX...');
+  console.log(`   Base64 length: ${base64Docx.length} chars`);
+
+  const API_KEY = process.env.GEMINI_API_KEY;
+  if (!API_KEY) throw new Error('GEMINI_API_KEY não configurada');
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                  data: base64Docx
+                }
+              },
+              {
+                text: 'Extraia TODO o texto deste documento Word (DOCX). Retorne APENAS o conteúdo textual completo, sem formatação adicional, sem comentários, sem explicações. Preservando a estrutura de parágrafos e quebras de linha.'
+              }
+            ]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 8192
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ [extrairTextoDocx] Erro Gemini:', errorText);
+      throw new Error(`Erro na API Gemini: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const texto = data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!texto) {
+      throw new Error('Resposta vazia da Gemini ao extrair texto do DOCX');
+    }
+
+    console.log(`✅ [extrairTextoDocx] Texto extraído: ${texto.length} caracteres`);
+
+    return { texto };
+
+  } catch (error: any) {
+    console.error('❌ [extrairTextoDocx] Erro:', error.message);
+    throw new Error(`Erro ao extrair texto do DOCX: ${error.message}`);
   }
 }
