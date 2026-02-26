@@ -56,6 +56,18 @@ interface PessoaExpanded extends Pessoa {
     origem?: string;
     total_candidaturas?: number;  // 🆕 Para controlar botão excluir
     linkedin_url?: string;
+    // 🆕 Campos de Entrevista Comportamental / CV Parcial
+    bairro?: string;
+    cep?: string;
+    rg?: string;
+    valor_hora_atual?: number;
+    pretensao_valor_hora?: number;
+    ja_trabalhou_pj?: boolean;
+    aceita_pj?: boolean;
+    possui_empresa?: boolean;
+    aceita_abrir_empresa?: boolean;
+    data_nascimento?: string;
+    estado_civil?: string;
 }
 
 interface SkillInfo {
@@ -229,7 +241,18 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 pretensao_salarial: p.pretensao_salarial,
                 cidade: p.cidade || '',
                 estado: p.estado || '',
-                id_analista_rs: p.id_analista_rs || undefined  // 🆕 v57.0: Manter analista existente
+                id_analista_rs: p.id_analista_rs || undefined,  // 🆕 v57.0: Manter analista existente
+                bairro: p.bairro || '',
+                cep: p.cep || '',
+                rg: p.rg || '',
+                valor_hora_atual: p.valor_hora_atual,
+                pretensao_valor_hora: p.pretensao_valor_hora,
+                ja_trabalhou_pj: p.ja_trabalhou_pj || false,
+                aceita_pj: p.aceita_pj || false,
+                possui_empresa: p.possui_empresa || false,
+                aceita_abrir_empresa: p.aceita_abrir_empresa || false,
+                data_nascimento: p.data_nascimento || '',
+                estado_civil: p.estado_civil || ''
             });
         } else {
             setEditingPessoa(null);
@@ -238,7 +261,12 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 titulo_profissional: '', senioridade: '', disponibilidade: '',
                 modalidade_preferida: '', pretensao_salarial: undefined,
                 cidade: '', estado: '',
-                id_analista_rs: user?.id  // 🆕 v57.0: Novo cadastro usa analista logado
+                id_analista_rs: user?.id,  // 🆕 v57.0: Novo cadastro usa analista logado
+                bairro: '', cep: '', rg: '',
+                valor_hora_atual: undefined, pretensao_valor_hora: undefined,
+                ja_trabalhou_pj: false, aceita_pj: false,
+                possui_empresa: false, aceita_abrir_empresa: false,
+                data_nascimento: '', estado_civil: ''
             });
         }
         setIsModalOpen(true);

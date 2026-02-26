@@ -116,6 +116,18 @@ export interface Pessoa {
   cv_arquivo_url?: string;
   // 🆕 Campo de origem (linkedin, importacao_cv, manual)
   origem?: string;
+  // 🆕 Campos de Entrevista Comportamental / CV Parcial
+  bairro?: string;
+  cep?: string;
+  rg?: string;
+  valor_hora_atual?: number;
+  pretensao_valor_hora?: number;
+  ja_trabalhou_pj?: boolean;
+  aceita_pj?: boolean;
+  possui_empresa?: boolean;
+  aceita_abrir_empresa?: boolean;
+  data_nascimento?: string;
+  estado_civil?: string;
   // 🆕 v56.0: Campos de Exclusividade
   id_analista_rs?: number | null;
   periodo_exclusividade?: number;         // Default 60 dias
