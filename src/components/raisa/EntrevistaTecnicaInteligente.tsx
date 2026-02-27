@@ -1,5 +1,5 @@
 /**
- * EntrevistaTecnicaInteligente.tsx - RMS RAISA v2.9.2
+ * EntrevistaTecnicaInteligente.tsx - RMS RAISA v3.0
  * Componente de Entrevista Técnica com IA
  * 
  * NOVO FLUXO:
@@ -10,6 +10,16 @@
  * 5. Análise das respostas vs perguntas
  * 6. Score e recomendação
  * 7. Decisão do analista
+ * 
+ * NOVIDADES v3.0 (27/02/2026):
+ * - 🆕 Botão "Baixar DOCX" substitui "Baixar PDF"
+ *   • Gera DOCX via API backend (/api/entrevista-docx)
+ *   • Papel timbrado TechFor (mesmo background do Gerador de CV)
+ *   • Perguntas organizadas por categoria com cores
+ *   • Linhas pontilhadas para anotações
+ *   • Seção de Observações Gerais
+ *   • Rodapé com paginação automática
+ *   • Removida dependência de jsPDF no frontend
  * 
  * NOVIDADES v2.9.2 (28/01/2026):
  * - 🔧 CORREÇÃO CRÍTICA: Usar String() na comparação de analista_id
@@ -47,7 +57,7 @@ import {
   Volume2, Headphones, Send, Save, Eye, FileDown
 } from 'lucide-react';
 import { Candidatura, Vaga } from '@/types';
-import jsPDF from 'jspdf';
+// jsPDF removido - agora usa API backend para gerar DOCX com papel timbrado TechFor
 import EntrevistaComportamental from './EntrevistaComportamental';
 
 // ============================================
@@ -242,152 +252,69 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   }, [candidaturas, vagas]);
 
   // ============================================
-  // 🆕 GERAR PDF DAS PERGUNTAS
+  // 🆕 GERAR DOCX DAS PERGUNTAS (v3.0 - com papel timbrado TechFor)
   // ============================================
   
-  const gerarPDFPerguntas = useCallback(() => {
+  const [loadingDocx, setLoadingDocx] = useState(false);
+
+  const gerarDocxPerguntas = useCallback(async () => {
     if (!candidaturaAtual || perguntas.length === 0) return;
     
-    const doc = new jsPDF();
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const pageHeight = doc.internal.pageSize.getHeight();
-    const margin = 20;
-    const lineHeight = 7;
-    let yPos = margin;
+    setLoadingDocx(true);
+    setError(null);
     
-    // Helper para adicionar nova página se necessário
-    const checkNewPage = (requiredSpace: number = 30) => {
-      if (yPos + requiredSpace > pageHeight - margin) {
-        doc.addPage();
-        yPos = margin;
-        return true;
-      }
-      return false;
-    };
-    
-    // Helper para quebrar texto em múltiplas linhas
-    const splitText = (text: string, maxWidth: number) => {
-      return doc.splitTextToSize(text, maxWidth);
-    };
-    
-    // ===== CABEÇALHO =====
-    doc.setFillColor(249, 115, 22); // Orange
-    doc.rect(0, 0, pageWidth, 35, 'F');
-    
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(18);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Roteiro de Entrevista Técnica', pageWidth / 2, 15, { align: 'center' });
-    
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'normal');
-    doc.text('RMS RAISA - Powered by AI', pageWidth / 2, 25, { align: 'center' });
-    
-    yPos = 50;
-    
-    // ===== DADOS DO CANDIDATO =====
-    doc.setTextColor(0, 0, 0);
-    doc.setFillColor(245, 245, 245);
-    doc.rect(margin, yPos - 5, pageWidth - (margin * 2), 30, 'F');
-    
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'bold');
-    doc.text('Candidato:', margin + 5, yPos + 5);
-    doc.setFont('helvetica', 'normal');
-    doc.text(candidaturaAtual.candidato_nome || 'N/A', margin + 35, yPos + 5);
-    
-    doc.setFont('helvetica', 'bold');
-    doc.text('Vaga:', margin + 5, yPos + 15);
-    doc.setFont('helvetica', 'normal');
-    const vagaTitulo = vagaAtual?.titulo || 'N/A';
-    doc.text(vagaTitulo.substring(0, 60), margin + 20, yPos + 15);
-    
-    const dataHoje = new Date().toLocaleDateString('pt-BR');
-    doc.setFont('helvetica', 'bold');
-    doc.text('Data:', pageWidth - margin - 50, yPos + 5);
-    doc.setFont('helvetica', 'normal');
-    doc.text(dataHoje, pageWidth - margin - 35, yPos + 5);
-    
-    yPos += 40;
-    
-    // ===== PERGUNTAS =====
-    let perguntaNum = 1;
-    
-    perguntas.forEach((categoria, catIdx) => {
-      checkNewPage(50);
-      
-      // Título da categoria
-      const isGap = categoria.categoria?.includes('GAP');
-      if (isGap) {
-        doc.setFillColor(254, 243, 199); // Amber-100
-        doc.setTextColor(146, 64, 14); // Amber-800
-      } else {
-        doc.setFillColor(219, 234, 254); // Blue-100
-        doc.setTextColor(30, 64, 175); // Blue-800
-      }
-      
-      doc.rect(margin, yPos - 5, pageWidth - (margin * 2), 12, 'F');
-      doc.setFontSize(11);
-      doc.setFont('helvetica', 'bold');
-      doc.text(`${categoria.icone || '📋'} ${categoria.categoria || 'Categoria'}`, margin + 3, yPos + 3);
-      
-      yPos += 15;
-      doc.setTextColor(0, 0, 0);
-      
-      categoria.perguntas.forEach((p: any, pIdx: number) => {
-        checkNewPage(40);
-        
-        // Número e pergunta
-        doc.setFontSize(10);
-        doc.setFont('helvetica', 'bold');
-        const perguntaTexto = `${perguntaNum}. ${p.pergunta}`;
-        const linhasPergunta = splitText(perguntaTexto, pageWidth - (margin * 2) - 10);
-        
-        linhasPergunta.forEach((linha: string, idx: number) => {
-          checkNewPage(lineHeight);
-          doc.text(linha, margin + 5, yPos);
-          yPos += lineHeight;
-        });
-        
-        // Espaço para anotações
-        yPos += 3;
-        doc.setDrawColor(200, 200, 200);
-        doc.setLineDashPattern([2, 2], 0);
-        for (let i = 0; i < 3; i++) {
-          checkNewPage(lineHeight);
-          doc.line(margin + 5, yPos, pageWidth - margin - 5, yPos);
-          yPos += lineHeight;
-        }
-        doc.setLineDashPattern([], 0);
-        
-        yPos += 5;
-        perguntaNum++;
+    try {
+      const response = await fetch('/api/entrevista-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          candidato: {
+            nome: candidaturaAtual.candidato_nome || 'Candidato'
+          },
+          vaga: {
+            titulo: vagaAtual?.titulo || 'Vaga não informada',
+            codigo: (vagaAtual as any)?.codigo || ''
+          },
+          perguntas: perguntas,
+          data: new Date().toLocaleDateString('pt-BR')
+        })
       });
-      
-      yPos += 5;
-    });
-    
-    // ===== RODAPÉ =====
-    const totalPages = doc.internal.pages.length - 1;
-    for (let i = 1; i <= totalPages; i++) {
-      doc.setPage(i);
-      doc.setFontSize(8);
-      doc.setTextColor(150, 150, 150);
-      doc.text(
-        `Página ${i} de ${totalPages} | Gerado em ${new Date().toLocaleString('pt-BR')}`,
-        pageWidth / 2,
-        pageHeight - 10,
-        { align: 'center' }
-      );
+
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Erro ao gerar DOCX');
+      }
+
+      const result = await response.json();
+
+      // Converter base64 para blob e iniciar download
+      const byteCharacters = atob(result.docx_base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      });
+
+      // Criar link de download
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.filename || `Entrevista_${(candidaturaAtual.candidato_nome || 'Candidato').replace(/\s+/g, '_')}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      console.log(`✅ DOCX gerado: ${result.filename} (${result.size} bytes)`);
+    } catch (err: any) {
+      console.error('❌ Erro ao gerar DOCX:', err);
+      setError(err.message || 'Erro ao gerar documento DOCX');
+    } finally {
+      setLoadingDocx(false);
     }
-    
-    // Gerar nome do arquivo
-    const nomeArquivo = `Entrevista_${(candidaturaAtual.candidato_nome || 'Candidato').replace(/\s+/g, '_')}_${dataHoje.replace(/\//g, '-')}.pdf`;
-    
-    // Download
-    doc.save(nomeArquivo);
-    
-    console.log(`✅ PDF gerado: ${nomeArquivo}`);
   }, [candidaturaAtual, vagaAtual, perguntas]);
 
   // ============================================
@@ -1380,16 +1307,17 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             {loadingPerguntas && <Loader2 size={16} className="animate-spin text-gray-400" />}
           </h3>
           
-          {/* 🆕 Botão Baixar PDF */}
+          {/* 🆕 v3.0: Botão Baixar DOCX (com papel timbrado TechFor) */}
           {perguntas.length > 0 && (
             <button
-              onClick={gerarPDFPerguntas}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-orange-100 text-orange-700 
-                         rounded-lg hover:bg-orange-200 transition-colors"
-              title="Baixar roteiro de perguntas em PDF"
+              onClick={gerarDocxPerguntas}
+              disabled={loadingDocx}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm bg-blue-100 text-blue-700 
+                         rounded-lg hover:bg-blue-200 transition-colors disabled:opacity-50"
+              title="Baixar roteiro de perguntas em DOCX (Word) com papel timbrado TechFor"
             >
               <FileDown size={16} />
-              Baixar PDF
+              {loadingDocx ? 'Gerando...' : 'Baixar DOCX'}
             </button>
           )}
         </div>
