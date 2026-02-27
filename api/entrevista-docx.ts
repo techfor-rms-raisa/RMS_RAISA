@@ -170,7 +170,7 @@ async function gerarDocxEntrevista(dados: EntrevistaDocxData): Promise<Buffer> {
     spacing: { after: 200 },
     children: [
       new TextRun({
-        text: 'RMS RAISA - Powered by AI',
+        text: 'Sistema RMS RAISA Techfor',
         size: 18,
         color: '666666',
         font: FONT,
@@ -302,60 +302,10 @@ async function gerarDocxEntrevista(dados: EntrevistaDocxData): Promise<Buffer> {
         ]
       }));
 
-      // Objetivo (se disponível)
-      if (p.objetivo) {
-        children.push(new Paragraph({
-          spacing: { before: 20, after: 20 },
-          indent: { left: 360 },
-          children: [
-            new TextRun({
-              text: 'Objetivo: ',
-              bold: true,
-              italics: true,
-              size: 16,
-              font: FONT,
-              color: '666666'
-            }),
-            new TextRun({
-              text: p.objetivo,
-              italics: true,
-              size: 16,
-              font: FONT,
-              color: '666666'
-            })
-          ]
-        }));
-      }
-
-      // O que avaliar (se disponível)
-      if (p.o_que_avaliar && p.o_que_avaliar.length > 0) {
-        children.push(new Paragraph({
-          spacing: { before: 20, after: 20 },
-          indent: { left: 360 },
-          children: [
-            new TextRun({
-              text: 'Avaliar: ',
-              bold: true,
-              italics: true,
-              size: 16,
-              font: FONT,
-              color: '888888'
-            }),
-            new TextRun({
-              text: p.o_que_avaliar.join('; '),
-              italics: true,
-              size: 16,
-              font: FONT,
-              color: '888888'
-            })
-          ]
-        }));
-      }
-
-      // Linhas pontilhadas para anotações (3 linhas)
-      children.push(new Paragraph({ spacing: { before: 60, after: 0 }, children: [] }));
+      // Linhas pontilhadas para anotações (2 linhas - espaço reduzido)
+      children.push(new Paragraph({ spacing: { before: 40, after: 0 }, children: [] }));
       
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 2; i++) {
         children.push(new Paragraph({
           spacing: { before: 60, after: 60 },
           indent: { left: 360 },
@@ -386,41 +336,6 @@ async function gerarDocxEntrevista(dados: EntrevistaDocxData): Promise<Buffer> {
     children.push(new Paragraph({ spacing: { before: 100, after: 100 }, children: [] }));
   });
 
-  // --- SEÇÃO DE OBSERVAÇÕES GERAIS ---
-  children.push(new Paragraph({
-    spacing: { before: 200, after: 80 },
-    border: {
-      bottom: { style: BorderStyle.SINGLE, size: 1, color: '808080', space: 1 }
-    },
-    children: [
-      new TextRun({
-        text: 'Observações Gerais',
-        bold: true,
-        size: 22,
-        font: FONT,
-        underline: { type: 'single' }
-      })
-    ]
-  }));
-
-  // 5 linhas para observações gerais
-  for (let i = 0; i < 5; i++) {
-    children.push(new Paragraph({
-      spacing: { before: 80, after: 80 },
-      border: {
-        bottom: {
-          style: BorderStyle.DOTTED,
-          size: 1,
-          color: 'CCCCCC',
-          space: 1
-        }
-      },
-      children: [
-        new TextRun({ text: ' ', size: 20, font: FONT })
-      ]
-    }));
-  }
-
   // --- RODAPÉ com paginação ---
   const footer = new Footer({
     children: [
@@ -428,7 +343,7 @@ async function gerarDocxEntrevista(dados: EntrevistaDocxData): Promise<Buffer> {
         alignment: AlignmentType.CENTER,
         children: [
           new TextRun({
-            text: `Gerado em ${dados.dataEntrevista} | RMS RAISA | Página `,
+            text: `Gerado em ${dados.dataEntrevista} | Sistema RMS RAISA Techfor | Página `,
             size: 14,
             font: FONT,
             color: '999999'
