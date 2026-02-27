@@ -243,43 +243,7 @@ async function gerarDocxEntrevista(dados: EntrevistaDocxData): Promise<Buffer> {
   let perguntaNum = 1;
 
   dados.perguntas.forEach((categoria) => {
-    const isGap = (categoria.categoria || '').includes('GAP');
-
-    // Título da categoria com fundo colorido
-    const catFill = isGap ? 'FEF3C7' : 'DBEAFE'; // Amber-100 ou Blue-100
-    const catColor = isGap ? '92400E' : '1E40AF'; // Amber-800 ou Blue-800
-
-    children.push(new Table({
-      width: { size: CONTENT_WIDTH, type: WidthType.DXA },
-      columnWidths: [CONTENT_WIDTH],
-      rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              borders: noBorders,
-              width: { size: CONTENT_WIDTH, type: WidthType.DXA },
-              margins: { top: 40, bottom: 40, left: 120, right: 80 },
-              shading: { fill: catFill, type: ShadingType.CLEAR },
-              children: [new Paragraph({
-                children: [
-                  new TextRun({
-                    text: `${categoria.icone || ''} ${categoria.categoria || 'Categoria'}`.trim(),
-                    bold: true,
-                    size: 22,
-                    font: FONT,
-                    color: catColor
-                  })
-                ]
-              })]
-            })
-          ]
-        })
-      ]
-    }));
-
-    children.push(new Paragraph({ spacing: { before: 80, after: 40 }, children: [] }));
-
-    // Perguntas da categoria
+    // Perguntas da categoria (sem título/tópico de categoria)
     categoria.perguntas.forEach((p) => {
       // Número + Pergunta
       children.push(new Paragraph({
@@ -376,7 +340,7 @@ async function gerarDocxEntrevista(dados: EntrevistaDocxData): Promise<Buffer> {
     properties: {
       page: {
         size: { width: A4_WIDTH, height: A4_HEIGHT },
-        margin: { top: 1640, right: 566, bottom: 1418, left: 1560 },
+        margin: { top: 1640, right: 566, bottom: 2200, left: 1560 },
         pageNumbers: { start: 1 }
       }
     },
