@@ -24,7 +24,7 @@ import {
   GraduationCap, Code, Eye, Edit3, Trash2, 
   CheckCircle, XCircle, ChevronDown, ChevronUp,
   Sparkles, FileText, Globe, Phone, Mail, Linkedin,
-  Lock, Clock, Users, Paperclip, Download, X, Loader2
+  Lock, Clock, Users, Paperclip, Download, X, Loader2, RefreshCw
 } from 'lucide-react';
 
 // ============================================
@@ -56,18 +56,6 @@ interface PessoaExpanded extends Pessoa {
     origem?: string;
     total_candidaturas?: number;  // 🆕 Para controlar botão excluir
     linkedin_url?: string;
-    // 🆕 Campos de Entrevista Comportamental / CV Parcial
-    bairro?: string;
-    cep?: string;
-    rg?: string;
-    valor_hora_atual?: number;
-    pretensao_valor_hora?: number;
-    ja_trabalhou_pj?: boolean;
-    aceita_pj?: boolean;
-    possui_empresa?: boolean;
-    aceita_abrir_empresa?: boolean;
-    data_nascimento?: string;
-    estado_civil?: string;
 }
 
 interface SkillInfo {
@@ -85,7 +73,6 @@ interface ExperienciaInfo {
     atual: boolean;
     descricao: string;
     tecnologias: string[];
-    motivo_saida?: string;
 }
 
 // ============================================
@@ -144,6 +131,7 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     const [anexos, setAnexos] = useState<any[]>([]);
     const [loadingAnexos, setLoadingAnexos] = useState(false);
     const [uploadingAnexo, setUploadingAnexo] = useState(false);
+    const [refreshingId, setRefreshingId] = useState<number | null>(null);
     
     // Estado do formulário
     const [formData, setFormData] = useState<Partial<PessoaExpanded>>({
@@ -242,18 +230,7 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 pretensao_salarial: p.pretensao_salarial,
                 cidade: p.cidade || '',
                 estado: p.estado || '',
-                id_analista_rs: p.id_analista_rs || undefined,  // 🆕 v57.0: Manter analista existente
-                bairro: p.bairro || '',
-                cep: p.cep || '',
-                rg: p.rg || '',
-                valor_hora_atual: p.valor_hora_atual,
-                pretensao_valor_hora: p.pretensao_valor_hora,
-                ja_trabalhou_pj: p.ja_trabalhou_pj || false,
-                aceita_pj: p.aceita_pj || false,
-                possui_empresa: p.possui_empresa || false,
-                aceita_abrir_empresa: p.aceita_abrir_empresa || false,
-                data_nascimento: p.data_nascimento || '',
-                estado_civil: p.estado_civil || ''
+                id_analista_rs: p.id_analista_rs || undefined  // 🆕 v57.0: Manter analista existente
             });
         } else {
             setEditingPessoa(null);
@@ -262,12 +239,7 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 titulo_profissional: '', senioridade: '', disponibilidade: '',
                 modalidade_preferida: '', pretensao_salarial: undefined,
                 cidade: '', estado: '',
-                id_analista_rs: user?.id,  // 🆕 v57.0: Novo cadastro usa analista logado
-                bairro: '', cep: '', rg: '',
-                valor_hora_atual: undefined, pretensao_valor_hora: undefined,
-                ja_trabalhou_pj: false, aceita_pj: false,
-                possui_empresa: false, aceita_abrir_empresa: false,
-                data_nascimento: '', estado_civil: ''
+                id_analista_rs: user?.id  // 🆕 v57.0: Novo cadastro usa analista logado
             });
         }
         setIsModalOpen(true);
@@ -301,6 +273,25 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
         
         if (deletePessoa) {
             deletePessoa(pessoa.id);
+        }
+    };
+
+    // ============================================
+    // 🆕 REFRESH INDIVIDUAL DO CANDIDATO
+    // ============================================
+
+    const handleRefreshPessoa = async (pessoa: PessoaExpanded) => {
+        setRefreshingId(pessoa.id);
+        try {
+            // Recarregar lista completa via callback do pai
+            if (onRefresh) {
+                await onRefresh();
+                console.log(`🔄 Dados atualizados: ${pessoa.nome}`);
+            }
+        } catch (err) {
+            console.error('Erro ao atualizar dados:', err);
+        } finally {
+            setTimeout(() => setRefreshingId(null), 500);
         }
     };
 
@@ -836,6 +827,16 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                     </div>
                                     <div className="flex gap-2">
                                         <button
+                                            onClick={() => handleRefreshPessoa(pessoa)}
+                                            className={`p-2 text-green-600 hover:bg-green-50 rounded-lg transition-transform ${
+                                                refreshingId === pessoa.id ? 'animate-spin' : ''
+                                            }`}
+                                            title="Atualizar dados do candidato"
+                                            disabled={refreshingId === pessoa.id}
+                                        >
+                                            <RefreshCw size={18} />
+                                        </button>
+                                        <button
                                             onClick={() => handleAbrirAnexos(pessoa.id)}
                                             className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg"
                                             title="Anexos do candidato"
@@ -1121,7 +1122,7 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                             ) : (
                                 <>
                                     {/* Info básica */}
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                         <div>
                                             <span className="text-xs text-gray-500">Senioridade</span>
                                             <p className="font-medium capitalize">{detailsPessoa.senioridade || '-'}</p>
@@ -1133,6 +1134,10 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                         <div>
                                             <span className="text-xs text-gray-500">Modalidade</span>
                                             <p className="font-medium capitalize">{detailsPessoa.modalidade_preferida || '-'}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs text-gray-500">Pretensão Salarial</span>
+                                            <p className="font-medium">{formatarSalario(detailsPessoa.pretensao_salarial)}</p>
                                         </div>
                                     </div>
 
@@ -1186,11 +1191,7 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                     {/* 🆕 Valores e Regime */}
                                     <div className="bg-gray-50 rounded-lg p-4 space-y-3">
                                         <h4 className="font-bold text-gray-700 text-sm">💰 Valores e Regime de Contratação</h4>
-                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                                            <div>
-                                                <span className="text-xs text-gray-500">Pretensão Salarial</span>
-                                                <p className="text-sm font-medium">{formatarSalario(detailsPessoa.pretensao_salarial)}</p>
-                                            </div>
+                                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                                             <div>
                                                 <span className="text-xs text-gray-500">Valor Hora Atual</span>
                                                 <p className="text-sm font-medium">
@@ -1402,11 +1403,6 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                                                     </span>
                                                                 ))}
                                                             </div>
-                                                        )}
-                                                        {exp.motivo_saida && (
-                                                            <p className="text-sm text-orange-600 mt-2 italic">
-                                                                📋 Motivo da saída: {exp.motivo_saida}
-                                                            </p>
                                                         )}
                                                     </div>
                                                 ))}
