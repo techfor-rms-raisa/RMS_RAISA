@@ -283,16 +283,10 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     const handleRefreshPessoa = async (pessoa: PessoaExpanded) => {
         setRefreshingId(pessoa.id);
         try {
-            const { data, error } = await supabase
-                .from('pessoas')
-                .select('*')
-                .eq('id', pessoa.id)
-                .single();
-
-            if (error) throw error;
-            if (data) {
-                updatePessoa(data as Pessoa);
-                console.log(`🔄 Dados atualizados: ${data.nome}`);
+            // Recarregar lista completa via callback do pai
+            if (onRefresh) {
+                await onRefresh();
+                console.log(`🔄 Dados atualizados: ${pessoa.nome}`);
             }
         } catch (err) {
             console.error('Erro ao atualizar dados:', err);
