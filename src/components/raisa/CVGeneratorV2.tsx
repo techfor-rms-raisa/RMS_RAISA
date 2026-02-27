@@ -184,6 +184,13 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
 
   // Extrair dados do CV
   const handleExtrairDados = async () => {
+    // ✅ Se CV já foi carregado do banco (Entrevista já preencheu), pular extração IA
+    if (cvAtual && cvAtual.dados_processados) {
+      console.log('📋 CV já carregado do banco, pulando extração IA');
+      setEtapa('dados');
+      return;
+    }
+
     if (!cvOriginalTexto) {
       setEtapa('dados');
       return;

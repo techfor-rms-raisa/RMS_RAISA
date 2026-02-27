@@ -87,13 +87,13 @@ export const useCVGenerator = () => {
         .select('*')
         .eq('candidatura_id', candidaturaId)
         .order('versao', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
 
-      if (err && err.code !== 'PGRST116') throw err;
+      if (err) throw err;
 
-      if (data) {
-        const cv = mapCVFromDB(data);
+      const registro = data?.[0];
+      if (registro) {
+        const cv = mapCVFromDB(registro);
         setCvAtual(cv);
         console.log(`✅ CV carregado (versão ${cv.versao})`);
         return cv;
@@ -149,15 +149,16 @@ export const useCVGenerator = () => {
       setError(null);
 
       // Verificar se já existe CV para esta candidatura
-      const { data: existente, error: checkError } = await supabase
+      const { data: existenteArr, error: checkError } = await supabase
         .from('cv_gerado')
         .select('versao')
         .eq('candidatura_id', input.candidatura_id)
         .order('versao', { ascending: false })
-        .limit(1)
-        .single();
+        .limit(1);
 
-      if (checkError && checkError.code !== 'PGRST116') throw checkError;
+      if (checkError) throw checkError;
+
+      const existente = existenteArr?.[0] || null;
 
       const novaVersao = existente ? existente.versao + 1 : 1;
 
@@ -235,13 +236,16 @@ export const useCVGenerator = () => {
       setError(null);
 
       // Buscar CV atual para saber a candidatura_id
-      const { data: cvExistente, error: fetchError } = await supabase
+      const { data: cvArr, error: fetchError } = await supabase
         .from('cv_gerado')
         .select('*')
         .eq('id', cvId)
-        .single();
+        .limit(1);
 
       if (fetchError) throw fetchError;
+
+      const cvExistente = cvArr?.[0];
+      if (!cvExistente) throw new Error('CV não encontrado');
 
       // Criar nova versão em vez de atualizar in-place
       const novoCV = await saveCV({

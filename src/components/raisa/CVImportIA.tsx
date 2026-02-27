@@ -808,7 +808,8 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
           data_fim: e.data_fim?.match(/^\d{4}-\d{2}$/) ? `${e.data_fim}-01` : e.data_fim,
           atual: e.atual || false,
           descricao: e.descricao || '',
-          tecnologias_usadas: e.tecnologias || []
+          tecnologias_usadas: e.tecnologias || [],
+          motivo_saida: e.motivo_saida || null
         }));
         
         await supabase.from('pessoa_experiencias').insert(experiencias);
@@ -1025,7 +1026,8 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
             data_fim: formatarData(e.data_fim),
             atual: e.atual || false,
             descricao: e.descricao || '',
-            tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : [] // Nome correto!
+            tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : [], // Nome correto!
+            motivo_saida: e.motivo_saida || null
           };
         });
         

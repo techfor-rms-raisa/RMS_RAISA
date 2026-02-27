@@ -24,7 +24,7 @@ import {
   GraduationCap, Code, Eye, Edit3, Trash2, 
   CheckCircle, XCircle, ChevronDown, ChevronUp,
   Sparkles, FileText, Globe, Phone, Mail, Linkedin,
-  Lock, Clock, Users
+  Lock, Clock, Users, Paperclip, Download, X, Loader2
 } from 'lucide-react';
 
 // ============================================
@@ -54,7 +54,20 @@ interface PessoaExpanded extends Pessoa {
     total_skills?: number;
     total_experiencias?: number;
     origem?: string;
+    total_candidaturas?: number;  // 🆕 Para controlar botão excluir
     linkedin_url?: string;
+    // 🆕 Campos de Entrevista Comportamental / CV Parcial
+    bairro?: string;
+    cep?: string;
+    rg?: string;
+    valor_hora_atual?: number;
+    pretensao_valor_hora?: number;
+    ja_trabalhou_pj?: boolean;
+    aceita_pj?: boolean;
+    possui_empresa?: boolean;
+    aceita_abrir_empresa?: boolean;
+    data_nascimento?: string;
+    estado_civil?: string;
 }
 
 interface SkillInfo {
@@ -72,6 +85,7 @@ interface ExperienciaInfo {
     atual: boolean;
     descricao: string;
     tecnologias: string[];
+    motivo_saida?: string;
 }
 
 // ============================================
@@ -124,6 +138,12 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     const [detailsFormacao, setDetailsFormacao] = useState<any[]>([]);
     const [detailsIdiomas, setDetailsIdiomas] = useState<any[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
+    
+    // 🆕 Anexos do candidato
+    const [anexosOpen, setAnexosOpen] = useState<number | null>(null); // pessoa_id com modal aberto
+    const [anexos, setAnexos] = useState<any[]>([]);
+    const [loadingAnexos, setLoadingAnexos] = useState(false);
+    const [uploadingAnexo, setUploadingAnexo] = useState(false);
     
     // Estado do formulário
     const [formData, setFormData] = useState<Partial<PessoaExpanded>>({
@@ -222,7 +242,18 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 pretensao_salarial: p.pretensao_salarial,
                 cidade: p.cidade || '',
                 estado: p.estado || '',
-                id_analista_rs: p.id_analista_rs || undefined  // 🆕 v57.0: Manter analista existente
+                id_analista_rs: p.id_analista_rs || undefined,  // 🆕 v57.0: Manter analista existente
+                bairro: p.bairro || '',
+                cep: p.cep || '',
+                rg: p.rg || '',
+                valor_hora_atual: p.valor_hora_atual,
+                pretensao_valor_hora: p.pretensao_valor_hora,
+                ja_trabalhou_pj: p.ja_trabalhou_pj || false,
+                aceita_pj: p.aceita_pj || false,
+                possui_empresa: p.possui_empresa || false,
+                aceita_abrir_empresa: p.aceita_abrir_empresa || false,
+                data_nascimento: p.data_nascimento || '',
+                estado_civil: p.estado_civil || ''
             });
         } else {
             setEditingPessoa(null);
@@ -231,7 +262,12 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 titulo_profissional: '', senioridade: '', disponibilidade: '',
                 modalidade_preferida: '', pretensao_salarial: undefined,
                 cidade: '', estado: '',
-                id_analista_rs: user?.id  // 🆕 v57.0: Novo cadastro usa analista logado
+                id_analista_rs: user?.id,  // 🆕 v57.0: Novo cadastro usa analista logado
+                bairro: '', cep: '', rg: '',
+                valor_hora_atual: undefined, pretensao_valor_hora: undefined,
+                ja_trabalhou_pj: false, aceita_pj: false,
+                possui_empresa: false, aceita_abrir_empresa: false,
+                data_nascimento: '', estado_civil: ''
             });
         }
         setIsModalOpen(true);
@@ -250,11 +286,148 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
 
     // Excluir pessoa
     const handleDelete = async (pessoa: PessoaExpanded) => {
+        // 🆕 Verificar se tem candidaturas antes de excluir
+        const { count } = await supabase
+            .from('candidaturas')
+            .select('*', { count: 'exact', head: true })
+            .eq('pessoa_id', parseInt(pessoa.id));
+
+        if (count && count > 0) {
+            alert(`Não é possível excluir ${pessoa.nome}.\n\nEste candidato possui ${count} candidatura(s) ativa(s). Remova as candidaturas primeiro.`);
+            return;
+        }
+
         if (!confirm(`Excluir ${pessoa.nome}?`)) return;
         
         if (deletePessoa) {
             deletePessoa(pessoa.id);
         }
+    };
+
+    // ============================================
+    // 🆕 FUNÇÕES DE ANEXOS
+    // ============================================
+    
+    const carregarAnexos = async (pessoaId: number) => {
+        setLoadingAnexos(true);
+        try {
+            const { data, error } = await supabase
+                .from('pessoa_anexos')
+                .select('*')
+                .eq('pessoa_id', pessoaId)
+                .order('created_at', { ascending: false });
+            
+            if (error) throw error;
+            setAnexos(data || []);
+        } catch (err) {
+            console.error('Erro ao carregar anexos:', err);
+            setAnexos([]);
+        } finally {
+            setLoadingAnexos(false);
+        }
+    };
+
+    const handleAbrirAnexos = async (pessoaId: number) => {
+        setAnexosOpen(pessoaId);
+        await carregarAnexos(pessoaId);
+    };
+
+    const handleUploadAnexo = async (e: React.ChangeEvent<HTMLInputElement>, pessoaId: number) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const extensoesPermitidas = ['pdf', 'docx', 'doc', 'jpg', 'jpeg', 'png', 'txt', 'xlsx', 'xls'];
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        if (!extensoesPermitidas.includes(ext)) {
+            alert(`Formato .${ext} não suportado.\nPermitidos: ${extensoesPermitidas.join(', ')}`);
+            return;
+        }
+
+        if (file.size > 10 * 1024 * 1024) {
+            alert('Arquivo muito grande. Máximo 10MB.');
+            return;
+        }
+
+        setUploadingAnexo(true);
+        try {
+            // Upload para Supabase Storage
+            const timestamp = Date.now();
+            const filePath = `pessoa_${pessoaId}/${timestamp}_${file.name}`;
+            
+            const { error: uploadError } = await supabase.storage
+                .from('pessoa-anexos')
+                .upload(filePath, file, { upsert: false });
+
+            if (uploadError) throw uploadError;
+
+            // Obter URL pública
+            const { data: urlData } = supabase.storage
+                .from('pessoa-anexos')
+                .getPublicUrl(filePath);
+
+            // Registrar na tabela
+            const { error: insertError } = await supabase
+                .from('pessoa_anexos')
+                .insert({
+                    pessoa_id: pessoaId,
+                    nome_arquivo: file.name,
+                    tipo_arquivo: ext,
+                    tamanho_bytes: file.size,
+                    storage_path: filePath,
+                    url_publica: urlData.publicUrl,
+                    uploaded_por: user?.id || null
+                });
+
+            if (insertError) throw insertError;
+
+            console.log(`✅ Anexo uploaded: ${file.name}`);
+            await carregarAnexos(pessoaId);
+        } catch (err: any) {
+            console.error('Erro no upload:', err);
+            alert('Erro ao enviar arquivo: ' + (err.message || 'Tente novamente'));
+        } finally {
+            setUploadingAnexo(false);
+            // Limpar input
+            e.target.value = '';
+        }
+    };
+
+    const handleExcluirAnexo = async (anexo: any) => {
+        if (!confirm(`Excluir "${anexo.nome_arquivo}"?`)) return;
+
+        try {
+            // Excluir do Storage
+            await supabase.storage
+                .from('pessoa-anexos')
+                .remove([anexo.storage_path]);
+
+            // Excluir do banco
+            await supabase
+                .from('pessoa_anexos')
+                .delete()
+                .eq('id', anexo.id);
+
+            setAnexos(prev => prev.filter(a => a.id !== anexo.id));
+            console.log(`🗑️ Anexo excluído: ${anexo.nome_arquivo}`);
+        } catch (err) {
+            console.error('Erro ao excluir anexo:', err);
+            alert('Erro ao excluir arquivo');
+        }
+    };
+
+    const getIconeArquivo = (tipo: string) => {
+        const icones: Record<string, string> = {
+            pdf: '📕', docx: '📘', doc: '📘', 
+            jpg: '🖼️', jpeg: '🖼️', png: '🖼️',
+            xlsx: '📗', xls: '📗', txt: '📄'
+        };
+        return icones[tipo] || '📎';
+    };
+
+    const formatarTamanho = (bytes: number) => {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
     };
 
     // Abrir detalhes
@@ -297,6 +470,14 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 .eq('pessoa_id', parseInt(pessoa.id));
             
             setDetailsIdiomas(idiomas || []);
+
+            // 🆕 Carregar contagem de candidaturas (para controlar botão excluir)
+            const { count: totalCandidaturas } = await supabase
+                .from('candidaturas')
+                .select('*', { count: 'exact', head: true })
+                .eq('pessoa_id', parseInt(pessoa.id));
+
+            setDetailsPessoa(prev => prev ? { ...prev, total_candidaturas: totalCandidaturas || 0 } : prev);
 
         } catch (err) {
             console.error('Erro ao carregar detalhes:', err);
@@ -655,6 +836,13 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                     </div>
                                     <div className="flex gap-2">
                                         <button
+                                            onClick={() => handleAbrirAnexos(pessoa.id)}
+                                            className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg"
+                                            title="Anexos do candidato"
+                                        >
+                                            <Paperclip size={18} />
+                                        </button>
+                                        <button
                                             onClick={() => handleOpenDetails(pessoa)}
                                             className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg"
                                             title="Ver detalhes"
@@ -933,7 +1121,7 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                             ) : (
                                 <>
                                     {/* Info básica */}
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                                         <div>
                                             <span className="text-xs text-gray-500">Senioridade</span>
                                             <p className="font-medium capitalize">{detailsPessoa.senioridade || '-'}</p>
@@ -946,9 +1134,85 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                             <span className="text-xs text-gray-500">Modalidade</span>
                                             <p className="font-medium capitalize">{detailsPessoa.modalidade_preferida || '-'}</p>
                                         </div>
-                                        <div>
-                                            <span className="text-xs text-gray-500">Pretensão</span>
-                                            <p className="font-medium">{formatarSalario(detailsPessoa.pretensao_salarial)}</p>
+                                    </div>
+
+                                    {/* 🆕 Dados Pessoais Detalhados */}
+                                    <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                                        <h4 className="font-bold text-gray-700 text-sm">👤 Dados Pessoais</h4>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div>
+                                                <span className="text-xs text-gray-500">Data Nascimento</span>
+                                                <p className="text-sm font-medium">
+                                                    {detailsPessoa.data_nascimento 
+                                                        ? new Date(detailsPessoa.data_nascimento + 'T00:00:00').toLocaleDateString('pt-BR')
+                                                        : '-'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Estado Civil</span>
+                                                <p className="text-sm font-medium capitalize">{detailsPessoa.estado_civil || '-'}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">CPF</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.cpf || '-'}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">RG</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.rg || '-'}</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div>
+                                                <span className="text-xs text-gray-500">Cidade/UF</span>
+                                                <p className="text-sm font-medium">
+                                                    {detailsPessoa.cidade ? `${detailsPessoa.cidade}/${detailsPessoa.estado}` : '-'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Bairro</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.bairro || '-'}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">CEP</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.cep || '-'}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Telefone</span>
+                                                <p className="text-sm font-medium">{detailsPessoa.telefone || '-'}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 🆕 Valores e Regime */}
+                                    <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                                        <h4 className="font-bold text-gray-700 text-sm">💰 Valores e Regime de Contratação</h4>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                            <div>
+                                                <span className="text-xs text-gray-500">Pretensão Salarial</span>
+                                                <p className="text-sm font-medium">{formatarSalario(detailsPessoa.pretensao_salarial)}</p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Valor Hora Atual</span>
+                                                <p className="text-sm font-medium">
+                                                    {detailsPessoa.valor_hora_atual ? `R$ ${detailsPessoa.valor_hora_atual}` : '-'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Pretensão Valor Hora</span>
+                                                <p className="text-sm font-medium">
+                                                    {detailsPessoa.pretensao_valor_hora ? `R$ ${detailsPessoa.pretensao_valor_hora}` : '-'}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <span className="text-xs text-gray-500">Regime PJ</span>
+                                                <div className="flex flex-wrap gap-1 mt-0.5">
+                                                    {detailsPessoa.ja_trabalhou_pj && <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded">Já trabalhou PJ</span>}
+                                                    {detailsPessoa.aceita_pj && <span className="text-xs px-2 py-0.5 bg-green-100 text-green-700 rounded">Aceita PJ</span>}
+                                                    {detailsPessoa.possui_empresa && <span className="text-xs px-2 py-0.5 bg-purple-100 text-purple-700 rounded">Possui empresa</span>}
+                                                    {detailsPessoa.aceita_abrir_empresa && <span className="text-xs px-2 py-0.5 bg-amber-100 text-amber-700 rounded">Aceita abrir</span>}
+                                                    {!detailsPessoa.ja_trabalhou_pj && !detailsPessoa.aceita_pj && <span className="text-xs text-gray-400">Não informado</span>}
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
 
@@ -1139,6 +1403,11 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                                                                 ))}
                                                             </div>
                                                         )}
+                                                        {exp.motivo_saida && (
+                                                            <p className="text-sm text-orange-600 mt-2 italic">
+                                                                📋 Motivo da saída: {exp.motivo_saida}
+                                                            </p>
+                                                        )}
                                                     </div>
                                                 ))}
                                             </div>
@@ -1179,6 +1448,115 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                     onImportComplete={handleImportComplete}
                     onClose={() => setIsImportIAOpen(false)}
                 />
+            )}
+
+            {/* ============================================ */}
+            {/* 🆕 MODAL DE ANEXOS */}
+            {/* ============================================ */}
+            {anexosOpen && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col">
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-4 border-b">
+                            <div className="flex items-center gap-2">
+                                <Paperclip size={20} className="text-amber-600" />
+                                <h3 className="font-bold text-gray-800">
+                                    Anexos do Candidato
+                                </h3>
+                                <span className="text-sm text-gray-400">({anexos.length})</span>
+                            </div>
+                            <button 
+                                onClick={() => setAnexosOpen(null)}
+                                className="p-1 hover:bg-gray-100 rounded"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        {/* Upload */}
+                        <div className="p-4 border-b bg-gray-50">
+                            <label className={`flex items-center justify-center gap-2 py-3 px-4 border-2 border-dashed 
+                                rounded-lg cursor-pointer transition-colors ${
+                                    uploadingAnexo 
+                                        ? 'border-gray-300 bg-gray-100 cursor-wait' 
+                                        : 'border-blue-300 hover:bg-blue-50 hover:border-blue-400'
+                                }`}>
+                                {uploadingAnexo ? (
+                                    <>
+                                        <Loader2 size={18} className="animate-spin text-blue-500" />
+                                        <span className="text-sm text-blue-600">Enviando...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Upload size={18} className="text-blue-500" />
+                                        <span className="text-sm text-blue-600 font-medium">
+                                            Enviar novo anexo
+                                        </span>
+                                        <span className="text-xs text-gray-400">
+                                            (PDF, DOCX, JPG, PNG, XLS — máx. 10MB)
+                                        </span>
+                                    </>
+                                )}
+                                <input
+                                    type="file"
+                                    className="hidden"
+                                    disabled={uploadingAnexo}
+                                    accept=".pdf,.docx,.doc,.jpg,.jpeg,.png,.txt,.xlsx,.xls"
+                                    onChange={(e) => handleUploadAnexo(e, anexosOpen)}
+                                />
+                            </label>
+                        </div>
+
+                        {/* Lista de Anexos */}
+                        <div className="flex-1 overflow-y-auto p-4">
+                            {loadingAnexos ? (
+                                <div className="flex items-center justify-center py-8">
+                                    <Loader2 size={24} className="animate-spin text-gray-400" />
+                                </div>
+                            ) : anexos.length === 0 ? (
+                                <div className="text-center py-8 text-gray-400">
+                                    <Paperclip size={40} className="mx-auto mb-2 opacity-30" />
+                                    <p className="text-sm">Nenhum anexo encontrado</p>
+                                    <p className="text-xs mt-1">Faça upload de documentos do candidato</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-2">
+                                    {anexos.map((anexo: any) => (
+                                        <div key={anexo.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg hover:bg-gray-100 group">
+                                            <span className="text-lg">{getIconeArquivo(anexo.tipo_arquivo)}</span>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-sm font-medium text-gray-800 truncate">
+                                                    {anexo.nome_arquivo}
+                                                </p>
+                                                <p className="text-xs text-gray-400">
+                                                    {formatarTamanho(anexo.tamanho_bytes)} • {new Date(anexo.created_at).toLocaleDateString('pt-BR')}
+                                                </p>
+                                            </div>
+                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <a
+                                                    href={anexo.url_publica}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="p-1.5 text-blue-600 hover:bg-blue-100 rounded"
+                                                    title="Baixar"
+                                                >
+                                                    <Download size={16} />
+                                                </a>
+                                                <button
+                                                    onClick={() => handleExcluirAnexo(anexo)}
+                                                    className="p-1.5 text-red-500 hover:bg-red-100 rounded"
+                                                    title="Excluir"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

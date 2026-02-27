@@ -6,8 +6,14 @@
  * - Marcos (.NET - T-Systems)
  * - Victor Hugo (GP - CATENO)
  * 
- * Versão: 2.0
- * Data: 26/12/2024
+ * 🔧 v3.0 (25/02/2026): Novos campos Entrevista Comportamental
+ * - bairro, cep, cpf, rg, data_nascimento
+ * - valor_hora_atual, pretensao_valor_hora
+ * - ja_trabalhou_pj, aceita_pj, possui_empresa, aceita_abrir_empresa
+ * - observacao em hard_skills_tabela
+ * 
+ * Versão: 3.0
+ * Data: 25/02/2026
  */
 
 // ============================================
@@ -20,11 +26,11 @@ export interface ExperienciaCV {
   data_inicio: string;
   data_fim?: string;
   atual: boolean;
-  cliente?: string; // Ex: "Cliente Santander"
+  cliente?: string;
   descricao?: string;
   principais_atividades?: string[];
   tecnologias?: string[];
-  motivo_saida?: string; // NOVO: Motivo de saída
+  motivo_saida?: string;
 }
 
 export interface FormacaoCV {
@@ -34,6 +40,7 @@ export interface FormacaoCV {
   data_inicio?: string;
   data_conclusao?: string;
   em_andamento: boolean;
+  concluido?: string;
 }
 
 export interface CertificacaoCV {
@@ -55,18 +62,20 @@ export interface IdiomaCV {
   nivel: 'basico' | 'intermediario' | 'avancado' | 'fluente' | 'nativo';
   certificacao?: string;
   instituicao?: string;
+  possui_certificacao?: string;
 }
 
 // ============================================
-// NOVO: Requisitos Match (Tabela 3 colunas)
+// REQUISITOS MATCH (Tabela com Observações)
 // ============================================
 
 export interface RequisitoMatch {
   tecnologia: string;
   tempo_experiencia: string;
-  observacao: string;
-  tipo: 'mandatorio' | 'desejavel';
-  atendido: boolean;
+  observacao?: string;
+  tipo?: 'mandatorio' | 'desejavel';
+  atendido?: boolean;
+  requerido?: boolean;
 }
 
 // ============================================
@@ -83,8 +92,14 @@ export interface DadosCandidatoTechfor {
   data_nascimento?: string;
   estado_civil?: 'solteiro' | 'casado' | 'divorciado' | 'viuvo' | 'uniao_estavel';
   cidade?: string;
+  bairro?: string;
   estado?: string;
+  cep?: string;
   
+  // === Documentos ===
+  cpf?: string;
+  rg?: string;
+
   // === Informações da Vaga ===
   codigo_vaga?: string;
   titulo_vaga?: string;
@@ -92,9 +107,17 @@ export interface DadosCandidatoTechfor {
   cliente_destino?: string;
   
   // === Disponibilidade ===
-  disponibilidade?: string; // "Imediata", "15 dias", "30 dias", "3 semanas"
+  disponibilidade?: string;
   modalidade_trabalho?: 'presencial' | 'remoto' | 'hibrido';
   pretensao_salarial?: string;
+  
+  // === Financeiro / Contratação ===
+  valor_hora_atual?: number;
+  pretensao_valor_hora?: number;
+  ja_trabalhou_pj?: boolean;
+  aceita_pj?: boolean;
+  possui_empresa?: boolean;
+  aceita_abrir_empresa?: boolean;
   
   // === Perfil Profissional ===
   titulo_profissional?: string;
@@ -102,29 +125,31 @@ export interface DadosCandidatoTechfor {
   linkedin_url?: string;
   foto_url?: string;
   
-  // === NOVO: Parecer de Seleção ===
-  parecer_selecao?: string; // Texto do recrutador sobre o candidato
+  // === Parecer de Seleção ===
+  parecer_selecao?: string;
   
-  // === NOVO: Recomendação Final ===
-  recomendacao_final?: string; // "Recomendamos o [NOME]..."
+  // === Recomendação Final ===
+  recomendacao_final?: string;
   participando_outros_processos?: boolean;
   participando_processo_cliente?: boolean;
   
-  // === NOVO: Requisitos Match ===
+  // === Requisitos Match ===
   requisitos_match?: RequisitoMatch[];
+  requisitos_desejaveis?: RequisitoMatch[];
   
   // === Experiências ===
   experiencias?: ExperienciaCV[];
   
   // === Formação ===
   formacao_academica?: FormacaoCV[];
-  formacao_complementar?: CertificacaoCV[]; // Cursos livres, certificações
+  formacao_complementar?: CertificacaoCV[];
   
   // === Skills ===
   habilidades?: HabilidadeCV[];
   hard_skills_tabela?: {
     tecnologia: string;
     tempo_experiencia: string;
+    observacao?: string;
   }[];
   
   // === Idiomas ===
@@ -144,7 +169,6 @@ export interface CVTemplateConfig {
   nome: string;
   tipo: 'techfor' | 'tsystems' | 'cliente_custom' | 'generico';
   
-  // Cores
   cor_primaria: string;
   cor_secundaria: string;
   cor_texto: string;
@@ -153,19 +177,16 @@ export interface CVTemplateConfig {
   cor_tabela_header: string;
   cor_tabela_alt: string;
   
-  // Logos
   logo_techfor_url?: string;
   logo_cliente_url?: string;
   mostrar_logo_techfor: boolean;
   mostrar_logo_cliente: boolean;
   
-  // Layout
   fonte: string;
   tamanho_fonte_base: number;
   mostrar_capa: boolean;
   mostrar_foto: boolean;
   
-  // Seções visíveis
   secoes: {
     capa: boolean;
     header_dados: boolean;
@@ -181,77 +202,9 @@ export interface CVTemplateConfig {
     informacoes_adicionais: boolean;
   };
   
-  // Textos padrão
   texto_recomendacao_padrao?: string;
   texto_rodape?: string;
 }
-
-// ============================================
-// TEMPLATES PRÉ-DEFINIDOS
-// ============================================
-
-export const TEMPLATE_TECHFOR: Partial<CVTemplateConfig> = {
-  nome: 'Template Techfor Padrão',
-  tipo: 'techfor',
-  cor_primaria: '#E31837', // Vermelho Techfor
-  cor_secundaria: '#1a1a1a',
-  cor_texto: '#333333',
-  cor_fundo: '#FFFFFF',
-  cor_header: '#E31837',
-  cor_tabela_header: '#FFF3CD', // Amarelo claro
-  cor_tabela_alt: '#F8F9FA',
-  mostrar_logo_techfor: true,
-  mostrar_logo_cliente: false,
-  mostrar_capa: false,
-  fonte: 'Arial, sans-serif',
-  secoes: {
-    capa: false,
-    header_dados: true,
-    parecer_selecao: true,
-    requisitos_mandatorios: true,
-    requisitos_desejaveis: true,
-    hard_skills_tabela: false,
-    formacao_academica: true,
-    formacao_complementar: true,
-    idiomas: true,
-    historico_profissional: true,
-    recomendacao_final: true,
-    informacoes_adicionais: true
-  },
-  texto_recomendacao_padrao: 'Recomendamos o(a) {NOME}, pois demonstrou ser um(a) profissional com experiência considerável nas principais tecnologias solicitadas para a posição supracitada.',
-  texto_rodape: 'Avenida Paulista, 1.765 - 7º andar - Conjunto 72 - Bela Vista - São Paulo - SP - Cep 01311-930\n(11) 3138-5800 - www.techforti.com.br'
-};
-
-export const TEMPLATE_TSYSTEMS: Partial<CVTemplateConfig> = {
-  nome: 'Template T-Systems',
-  tipo: 'tsystems',
-  cor_primaria: '#E20074', // Magenta T-Systems
-  cor_secundaria: '#E20074',
-  cor_texto: '#333333',
-  cor_fundo: '#FFFFFF',
-  cor_header: '#E20074',
-  cor_tabela_header: '#E20074',
-  cor_tabela_alt: '#FDF2F8',
-  mostrar_logo_techfor: false,
-  mostrar_logo_cliente: true,
-  mostrar_capa: true, // T-Systems tem capa
-  fonte: 'Arial, sans-serif',
-  secoes: {
-    capa: true,
-    header_dados: false, // Na capa
-    parecer_selecao: false,
-    requisitos_mandatorios: false,
-    requisitos_desejaveis: false,
-    hard_skills_tabela: true, // T-Systems usa tabela de hard skills
-    formacao_academica: true,
-    formacao_complementar: false,
-    idiomas: true,
-    historico_profissional: true,
-    recomendacao_final: true,
-    informacoes_adicionais: true
-  },
-  texto_recomendacao_padrao: 'Recomendamos o(a) {NOME}, pois demonstrou ser um(a) profissional com experiência considerável nas principais tecnologias solicitadas para a posição supracitada.'
-};
 
 // ============================================
 // CV GERADO
@@ -263,29 +216,23 @@ export interface CVGeradoCompleto {
   template_id: number;
   template_tipo: string;
   
-  // Dados processados
   dados: DadosCandidatoTechfor;
   
-  // HTML gerado
   cv_html: string;
   cv_capa_html?: string;
   
-  // URLs
   cv_original_url?: string;
   cv_padronizado_url?: string;
   cv_pdf_url?: string;
   
-  // Status
   aprovado?: boolean;
   aprovado_por?: number;
   aprovado_em?: string;
   
-  // Versionamento
   versao: number;
   gerado_em: string;
   gerado_por?: number;
   
-  // Metadata
   metadados?: {
     tempo_geracao_ms?: number;
     modelo_ia?: string;

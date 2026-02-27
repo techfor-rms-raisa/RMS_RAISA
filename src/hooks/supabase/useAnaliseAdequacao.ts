@@ -7,7 +7,9 @@
 // 
 // 🔧 CORREÇÃO 19/02/2026:
 // - salvarAnalise agora aceita resultado como 5º parâmetro
-// - Usa .maybeSingle() em vez de .single() para evitar erro 406
+// 🔧 CORREÇÃO 25/02/2026:
+// - Substituído .limit(1).maybeSingle() por .limit(1) + array[0]
+// - Resolve erro 406 do PostgREST quando há múltiplos registros
 // ============================================================
 
 import { useState, useCallback } from 'react';
@@ -121,13 +123,15 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
       console.log(`   Score: ${analiseParaSalvar.score_geral}%`);
 
       // Verificar se já existe análise para esta candidatura
+      // 🔧 FIX 25/02: .limit(1) + array[0] em vez de .maybeSingle()
       if (candidaturaId) {
-        const { data: existente } = await supabase
+        const { data: existenteArr } = await supabase
           .from('analise_adequacao')
           .select('id')
           .eq('candidatura_id', candidaturaId)
-          .limit(1)
-          .maybeSingle();
+          .limit(1);
+
+        const existente = existenteArr?.[0] || null;
 
         if (existente?.id) {
           // Atualizar registro existente
@@ -205,6 +209,7 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
   }, [analise]);
 
   // Carregar análise do banco de dados
+  // 🔧 FIX 25/02: .limit(1) + array[0] em vez de .maybeSingle()
   const carregarAnalise = useCallback(async (
     candidaturaId?: number,
     pessoaId?: number,
@@ -226,15 +231,16 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
         return null;
       }
 
-      const { data, error: dbError } = await query
+      const { data: dataArr, error: dbError } = await query
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
 
       if (dbError) {
         console.error('❌ [useAnaliseAdequacao] Erro ao carregar:', dbError.message);
         return null;
       }
+
+      const data = dataArr?.[0] || null;
 
       if (!data) {
         console.log('[useAnaliseAdequacao] Nenhuma análise encontrada');
@@ -261,6 +267,7 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
   const desqualificacao = analise ? verificarDesqualificacao(analise) : null;
 
   // Buscar perguntas de entrevista
+  // 🔧 FIX 25/02: .limit(1) + array[0] em vez de .maybeSingle()
   const buscarPerguntasEntrevista = useCallback(async (
     candidaturaId?: number,
     pessoaId?: number,
@@ -279,13 +286,13 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
         return null;
       }
 
-      const { data, error } = await query
+      const { data: dataArr, error } = await query
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
 
-      if (error || !data) return null;
+      if (error || !dataArr?.length) return null;
 
+      const data = dataArr[0];
       return data.perguntas_entrevista || [];
     } catch {
       return null;
@@ -310,6 +317,7 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
 // HOOK SIMPLIFICADO
 // ============================================================
 
+// 🔧 FIX 25/02: .limit(1) + array[0] em vez de .maybeSingle()
 export function useAnaliseAdequacaoExistente(candidaturaId: number | null) {
   const [analise, setAnalise] = useState<AnaliseAdequacaoPerfil | null>(null);
   const [loading, setLoading] = useState(false);
@@ -319,12 +327,13 @@ export function useAnaliseAdequacaoExistente(candidaturaId: number | null) {
 
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data: dataArr, error } = await supabase
         .from('analise_adequacao')
         .select('resultado_completo')
         .eq('candidatura_id', candidaturaId)
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+
+      const data = dataArr?.[0] || null;
 
       if (!error && data?.resultado_completo) {
         setAnalise(data.resultado_completo as AnaliseAdequacaoPerfil);

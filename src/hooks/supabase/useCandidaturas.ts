@@ -1,6 +1,10 @@
 /**
  * useCandidaturas Hook - Gerenciamento de Candidaturas (RAISA)
  * Módulo separado do useSupabaseData para melhor organização
+ * 
+ * 🆕 v2.1 (25/02/2026): Vinculação com analise_adequacao
+ *   • Ao criar candidatura, atualiza candidatura_id na analise_adequacao existente (pessoa+vaga)
+ *   • Garante que perguntas de entrevista geradas na Análise de Currículo fiquem acessíveis
  */
 
 import { useState } from 'react';
@@ -154,6 +158,35 @@ export const useCandidaturas = () => {
       setCandidaturas(prev => [createdCandidatura, ...prev]);
       console.log('✅ Candidatura criada:', createdCandidatura);
       
+      // 🆕 v2.1: Vincular candidatura_id na analise_adequacao existente (pessoa+vaga)
+      if (data.pessoa_id && data.vaga_id) {
+        try {
+          const { data: analiseExistente, error: analiseErr } = await supabase
+            .from('analise_adequacao')
+            .select('id')
+            .eq('pessoa_id', data.pessoa_id)
+            .eq('vaga_id', data.vaga_id)
+            .is('candidatura_id', null)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (!analiseErr && analiseExistente?.id) {
+            await supabase
+              .from('analise_adequacao')
+              .update({ 
+                candidatura_id: data.id,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', analiseExistente.id);
+
+            console.log(`✅ analise_adequacao (ID: ${analiseExistente.id}) vinculada à candidatura ${data.id}`);
+          }
+        } catch (errVinculo: any) {
+          console.warn('⚠️ Erro ao vincular analise_adequacao:', errVinculo.message);
+        }
+      }
+
       return createdCandidatura;
     } catch (err: any) {
       console.error('❌ Erro ao criar candidatura:', err);

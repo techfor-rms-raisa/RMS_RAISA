@@ -478,12 +478,13 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
       }
 
       // Motivo de saída
-      if (exp.motivo_saida) {
+      const motivoSaida = (exp.motivo_saida || exp.motivoSaida || exp.motivo || '').toString().trim();
+      if (motivoSaida) {
         children.push(new Paragraph({
           spacing: { before: 40, after: 40 },
           children: [
             new TextRun({ text: 'Motivo de saída: ', bold: true, italics: true, size: 18, font: FONT, color: '555555' }),
-            new TextRun({ text: exp.motivo_saida, italics: true, size: 18, font: FONT, color: '555555' })
+            new TextRun({ text: motivoSaida, italics: true, size: 18, font: FONT, color: '555555' })
           ]
         }));
       }

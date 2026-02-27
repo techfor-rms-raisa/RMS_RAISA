@@ -1,5 +1,5 @@
 /**
- * AnaliseRisco.tsx - RMS RAISA v4.3
+ * AnaliseRisco.tsx - RMS RAISA v4.5
  * Componente de Análise de Currículo com IA
  * 
  * HISTÓRICO:
@@ -25,6 +25,15 @@
  *   • Verifica duplicata por CPF > Email > Nome ANTES de inserir
  *   • Se encontrar duplicata, faz UPDATE em vez de INSERT
  *   • Evita criação de registros duplicados no banco
+ * - v4.4 (25/02/2026): Correção extração estruturada com PDF original
+ *   • base64PDF agora é persistido no state para re-uso nas análises
+ *   • Triagem e Adequação enviam PDF original à Gemini (não apenas texto plano)
+ *   • Resolve bug de Skills: 0 / Experiências: 0 em CVs com tabelas complexas
+ * - v4.5 (25/02/2026): Persistência da Análise de Adequação
+ *   • Análise completa (score, requisitos, gaps, perguntas) salva em analise_adequacao
+ *   • Vinculação por pessoa_id + vaga_id (candidatura_id atualizado depois)
+ *   • Perguntas de entrevista ficam disponíveis para Entrevista Técnica
+ *   • Upsert: se já existe análise para pessoa+vaga, atualiza em vez de duplicar
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -159,12 +168,32 @@ const AnaliseRisco: React.FC = () => {
   // Estados da aba Triagem
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [textoExtraido, setTextoExtraido] = useState<string>('');
+  const [base64Original, setBase64Original] = useState<string>(''); // 🆕 v4.4: Manter PDF original para re-extração estruturada
   const [isExtraindo, setIsExtraindo] = useState(false);
   const [isAnalisando, setIsAnalisando] = useState(false);
   const [analise, setAnalise] = useState<AnaliseTriagem | null>(null);
   const [salvouBanco, setSalvouBanco] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ✅ Helper: Mensagem amigável para erros de API
+  const formatarErroAPI = (err: any): string => {
+    const msg = err?.message || String(err) || '';
+    if (msg.includes('429') || msg.includes('Too Many Requests') || 
+        msg.includes('RESOURCE_EXHAUSTED') || msg.includes('quota') || msg.includes('rate')) {
+      return '⏳ A IA está temporariamente sobrecarregada (limite de requisições atingido). Aguarde 1-2 minutos e tente novamente.';
+    }
+    if (msg.includes('timeout') || msg.includes('DEADLINE_EXCEEDED')) {
+      return '⏱️ O processamento demorou mais que o esperado. Tente novamente em alguns instantes.';
+    }
+    if (msg.includes('401') || msg.includes('403') || msg.includes('API key') || msg.includes('PERMISSION_DENIED')) {
+      return '🔑 Erro de autenticação com a IA. Contate o administrador do sistema.';
+    }
+    if (msg.includes('Resposta vazia') || msg.includes('EMPTY_RESPONSE')) {
+      return '📭 A IA não retornou dados. Aguarde 1 minuto e tente novamente.';
+    }
+    return msg;
+  };
   
   // 🆕 v4.0: Estados para análise de adequação
   const [vagas, setVagas] = useState<VagaSimples[]>([]);
@@ -310,6 +339,7 @@ const AnaliseRisco: React.FC = () => {
     setAnalise(null);
     setAnaliseAdequacao(null);
     setSalvouBanco(false);
+    setBase64Original(''); // 🆕 v4.4: Limpar base64 anterior
     
     await extrairTexto(file);
   };
@@ -320,6 +350,7 @@ const AnaliseRisco: React.FC = () => {
 
     try {
       const base64 = await fileToBase64(file);
+      setBase64Original(base64); // 🆕 v4.4: Persistir para re-uso nas análises
       
       const response = await fetch('/api/gemini-analyze', {
         method: 'POST',
@@ -346,7 +377,7 @@ const AnaliseRisco: React.FC = () => {
       }
     } catch (err: any) {
       console.error('Erro ao extrair texto:', err);
-      setErro(`Erro ao extrair texto: ${err.message}`);
+      setErro(formatarErroAPI(err));
       setTextoExtraido('');
     } finally {
       setIsExtraindo(false);
@@ -418,7 +449,7 @@ const AnaliseRisco: React.FC = () => {
           action: 'extrair_cv',
           payload: {
             textoCV: textoExtraido,
-            base64PDF: ''
+            base64PDF: '' // ✅ Texto já extraído no upload, não reenviar PDF (evita timeout)
           }
         })
       });
@@ -754,7 +785,8 @@ const AnaliseRisco: React.FC = () => {
           data_fim: formatarData(e.data_fim),
           atual: e.atual || false,
           descricao: e.descricao || '',
-          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : []
+          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : [],
+          motivo_saida: e.motivo_saida || null
         }));
         
         await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
@@ -966,7 +998,8 @@ const AnaliseRisco: React.FC = () => {
           data_fim: formatarData(e.data_fim),
           atual: e.atual || false,
           descricao: e.descricao || '',
-          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : []
+          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : [],
+          motivo_saida: e.motivo_saida || null
         }));
         
         await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
@@ -1054,6 +1087,7 @@ const AnaliseRisco: React.FC = () => {
       // ========================================
       // PASSO 1: Extrair dados do CV via Gemini
       // (Mesmo padrão do CVImportIA.tsx)
+      // 🆕 v4.4: Envia base64PDF original para extração precisa de tabelas
       // ========================================
       console.log('🤖 Extraindo dados do CV via Gemini...');
       
@@ -1064,7 +1098,7 @@ const AnaliseRisco: React.FC = () => {
           action: 'extrair_cv',
           payload: {
             textoCV: textoExtraido,
-            base64PDF: ''
+            base64PDF: '' // ✅ Texto já extraído no upload, não reenviar PDF (evita timeout)
           }
         })
       });
@@ -1173,12 +1207,15 @@ const AnaliseRisco: React.FC = () => {
       // PASSO 4: PERSISTIR NO BANCO (SE SCORE >= 40%)
       // 🆕 v4.1: Só salva automaticamente se score for adequado
       // ========================================
+      let pessoaSalvaId: number | null = null;
+
       if (scoreGeral >= SCORE_MINIMO_SALVAR) {
         console.log(`💾 Score ${scoreGeral}% >= ${SCORE_MINIMO_SALVAR}% - Salvando candidato...`);
         
         const pessoaSalva = await salvarCandidatoNoBanco(candidato, dados, textoOriginal);
         
         if (pessoaSalva) {
+          pessoaSalvaId = pessoaSalva.id;
           console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
           setSalvouBanco(true);
         }
@@ -1188,9 +1225,85 @@ const AnaliseRisco: React.FC = () => {
         setDadosParaSalvarManual({ candidato, dados, textoOriginal, analiseResult: data });
       }
 
+      // ========================================
+      // PASSO 5: PERSISTIR ANÁLISE DE ADEQUAÇÃO
+      // 🆕 v4.5: Salvar score, requisitos, gaps, perguntas na tabela analise_adequacao
+      // Vinculado por pessoa_id + vaga_id (candidatura_id será preenchido quando candidatura for criada)
+      // ========================================
+      if (pessoaSalvaId && vagaSelecionada?.id) {
+        try {
+          console.log('💾 Persistindo análise de adequação na tabela analise_adequacao...');
+
+          // Verificar se já existe análise para este par pessoa+vaga (upsert)
+          const { data: analiseExistente } = await supabase
+            .from('analise_adequacao')
+            .select('id')
+            .eq('pessoa_id', pessoaSalvaId)
+            .eq('vaga_id', vagaSelecionada.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          const dadosAnalise = {
+            pessoa_id: pessoaSalvaId,
+            vaga_id: vagaSelecionada.id,
+            candidatura_id: null, // Será preenchido quando a candidatura for criada
+            score_geral: scoreGeral,
+            nivel_adequacao: data.nivel_adequacao_geral || 'PARCIALMENTE_COMPATIVEL',
+            confianca_analise: data.confianca_analise || 0,
+            recomendacao: data.avaliacao_final?.recomendacao || 'ENTREVISTAR',
+            perguntas_entrevista: data.perguntas_entrevista || [],
+            requisitos_analisados: [
+              ...(data.requisitos_imprescindiveis || []),
+              ...(data.requisitos_muito_desejaveis || []),
+              ...(data.requisitos_desejaveis || [])
+            ],
+            resumo_executivo: data.resumo_executivo || {},
+            avaliacao_final: data.avaliacao_final || {},
+            resultado_completo: data,
+            modelo_ia: 'claude-sonnet',
+            status: 'concluida',
+            updated_at: new Date().toISOString()
+          };
+
+          if (analiseExistente?.id) {
+            // UPDATE - análise já existe para este par pessoa+vaga
+            const { error: updateErr } = await supabase
+              .from('analise_adequacao')
+              .update(dadosAnalise)
+              .eq('id', analiseExistente.id);
+
+            if (updateErr) {
+              console.warn('⚠️ Erro ao atualizar analise_adequacao:', updateErr.message);
+            } else {
+              console.log(`✅ Análise de adequação ATUALIZADA (ID: ${analiseExistente.id}) - pessoa_id: ${pessoaSalvaId}, vaga_id: ${vagaSelecionada.id}`);
+            }
+          } else {
+            // INSERT - nova análise
+            const { data: novaAnalise, error: insertErr } = await supabase
+              .from('analise_adequacao')
+              .insert({
+                ...dadosAnalise,
+                created_by: user?.id || null
+              })
+              .select('id')
+              .single();
+
+            if (insertErr) {
+              console.warn('⚠️ Erro ao inserir analise_adequacao:', insertErr.message);
+            } else {
+              console.log(`✅ Análise de adequação CRIADA (ID: ${novaAnalise?.id}) - pessoa_id: ${pessoaSalvaId}, vaga_id: ${vagaSelecionada.id}`);
+            }
+          }
+        } catch (errAnalise: any) {
+          // Não bloqueia o fluxo principal se falhar
+          console.warn('⚠️ Erro ao persistir análise de adequação:', errAnalise.message);
+        }
+      }
+
     } catch (err: any) {
       console.error('❌ Erro na análise de adequação:', err);
-      setErro(`Erro na análise: ${err.message}`);
+      setErro(formatarErroAPI(err));
     } finally {
       setIsAnalisandoAdequacao(false);
     }
@@ -1392,7 +1505,8 @@ const AnaliseRisco: React.FC = () => {
           data_fim: formatarData(e.data_fim),
           atual: e.atual || false,
           descricao: e.descricao || '',
-          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : []
+          tecnologias_usadas: Array.isArray(e.tecnologias) ? e.tecnologias : [],
+          motivo_saida: e.motivo_saida || null
         }));
         
         const { error: errExp } = await supabase.from('pessoa_experiencias').insert(experienciasParaSalvar);
@@ -1583,6 +1697,53 @@ const AnaliseRisco: React.FC = () => {
         console.log('✅ Candidato salvo manualmente com ID:', pessoaSalva.id);
         setSalvouBanco(true);
         setDadosParaSalvarManual(null);
+
+        // 🆕 v4.5: Persistir análise de adequação no salvamento manual também
+        if (analiseAdequacao && vagaSelecionada?.id && analiseResult) {
+          try {
+            console.log('💾 [Manual] Persistindo análise de adequação...');
+            
+            const { data: analiseExistente } = await supabase
+              .from('analise_adequacao')
+              .select('id')
+              .eq('pessoa_id', pessoaSalva.id)
+              .eq('vaga_id', vagaSelecionada.id)
+              .limit(1)
+              .maybeSingle();
+
+            const dadosAnalise = {
+              pessoa_id: pessoaSalva.id,
+              vaga_id: vagaSelecionada.id,
+              candidatura_id: null,
+              score_geral: analiseAdequacao.score_geral,
+              nivel_adequacao: analiseResult.nivel_adequacao_geral || 'PARCIALMENTE_COMPATIVEL',
+              confianca_analise: analiseAdequacao.nivel_confianca || 0,
+              recomendacao: analiseResult.avaliacao_final?.recomendacao || 'ENTREVISTAR',
+              perguntas_entrevista: analiseResult.perguntas_entrevista || [],
+              requisitos_analisados: [
+                ...(analiseResult.requisitos_imprescindiveis || []),
+                ...(analiseResult.requisitos_muito_desejaveis || []),
+                ...(analiseResult.requisitos_desejaveis || [])
+              ],
+              resumo_executivo: analiseResult.resumo_executivo || {},
+              avaliacao_final: analiseResult.avaliacao_final || {},
+              resultado_completo: analiseResult,
+              modelo_ia: 'claude-sonnet',
+              status: 'concluida',
+              updated_at: new Date().toISOString()
+            };
+
+            if (analiseExistente?.id) {
+              await supabase.from('analise_adequacao').update(dadosAnalise).eq('id', analiseExistente.id);
+              console.log(`✅ [Manual] Análise de adequação ATUALIZADA (ID: ${analiseExistente.id})`);
+            } else {
+              await supabase.from('analise_adequacao').insert({ ...dadosAnalise, created_by: user?.id || null });
+              console.log('✅ [Manual] Análise de adequação CRIADA');
+            }
+          } catch (errAnalise: any) {
+            console.warn('⚠️ [Manual] Erro ao persistir análise:', errAnalise.message);
+          }
+        }
       }
     } catch (err: any) {
       console.error('❌ Erro ao salvar manualmente:', err);

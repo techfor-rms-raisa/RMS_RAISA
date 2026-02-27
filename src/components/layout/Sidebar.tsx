@@ -6,7 +6,10 @@
  * - Separação RMS vs RAISA
  * - Config. Priorização apenas para Admin
  * 
- * Data: 11/01/2026
+ * 🆕 v58.0: Reordenação Menu RAISA
+ * - Nova sequência: Vagas > Análise CV > LinkedIn > Banco Talentos > Candidaturas > Entrevista > Pipeline > Controle Envios
+ * 
+ * Data: 25/02/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -185,62 +188,63 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
     // ============================================
     
     const raisaItems = [
-        // Vagas - RAISA Total + Gestão Comercial (pode inserir vagas)
+        // 1) Vagas - RAISA Total + Gestão Comercial (pode inserir vagas)
         { 
             view: 'vagas', 
             label: 'Vagas', 
             icon: 'fa-solid fa-briefcase', 
             roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
         },
-        // Candidaturas - RAISA Total + Gestão Comercial (read-only)
-        { 
-            view: 'candidaturas', 
-            label: 'Candidaturas', 
-            icon: 'fa-solid fa-id-card', 
-            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
-        },
-        // Entrevista Técnica - RAISA Total + Gestão Comercial (read-only)
-        { 
-            view: 'entrevista_tecnica', 
-            label: 'Entrevista Técnica', 
-            icon: 'fa-solid fa-headset', 
-            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
-        },
-        // Controle de Envios - RAISA Total + Gestão Comercial (read-only)
-        { 
-            view: 'controle_envios', 
-            label: 'Controle de Envios', 
-            icon: 'fa-solid fa-paper-plane', 
-            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
-        },
-        // Análise de Currículo - RAISA Total + Gestão Comercial (read-only)
+        // 2) Análise de Currículo - RAISA Total + Gestão Comercial (read-only)
         { 
             view: 'analise_risco', 
             label: 'Análise de Currículo (AI)', 
             icon: 'fa-solid fa-magnifying-glass', 
             roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
         },
-        // Pipeline - RAISA Total + Gestão Comercial (read-only)
+        // 3) Candidaturas - RAISA Total + Gestão Comercial (read-only)
         { 
-            view: 'pipeline', 
-            label: 'Pipeline', 
-            icon: 'fa-solid fa-filter', 
+            view: 'candidaturas', 
+            label: 'Candidaturas', 
+            icon: 'fa-solid fa-id-card', 
             roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
         },
-        // Banco de Talentos - RAISA Total + Gestão Comercial (read-only)
+        // 4) Entrevista Técnica - RAISA Total + Gestão Comercial (read-only)
+        { 
+            view: 'entrevista_tecnica', 
+            label: 'Entrevista Técnica', 
+            icon: 'fa-solid fa-headset', 
+            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
+        },
+        // 5) Banco de Talentos - RAISA Total + Gestão Comercial (read-only)
         { 
             view: 'talentos', 
             label: 'Banco de Talentos', 
             icon: 'fa-solid fa-user-graduate', 
             roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
         },
-        // Importar LinkedIn - Apenas RAISA Total (Gestão Comercial NÃO pode)
+        // 6) Importar LinkedIn - Apenas RAISA Total (Gestão Comercial NÃO pode)
         { 
             view: 'linkedin_import', 
             label: 'Importar LinkedIn', 
             icon: 'fa-brands fa-linkedin', 
             roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S'] 
         },
+        // 7) Pipeline - RAISA Total + Gestão Comercial (read-only)
+        { 
+            view: 'pipeline', 
+            label: 'Pipeline', 
+            icon: 'fa-solid fa-filter', 
+            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
+        },
+        // 8) Controle de Envios - RAISA Total + Gestão Comercial (read-only)
+        { 
+            view: 'controle_envios', 
+            label: 'Controle de Envios', 
+            icon: 'fa-solid fa-paper-plane', 
+            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
+        },
+        // --- Restante mantém ordem ---
         // Distribuição IA - RAISA Total + Gestão Comercial (read-only)
         { 
             view: 'distribuicao_ia', 
