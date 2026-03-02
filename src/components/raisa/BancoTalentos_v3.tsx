@@ -14,7 +14,7 @@
  * Data: 13/01/2026
  */
 
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Pessoa } from '../../types/types_models';
 import { supabase } from '../../config/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -158,38 +158,44 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     }, [user?.tipo_usuario]);
 
     // ============================================
-    // 🆕 AUTO-REFRESH: Recarregar ao voltar para a aba
+    // 🆕 SUPABASE REALTIME: Escuta mudanças na tabela pessoas
     // Resolve: candidato importado via LinkedIn não aparece sem F5
-    // Estratégia: quando o usuário volta para a aba da RAISA,
-    // verifica se houve mudança (contagem) e recarrega se necessário
+    // Estratégia: WebSocket persistente via Supabase Realtime.
+    // Quando a tabela 'pessoas' recebe INSERT/UPDATE/DELETE,
+    // o Supabase envia push instantâneo e chamamos onRefresh.
+    // Debounce de 1.5s evita múltiplos refreshs simultâneos.
     // ============================================
-    const pessoasCountRef = useRef(pessoas?.length || 0);
-
     useEffect(() => {
-        // Atualizar ref sempre que pessoas mudar
-        pessoasCountRef.current = pessoas?.length || 0;
-    }, [pessoas?.length]);
+        if (!onRefresh) return;
 
-    useEffect(() => {
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === 'visible' && onRefresh) {
-                console.log('🔄 [BancoTalentos] Aba ativada - verificando atualizações...');
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const debouncedRefresh = () => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                console.log('🔄 [BancoTalentos] Realtime: mudança detectada - recarregando...');
                 onRefresh();
-            }
+            }, 1500);
         };
 
-        // Listener para evento customizado do plugin LinkedIn
-        const handleLinkedInImport = () => {
-            console.log('🔄 [BancoTalentos] Importação LinkedIn detectada - recarregando...');
-            if (onRefresh) onRefresh();
-        };
-
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        window.addEventListener('raisa-linkedin-import', handleLinkedInImport);
+        const channel = supabase
+            .channel('banco-talentos-changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'pessoas' },
+                (payload) => {
+                    console.log('📡 [Realtime] Evento:', payload.eventType, payload.new ? (payload.new as any).nome : '');
+                    debouncedRefresh();
+                }
+            )
+            .subscribe((status) => {
+                console.log('📡 [Realtime] Status canal pessoas:', status);
+            });
 
         return () => {
-            document.removeEventListener('visibilitychange', handleVisibilityChange);
-            window.removeEventListener('raisa-linkedin-import', handleLinkedInImport);
+            if (debounceTimer) clearTimeout(debounceTimer);
+            supabase.removeChannel(channel);
+            console.log('📡 [Realtime] Canal pessoas desconectado');
         };
     }, [onRefresh]);
 
