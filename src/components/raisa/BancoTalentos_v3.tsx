@@ -14,7 +14,7 @@
  * Data: 13/01/2026
  */
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Pessoa } from '../../types/types_models';
 import { supabase } from '../../config/supabase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -156,6 +156,42 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
             setFiltroExclusividade('todos');
         }
     }, [user?.tipo_usuario]);
+
+    // ============================================
+    // 🆕 AUTO-REFRESH: Recarregar ao voltar para a aba
+    // Resolve: candidato importado via LinkedIn não aparece sem F5
+    // Estratégia: quando o usuário volta para a aba da RAISA,
+    // verifica se houve mudança (contagem) e recarrega se necessário
+    // ============================================
+    const pessoasCountRef = useRef(pessoas?.length || 0);
+
+    useEffect(() => {
+        // Atualizar ref sempre que pessoas mudar
+        pessoasCountRef.current = pessoas?.length || 0;
+    }, [pessoas?.length]);
+
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible' && onRefresh) {
+                console.log('🔄 [BancoTalentos] Aba ativada - verificando atualizações...');
+                onRefresh();
+            }
+        };
+
+        // Listener para evento customizado do plugin LinkedIn
+        const handleLinkedInImport = () => {
+            console.log('🔄 [BancoTalentos] Importação LinkedIn detectada - recarregando...');
+            if (onRefresh) onRefresh();
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('raisa-linkedin-import', handleLinkedInImport);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('raisa-linkedin-import', handleLinkedInImport);
+        };
+    }, [onRefresh]);
 
     // ============================================
     // FILTROS
