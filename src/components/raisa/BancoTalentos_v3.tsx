@@ -158,6 +158,48 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     }, [user?.tipo_usuario]);
 
     // ============================================
+    // 🆕 SUPABASE REALTIME: Escuta mudanças na tabela pessoas
+    // Resolve: candidato importado via LinkedIn não aparece sem F5
+    // Estratégia: WebSocket persistente via Supabase Realtime.
+    // Quando a tabela 'pessoas' recebe INSERT/UPDATE/DELETE,
+    // o Supabase envia push instantâneo e chamamos onRefresh.
+    // Debounce de 1.5s evita múltiplos refreshs simultâneos.
+    // ============================================
+    useEffect(() => {
+        if (!onRefresh) return;
+
+        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const debouncedRefresh = () => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(() => {
+                console.log('🔄 [BancoTalentos] Realtime: mudança detectada - recarregando...');
+                onRefresh();
+            }, 1500);
+        };
+
+        const channel = supabase
+            .channel('banco-talentos-changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'pessoas' },
+                (payload) => {
+                    console.log('📡 [Realtime] Evento:', payload.eventType, payload.new ? (payload.new as any).nome : '');
+                    debouncedRefresh();
+                }
+            )
+            .subscribe((status) => {
+                console.log('📡 [Realtime] Status canal pessoas:', status);
+            });
+
+        return () => {
+            if (debounceTimer) clearTimeout(debounceTimer);
+            supabase.removeChannel(channel);
+            console.log('📡 [Realtime] Canal pessoas desconectado');
+        };
+    }, [onRefresh]);
+
+    // ============================================
     // FILTROS
     // ============================================
 
