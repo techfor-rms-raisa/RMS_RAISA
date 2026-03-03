@@ -36,7 +36,9 @@ export type View =
   | 'dashboard_geral' | 'dashboard_clientes' | 'dashboard_tempo'
   | 'dashboard_ml' | 'dashboard_performance_ia' | 'dashboard_raisa_metrics'
   // Movimentações e Posição
-  | 'movimentacoes' | 'posicao_comercial' | 'profiles';
+  | 'movimentacoes' | 'posicao_comercial' | 'profiles'
+  // Apollo Views
+  | 'apollo_prospect';
 
 // ============================================
 // VAGAS (RAISA)
