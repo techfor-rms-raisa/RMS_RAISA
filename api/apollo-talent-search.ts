@@ -126,7 +126,7 @@ async function searchPeople(filters: ApolloSearchFilters): Promise<ApolloSearchR
 
     console.log('🔍 [Apollo Service] People Search:', JSON.stringify(body, null, 2));
 
-    const response = await fetch(`${APOLLO_BASE_URL}/mixed_people/search`, {
+    const response = await fetch(`${APOLLO_BASE_URL}/mixed_people/api_search`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
