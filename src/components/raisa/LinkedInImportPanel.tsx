@@ -21,7 +21,6 @@ import React, { useState, useEffect } from 'react';
 import { useLinkedInPessoas, PessoaLinkedIn } from '@/hooks/supabase/useLinkedInPessoas';
 import { useAuth } from '../../contexts/AuthContext';
 import { podeUsarLinkedIn } from '../../utils/permissions';
-import ApolloTalentTab from './ApolloTalentTab';
 
 interface LinkedInImportPanelProps {
   userId?: number;
@@ -61,7 +60,7 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
     atualizarPerfil
   } = useLinkedInPessoas();
 
-  const [tab, setTab] = useState<'linkedin' | 'todas' | 'apollo' | 'instrucoes'>('linkedin');
+  const [tab, setTab] = useState<'linkedin' | 'todas' | 'instrucoes'>('linkedin');
   const [filtroTermo, setFiltroTermo] = useState('');
   const [filtroSenioridade, setFiltroSenioridade] = useState('');
   const [filtroOrigem, setFiltroOrigem] = useState('');
@@ -116,7 +115,7 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
   };
 
   // Mudar tab
-  const handleTabChange = async (novaTab: 'linkedin' | 'todas' | 'apollo' | 'instrucoes') => {
+  const handleTabChange = async (novaTab: 'linkedin' | 'todas' | 'instrucoes') => {
     setTab(novaTab);
     setFiltroTermo('');
     setFiltroSenioridade('');
@@ -401,7 +400,6 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
         {[
           { id: 'linkedin', label: '🔗 Do LinkedIn', count: statsLinkedIn.totalImportados },
           { id: 'todas', label: '👥 Todas Origens', count: statsGeral.reduce((a, b) => a + b.total, 0) },
-          { id: 'apollo', label: '🎯 Buscar no Apollo', count: null },
           { id: 'instrucoes', label: '📖 Como Usar', count: null }
         ].map(t => (
           <button
@@ -546,11 +544,6 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
             </div>
           )}
         </div>
-      )}
-
-      {/* 🆕 Tab Apollo Talent Finder */}
-      {tab === 'apollo' && (
-        <ApolloTalentTab userId={user?.id} />
       )}
 
       {/* Tab Instruções */}

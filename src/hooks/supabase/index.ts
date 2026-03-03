@@ -87,11 +87,3 @@ export type { PessoaLinkedIn, EstatisticasOrigem, FiltrosPessoas } from './useLi
 
 // Hook de Análise de Adequação de Perfil
 export { useAnaliseAdequacao } from './useAnaliseAdequacao';
-
-// ============================================
-// HOOKS ADICIONADOS EM 03/03/2026
-// ============================================
-
-// Hook Apollo Talent Search (Busca de candidatos via Apollo)
-export { useApolloTalentSearch } from './useApolloTalentSearch';
-export type { ApolloTalentResult, ApolloTalentPagination, VagaResumo } from './useApolloTalentSearch';
