@@ -8,7 +8,11 @@
  * RETORNA: nome, cargo, empresa, LinkedIn URL, foto, localização
  * NÃO RETORNA: email, telefone
  * 
- * Versão: 1.1 (self-contained - sem imports externos entre serverless functions)
+ * IMPORTANTE: O endpoint api_search recebe parâmetros via QUERY STRING,
+ * não via JSON body (conforme documentação Apollo atualizada)
+ * Ref: https://docs.apollo.io/reference/people-api-search
+ * 
+ * Versão: 1.2
  * Data: 03/03/2026
  */
 
@@ -16,7 +20,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
 // ============================================
-// APOLLO SERVICE (INLINE - evita problemas de import no Vercel)
+// APOLLO SERVICE (INLINE)
 // ============================================
 
 const APOLLO_BASE_URL = 'https://api.apollo.io/api/v1';
@@ -46,9 +50,7 @@ interface ApolloSearchFilters {
   person_seniorities?: string[];
   person_locations?: string[];
   q_keywords?: string;
-  organization_industry_tag_ids?: string[];
   organization_num_employees_ranges?: string[];
-  q_organization_domains?: string[];
   page?: number;
   per_page?: number;
 }
@@ -90,6 +92,12 @@ interface ApolloSearchResponse {
   error?: string;
 }
 
+/**
+ * Busca pessoas via Apollo People API Search
+ * 
+ * IMPORTANTE: O endpoint api_search usa QUERY STRING, não JSON body
+ * Formato: person_titles[]=value1&person_titles[]=value2
+ */
 async function searchPeople(filters: ApolloSearchFilters): Promise<ApolloSearchResponse> {
   try {
     const apiKey = process.env.APOLLO_API_KEY;
@@ -97,43 +105,66 @@ async function searchPeople(filters: ApolloSearchFilters): Promise<ApolloSearchR
       throw new Error('APOLLO_API_KEY não configurada nas variáveis de ambiente');
     }
 
-    const body: Record<string, any> = {
-      page: filters.page || 1,
-      per_page: Math.min(filters.per_page || 25, 100)
-    };
+    // Montar query string (formato array: param[]=value)
+    const params = new URLSearchParams();
 
+    // Títulos/Cargos
     if (filters.person_titles?.length) {
-      body.person_titles = filters.person_titles;
+      for (const title of filters.person_titles) {
+        if (title.trim()) {
+          params.append('person_titles[]', title.trim());
+        }
+      }
     }
+
+    // Senioridade
     if (filters.person_seniorities?.length) {
-      body.person_seniorities = filters.person_seniorities.map(s => mapSeniority(s));
+      for (const sen of filters.person_seniorities) {
+        if (sen.trim()) {
+          params.append('person_seniorities[]', mapSeniority(sen.trim()));
+        }
+      }
     }
+
+    // Localização
     if (filters.person_locations?.length) {
-      body.person_locations = filters.person_locations;
+      for (const loc of filters.person_locations) {
+        if (loc.trim()) {
+          params.append('person_locations[]', loc.trim());
+        }
+      }
     }
-    if (filters.q_keywords) {
-      body.q_keywords = filters.q_keywords;
+
+    // Keywords
+    if (filters.q_keywords?.trim()) {
+      params.append('q_keywords', filters.q_keywords.trim());
     }
-    if (filters.organization_industry_tag_ids?.length) {
-      body.organization_industry_tag_ids = filters.organization_industry_tag_ids;
-    }
+
+    // Tamanho da empresa
     if (filters.organization_num_employees_ranges?.length) {
-      body.organization_num_employees_ranges = filters.organization_num_employees_ranges;
-    }
-    if (filters.q_organization_domains?.length) {
-      body.q_organization_domains = filters.q_organization_domains.join('\n');
+      for (const range of filters.organization_num_employees_ranges) {
+        if (range.trim()) {
+          params.append('organization_num_employees_ranges[]', range.trim());
+        }
+      }
     }
 
-    console.log('🔍 [Apollo Service] People Search:', JSON.stringify(body, null, 2));
+    // Paginação
+    params.append('page', String(filters.page || 1));
+    params.append('per_page', String(Math.min(filters.per_page || 25, 100)));
 
-    const response = await fetch(`${APOLLO_BASE_URL}/mixed_people/api_search`, {
+    const url = `${APOLLO_BASE_URL}/mixed_people/api_search?${params.toString()}`;
+
+    console.log('🔍 [Apollo Service] People API Search URL:', url.replace(apiKey, '***'));
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'no-cache',
+        'accept': 'application/json',
         'x-api-key': apiKey
-      },
-      body: JSON.stringify(body)
+      }
     });
 
     if (!response.ok) {
@@ -221,9 +252,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       person_seniorities,
       person_locations,
       q_keywords,
-      organization_industry_tag_ids,
       organization_num_employees_ranges,
-      q_organization_domains,
       page = 1,
       per_page = 25,
       user_id,
@@ -244,9 +273,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       person_seniorities: person_seniorities || [],
       person_locations: person_locations || ['Brazil'],
       q_keywords: q_keywords || '',
-      organization_industry_tag_ids: organization_industry_tag_ids || [],
       organization_num_employees_ranges: organization_num_employees_ranges || [],
-      q_organization_domains: q_organization_domains || [],
       page,
       per_page: Math.min(per_page, 100)
     };
