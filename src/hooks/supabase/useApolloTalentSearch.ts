@@ -133,7 +133,7 @@ export function useApolloTalentSearch() {
         id: String(v.id),
         titulo: v.titulo,
         senioridade: v.senioridade || 'Pleno',
-        stack_tecnologica: v.stack_tecnologica || [],
+        stack_tecnologica: Array.isArray(v.stack_tecnologica) ? v.stack_tecnologica : (v.stack_tecnologica ? String(v.stack_tecnologica).replace(/[{}"]/g, '').split(',').filter(Boolean) : []),
         status: v.status,
         cliente_nome: v.clients?.razao_social_cliente || '',
         modalidade: v.modalidade,

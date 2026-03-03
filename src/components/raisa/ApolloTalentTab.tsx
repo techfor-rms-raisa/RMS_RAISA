@@ -112,7 +112,7 @@ const ApolloTalentTab: React.FC<ApolloTalentTabProps> = ({ userId }) => {
     return vagasAbertas.filter(v =>
       v.titulo.toLowerCase().includes(termo) ||
       v.cliente_nome?.toLowerCase().includes(termo) ||
-      v.stack_tecnologica.some(s => s.toLowerCase().includes(termo))
+      v.stack_tecnologica?.some(s => s.toLowerCase().includes(termo))
     );
   }, [vagasAbertas, buscaVaga]);
 
@@ -309,16 +309,16 @@ const ApolloTalentTab: React.FC<ApolloTalentTabProps> = ({ userId }) => {
                 <span>💼 {vagaSelecionada.modalidade}</span>
               )}
             </div>
-            {vagaSelecionada.stack_tecnologica.length > 0 && (
+            {(vagaSelecionada.stack_tecnologica || []).length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
-                {vagaSelecionada.stack_tecnologica.slice(0, 8).map((skill, i) => (
+                {(vagaSelecionada.stack_tecnologica || []).slice(0, 8).map((skill, i) => (
                   <span key={i} className="px-2 py-0.5 text-xs bg-blue-100 text-blue-700 rounded-full">
                     {skill}
                   </span>
                 ))}
-                {vagaSelecionada.stack_tecnologica.length > 8 && (
+                {(vagaSelecionada.stack_tecnologica || []).length > 8 && (
                   <span className="px-2 py-0.5 text-xs bg-blue-200 text-blue-800 rounded-full">
-                    +{vagaSelecionada.stack_tecnologica.length - 8}
+                    +{(vagaSelecionada.stack_tecnologica || []).length - 8}
                   </span>
                 )}
               </div>
@@ -485,8 +485,8 @@ const ApolloTalentTab: React.FC<ApolloTalentTabProps> = ({ userId }) => {
                         <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
                           {vaga.cliente_nome && <span>🏢 {vaga.cliente_nome}</span>}
                           <span>📊 {vaga.senioridade}</span>
-                          {vaga.stack_tecnologica.length > 0 && (
-                            <span>🔧 {vaga.stack_tecnologica.slice(0, 3).join(', ')}{vaga.stack_tecnologica.length > 3 ? '...' : ''}</span>
+                          {(vaga.stack_tecnologica || []).length > 0 && (
+                            <span>🔧 {(vaga.stack_tecnologica || []).slice(0, 3).join(', ')}{(vaga.stack_tecnologica || []).length > 3 ? '...' : ''}</span>
                           )}
                         </div>
                       </div>
