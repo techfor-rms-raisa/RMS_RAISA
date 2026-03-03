@@ -323,6 +323,31 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
     ] as any;
 
     // ============================================
+    // ITENS DO MENU PROSPECT
+    // ============================================
+    
+    const prospectItems = [
+        { 
+            view: 'prospect_search', 
+            label: 'Buscar Leads', 
+            icon: 'fa-solid fa-magnifying-glass-dollar', 
+            roles: ['Administrador', 'Gestão Comercial'] 
+        },
+        { 
+            view: 'prospect_list', 
+            label: 'Meus Prospects', 
+            icon: 'fa-solid fa-address-book', 
+            roles: ['Administrador', 'Gestão Comercial', 'Gestão de R&S'] 
+        },
+        { 
+            view: 'prospect_credits', 
+            label: 'Consumo Créditos', 
+            icon: 'fa-solid fa-chart-column', 
+            roles: ['Administrador', 'Gestão Comercial'] 
+        },
+    ] as any;
+
+    // ============================================
     // VERIFICAR SE USUÁRIO TEM ACESSO AO RAISA
     // ============================================
     
@@ -334,6 +359,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
     // ============================================
     
     const temAcessoAtividades = ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Gestão de Pessoas', 'Consulta']
+        .includes(currentUser.tipo_usuario);
+
+    const temAcessoPROSPECT = ['Administrador', 'Gestão Comercial', 'Gestão de R&S']
         .includes(currentUser.tipo_usuario);
 
     return (
@@ -390,6 +418,23 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
                             title="RAISA"
                             subtitle="Recruitment AI System Assistant"
                             items={raisaItems}
+                            currentUserRole={currentUser.tipo_usuario}
+                            currentView={currentView}
+                            isCollapsed={isCollapsed}
+                            onNavigate={onNavigate}
+                        />
+                    </>
+                )}
+
+                {/* PROSPECT - Prospecção B2B */}
+                {temAcessoPROSPECT && (
+                    <>
+                        <div className="my-2 border-t border-gray-700 mx-4 opacity-50"></div>
+
+                        <SidebarSection 
+                            title="PROSPECT"
+                            subtitle="B2B Lead Intelligence"
+                            items={prospectItems}
                             currentUserRole={currentUser.tipo_usuario}
                             currentView={currentView}
                             isCollapsed={isCollapsed}

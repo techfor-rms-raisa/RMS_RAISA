@@ -50,6 +50,7 @@ import DashboardRaisaMetrics from './components/raisa/DashboardRaisaMetrics';
 // ✅ NOVO: Imports de Configuração e Distribuição (28/12/2024)
 import { ConfiguracaoPriorizacaoDistribuicao } from './components/ConfiguracaoPriorizacaoDistribuicao';
 import DistribuicaoIAPage from './components/raisa/DistribuicaoIAPage';
+import ProspectSearchPage from './components/prospect/ProspectSearchPage';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -435,6 +436,16 @@ const App: React.FC = () => {
           return <ConfiguracaoPriorizacaoDistribuicao />;
       case 'distribuicao_ia':
           return <DistribuicaoIAPage />;
+
+      // ============================================
+      // PROSPECT Views — Prospecção B2B
+      // ============================================
+      case 'prospect_search':
+          return <ProspectSearchPage />;
+      case 'prospect_list':
+          return <div className="p-8 text-center text-gray-400"><i className="fa-solid fa-address-book text-5xl mb-4 block"></i><p className="text-lg">Meus Prospects — Fase 3</p></div>;
+      case 'prospect_credits':
+          return <div className="p-8 text-center text-gray-400"><i className="fa-solid fa-chart-column text-5xl mb-4 block"></i><p className="text-lg">Consumo de Créditos — Fase 3</p></div>;
 
       case 'dashboard':
       default:
