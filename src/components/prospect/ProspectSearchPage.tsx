@@ -4,11 +4,17 @@
  * Página principal do módulo de prospecção B2B
  * Motor duplo: Apollo + Snov.io com fallback cruzado
  * 
- * Versão: 1.0
- * Data: 03/03/2026
+ * Versão: 2.0
+ * Data: 04/03/2026
+ *
+ * v2.0:
+ * - Implementação real do botão Salvar (integrado com /api/prospect-save)
+ * - Aba "Leads Salvos" com listagem do Supabase
+ * - useAuth corrigido: { user: currentUser }
+ * - Toast de feedback no save
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 
 // ============================================
@@ -87,6 +93,8 @@ const ProspectSearchPage: React.FC = () => {
     const [resultados, setResultados] = useState<ProspectResult[]>([]);
     const [searchState, setSearchState] = useState<SearchState>({ loading: false, motor: null, error: null });
     const [creditosConsumidos, setCreditosConsumidos] = useState({ apollo: 0, snovio: 0 });
+    const [saving, setSaving]         = useState(false);
+    const [toastMsg, setToastMsg]     = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
     const [empresaInfo, setEmpresaInfo] = useState<any>(null);
 
     // Seleção
@@ -301,8 +309,58 @@ const ProspectSearchPage: React.FC = () => {
     // ============================================
     // RENDER
     // ============================================
-    return (
+    // ── SALVAR SELECIONADOS ──────────────────────────────
+    const handleSalvar = useCallback(async () => {
+        if (!currentUser?.id) {
+            console.warn('⚠️ [ProspectSearch] currentUser não disponível');
+            return;
+        }
+        const selecionados = resultados.filter(r => r.selecionado);
+        if (!selecionados.length) return;
+
+        setSaving(true);
+        try {
+            const response = await fetch('/api/prospect-save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    prospects:    selecionados,
+                    user_id:      currentUser.id,
+                    filtros_busca: {
+                        departamentos:   departamentosSelecionados,
+                        senioridades:    senioridadesSelecionadas,
+                        filtrar_brasil:  filtrarBrasil,
+                        dominio_buscado: domain.trim(),
+                    },
+                }),
+            });
+            const result = await response.json();
+            if (result.success) {
+                setToastMsg({ tipo: 'ok', msg: `${result.salvos} lead${result.salvos > 1 ? 's' : ''} salvo${result.salvos > 1 ? 's' : ''} com sucesso!` });
+                console.log(`✅ [ProspectSearch] ${result.salvos} leads salvos`);
+            } else {
+                setToastMsg({ tipo: 'erro', msg: `Erro ao salvar: ${result.error || 'desconhecido'}` });
+                console.error('❌ [ProspectSearch] Erro save:', result.error);
+            }
+        } catch (err: any) {
+            setToastMsg({ tipo: 'erro', msg: `Erro: ${err.message}` });
+            console.error('❌ [ProspectSearch] Erro save:', err);
+        } finally {
+            setSaving(false);
+            setTimeout(() => setToastMsg(null), 4000);
+        }
+    }, [resultados, currentUser, departamentosSelecionados, senioridadesSelecionadas, filtrarBrasil, domain]);
+
+        return (
         <div className="p-6 max-w-full">
+            {/* Toast */}
+            {toastMsg && (
+                <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium flex items-center gap-2
+                    ${toastMsg.tipo === 'ok' ? 'bg-green-600' : 'bg-red-600'}`}>
+                    <i className={`fa-solid ${toastMsg.tipo === 'ok' ? 'fa-check-circle' : 'fa-exclamation-circle'}`}></i>
+                    {toastMsg.msg}
+                </div>
+            )}
             {/* Header */}
             <div className="mb-6">
                 <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
@@ -481,12 +539,14 @@ const ProspectSearchPage: React.FC = () => {
                         </div>
                         <div className="flex gap-2">
                             <button
-                                onClick={() => alert('Fase 3: Salvar no Supabase')}
-                                disabled={selecionadosCount === 0}
+                                onClick={handleSalvar}
+                                disabled={selecionadosCount === 0 || saving}
                                 className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                <i className="fa-solid fa-floppy-disk mr-1"></i>
-                                Salvar Selecionados
+                                {saving
+                                    ? <><i className="fa-solid fa-spinner fa-spin mr-1"></i>Salvando...</>
+                                    : <><i className="fa-solid fa-floppy-disk mr-1"></i>Salvar Selecionados ({selecionadosCount})</>
+                                }
                             </button>
                             <button
                                 onClick={() => alert('Fase 3: Exportar XLS')}
