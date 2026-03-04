@@ -4,8 +4,9 @@
  * Persiste decisores encontrados pelo Dual Engine na tabela prospect_leads
  * Recebe array de prospects + userId e faz upsert em lote
  *
- * Versão: 1.0
+ * Versão: 1.1
  * Data: 04/03/2026
+ * v1.1: Log detalhado de erro Supabase + diagnóstico tabela inexistente
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -103,8 +104,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .select('id, nome_completo, empresa_nome');
 
         if (error) {
-            console.error('❌ [prospect-save] Supabase error:', error);
-            return res.status(500).json({ success: false, error: error.message });
+            console.error('❌ [prospect-save] Supabase error:', JSON.stringify({
+                code:    error.code,
+                message: error.message,
+                details: error.details,
+                hint:    error.hint,
+            }));
+            // Diagnóstico de erros comuns
+            if (error.code === '42P01') {
+                console.error('❌ TABELA prospect_leads NÃO EXISTE — execute o SQL de criação no Supabase');
+            } else if (error.code === '23503') {
+                console.error('❌ FK violation — buscado_por (user_id) não existe na tabela users');
+            } else if (error.code === '42501') {
+                console.error('❌ RLS bloqueando insert — execute: ALTER TABLE prospect_leads DISABLE ROW LEVEL SECURITY');
+            }
+            return res.status(500).json({ success: false, error: error.message, code: error.code });
         }
 
         console.log(`✅ [prospect-save] ${data?.length} prospects salvos por user_id=${user_id}`);
