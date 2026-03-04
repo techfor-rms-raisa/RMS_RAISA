@@ -8,15 +8,17 @@
  * 1. Busca gratuita (api_search) → retorna lista de decisores (0 créditos)
  * 2. Enriquecimento (people/match) → dados completos (1 crédito/pessoa)
  * 
- * Versão: 2.1
+ * Versão: 2.2
  * Data: 04/03/2026
  *
- * CORREÇÕES v2.1:
- * - Bug #1: Endpoint corrigido → /mixed_people/search (era /mixed_people/api_search)
- * - Bug #2: Chamada corrigida para POST com body JSON (era URLSearchParams na URL)
- * - Bug #3: Filtro filtrar_brasil implementado via person_locations[]
- * - Bug #4: MAX_TITULOS=25 para evitar URL too long
- * - Melhoria: títulos PT-BR expandidos + log de diagnóstico detalhado
+ * CORREÇÕES v2.2 (documentação oficial Apollo):
+ * - Endpoint correto: /mixed_people/api_search
+ * - Método: POST com parâmetros na QUERY STRING (não body JSON)
+ *   Apollo usa POST mas lê filtros via URLSearchParams na URL
+ *   Ref: https://docs.apollo.io/reference/people-api-search
+ * - Domínio: q_organization_domains_list[] na querystring
+ * - Filtro Brasil: person_locations[]=Brazil
+ * - Títulos PT-BR expandidos + MAX_TITULOS=25
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -26,55 +28,44 @@ const APOLLO_BASE_URL = 'https://api.apollo.io/api/v1';
 // ============================================
 // MAPEAMENTO DE DEPARTAMENTOS → TÍTULOS APOLLO
 // ============================================
-// Limite de títulos por request (evitar URL too long e payload excessivo)
+// Máximo de títulos por request (evitar query string muito longa)
 const MAX_TITULOS = 25;
 
 const DEPARTAMENTO_TITULOS: Record<string, string[]> = {
     'ti_tecnologia': [
-        // C-Level / VP
-        'CTO', 'CIO', 'Chief Technology Officer', 'Chief Information Officer',
-        // Diretor
-        'IT Director', 'Director of Technology', 'Director of IT', 'Diretor de TI', 'Diretor de Tecnologia',
-        // Gerente
-        'IT Manager', 'Gerente de TI', 'Head of IT', 'Head of Technology', 'Gerente de Tecnologia',
-        // Coordenador / Especialista
-        'Coordenador de TI', 'Coordenador de Tecnologia', 'Analista de TI',
-        // Engenharia
-        'Software Engineer', 'Software Developer', 'Solutions Architect', 'Cloud Engineer',
-        // Dados
-        'Data Engineer', 'Data Analyst', 'Data Scientist',
-        // DevOps / Segurança
-        'DevOps Engineer', 'System Administrator', 'Cybersecurity Manager',
+        'CTO', 'CIO', 'IT Director', 'Director of Technology', 'Director of IT',
+        'Diretor de TI', 'Diretor de Tecnologia', 'IT Manager', 'Gerente de TI',
+        'Head of IT', 'Head of Technology', 'Gerente de Tecnologia',
+        'Coordenador de TI', 'Solutions Architect', 'Software Engineer',
     ],
     'compras_procurement': [
-        'CPO', 'Procurement Director', 'Purchasing Director', 'Director of Procurement',
-        'Purchasing Manager', 'Procurement Manager', 'Gerente de Compras', 'Diretor de Compras',
-        'Head of Procurement', 'Coordenador de Compras', 'Analista de Compras', 'Supply Chain Manager',
+        'CPO', 'Procurement Director', 'Purchasing Director', 'Procurement Manager',
+        'Purchasing Manager', 'Diretor de Compras', 'Gerente de Compras',
+        'Head of Procurement', 'Coordenador de Compras', 'Supply Chain Manager',
     ],
     'infraestrutura': [
         'Infrastructure Director', 'Infrastructure Manager', 'Diretor de Infraestrutura',
-        'Gerente de Infraestrutura', 'Head of Infrastructure', 'Coordenador de Infraestrutura',
-        'IT Infrastructure Manager', 'Network Manager', 'Systems Manager',
+        'Gerente de Infraestrutura', 'Head of Infrastructure', 'IT Infrastructure Manager',
+        'Network Manager', 'Systems Manager', 'Coordenador de Infraestrutura',
     ],
     'governanca_compliance': [
-        'Chief Compliance Officer', 'CCO', 'Governance Director', 'Compliance Director',
+        'Chief Compliance Officer', 'CCO', 'Compliance Director', 'Governance Director',
         'Diretor de Governança', 'Gerente de Governança', 'Compliance Manager',
-        'Gerente de Compliance', 'Head of Governance', 'Risk Manager', 'Gerente de Riscos',
+        'Gerente de Compliance', 'Risk Manager', 'Gerente de Riscos',
     ],
     'rh_recursos_humanos': [
-        'CHRO', 'Chief Human Resources Officer', 'HR Director', 'HR Manager',
-        'Diretor de RH', 'Gerente de RH', 'Head of HR', 'Head of People',
-        'Diretor de Pessoas', 'Gerente de Pessoas', 'People Manager', 'Talent Manager',
+        'CHRO', 'HR Director', 'HR Manager', 'Diretor de RH', 'Gerente de RH',
+        'Head of HR', 'Head of People', 'Diretor de Pessoas', 'Gerente de Pessoas',
+        'People Manager', 'Talent Manager',
     ],
     'comercial_vendas': [
-        'CSO', 'Chief Sales Officer', 'Sales Director', 'Commercial Director',
-        'Sales Manager', 'Diretor Comercial', 'Gerente Comercial', 'Head of Sales',
-        'VP de Vendas', 'VP Comercial', 'Account Director', 'Business Development Director',
+        'CSO', 'Sales Director', 'Commercial Director', 'Sales Manager',
+        'Diretor Comercial', 'Gerente Comercial', 'Head of Sales',
+        'VP de Vendas', 'VP Comercial', 'Business Development Director',
     ],
     'financeiro': [
-        'CFO', 'Chief Financial Officer', 'Finance Director', 'Finance Manager',
-        'Diretor Financeiro', 'Gerente Financeiro', 'Head of Finance', 'Controller',
-        'Controladoria', 'Financial Controller', 'VP Finance',
+        'CFO', 'Finance Director', 'Finance Manager', 'Diretor Financeiro',
+        'Gerente Financeiro', 'Head of Finance', 'Controller', 'Financial Controller',
     ],
     'diretoria_clevel': [
         'CEO', 'COO', 'CTO', 'CFO', 'CIO', 'CHRO', 'CSO', 'CPO',
@@ -121,20 +112,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         // ============================================
-        // ETAPA 1: BUSCA GRATUITA (0 créditos)
+        // ETAPA 1: BUSCA (0 créditos)
+        // Apollo: POST /mixed_people/api_search
+        // Parâmetros obrigatoriamente na QUERY STRING (não body)
         // ============================================
-        // ── Montar lista de títulos ───────────────────────────
+
+        // ── Títulos por departamento ──────────────────────────
         const titulos: string[] = [];
         for (const dep of departamentos) {
             const depTitulos = DEPARTAMENTO_TITULOS[dep];
             if (depTitulos) titulos.push(...depTitulos);
         }
-        // Se nenhum departamento selecionado, usar todos
         if (titulos.length === 0) {
-            const todos = Object.values(DEPARTAMENTO_TITULOS).flat();
-            titulos.push(...[...new Set(todos)]);
+            // Nenhum departamento selecionado → usar todos sem duplicatas
+            titulos.push(...[...new Set(Object.values(DEPARTAMENTO_TITULOS).flat())]);
         }
-        // Limitar para evitar payload excessivo
+        // Limitar para não exceder query string
         const titulosLimitados = titulos.slice(0, MAX_TITULOS);
 
         // ── Senioridades ──────────────────────────────────────
@@ -147,27 +140,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             seniorities.push('c_suite', 'vp', 'director', 'manager');
         }
 
-        // ── Montar body JSON (POST correto) ───────────────────
-        const searchBody: Record<string, unknown> = {
-            q_organization_domains_list: [domain],
-            person_titles:               titulosLimitados,
-            person_seniorities:          seniorities,
-            per_page:                    max_resultados,
-            page:                        pagina,
-        };
+        // ── Montar query string ───────────────────────────────
+        // Apollo: POST com todos filtros como URLSearchParams na URL
+        const qs = new URLSearchParams();
 
-        // Filtro geográfico Brasil
+        // Domínio — formato array obrigatório
+        qs.append('q_organization_domains_list[]', domain);
+
+        // Títulos
+        for (const t of titulosLimitados) qs.append('person_titles[]', t);
+
+        // Senioridades
+        for (const s of seniorities) qs.append('person_seniorities[]', s);
+
+        // Filtro Brasil
         if (filtrar_brasil) {
-            searchBody.person_locations = ['Brazil', 'Brasil'];
+            qs.append('person_locations[]', 'Brazil');
             console.log(`🌎 [Apollo Prospect] Filtro geográfico: Brasil`);
         }
 
+        qs.append('per_page', String(max_resultados));
+        qs.append('page',     String(pagina));
+
         console.log(`🔍 [Apollo Prospect] Domínio: ${domain} | Depts: ${departamentos.join(', ') || 'todos'} | ${titulosLimitados.length} títulos | Seniorities: ${seniorities.join(', ')}`);
 
-        // ── Chamada POST com body JSON ────────────────────────
-        // CORREÇÃO: endpoint /mixed_people/search (não /api_search)
-        //           body JSON (não URLSearchParams na URL)
-        const searchUrl = `${APOLLO_BASE_URL}/mixed_people/search`;
+        // POST com parâmetros na URL (comportamento correto conforme docs Apollo)
+        const searchUrl = `${APOLLO_BASE_URL}/mixed_people/api_search?${qs.toString()}`;
         const searchResponse = await fetch(searchUrl, {
             method: 'POST',
             headers: {
@@ -176,7 +174,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 'accept':        'application/json',
                 'x-api-key':     apiKey,
             },
-            body: JSON.stringify(searchBody),
+            // body vazio — Apollo lê os filtros da query string
         });
 
         if (!searchResponse.ok) {
@@ -192,12 +190,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const searchData = await searchResponse.json();
         const pessoas = searchData.people || [];
 
-        // Log de diagnóstico — mostra estrutura da resposta para debug
-        console.log(`✅ [Apollo Prospect] ${pessoas.length}/? decisores encontrados em ${domain}`);
+        console.log(`✅ [Apollo Prospect] ${pessoas.length} decisores encontrados em ${domain} (total: ${searchData.pagination?.total_entries ?? '?'})`);
         if (pessoas.length === 0) {
-            console.log(`⚠️  [Apollo Prospect] Resposta Apollo:`, JSON.stringify({
+            // Log diagnóstico — ajuda a entender se foi filtro geográfico ou ausência de dados
+            console.log(`⚠️  [Apollo Prospect] Detalhes:`, JSON.stringify({
                 total_entries: searchData.pagination?.total_entries,
-                total_pages:   searchData.pagination?.total_pages,
                 breadcrumbs:   searchData.breadcrumbs,
             }));
         }
