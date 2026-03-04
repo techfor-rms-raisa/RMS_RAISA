@@ -374,8 +374,7 @@ const ProspectSearchPage: React.FC = () => {
         // Gerar CSV com separador ponto-e-vírgula (compatível com Excel BR)
         const csvContent = [headers, ...rows]
             .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(';'))
-            .join('
-');
+            .join('\n');
 
         const BOM = '﻿'; // BOM para Excel reconhecer UTF-8
         const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
