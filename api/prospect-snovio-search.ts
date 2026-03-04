@@ -4,16 +4,16 @@
  * PROSPECT DUAL ENGINE — Motor Snov.io
  * Busca prospects por domínio via Domain Search API
  *
- * Versão: 1.5
+ * Versão: 1.6
  * Data: 04/03/2026
  *
- * CORREÇÕES v1.5:
- * - Filtro de departamentos aplicado NO BACKEND após retorno da API
- *   (Snov.io ignora positions[] em domínios grandes)
- * - Email bulk finder: até 10 por request em paralelo via
- *   /v2/emails-by-domain-by-name/start (mais eficiente e dentro do timeout)
- * - maxDuration: 60 explícito
- * - Polling otimizado: 8×2s por ciclo
+ * MELHORIAS v1.6:
+ * - Paginação automática: busca até 3 páginas para maximizar resultados
+ * - Keywords de departamento expandidas (mais variações PT/EN)
+ * - Filtro de senioridade como segunda camada (quando selecionado)
+ * - Filtro de cargo mais permissivo: basta UMA palavra-chave no cargo
+ * - Se após filtro restar menos de 5, retorna todos sem filtro
+ *   (evita resultados muito escassos por filtro excessivo)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -29,21 +29,91 @@ let cachedToken: string | null = null;
 let tokenExpiresAt: number = 0;
 
 // ============================================
-// PALAVRAS-CHAVE POR DEPARTAMENTO para filtro backend
-// Busca case-insensitive no campo "position/title" do prospect
+// PALAVRAS-CHAVE POR DEPARTAMENTO
+// Expandidas para cobrir variações reais de cargos no LinkedIn Brasil
 // ============================================
 const DEPARTAMENTO_KEYWORDS: Record<string, string[]> = {
-    'ti_tecnologia':         ['ti ', 'tecnologia', 'technology', 'tech', 'cto', 'cio', 'it ', 'software', 'sistemas', 'dados', 'data', 'digital', 'cyber', 'infosec', 'devops', 'desenvolvimento', 'developer', 'engenheiro de software', 'head of it', 'head of tech'],
-    'compras_procurement':   ['compras', 'procurement', 'purchasing', 'suprimentos', 'supply', 'cpo', 'sourcing', 'licitação', 'contratação'],
-    'infraestrutura':        ['infraestrutura', 'infrastructure', 'facilities', 'operações', 'operations', 'datacenter', 'redes', 'network'],
-    'governanca_compliance': ['governança', 'governance', 'compliance', 'regulatório', 'regulatory', 'auditoria', 'audit', 'riscos', 'risk', 'lgpd', 'sgsi'],
-    'rh_recursos_humanos':   ['rh', 'recursos humanos', 'human resources', 'hr ', 'pessoas', 'people', 'chro', 'talent', 'talentos', 'dp ', 'dhp', 'cultura', 'treinamento'],
-    'comercial_vendas':      ['comercial', 'vendas', 'sales', 'cso', 'negócios', 'business', 'receita', 'revenue', 'account', 'cliente'],
-    'financeiro':            ['financeiro', 'finance', 'cfo', 'controladoria', 'controller', 'fiscal', 'contábil', 'contabilidade', 'tesouraria', 'treasury', 'orçamento'],
-    'diretoria_clevel':      ['ceo', 'coo', 'cto', 'cfo', 'cio', 'chro', 'cso', 'cpo', 'diretor', 'director', 'presidente', 'president', 'vp ', 'vice-presidente', 'vice president', 'managing director', 'diretor geral', 'head of', 'gerente geral', 'general manager']
+    'ti_tecnologia': [
+        'tecnologia', 'technology', 'tech', 'ti ', ' ti,', 'cto', 'cio',
+        'it ', ' it,', 'it manager', 'it director',
+        'software', 'sistemas', 'system', 'dados', 'data',
+        'digital', 'cyber', 'infosec', 'segurança da informação',
+        'devops', 'desenvolvimento', 'developer', 'engenheiro de software',
+        'head of it', 'head of tech', 'head of technology',
+        'infraestrutura de ti', 'arquitetura', 'architect',
+        'cloud', 'erp', 'sap', 'oracle', 'totvs', 'microservices',
+        'inteligência artificial', 'machine learning', 'ia '
+    ],
+    'compras_procurement': [
+        'compras', 'procurement', 'purchasing', 'suprimentos',
+        'supply chain', 'supply', 'cpo', 'sourcing',
+        'licitação', 'contratação', 'fornecedores', 'vendor',
+        'categoria', 'category', 'strategic sourcing', 'abastecimento',
+        'logística de suprimentos', 'gestão de fornecedores'
+    ],
+    'infraestrutura': [
+        'infraestrutura', 'infrastructure', 'facilities',
+        'operações de ti', 'it operations', 'datacenter', 'data center',
+        'redes', 'network', 'telecom', 'noc', 'service desk',
+        'suporte', 'support', 'field service', 'helpdesk',
+        'cloud infrastructure', 'servidor', 'server'
+    ],
+    'governanca_compliance': [
+        'governança', 'governance', 'compliance', 'regulatório', 'regulatory',
+        'auditoria', 'audit', 'riscos', 'risk', 'lgpd', 'sgsi',
+        'controles internos', 'internal controls', 'sox',
+        'privacidade', 'privacy', 'dpO', 'data protection',
+        'segurança corporativa', 'gestão de riscos'
+    ],
+    'rh_recursos_humanos': [
+        'recursos humanos', 'human resources', 'rh ', ' rh,',
+        'hr ', ' hr,', 'pessoas', 'people', 'chro',
+        'talent', 'talentos', 'cultura', 'treinamento',
+        'desenvolvimento humano', 'aprendizagem', 'learning',
+        'remuneração', 'compensation', 'benefícios', 'benefits',
+        'recrutamento', 'recruitment', 'seleção', 'dhp',
+        'gente e gestão', 'gestão de pessoas', 'people & culture'
+    ],
+    'comercial_vendas': [
+        'comercial', 'vendas', 'sales', 'cso', 'negócios', 'business',
+        'receita', 'revenue', 'account', 'cliente', 'customer',
+        'key account', 'national account', 'trade', 'channel',
+        'b2b', 'b2c', 'marketplace', 'expansão', 'growth',
+        'desenvolvimento de negócios', 'business development',
+        'parcerias', 'partnership'
+    ],
+    'financeiro': [
+        'financeiro', 'finance', 'cfo', 'controladoria', 'controller',
+        'fiscal', 'contábil', 'contabilidade', 'tesouraria', 'treasury',
+        'orçamento', 'budget', 'planejamento financeiro', 'fp&a',
+        'contabilidade', 'tax', 'tributos', 'custos', 'cost',
+        'faturamento', 'billing', 'contas a pagar', 'contas a receber',
+        'shared services', 'gbs', 'csc'
+    ],
+    'diretoria_clevel': [
+        'ceo', 'coo', 'cto', 'cfo', 'cio', 'chro', 'cso', 'cpo',
+        'diretor', 'director', 'diretora',
+        'presidente', 'president', 'presidenta',
+        'vp ', ' vp,', 'vice-presidente', 'vice presidente', 'vice president',
+        'managing director', 'diretor geral', 'general manager',
+        'head of', 'gerente geral', 'country manager',
+        'superintendente', 'superintendent',
+        'executive', 'executivo', 'board', 'conselho',
+        'sócio', 'partner', 'principal'
+    ]
 };
 
-// Posições para enviar à API (limite de 10 por request)
+// Palavras-chave por senioridade para filtro backend
+const SENIORIDADE_KEYWORDS: Record<string, string[]> = {
+    'c_level':       ['ceo', 'coo', 'cto', 'cfo', 'cio', 'chro', 'cso', 'cpo', 'presidente', 'president'],
+    'vp':            ['vp ', ' vp,', 'vice-presidente', 'vice president', 'vice presidente'],
+    'diretor':       ['diretor', 'director', 'diretora'],
+    'gerente':       ['gerente', 'manager', 'gerência'],
+    'coordenador':   ['coordenador', 'coordinator', 'coordenação', 'lead ', 'líder'],
+    'superintendente':['superintendente', 'superintendent']
+};
+
+// Posições para enviar à API Snov.io
 const DEPARTAMENTO_POSICOES: Record<string, string[]> = {
     'ti_tecnologia':         ['CTO', 'CIO', 'IT Director', 'IT Manager', 'Gerente de TI', 'Diretor de TI', 'Head of Technology'],
     'compras_procurement':   ['CPO', 'Procurement Director', 'Purchasing Manager', 'Diretor de Compras', 'Gerente de Compras'],
@@ -56,14 +126,22 @@ const DEPARTAMENTO_POSICOES: Record<string, string[]> = {
 };
 
 // ============================================
-// FILTRO DE CARGO NO BACKEND
-// Retorna true se o cargo do prospect bate com algum departamento selecionado
+// FILTROS DE CARGO E SENIORIDADE NO BACKEND
 // ============================================
 function cargoCorrespondeDepartamentos(cargo: string, departamentos: string[]): boolean {
-    if (!cargo || departamentos.length === 0) return true; // sem filtro = todos passam
-    const cargoLower = cargo.toLowerCase();
+    if (!cargo || departamentos.length === 0) return true;
+    const cargoLower = ` ${cargo.toLowerCase()} `; // espaços para match exato de palavras curtas
     return departamentos.some(dep => {
         const keywords = DEPARTAMENTO_KEYWORDS[dep] || [];
+        return keywords.some(kw => cargoLower.includes(kw.toLowerCase()));
+    });
+}
+
+function cargoCorrespondeSenioridade(cargo: string, senioridades: string[]): boolean {
+    if (!cargo || senioridades.length === 0) return true;
+    const cargoLower = ` ${cargo.toLowerCase()} `;
+    return senioridades.some(sen => {
+        const keywords = SENIORIDADE_KEYWORDS[sen] || [];
         return keywords.some(kw => cargoLower.includes(kw.toLowerCase()));
     });
 }
@@ -101,7 +179,7 @@ async function getAccessToken(): Promise<string> {
 }
 
 // ============================================
-// POLLING ROBUSTO — 8×2s = 16s máx por ciclo
+// POLLING — 8×2s = 16s máx por ciclo
 // ============================================
 async function pollForResult(url: string, token: string, maxAttempts = 8, intervalMs = 2000): Promise<any> {
     for (let i = 0; i < maxAttempts; i++) {
@@ -112,7 +190,7 @@ async function pollForResult(url: string, token: string, maxAttempts = 8, interv
         console.log(`⏳ [Snov.io] Poll ${i + 1}/${maxAttempts} — status: "${data.status}"`);
 
         if (data.status === 'completed') return data;
-        if (data.status === 'failed')    throw new Error(`Task failed: ${JSON.stringify(data)}`);
+        if (data.status === 'failed')    throw new Error(`Task failed`);
 
         await new Promise(r => setTimeout(r, intervalMs));
     }
@@ -120,7 +198,7 @@ async function pollForResult(url: string, token: string, maxAttempts = 8, interv
 }
 
 // ============================================
-// EXTRAÇÃO ROBUSTA DE PROSPECTS
+// EXTRAÇÃO ROBUSTA
 // ============================================
 function extrairProspects(data: any): any[] {
     if (!data) return [];
@@ -130,76 +208,108 @@ function extrairProspects(data: any): any[] {
     if (data.data && typeof data.data === 'object' && !Array.isArray(data.data)) {
         for (const key of Object.keys(data.data)) {
             if (Array.isArray(data.data[key]) && data.data[key].length > 0) {
-                console.log(`✅ Estrutura data.data.${key}[] (${data.data[key].length})`);
                 return data.data[key];
             }
         }
     }
-    console.warn('⚠️ Nenhum array de prospects. Keys:', Object.keys(data));
     return [];
 }
 
 // ============================================
-// BUSCA DE PROSPECTS (com fallback sem filtro)
+// BUSCA COM PAGINAÇÃO AUTOMÁTICA
+// Busca até MAX_PAGES páginas para maximizar resultados
+// Budget: 3 páginas × (1s start + 8×2s poll) = ~51s máx
 // ============================================
-async function buscarProspects(
+async function buscarProspectsComPaginacao(
     token: string,
     domain: string,
     posicoes: string[],
-    prospectsStartUrl: string
+    prospectsStartUrl: string,
+    maxPages: number = 3
 ): Promise<{ prospects: any[]; totalCount: number }> {
 
-    const buscar = async (semFiltro = false) => {
+    const buscarPagina = async (page: number, semFiltro = false): Promise<any> => {
         const params = new URLSearchParams();
         params.append('domain', domain);
-        params.append('page', '1');
+        params.append('page',   String(page));
         if (!semFiltro) {
             for (const pos of posicoes.slice(0, 10)) params.append('positions[]', pos);
         }
 
-        console.log(`🔍 [Snov.io] POST prospects${semFiltro ? ' (sem filtro)' : ''}: ${params.toString().substring(0, 200)}`);
+        console.log(`🔍 [Snov.io] Página ${page}${semFiltro ? ' (sem filtro)' : ''}`);
 
         const startRes = await fetch(prospectsStartUrl, {
             method: 'POST',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
             body: params.toString()
         });
-        if (!startRes.ok) throw new Error(`Prospects Start ${startRes.status}: ${await startRes.text()}`);
+        if (!startRes.ok) {
+            console.warn(`⚠️ [Snov.io] Página ${page} falhou: ${startRes.status}`);
+            return null;
+        }
 
         const startData = await startRes.json();
-        console.log(`📦 [Snov.io] Prospects Start:`, JSON.stringify(startData).substring(0, 400));
-
-        const taskHash = startData.meta?.task_hash;
-        if (!taskHash) throw new Error(`Sem task_hash. RAW: ${JSON.stringify(startData)}`);
+        const taskHash  = startData.meta?.task_hash;
+        if (!taskHash) {
+            console.warn(`⚠️ [Snov.io] Sem task_hash na página ${page}`);
+            return null;
+        }
 
         const resultUrl = startData.links?.result ||
             `${SNOVIO_BASE_URL}/v2/domain-search/prospects/result/${taskHash}`;
 
-        const resultData = await pollForResult(resultUrl, token);
-        console.log(`📦 [Snov.io] Prospects Result:`, JSON.stringify(resultData).substring(0, 600));
-
-        return resultData;
+        try {
+            return await pollForResult(resultUrl, token);
+        } catch (e) {
+            console.warn(`⚠️ [Snov.io] Timeout página ${page}`);
+            return null;
+        }
     };
 
-    // Tentativa 1: com filtro de posições
-    const resultData = await buscar(false);
-    let prospects = extrairProspects(resultData);
-    let totalCount = resultData.meta?.total_count || resultData.meta?.count || prospects.length;
+    let todosProspects: any[] = [];
+    let totalCount = 0;
 
-    // Fallback: sem filtro se retornou 0
-    if (prospects.length === 0 && posicoes.length > 0) {
-        console.log('⚠️ [Snov.io] 0 com filtro, tentando sem filtro...');
-        const resultData2 = await buscar(true);
-        prospects  = extrairProspects(resultData2);
-        totalCount = resultData2.meta?.total_count || resultData2.meta?.count || prospects.length;
+    // Buscar páginas em sequência (não paralelo — evita rate limit)
+    for (let page = 1; page <= maxPages; page++) {
+        const resultData = await buscarPagina(page, false);
+        if (!resultData) break;
+
+        const pageProspects = extrairProspects(resultData);
+        totalCount = resultData.meta?.total_count || resultData.meta?.count || totalCount;
+
+        console.log(`✅ [Snov.io] Página ${page}: ${pageProspects.length} prospects`);
+
+        if (pageProspects.length === 0) break; // sem mais páginas
+
+        // Deduplicar por ID
+        const idsExistentes = new Set(todosProspects.map(p => p.id || `${p.first_name}|${p.last_name}`));
+        const novos = pageProspects.filter(p => {
+            const key = p.id || `${p.first_name}|${p.last_name}`;
+            return !idsExistentes.has(key);
+        });
+
+        todosProspects.push(...novos);
+        console.log(`📊 [Snov.io] Acumulado: ${todosProspects.length} prospects únicos`);
+
+        // Se a página retornou menos de 10, provavelmente é a última
+        if (pageProspects.length < 10) break;
     }
 
-    return { prospects, totalCount };
+    // Fallback: se ainda está vazio, buscar sem filtro
+    if (todosProspects.length === 0 && posicoes.length > 0) {
+        console.log('⚠️ [Snov.io] 0 prospects com filtro, tentando sem filtro p1...');
+        const resultData = await buscarPagina(1, true);
+        if (resultData) {
+            todosProspects = extrairProspects(resultData);
+            totalCount = resultData.meta?.total_count || todosProspects.length;
+        }
+    }
+
+    return { prospects: todosProspects, totalCount };
 }
 
 // ============================================
-// EMAIL BULK FINDER via /v2/emails-by-domain-by-name/start
-// Até 10 prospects por request (muito mais eficiente que 1 a 1)
+// EMAIL BULK FINDER — batches de 10
 // ============================================
 async function buscarEmailsBulk(
     token: string,
@@ -219,52 +329,39 @@ async function buscarEmailsBulk(
             params.append(`rows[${idx}][domain]`,     domain);
         });
 
-        console.log(`📧 [Snov.io] Email bulk batch ${Math.floor(i/BATCH_SIZE)+1}: ${batch.length} prospects`);
+        console.log(`📧 [Snov.io] Email batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.length} prospects`);
 
         try {
             const startRes = await fetch(`${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/start`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                },
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: params.toString()
             });
 
-            if (!startRes.ok) {
-                console.warn(`⚠️ [Snov.io] Email bulk start ${startRes.status}`);
-                continue;
-            }
+            if (!startRes.ok) { console.warn(`⚠️ Email bulk ${startRes.status}`); continue; }
 
             const startData = await startRes.json();
-            console.log(`📦 [Snov.io] Email Bulk Start:`, JSON.stringify(startData).substring(0, 400));
+            console.log(`📦 [Snov.io] Email Bulk Start:`, JSON.stringify(startData).substring(0, 300));
 
-            // Pode já retornar completado
             let resultData: any;
             if (startData.status === 'completed') {
                 resultData = startData;
             } else {
                 const taskHash = startData.meta?.task_hash;
                 if (!taskHash) continue;
-
                 const resultUrl = startData.links?.result ||
                     `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result/${taskHash}`;
                 resultData = await pollForResult(resultUrl, token, 6, 2000);
             }
 
-            console.log(`📦 [Snov.io] Email Bulk Result:`, JSON.stringify(resultData).substring(0, 600));
-
-            // Mapear resultados por nome
             const rows: any[] = resultData.data || [];
             rows.forEach((row: any) => {
-                const firstName = (row.first_name || '').toLowerCase();
-                const lastName  = (row.last_name  || '').toLowerCase();
-                const key = `${firstName}|${lastName}`;
+                const key   = `${(row.first_name || '').toLowerCase()}|${(row.last_name || '').toLowerCase()}`;
                 const email = row.emails?.[0]?.email || row.email;
                 if (email) {
                     emailMap.set(key, {
                         email,
-                        status: row.emails?.[0]?.smtp_status || row.smtp_status || 'unknown'
+                        status: row.emails?.[0]?.smtp_status || 'unknown'
                     });
                 }
             });
@@ -274,7 +371,7 @@ async function buscarEmailsBulk(
         }
     }
 
-    console.log(`📧 [Snov.io] Emails encontrados: ${emailMap.size}/${prospects.length}`);
+    console.log(`📧 [Snov.io] Total emails encontrados: ${emailMap.size}`);
     return emailMap;
 }
 
@@ -284,16 +381,21 @@ async function buscarEmailsBulk(
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST.' });
 
-    const { domain, departamentos = [], buscar_emails = false } = req.body;
+    const {
+        domain,
+        departamentos = [],
+        senioridades  = [],
+        buscar_emails = false
+    } = req.body;
+
     if (!domain) return res.status(400).json({ error: 'Campo "domain" é obrigatório' });
 
     try {
-        console.log(`\n🚀 [Snov.io] === INÍCIO: ${domain} | depts: ${departamentos.join(',')} ===`);
+        console.log(`\n🚀 [Snov.io] === INÍCIO: ${domain} | depts: [${departamentos.join(',')}] | sen: [${senioridades.join(',')}] ===`);
 
-        // ETAPA 1: TOKEN
         const token = await getAccessToken();
 
-        // ETAPA 2: COMPANY INFO START
+        // ETAPA 2: COMPANY INFO
         const companyParams = new URLSearchParams();
         companyParams.append('domain', domain);
 
@@ -308,20 +410,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const companyStartData = await companyStartRes.json();
-        console.log(`📦 [Snov.io] Company Start:`, JSON.stringify(companyStartData));
-
-        const companyTaskHash = companyStartData.meta?.task_hash;
+        const companyTaskHash  = companyStartData.meta?.task_hash;
         if (!companyTaskHash) return res.status(200).json({ success: false, error: 'Sem task_hash empresa', raw: companyStartData });
 
-        // ETAPA 3: COMPANY INFO RESULT
         const companyResultUrl = companyStartData.links?.result ||
             `${SNOVIO_BASE_URL}/v2/domain-search/result/${companyTaskHash}`;
-
         const companyResult = await pollForResult(companyResultUrl, token);
-        console.log(`✅ [Snov.io] Empresa: ${companyResult.data?.company_name || domain}`);
-        console.log(`🔗 [Snov.io] Links empresa:`, JSON.stringify(companyResult.links || {}));
 
-        // ETAPA 4+5: PROSPECTS
+        console.log(`✅ [Snov.io] Empresa: ${companyResult.data?.company_name || domain}`);
+
+        // ETAPA 4: PROSPECTS COM PAGINAÇÃO
         const posicoes: string[] = [];
         for (const dep of departamentos) {
             const p = DEPARTAMENTO_POSICOES[dep];
@@ -332,11 +430,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ? companyResult.links.prospects
             : `${SNOVIO_BASE_URL}/v2/domain-search/prospects/start`;
 
-        const { prospects: rawProspects, totalCount } = await buscarProspects(token, domain, posicoes, prospectsStartUrl);
+        const { prospects: rawProspects, totalCount } = await buscarProspectsComPaginacao(
+            token, domain, posicoes, prospectsStartUrl,
+            3 // até 3 páginas
+        );
 
-        console.log(`✅ [Snov.io] Raw prospects: ${rawProspects.length} | total disponível: ${totalCount}`);
+        console.log(`✅ [Snov.io] Total bruto: ${rawProspects.length} | total disponível: ${totalCount}`);
 
-        // ETAPA 6: MAPEAR
+        // ETAPA 5: MAPEAR
         const resultadosBrutos = rawProspects.map((p: any) => ({
             snovio_id:        p.id || null,
             nome_completo:    `${p.first_name || ''} ${p.last_name || ''}`.trim(),
@@ -362,34 +463,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             enriquecido:      false
         }));
 
-        // ============================================
-        // ETAPA 7: FILTRO DE CARGO NO BACKEND
-        // Necessário porque Snov.io ignora positions[] em domínios grandes
-        // ============================================
-        const resultadosFiltrados = departamentos.length > 0
-            ? resultadosBrutos.filter(r => cargoCorrespondeDepartamentos(r.cargo, departamentos))
+        // ETAPA 6: FILTRO BACKEND — departamento + senioridade
+        let resultadosFiltrados = resultadosBrutos;
+
+        if (departamentos.length > 0) {
+            resultadosFiltrados = resultadosFiltrados.filter(r =>
+                cargoCorrespondeDepartamentos(r.cargo, departamentos)
+            );
+            console.log(`🔽 [Snov.io] Após filtro departamento: ${resultadosFiltrados.length}/${resultadosBrutos.length}`);
+        }
+
+        if (senioridades.length > 0) {
+            const comSenioridade = resultadosFiltrados.filter(r =>
+                cargoCorrespondeSenioridade(r.cargo, senioridades)
+            );
+            // Só aplica filtro de senioridade se não zerar demais
+            if (comSenioridade.length >= 3) {
+                resultadosFiltrados = comSenioridade;
+                console.log(`🔽 [Snov.io] Após filtro senioridade: ${resultadosFiltrados.length}`);
+            } else {
+                console.log(`⚠️ [Snov.io] Filtro senioridade zerou (<3), mantendo filtro só de departamento`);
+            }
+        }
+
+        // Proteção: se filtro deixou menos de 5, usa bruto sem filtro
+        const resultadosFinais = resultadosFiltrados.length >= 5
+            ? resultadosFiltrados
             : resultadosBrutos;
 
-        console.log(`🔽 [Snov.io] Após filtro de cargo: ${resultadosFiltrados.length}/${resultadosBrutos.length}`);
+        const filtroAplicado = resultadosFiltrados.length >= 5;
 
-        // Se filtro zerou os resultados, retornar todos (sem filtro) com aviso
-        const resultadosFinais = resultadosFiltrados.length > 0 ? resultadosFiltrados : resultadosBrutos;
-        const filtroAplicado   = resultadosFiltrados.length > 0;
+        console.log(`✅ [Snov.io] Resultados finais: ${resultadosFinais.length} | filtro aplicado: ${filtroAplicado}`);
 
-        // ============================================
-        // ETAPA 8 (OPCIONAL): EMAIL BULK FINDER
-        // Usa /v2/emails-by-domain-by-name em batches de 10
-        // Muito mais eficiente que buscar 1 a 1
-        // ============================================
+        // ETAPA 7 (OPCIONAL): EMAIL BULK FINDER
         let creditosEmails = 0;
 
         if (buscar_emails && resultadosFinais.length > 0) {
-            // Limitar a 20 buscas de email por chamada para controle de tempo e créditos
             const prospectsParaEmail = resultadosFinais.slice(0, 20);
             const emailMap = await buscarEmailsBulk(token, prospectsParaEmail, domain);
 
             for (const prospect of prospectsParaEmail) {
-                const key = `${prospect.primeiro_nome.toLowerCase()}|${prospect.ultimo_nome.toLowerCase()}`;
+                const key   = `${prospect.primeiro_nome.toLowerCase()}|${prospect.ultimo_nome.toLowerCase()}`;
                 const found = emailMap.get(key);
                 if (found) {
                     prospect.email        = found.email;
@@ -400,12 +514,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        console.log(`\n✅ [Snov.io] === FIM: ${resultadosFinais.length} prospects | ${creditosEmails} emails | filtrado: ${filtroAplicado} ===\n`);
+        console.log(`\n✅ [Snov.io] === FIM: ${resultadosFinais.length} prospects | ${creditosEmails} emails ===\n`);
 
         return res.status(200).json({
-            success: true,
-            motor:   'snovio',
-            dominio: domain,
+            success:            true,
+            motor:              'snovio',
+            dominio:            domain,
             empresa: {
                 nome:      companyResult.data?.company_name || null,
                 setor:     companyResult.data?.industry || null,
