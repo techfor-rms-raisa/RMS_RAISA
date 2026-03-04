@@ -39,6 +39,10 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
+// Garante maxDuration mesmo se vercel.json não cobrir este arquivo
+export const config = { maxDuration: 60 };
+
+
 const SNOVIO_BASE_URL = 'https://api.snov.io';
 
 // ============================================
@@ -112,8 +116,8 @@ async function getAccessToken(): Promise<string> {
 async function pollForResult(
     url: string,
     token: string,
-    maxAttempts: number = 15,
-    intervalMs: number = 3000
+    maxAttempts: number = 8,
+    intervalMs: number = 2000
 ): Promise<any> {
     for (let i = 0; i < maxAttempts; i++) {
         const res = await fetch(url, {

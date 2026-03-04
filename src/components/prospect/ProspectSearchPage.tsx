@@ -163,7 +163,25 @@ const ProspectSearchPage: React.FC = () => {
                 })
             });
 
-            const data = await response.json();
+            // Tratar resposta não-JSON (504 timeout, 502 bad gateway, etc.)
+            if (!response.ok) {
+                const statusMsg: Record<number, string> = {
+                    504: 'Tempo limite excedido (504). Domínios grandes podem demorar mais — tente novamente.',
+                    502: 'Servidor temporariamente indisponível (502). Tente novamente em instantes.',
+                    500: 'Erro interno do servidor (500). Verifique os logs do Vercel.'
+                };
+                const msg = statusMsg[response.status] || `Erro HTTP ${response.status}. Tente novamente.`;
+                setSearchState({ loading: false, motor: 'snovio', error: msg });
+                return;
+            }
+
+            let data: any;
+            try {
+                data = await response.json();
+            } catch {
+                setSearchState({ loading: false, motor: 'snovio', error: 'Resposta inválida do servidor. Tente novamente.' });
+                return;
+            }
 
             if (data.success) {
                 setResultados(data.resultados.map((r: ProspectResult) => ({ ...r, selecionado: false })));
