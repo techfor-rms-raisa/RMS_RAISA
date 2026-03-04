@@ -8,15 +8,16 @@
  * 1. Busca gratuita (api_search) → retorna lista de decisores (0 créditos)
  * 2. Enriquecimento (people/match) → dados completos (1 crédito/pessoa)
  * 
- * Versão: 2.6
+ * Versão: 2.7
  * Data: 04/03/2026
  *
- * CORREÇÕES v2.6:
- * - Filtro Brasil: usa organization_locations[]=Brazil na query Apollo
- *   (não person_locations[] que zera tudo, não pós-processamento sem dados)
- *   Motivo confirmado: /api_search retorna SOMENTE flags (has_country, has_state)
- *   sem valores reais de country/city/state → pós-processamento impossível
- *   organization_locations filtra pela SEDE da empresa → correto para empresas BR
+ * CORREÇÕES v2.7 — Solução definitiva filtro Brasil:
+ * - q_organization_domains_list[] + qualquer filtro de localização = total_entries:0
+ *   A Apollo trata como interseção impossível (comportamento confirmado empiricamente)
+ * - Regra: quando domínio é fornecido → NÃO aplicar nenhum filtro de localização
+ *   Justificativa: domínio .com.br já garante empresa brasileira
+ * - filtrar_brasil agora só é aplicado quando domínio NÃO é fornecido (busca por título)
+ * - Documentado nos comentários para referência futura
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -124,9 +125,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // ============================================
         // ETAPA 1: BUSCA (0 créditos)
         // POST /mixed_people/api_search — filtros na query string, body vazio
-        // IMPORTANTE: person_locations[] NÃO é usado aqui.
-        //   Motivo: person_locations[]=Brazil retorna total_entries:0 para domínios
-        //   .com.br. O filtro de Brasil é feito em pós-processamento.
+        // REGRA: nunca combinar q_organization_domains_list[] com location[]
+        //        Apollo retorna total_entries:0 quando ambos presentes
         // ============================================
 
         // ── Domínios: base + completo para máxima cobertura ──
@@ -161,13 +161,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         for (const t of titulosLimitados)  qs.append('person_titles[]',               t);
         for (const s of seniorities)       qs.append('person_seniorities[]',           s);
 
-        // Filtro Brasil via sede da organização — correto para empresas BR
-        // organization_locations filtra pela HQ da empresa (não pelo endereço pessoal)
-        // Confirmado: /api_search retorna apenas flags (has_country) sem valores reais
-        // de country/city → pós-processamento não é viável neste endpoint
-        if (filtrar_brasil) {
+        // REGRA DEFINITIVA — Filtro de localização x Domínio:
+        // Apollo trata q_organization_domains_list[] + qualquer location[] como
+        // interseção impossível → total_entries: 0 sempre.
+        // Quando domínio é fornecido: empresa JÁ é identificada, localização é redundante.
+        // Quando domínio NÃO é fornecido: location filtra geograficamente por título/cargo.
+        const temDominio = dominios.length > 0;
+        if (filtrar_brasil && !temDominio) {
             qs.append('organization_locations[]', 'Brazil');
-            console.log(`🌎 [Apollo Prospect] Filtro: organization_locations[]=Brazil`);
+            console.log(`🌎 [Apollo Prospect] Filtro Brasil aplicado (busca sem domínio)`);
+        } else if (filtrar_brasil && temDominio) {
+            console.log(`🌎 [Apollo Prospect] Filtro Brasil ignorado — domínio já identifica a empresa`);
         }
 
         qs.append('per_page', String(max_resultados));
