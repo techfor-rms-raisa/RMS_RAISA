@@ -614,8 +614,8 @@ const ProspectSearchPage: React.FC = () => {
             )}
 
             {/* ── ABA NOVA BUSCA ── */}
-            {abaAtiva === 'busca' && <>
-
+            {abaAtiva === 'busca' && (
+            <>
             {/* Formulário de Busca */}
             <div className="bg-white rounded-lg shadow-md p-6 mb-6">
                 {/* Domínio */}
@@ -912,7 +912,8 @@ const ProspectSearchPage: React.FC = () => {
                 </div>
             )}
         </div>
-        </>}
+        </>
+            )}
     </div>
     );
 };
