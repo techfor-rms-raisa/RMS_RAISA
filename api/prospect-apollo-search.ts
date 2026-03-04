@@ -8,16 +8,15 @@
  * 1. Busca gratuita (api_search) → retorna lista de decisores (0 créditos)
  * 2. Enriquecimento (people/match) → dados completos (1 crédito/pessoa)
  * 
- * Versão: 2.4
+ * Versão: 2.5
  * Data: 04/03/2026
  *
- * CORREÇÕES v2.4:
- * - Endpoint: POST /mixed_people/api_search (parâmetros na query string)
- * - person_locations[] REMOVIDO da query → causava total_entries:0 para domínios .com.br
- * - Filtro Brasil movido para pós-processamento (verifica country/state do resultado)
- * - Busca por domínio base (carrefour.com) E domínio completo (carrefour.com.br)
- * - Suporte a searchData.contacts[] além de .people[]
- * - Títulos PT-BR expandidos + MAX_TITULOS=25
+ * CORREÇÕES v2.5:
+ * - ehBrasil() reescrita para lidar com /api_search que retorna has_country (flag)
+ *   mas NÃO retorna country/city/state (valores)
+ * - Lógica: se tem localização → verifica keywords; se sem dados → inclui (não exclui)
+ * - Fallback: se org.primary_domain termina em .br → é Brasil
+ * - Log diagnóstico dos campos reais de p[0] para confirmar estrutura
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -29,10 +28,6 @@ const APOLLO_BASE_URL = 'https://api.apollo.io/api/v1';
 // ============================================
 // Limite de títulos por request (evitar query string excessiva)
 const MAX_TITULOS = 25;
-
-// Termos para detectar localização Brasil no pós-processamento
-const BR_KEYWORDS = ['brazil', 'brasil', 'são paulo', 'rio de janeiro', 'minas gerais',
-                     'brasilia', 'curitiba', 'porto alegre', 'salvador', 'fortaleza'];
 
 const DEPARTAMENTO_TITULOS: Record<string, string[]> = {
     'ti_tecnologia': [
@@ -89,11 +84,42 @@ function extrairDominioBase(domain: string): string {
     return `${partes[partes.length - 2]}.${partes[partes.length - 1]}`;
 }
 
-// ─── Verifica se pessoa está no Brasil (pós-processamento) ─────────────────
+// ─── Verifica se pessoa está no Brasil ─────────────────────────────────────
+// ATENÇÃO: /mixed_people/api_search retorna campos de localização como flags
+// (has_country, has_state) mas NÃO retorna os valores (country, city).
+// Estratégias em ordem de confiabilidade:
+//   1. Campos diretos (presentes se enriquecido): country, state, city
+//   2. organization.primary_domain termina em .br
+//   3. present_raw_address contém BR keywords
+//   4. Se nenhum campo disponível → INCLUIR (não excluir por falta de dado)
 function ehBrasil(p: any): boolean {
-    const texto = [p.country, p.state, p.city, p.location, p.present_raw_address]
-        .filter(Boolean).join(' ').toLowerCase();
-    return BR_KEYWORDS.some(kw => texto.includes(kw));
+    // Estratégia 1: campos diretos de localização (enriquecido)
+    const camposDiretos = [
+        p.country, p.state, p.city, p.location, p.present_raw_address,
+        p.country_code, p.geo,
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    if (camposDiretos) {
+        const BR_KEYWORDS = [
+            'brazil', 'brasil', 'br,', ', br', 'são paulo', 'rio de janeiro',
+            'minas gerais', 'brasilia', 'curitiba', 'porto alegre', 'salvador',
+            'fortaleza', 'recife', 'manaus', 'belém', 'goiânia',
+        ];
+        const temKeyword = BR_KEYWORDS.some(kw => camposDiretos.includes(kw));
+        if (temKeyword) return true;
+        // Se tem localização e NÃO é Brasil → excluir
+        const temLocalizacao = !!(p.country || p.city || p.state);
+        if (temLocalizacao) return false;
+    }
+
+    // Estratégia 2: domínio da organização termina em .br
+    const orgDomain = (p.organization?.primary_domain || p.organization?.website_url || '').toLowerCase();
+    if (orgDomain && orgDomain.endsWith('.br')) return true;
+
+    // Estratégia 3: sem dados de localização → incluir (princípio da inclusão)
+    // O Apollo api_search básico não retorna campos de localização preenchidos
+    // Seria um falso negativo excluir alguém sem dados
+    return true;
 }
 
 // ============================================
@@ -210,6 +236,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ];
         const totalBruto = searchData.total_entries ?? searchData.pagination?.total_entries ?? 0;
         console.log(`📊 [Apollo Prospect] Bruto: ${pessoas.length} | total_entries: ${totalBruto}`);
+
+        // DIAGNÓSTICO (remover após confirmar campos disponíveis)
+        if (pessoas.length > 0) {
+            const p0 = pessoas[0];
+            console.log(`🔬 [Apollo Prospect] Campos p[0]:`, JSON.stringify({
+                keys:                Object.keys(p0).join(', '),
+                country:             p0.country,
+                state:               p0.state,
+                city:                p0.city,
+                location:            p0.location,
+                country_code:        p0.country_code,
+                present_raw_address: p0.present_raw_address,
+                has_country:         p0.has_country,
+                has_state:           p0.has_state,
+                org_domain:          p0.organization?.primary_domain,
+            }));
+        }
 
         // ── Pós-processamento: filtro Brasil ──────────────────
         // Verifica campos country/state/city — muito mais confiável que person_locations
