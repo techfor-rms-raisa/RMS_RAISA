@@ -8,17 +8,15 @@
  * 1. Busca gratuita (api_search) → retorna lista de decisores (0 créditos)
  * 2. Enriquecimento (people/match) → dados completos (1 crédito/pessoa)
  * 
- * Versão: 2.3
+ * Versão: 2.4
  * Data: 04/03/2026
  *
- * CORREÇÕES v2.3:
- * - Endpoint: POST /mixed_people/api_search (correto para API callers)
- * - Parâmetros na QUERY STRING da URL (Apollo lê filtros via URLSearchParams)
- *   body vazio — comportamento documentado em docs.apollo.io
- * - q_organization_domains_list[] (array, não string)
- * - filtrar_brasil → person_locations[]=Brazil
+ * CORREÇÕES v2.4:
+ * - Endpoint: POST /mixed_people/api_search (parâmetros na query string)
+ * - person_locations[] REMOVIDO da query → causava total_entries:0 para domínios .com.br
+ * - Filtro Brasil movido para pós-processamento (verifica country/state do resultado)
+ * - Busca por domínio base (carrefour.com) E domínio completo (carrefour.com.br)
  * - Suporte a searchData.contacts[] além de .people[]
- * - Log diagnóstico completo da resposta para debug
  * - Títulos PT-BR expandidos + MAX_TITULOS=25
  */
 
@@ -29,8 +27,12 @@ const APOLLO_BASE_URL = 'https://api.apollo.io/api/v1';
 // ============================================
 // MAPEAMENTO DE DEPARTAMENTOS → TÍTULOS APOLLO
 // ============================================
-// Limite de títulos por request (evitar query string muito longa)
+// Limite de títulos por request (evitar query string excessiva)
 const MAX_TITULOS = 25;
+
+// Termos para detectar localização Brasil no pós-processamento
+const BR_KEYWORDS = ['brazil', 'brasil', 'são paulo', 'rio de janeiro', 'minas gerais',
+                     'brasilia', 'curitiba', 'porto alegre', 'salvador', 'fortaleza'];
 
 const DEPARTAMENTO_TITULOS: Record<string, string[]> = {
     'ti_tecnologia': [
@@ -75,6 +77,25 @@ const DEPARTAMENTO_TITULOS: Record<string, string[]> = {
     ],
 };
 
+// ─── Extrai domínio base: carrefour.com.br → carrefour.com ─────────────────
+function extrairDominioBase(domain: string): string {
+    const partes = domain.toLowerCase().trim().split('.');
+    if (partes.length <= 2) return domain;
+    // Detecta ccTLD composto: .com.br, .org.br, .co.uk, etc.
+    const ccSLD = ['com', 'org', 'net', 'edu', 'gov', 'co', 'net'];
+    if (ccSLD.includes(partes[partes.length - 2])) {
+        return `${partes[partes.length - 3]}.${partes[partes.length - 2]}`;
+    }
+    return `${partes[partes.length - 2]}.${partes[partes.length - 1]}`;
+}
+
+// ─── Verifica se pessoa está no Brasil (pós-processamento) ─────────────────
+function ehBrasil(p: any): boolean {
+    const texto = [p.country, p.state, p.city, p.location, p.present_raw_address]
+        .filter(Boolean).join(' ').toLowerCase();
+    return BR_KEYWORDS.some(kw => texto.includes(kw));
+}
+
 // ============================================
 // MAPEAMENTO DE SENIORIDADE → APOLLO VALUES
 // ============================================
@@ -114,19 +135,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
         // ============================================
         // ETAPA 1: BUSCA (0 créditos)
-        // Apollo: POST /mixed_people/api_search
-        // IMPORTANTE: parâmetros vão na QUERY STRING da URL (não no body)
-        // Comportamento documentado: https://docs.apollo.io/reference/people-api-search
+        // POST /mixed_people/api_search — filtros na query string, body vazio
+        // IMPORTANTE: person_locations[] NÃO é usado aqui.
+        //   Motivo: person_locations[]=Brazil retorna total_entries:0 para domínios
+        //   .com.br. O filtro de Brasil é feito em pós-processamento.
         // ============================================
 
-        // ── Títulos por departamento ──────────────────────────
+        // ── Domínios: base + completo para máxima cobertura ──
+        // Ex: carrefour.com.br → busca por carrefour.com E carrefour.com.br
+        const dominioCompleto = domain.trim().toLowerCase();
+        const dominioBase     = extrairDominioBase(dominioCompleto);
+        const dominios        = [...new Set([dominioBase, dominioCompleto])];
+        console.log(`🔗 [Apollo Prospect] Domínios: ${dominios.join(' + ')}`);
+
+        // ── Títulos ───────────────────────────────────────────
         const titulos: string[] = [];
         for (const dep of departamentos) {
-            const depTitulos = DEPARTAMENTO_TITULOS[dep];
-            if (depTitulos) titulos.push(...depTitulos);
+            const ts = DEPARTAMENTO_TITULOS[dep];
+            if (ts) titulos.push(...ts);
         }
         if (titulos.length === 0) {
-            // Nenhum departamento → usar todos, sem duplicatas
             titulos.push(...[...new Set(Object.values(DEPARTAMENTO_TITULOS).flat())]);
         }
         const titulosLimitados = titulos.slice(0, MAX_TITULOS);
@@ -134,33 +162,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // ── Senioridades ──────────────────────────────────────
         const seniorities: string[] = [];
         for (const sen of senioridades) {
-            const apolloSen = SENIORIDADE_MAP[sen];
-            if (apolloSen && !seniorities.includes(apolloSen)) seniorities.push(apolloSen);
+            const v = SENIORIDADE_MAP[sen];
+            if (v && !seniorities.includes(v)) seniorities.push(v);
         }
-        if (seniorities.length === 0) {
-            seniorities.push('c_suite', 'vp', 'director', 'manager');
-        }
+        if (seniorities.length === 0) seniorities.push('c_suite', 'vp', 'director', 'manager');
 
-        // ── Montar query string ───────────────────────────────
+        // ── Query string (todos os filtros vão na URL) ────────
         const qs = new URLSearchParams();
-
-        // Domínio como array (formato correto conforme docs Apollo)
-        qs.append('q_organization_domains_list[]', domain);
-
-        for (const t of titulosLimitados)  qs.append('person_titles[]',     t);
-        for (const s of seniorities)        qs.append('person_seniorities[]', s);
-
-        if (filtrar_brasil) {
-            qs.append('person_locations[]', 'Brazil');
-            console.log(`🌎 [Apollo Prospect] Filtro geográfico: Brasil`);
-        }
-
+        for (const d of dominios)          qs.append('q_organization_domains_list[]', d);
+        for (const t of titulosLimitados)  qs.append('person_titles[]',               t);
+        for (const s of seniorities)       qs.append('person_seniorities[]',           s);
         qs.append('per_page', String(max_resultados));
         qs.append('page',     String(pagina));
 
         console.log(`🔍 [Apollo Prospect] Domínio: ${domain} | Depts: ${departamentos.join(', ') || 'todos'} | ${titulosLimitados.length} títulos | Seniorities: ${seniorities.join(', ')}`);
 
-        // POST com parâmetros na URL, body vazio (comportamento correto Apollo)
+        // POST com body vazio — Apollo lê filtros da query string
         const searchUrl = `${APOLLO_BASE_URL}/mixed_people/api_search?${qs.toString()}`;
         const searchResponse = await fetch(searchUrl, {
             method: 'POST',
@@ -175,37 +192,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!searchResponse.ok) {
             const errText = await searchResponse.text();
             console.error(`❌ [Apollo Prospect] Erro busca: ${searchResponse.status} - ${errText}`);
-            return res.status(200).json({ 
-                success: false, 
-                error: `Apollo API erro: ${searchResponse.status}`,
-                detalhes: errText
-            });
+            return res.status(200).json({ success: false, error: `Apollo API erro: ${searchResponse.status}`, detalhes: errText });
         }
 
-        // Ler como texto → JSON para poder logar em caso de schema inesperado
         const rawText = await searchResponse.text();
         let searchData: any = {};
-        try {
-            searchData = JSON.parse(rawText);
-        } catch {
-            console.error(`❌ [Apollo Prospect] Resposta não é JSON:`, rawText.slice(0, 500));
-            return res.status(200).json({ success: false, error: 'Resposta inválida Apollo', raw: rawText.slice(0, 300) });
-        }
+        try   { searchData = JSON.parse(rawText); }
+        catch { console.error(`❌ [Apollo Prospect] JSON inválido:`, rawText.slice(0, 300));
+                return res.status(200).json({ success: false, error: 'Resposta inválida Apollo' }); }
 
-        // DIAGNÓSTICO — logar estrutura da resposta para identificar problemas
-        console.log(`📦 [Apollo Prospect] Chaves da resposta:`, Object.keys(searchData).join(', '));
-        if (!searchData.people?.length && !searchData.contacts?.length) {
-            console.log(`⚠️  [Apollo Prospect] Sem resultados. Preview:`, JSON.stringify(searchData).slice(0, 600));
-        }
+        console.log(`📦 [Apollo Prospect] Chaves: ${Object.keys(searchData).join(', ')}`);
 
-        // Apollo pode retornar 'people' (prospects) e/ou 'contacts' (salvos na conta)
-        const pessoas = [
+        // Apollo pode retornar .people (novos) e/ou .contacts (salvos na conta)
+        let pessoas: any[] = [
             ...(searchData.people   || []),
             ...(searchData.contacts || []),
         ];
+        const totalBruto = searchData.total_entries ?? searchData.pagination?.total_entries ?? 0;
+        console.log(`📊 [Apollo Prospect] Bruto: ${pessoas.length} | total_entries: ${totalBruto}`);
 
-        const totalEntries = searchData.pagination?.total_entries ?? searchData.total_entries ?? '?';
-        console.log(`✅ [Apollo Prospect] ${pessoas.length} decisores encontrados em ${domain} (total_entries: ${totalEntries})`);
+        // ── Pós-processamento: filtro Brasil ──────────────────
+        // Verifica campos country/state/city — muito mais confiável que person_locations
+        if (filtrar_brasil) {
+            console.log(`🌎 [Apollo Prospect] Filtro Brasil: aplicando pós-processamento`);
+            const antes = pessoas.length;
+            pessoas = pessoas.filter(ehBrasil);
+            console.log(`🌎 [Apollo Prospect] Brasil: ${antes} → ${pessoas.length} (${antes - pessoas.length} excluídos)`);
+        }
+
+        console.log(`✅ [Apollo Prospect] ${pessoas.length} decisores encontrados em ${domain}`);
 
         // Se não precisa enriquecer, retornar dados básicos
         if (!enriquecer) {
