@@ -4,8 +4,14 @@
  * PROSPECT DUAL ENGINE — Motor Snov.io
  * Busca prospects por domínio via Domain Search API
  *
- * Versão: 1.9
+ * Versão: 2.0
  * Data: 04/03/2026
+ *
+ * FIX v2.0 (sobre v1.9):
+ * - Email: reescrito com Promise.all CONCURRENCY=5 (era serial batch → timeout)
+ * - Email: 1 prospect por request (mais confiável que bulk de 10)
+ * - Filtro Brasil: novo parâmetro filtrar_brasil no req.body
+ * - Localização: se dados insuficientes, filtro de país não é aplicado
  *
  * FIX v1.9 (sobre v1.8):
  * - CRÍTICO: parsing email bulk corrigido — API retorna {people, result[]} não {first_name, emails[]}
@@ -350,7 +356,10 @@ async function buscarProspectsComPaginacao(
 }
 
 // ============================================
-// EMAIL BULK FINDER — batches de 10
+// EMAIL FINDER VIA PROSPECT HASH — paralelo
+// Usa search_emails_start individual por prospect (endpoint correto da documentação)
+// Paralelo com Promise.all — muito mais rápido que bulk serial
+// Máximo CONCURRENCY simultâneo para não sobrecarregar rate limit (60 req/min)
 // ============================================
 async function buscarEmailsBulk(
     token: string,
@@ -358,110 +367,73 @@ async function buscarEmailsBulk(
     domain: string
 ): Promise<Map<string, { email: string; status: string }>> {
     const emailMap = new Map<string, { email: string; status: string }>();
-    const BATCH_SIZE = 10;
+    const CONCURRENCY = 5; // máx simultâneos para respeitar rate limit Snov.io
 
-    for (let i = 0; i < prospects.length; i += BATCH_SIZE) {
-        const batch = prospects.slice(i, i + BATCH_SIZE);
-
-        const params = new URLSearchParams();
-        batch.forEach((p, idx) => {
-            params.append(`rows[${idx}][first_name]`, p.primeiro_nome || '');
-            params.append(`rows[${idx}][last_name]`,  p.ultimo_nome || '');
-            params.append(`rows[${idx}][domain]`,     domain);
-        });
-
-        console.log(`📧 [Snov.io] Email batch ${Math.floor(i / BATCH_SIZE) + 1}: ${batch.length} prospects`);
-
+    // Função que busca email de 1 prospect via bulk finder (mais eficiente)
+    const buscarEmailUm = async (p: any): Promise<void> => {
         try {
+            const params = new URLSearchParams();
+            params.append('rows[0][first_name]', p.primeiro_nome || '');
+            params.append('rows[0][last_name]',  p.ultimo_nome || '');
+            params.append('rows[0][domain]',     domain);
+
             const startRes = await fetch(`${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/start`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: params.toString()
             });
-
-            if (!startRes.ok) { console.warn(`⚠️ Email bulk ${startRes.status}`); continue; }
+            if (!startRes.ok) return;
 
             const startData = await startRes.json();
-            console.log(`📦 [Snov.io] Email Bulk Start:`, JSON.stringify(startData).substring(0, 300));
 
-            let resultData: any;
-            if (startData.status === 'completed') {
-                resultData = startData;
-            } else {
-                // API retorna task_hash em data.task_hash OU meta.task_hash
-                const taskHash = startData.data?.task_hash || startData.meta?.task_hash;
-                if (!taskHash) {
-                    console.warn('⚠️ [Snov.io] Email bulk sem task_hash. RAW:', JSON.stringify(startData).substring(0, 200));
-                    continue;
+            // Resposta imediata (já completed)
+            if (startData.status === 'completed' && Array.isArray(startData.data)) {
+                const row = startData.data[0];
+                const email = row?.result?.[0]?.email || row?.email;
+                if (email) {
+                    const key = `${p.primeiro_nome.toLowerCase()}|${p.ultimo_nome.toLowerCase()}`;
+                    emailMap.set(key, { email, status: row?.result?.[0]?.smtp_status || 'unknown' });
+                    console.log(`✉️ [Snov.io] ${p.primeiro_nome} → ${email}`);
                 }
-                // CORRETO: query param ?task_hash=, não path param /{hash}
-                const resultUrl = startData.links?.result ||
-                    `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result?task_hash=${taskHash}`;
-                console.log(`⏳ [Snov.io] Email polling URL: ${resultUrl}`);
-                resultData = await pollForResult(resultUrl, token, 12, 3000); // Email finder precisa de mais tempo
+                return;
             }
 
-            console.log(`📦 [Snov.io] Email Bulk Result:`, JSON.stringify(resultData).substring(0, 500));
+            const taskHash = startData.data?.task_hash || startData.meta?.task_hash;
+            if (!taskHash) return;
 
-            // A API Snov.io retorna estrutura:
-            // data: [{people: "Jessica XU", result: [{email: "...", smtp_status: "valid"}]}]
-            // O campo "people" é o nome completo — fazer match com first_name|last_name do batch
-            const rawRows: any[] = Array.isArray(resultData.data)
-                ? resultData.data
-                : (resultData.data?.rows || resultData.rows || []);
+            const resultUrl = startData.links?.result ||
+                `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result?task_hash=${taskHash}`;
 
-            rawRows.forEach((row: any) => {
-                // Estrutura nova: {people: "Nome Completo", result: [{email, smtp_status}]}
-                if (row.people && Array.isArray(row.result)) {
-                    const emailEntry = row.result[0];
-                    if (!emailEntry?.email) return;
+            // Poll individual: 6×3s = 18s máx por prospect
+            const resultData = await pollForResult(resultUrl, token, 6, 3000);
+            if (resultData.status !== 'completed' || !Array.isArray(resultData.data)) return;
 
-                    // Fazer match pelo nome completo contra os prospects do batch atual
-                    // Normalizar: "Jean-Daniel" → "jean daniel" para comparação
-                    const norm = (s: string) => s.toLowerCase().replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
-                    const peopleLower = norm(row.people);
-                    const prospect = batch.find((p: any) => {
-                        const fullName = norm(`${p.primeiro_nome} ${p.ultimo_nome}`);
-                        return fullName === peopleLower ||
-                               (norm(p.primeiro_nome) !== '' && peopleLower.includes(norm(p.primeiro_nome)) &&
-                               (p.ultimo_nome ? peopleLower.includes(norm(p.ultimo_nome)) : true));
-                    });
+            const row = resultData.data[0];
+            if (!row) return;
 
-                    if (prospect) {
-                        const key = `${prospect.primeiro_nome.toLowerCase()}|${prospect.ultimo_nome.toLowerCase()}`;
-                        emailMap.set(key, {
-                            email:  emailEntry.email,
-                            status: emailEntry.smtp_status || 'unknown'
-                        });
-                        console.log(`✉️ [Snov.io] Email mapeado: ${prospect.primeiro_nome} → ${emailEntry.email}`);
-                    } else {
-                        // Fallback: tentar chave pelo nome "people" split
-                        const parts = row.people.trim().split(' ');
-                        if (parts.length >= 2) {
-                            const keyAlt = `${parts[0].toLowerCase()}|${parts[parts.length - 1].toLowerCase()}`;
-                            emailMap.set(keyAlt, {
-                                email:  emailEntry.email,
-                                status: emailEntry.smtp_status || 'unknown'
-                            });
-                        }
-                    }
-                    return;
-                }
+            // Estrutura: {people: "Nome", result: [{email, smtp_status}]}
+            const email = row?.result?.[0]?.email || row?.email;
+            if (!email) return;
 
-                // Estrutura antiga (fallback): {first_name, last_name, emails[]}
-                const key   = `${(row.first_name || '').toLowerCase()}|${(row.last_name || '').toLowerCase()}`;
-                const email = row.emails?.[0]?.email || row.email;
-                if (email) {
-                    emailMap.set(key, {
-                        email,
-                        status: row.emails?.[0]?.smtp_status || 'unknown'
-                    });
-                }
+            const key = `${p.primeiro_nome.toLowerCase()}|${p.ultimo_nome.toLowerCase()}`;
+            emailMap.set(key, {
+                email,
+                status: row?.result?.[0]?.smtp_status || 'unknown'
             });
+            console.log(`✉️ [Snov.io] ${p.primeiro_nome} → ${email}`);
 
         } catch (err: any) {
-            console.warn(`⚠️ [Snov.io] Erro batch emails: ${err.message}`);
+            // Silencioso por prospect — não abortar os demais
         }
+    };
+
+    console.log(`📧 [Snov.io] Buscando emails: ${prospects.length} prospects (${CONCURRENCY} simultâneos)`);
+
+    // Processar em lotes de CONCURRENCY simultâneos
+    for (let i = 0; i < prospects.length; i += CONCURRENCY) {
+        const lote = prospects.slice(i, i + CONCURRENCY);
+        await Promise.all(lote.map(buscarEmailUm));
+        console.log(`📧 [Snov.io] Lote ${Math.floor(i/CONCURRENCY)+1}: processado`);
     }
 
     console.log(`📧 [Snov.io] Total emails encontrados: ${emailMap.size}`);
@@ -476,9 +448,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const {
         domain,
-        departamentos = [],
-        senioridades  = [],
-        buscar_emails = false
+        departamentos   = [],
+        senioridades    = [],
+        buscar_emails   = false,
+        filtrar_brasil  = false   // novo: filtrar somente prospects do Brasil
     } = req.body;
 
     if (!domain) return res.status(400).json({ error: 'Campo "domain" é obrigatório' });
@@ -556,8 +529,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             enriquecido:      false
         }));
 
-        // ETAPA 6: FILTRO BACKEND — departamento + senioridade
+        // ETAPA 6: FILTRO BACKEND — país + departamento + senioridade
         let resultadosFiltrados = resultadosBrutos;
+
+        // Filtro de país (Brasil) — se solicitado
+        if (filtrar_brasil) {
+            const BRASIL_KEYWORDS = ['brazil', 'brasil', 'br', 'são paulo', 'sao paulo', 'rio de janeiro',
+                'belo horizonte', 'brasilia', 'brasília', 'curitiba', 'porto alegre', 'salvador',
+                'recife', 'fortaleza', 'manaus', 'goiania', 'goiânia', 'campinas', 'guarulhos'];
+            const antesBrasil = resultadosFiltrados.length;
+            resultadosFiltrados = resultadosFiltrados.filter(r => {
+                const pais   = (r.pais   || '').toLowerCase();
+                const cidade = (r.cidade || '').toLowerCase();
+                // Se o campo está vazio, não filtrar (Snov.io nem sempre retorna localização)
+                if (!pais && !cidade) return true;
+                return BRASIL_KEYWORDS.some(kw => pais.includes(kw) || cidade.includes(kw));
+            });
+            console.log(`🌎 [Snov.io] Após filtro Brasil: ${resultadosFiltrados.length}/${antesBrasil}`);
+            // Se filtrou demais (menos que 20% do total), não aplicar — localização não confiável
+            if (resultadosFiltrados.length < antesBrasil * 0.2 && antesBrasil > 5) {
+                console.log(`⚠️ [Snov.io] Filtro Brasil muito restritivo (${resultadosFiltrados.length}/${antesBrasil}), dados de localização insuficientes`);
+                resultadosFiltrados = resultadosBrutos;
+            }
+        }
 
         if (departamentos.length > 0) {
             resultadosFiltrados = resultadosFiltrados.filter(r =>

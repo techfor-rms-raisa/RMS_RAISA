@@ -4,7 +4,7 @@
  * Página principal do módulo de prospecção B2B
  * Motor duplo: Apollo + Snov.io com fallback cruzado
  * 
- * Versão: 1.1
+ * Versão: 1.2
  * Data: 04/03/2026
  */
 
@@ -82,6 +82,7 @@ const ProspectSearchPage: React.FC = () => {
     const [senioridadesSelecionadas, setSenioridadesSelecionadas] = useState<string[]>([]);
     const [enriquecerApollo, setEnriquecerApollo] = useState(true);
     const [buscarEmailsSnovio, setBuscarEmailsSnovio] = useState(true);
+    const [filtrarBrasil, setFiltrarBrasil] = useState(true);
 
     // Results state
     const [resultados, setResultados] = useState<ProspectResult[]>([]);
@@ -159,7 +160,8 @@ const ProspectSearchPage: React.FC = () => {
                 body: JSON.stringify({
                     domain: domain.trim(),
                     departamentos: departamentosSelecionados,
-                    buscar_emails: buscarEmailsSnovio
+                    buscar_emails: buscarEmailsSnovio,
+                    filtrar_brasil: filtrarBrasil
                 })
             });
 
@@ -194,7 +196,7 @@ const ProspectSearchPage: React.FC = () => {
         } catch (err: any) {
             setSearchState({ loading: false, motor: 'snovio', error: err.message });
         }
-    }, [domain, departamentosSelecionados, buscarEmailsSnovio]);
+    }, [domain, departamentosSelecionados, buscarEmailsSnovio, filtrarBrasil]);
 
     // ============================================
     // BUSCAR EMAIL INDIVIDUAL — endpoint dedicado
@@ -396,6 +398,18 @@ const ProspectSearchPage: React.FC = () => {
                             className="w-4 h-4 text-green-600 rounded"
                         />
                         <span>Buscar emails Snov.io (1 crédito/email)</span>
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer" title="Filtra prospects com localização no Brasil (quando disponível)">
+                        <input
+                            type="checkbox"
+                            checked={filtrarBrasil}
+                            onChange={(e) => setFiltrarBrasil(e.target.checked)}
+                            className="w-4 h-4 text-blue-600 rounded"
+                        />
+                        <span className="flex items-center gap-1">
+                            <span>🇧🇷</span>
+                            <span>Apenas Brasil</span>
+                        </span>
                     </label>
                 </div>
 
