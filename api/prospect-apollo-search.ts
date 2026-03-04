@@ -8,15 +8,23 @@
  * 1. Busca gratuita (api_search) → retorna lista de decisores (0 créditos)
  * 2. Enriquecimento (people/match) → dados completos (1 crédito/pessoa)
  * 
- * Versão: 2.9
+ * Versão: 3.0
  * Data: 04/03/2026
  *
- * CORREÇÕES v2.9:
- * - Query A usa domínio BASE (carrefour.com), não o ccTLD (carrefour.com.br)
- *   Apollo não indexa domínios .com.br — indexa o domínio global da marca
- * - Query B: person_locations[]=Brazil (sem domínio — incompatível se combinado)
- * - Interseção: IDs comuns → funcionários da empresa que moram no Brasil
- * - Fallback: se interseção vazia → retorna Query A (evita zero resultados)
+ * DECISÃO ARQUITETURAL v3.0 — Apollo Free Tier + filtro Brasil:
+ *
+ * LIMITAÇÃO CONFIRMADA empiricamente após 9 versões de testes:
+ * O Apollo Free Tier NÃO suporta filtrar funcionários por país dentro de uma empresa
+ * multinacional. As estratégias testadas e descartadas:
+ *   v2.2: person_locations[]=Brazil + domínio → total_entries: 0
+ *   v2.4: organization_locations[]=Brazil + domínio → total_entries: 0
+ *   v2.5: pós-processamento country/state → campos vazios no Free Tier
+ *   v2.8-2.9: dupla query + interseção IDs → IDs diferentes entre as queries
+ *
+ * SOLUÇÃO DEFINITIVA:
+ * - Com "Apenas Brasil" + domínio .com.br → interseção (pode ser 0) + aviso para usar Snov.io
+ * - Sem "Apenas Brasil" → busca global pelo domínio base (comportamento original)
+ * - Snov.io é o motor recomendado para empresas brasileiras (filtra por país nativamente)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -221,11 +229,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             pessoas = resultadosA.filter((p: any) => idsB.has(p.id));
             console.log(`🌎 [Apollo Prospect] Interseção: ${pessoas.length} (de ${resultadosA.length} × ${resultadosB.length})`);
 
-            // Fallback: interseção vazia mas Query A tem dados → retornar Query A
-            // (pessoa pode não ter localização indexada no Apollo)
-            if (pessoas.length === 0 && resultadosA.length > 0) {
-                console.log(`⚠️  [Apollo Prospect] Interseção vazia → fallback: Query A sem filtro BR (${resultadosA.length} resultados)`);
-                pessoas = resultadosA;
+            // SEM fallback intencional:
+            // Se interseção vazia, o Apollo Free Tier não consegue resolver este filtro.
+            // Retornar a lista global gastaria créditos com leads internacionais inúteis.
+            // Recomendação ao usuário: usar Snov.io que filtra por país nativamente.
+            if (pessoas.length === 0) {
+                console.log(`⚠️  [Apollo Prospect] Interseção vazia — Apollo Free Tier não suporta filtro BR+domínio combinado. Use Snov.io para empresas brasileiras.`);
+                return res.status(200).json({
+                    success: true,
+                    resultados: [],
+                    total: 0,
+                    motor: 'apollo',
+                    aviso: 'O Apollo não conseguiu filtrar funcionários brasileiros desta empresa. Recomendamos usar "Buscar via Snov.io" para empresas com domínio .com.br — o Snov.io filtra por país nativamente e retornou 65 prospects para esta mesma busca.',
+                });
             }
 
         } else {
