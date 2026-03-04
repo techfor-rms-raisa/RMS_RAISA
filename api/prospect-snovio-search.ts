@@ -4,7 +4,14 @@
  * PROSPECT DUAL ENGINE — Motor Snov.io
  * Busca prospects por domínio via Domain Search API
  *
- * Versão: 2.0
+ * Versão: 2.2
+ * 
+ * FIX v2.2 (sobre v2.1):
+ * - Email: usa endpoint nativo search_emails_start (prospect_hash já vem na API)
+ * - Email: fallback para /v2/emails-by-domain-by-name se sem prospect_hash
+ * - Mapeamento: captura _search_emails_start de cada prospect
+ * - Resposta: remove _search_emails_start antes de retornar ao frontend
+ * - Poll email: reduzido para 8×2s (mais rápido, endpoint nativo é mais veloz)
  * Data: 04/03/2026
  *
  * FIX v2.0 (sobre v1.9):
@@ -51,79 +58,164 @@ let cachedToken: string | null = null;
 let tokenExpiresAt: number = 0;
 
 // ============================================
-// PALAVRAS-CHAVE POR DEPARTAMENTO
-// Expandidas para cobrir variações reais de cargos no LinkedIn Brasil
+// PALAVRAS-CHAVE POR DEPARTAMENTO — v2.0
+// ESTRATÉGIA: keywords ESPECÍFICAS (não genéricas) para evitar falsos positivos
+// Ex: "developer" sozinho pega "Supplier Developer" (supply chain) → usar "software developer"
+// Ex: "system" sozinho pega "Quality System" → usar "system administrator"
+// Cada keyword testada com word boundary (\b) para máxima precisão
 // ============================================
 const DEPARTAMENTO_KEYWORDS: Record<string, string[]> = {
-    'ti_tecnologia': [
-        'tecnologia', 'technology', 'tech', 'ti', 'cto', 'cio',
-        'it', 'it manager', 'it director',
-        'software', 'sistemas', 'system', 'dados', 'data',
-        'digital', 'cyber', 'infosec', 'segurança da informação',
-        'devops', 'desenvolvimento', 'developer', 'engenheiro de software',
-        'head of it', 'head of tech', 'head of technology',
-        'infraestrutura de ti', 'arquitetura', 'architect',
-        'cloud', 'erp', 'sap', 'oracle', 'totvs', 'microservices',
-        'inteligência artificial', 'machine learning', 'ia'
+    ti_tecnologia: [
+        // Títulos específicos PT-BR
+        'gerente de ti', 'diretor de ti', 'coordenador de ti', 'analista de ti',
+        'gerente de tecnologia', 'diretor de tecnologia', 'head of ti',
+        'gerente de sistemas', 'diretor de sistemas',
+        'gerente de informatica', 'diretor de informatica',
+        'transformacao digital', 'transformação digital',
+        // Títulos EN específicos
+        'it director', 'it manager', 'it coordinator', 'it analyst',
+        'head of it', 'head of technology', 'head of tech',
+        'director of technology', 'director of it', 'vp of technology',
+        // C-Level TI
+        'cto', 'cio', 'chief technology officer', 'chief information officer',
+        // Especialidades técnicas específicas (não genéricas)
+        'software developer', 'software engineer', 'software architect',
+        'solutions architect', 'enterprise architect', 'it architect',
+        'digital solutions', 'digital transformation',
+        'information technology', 'information systems',
+        'data analyst', 'data engineer', 'data scientist', 'data manager',
+        'system administrator', 'systems administrator',
+        'cloud engineer', 'cloud architect', 'devops engineer', 'devops',
+        'cybersecurity', 'segurança da informação', 'information security',
+        'erp manager', 'sap manager', 'sap basis',
+        'tech lead', 'tecnologia da informação',
     ],
-    'compras_procurement': [
-        'compras', 'procurement', 'purchasing', 'suprimentos',
-        'supply chain', 'supply', 'cpo', 'sourcing',
-        'licitação', 'contratação', 'fornecedores', 'vendor',
-        'categoria', 'category', 'strategic sourcing', 'abastecimento',
-        'logística de suprimentos', 'gestão de fornecedores'
+    infraestrutura: [
+        // PT-BR
+        'gerente de infraestrutura', 'diretor de infraestrutura',
+        'coordenador de infraestrutura', 'analista de infraestrutura',
+        'infraestrutura de ti', 'operações de ti',
+        'gerente de datacenter', 'gerente de redes',
+        'administrador de sistemas', 'administrador de redes',
+        // EN
+        'infrastructure manager', 'infrastructure director',
+        'it operations manager', 'it operations director',
+        'network manager', 'network administrator', 'network engineer',
+        'datacenter manager', 'data center manager',
+        'system administrator', 'systems administrator', 'sysadmin',
+        'cloud infrastructure', 'infrastructure engineer',
+        'helpdesk manager', 'service desk manager',
+        'noc manager', 'field service manager',
+        'telecom manager', 'telecommunications',
+        'server administrator', 'storage administrator',
     ],
-    'infraestrutura': [
-        'infraestrutura', 'infrastructure', 'facilities',
-        'operações de ti', 'it operations', 'datacenter', 'data center',
-        'redes', 'network', 'telecom', 'noc', 'service desk',
-        'suporte', 'support', 'field service', 'helpdesk',
-        'cloud infrastructure', 'servidor', 'server'
+    compras_procurement: [
+        // PT-BR
+        'gerente de compras', 'diretor de compras', 'coordenador de compras',
+        'gerente de suprimentos', 'diretor de suprimentos',
+        'gerente de procurement', 'diretor de procurement',
+        'superintendente de compras',
+        // EN
+        'procurement manager', 'procurement director', 'purchasing manager',
+        'purchasing director', 'supply chain manager', 'supply chain director',
+        'head of procurement', 'head of purchasing', 'vp of procurement',
+        'category manager', 'sourcing manager', 'strategic sourcing',
+        // C-Level
+        'cpo', 'chief procurement officer',
     ],
-    'governanca_compliance': [
-        'governança', 'governance', 'compliance', 'regulatório', 'regulatory',
-        'auditoria', 'audit', 'riscos', 'risk', 'lgpd', 'sgsi',
-        'controles internos', 'internal controls', 'sox',
-        'privacidade', 'privacy', 'dpO', 'data protection',
-        'segurança corporativa', 'gestão de riscos'
+    governanca_compliance: [
+        // PT-BR
+        'gerente de compliance', 'diretor de compliance',
+        'gerente de governança', 'diretor de governança',
+        'gerente de riscos', 'diretor de riscos',
+        'gestor de riscos', 'auditor interno',
+        // EN
+        'compliance manager', 'compliance director', 'compliance officer',
+        'governance manager', 'governance director',
+        'risk manager', 'risk director', 'chief risk officer',
+        'internal audit', 'audit manager',
+        'dpo', 'data protection officer', 'privacy officer',
+        'lgpd', 'sox manager',
+        // C-Level
+        'cco', 'chief compliance officer',
     ],
-    'rh_recursos_humanos': [
-        'recursos humanos', 'human resources', 'rh',
-        'hr', 'pessoas', 'people', 'chro',
-        'talent', 'talentos', 'cultura', 'treinamento',
-        'desenvolvimento humano', 'aprendizagem', 'learning',
-        'remuneração', 'compensation', 'benefícios', 'benefits',
-        'recrutamento', 'recruitment', 'seleção', 'dhp',
-        'gente e gestão', 'gestão de pessoas', 'people & culture'
+    rh_recursos_humanos: [
+        // PT-BR
+        'gerente de rh', 'diretor de rh', 'coordenador de rh',
+        'gerente de recursos humanos', 'diretor de recursos humanos',
+        'gerente de pessoas', 'diretor de pessoas',
+        'gestão de pessoas', 'gente e gestão',
+        'gerente de talentos', 'gerente de recrutamento',
+        // EN
+        'hr manager', 'hr director', 'human resources manager',
+        'head of hr', 'head of people', 'vp of hr',
+        'people manager', 'talent manager', 'talent acquisition',
+        'people & culture', 'culture manager',
+        // C-Level
+        'chro', 'chief human resources officer', 'chief people officer',
     ],
-    'comercial_vendas': [
-        'comercial', 'vendas', 'sales', 'cso', 'negócios', 'business',
-        'receita', 'revenue', 'account', 'cliente', 'customer',
-        'key account', 'national account', 'trade', 'channel',
-        'b2b', 'b2c', 'marketplace', 'expansão', 'growth',
-        'desenvolvimento de negócios', 'business development',
-        'parcerias', 'partnership'
+    comercial_vendas: [
+        // PT-BR
+        'gerente comercial', 'diretor comercial',
+        'gerente de vendas', 'diretor de vendas',
+        'coordenador comercial',
+        'desenvolvimento de negócios', 'desenvolvimento de negocios',
+        // EN
+        'sales manager', 'sales director', 'commercial manager',
+        'head of sales', 'vp of sales', 'vp sales',
+        'business development manager', 'account manager',
+        'revenue manager', 'growth manager',
+        // C-Level
+        'cso', 'cro', 'chief sales officer', 'chief revenue officer',
     ],
-    'financeiro': [
-        'financeiro', 'finance', 'cfo', 'controladoria', 'controller',
-        'fiscal', 'contábil', 'contabilidade', 'tesouraria', 'treasury',
-        'orçamento', 'budget', 'planejamento financeiro', 'fp&a',
-        'contabilidade', 'tax', 'tributos', 'custos', 'cost',
-        'faturamento', 'billing', 'contas a pagar', 'contas a receber',
-        'shared services', 'gbs', 'csc'
+    financeiro: [
+        // PT-BR
+        'gerente financeiro', 'diretor financeiro',
+        'coordenador financeiro', 'controller financeiro',
+        'gerente de controladoria', 'diretor de controladoria',
+        'gerente de tesouraria', 'planejamento financeiro',
+        // EN
+        'finance manager', 'finance director', 'financial manager',
+        'head of finance', 'vp of finance', 'vp finance',
+        'controller', 'financial controller',
+        'fp&a manager', 'treasury manager',
+        // C-Level
+        'cfo', 'chief financial officer',
     ],
-    'diretoria_clevel': [
-        'ceo', 'coo', 'cto', 'cfo', 'cio', 'chro', 'cso', 'cpo',
-        'diretor', 'director', 'diretora',
-        'presidente', 'president', 'presidenta',
-        'vp', 'vice-presidente', 'vice presidente', 'vice president',
+    diretoria_clevel: [
+        // C-Suite
+        'ceo', 'coo', 'cto', 'cfo', 'cio', 'chro', 'cso', 'cpo', 'cro',
+        'chief executive officer', 'chief operating officer',
+        // Diretor/President
+        'presidente executivo', 'president',
         'managing director', 'diretor geral', 'general manager',
-        'head of', 'gerente geral', 'country manager',
-        'superintendente', 'superintendent',
-        'executive', 'executivo', 'board', 'conselho',
-        'sócio', 'partner', 'principal'
-    ]
+        'country manager', 'gerente geral',
+        // VP
+        'vice presidente', 'vice-presidente', 'vice president',
+        // Head
+        'head of business', 'head of operations',
+    ],
 };
+
+// Lista de termos que EXCLUEM um cargo de TI/Infraestrutura
+// Evita falsos positivos como "Supplier Developer", "Quality System Director"
+const EXCLUSOES_TI: string[] = [
+    'supply chain', 'supplier', 'sourcing manager',
+    'quality system', 'quality manager', 'quality director',
+    'csr', 'corporate social',
+    'operations manager', 'operations director', 'gerente de operacoes',
+    'operations coordinator',
+    'logistics', 'logistica',
+    'merchandis', // "merchandiser", "merchandising"
+];
+
+function cargoTemExclusao(cargoLower: string, departamentos: string[]): boolean {
+    // Só aplica exclusões para filtros TI/Infraestrutura
+    const ehFiltroTI = departamentos.some(d => d === 'ti_tecnologia' || d === 'infraestrutura');
+    if (!ehFiltroTI) return false;
+
+    return EXCLUSOES_TI.some(ex => cargoLower.includes(ex.toLowerCase()));
+}
 
 // Palavras-chave por senioridade para filtro backend
 const SENIORIDADE_KEYWORDS: Record<string, string[]> = {
@@ -167,9 +259,21 @@ function kwMatchesCargo(keyword: string, cargoLower: string): boolean {
 function cargoCorrespondeDepartamentos(cargo: string, departamentos: string[]): boolean {
     if (!cargo || departamentos.length === 0) return true;
     const cargoLower = cargo.toLowerCase();
+
+    // Verificar exclusões ANTES de testar keywords positivas
+    if (cargoTemExclusao(cargoLower, departamentos)) return false;
+
     return departamentos.some(dep => {
         const keywords = DEPARTAMENTO_KEYWORDS[dep] || [];
-        return keywords.some(kw => kwMatchesCargo(kw, cargoLower));
+        // Keywords com mais de 1 palavra: usar includes simples (mais confiável)
+        // Keywords de 1 palavra: usar word boundary
+        return keywords.some(kw => {
+            const kwl = kw.trim().toLowerCase();
+            if (kwl.includes(' ')) {
+                return cargoLower.includes(kwl);
+            }
+            return kwMatchesCargo(kwl, cargoLower);
+        });
     });
 }
 
@@ -356,10 +460,12 @@ async function buscarProspectsComPaginacao(
 }
 
 // ============================================
-// EMAIL FINDER VIA PROSPECT HASH — paralelo
-// Usa search_emails_start individual por prospect (endpoint correto da documentação)
-// Paralelo com Promise.all — muito mais rápido que bulk serial
-// Máximo CONCURRENCY simultâneo para não sobrecarregar rate limit (60 req/min)
+// EMAIL FINDER — via prospect_hash nativo (endpoint correto documentação oficial)
+// Fluxo:
+//   1. Cada prospect retornado pela API já tem "search_emails_start" (URL com prospect_hash)
+//   2. POST {search_emails_start} → task_hash
+//   3. GET /v2/domain-search/prospects/search-emails/result/{task_hash} → email
+// Paralelo CONCURRENCY=5, fallback para /v2/emails-by-domain-by-name se sem prospect_hash
 // ============================================
 async function buscarEmailsBulk(
     token: string,
@@ -367,14 +473,42 @@ async function buscarEmailsBulk(
     domain: string
 ): Promise<Map<string, { email: string; status: string }>> {
     const emailMap = new Map<string, { email: string; status: string }>();
-    const CONCURRENCY = 5; // máx simultâneos para respeitar rate limit Snov.io
+    const CONCURRENCY = 5;
 
-    // Função que busca email de 1 prospect via bulk finder (mais eficiente)
     const buscarEmailUm = async (p: any): Promise<void> => {
+        const key = `${(p.primeiro_nome || '').toLowerCase()}|${(p.ultimo_nome || '').toLowerCase()}`;
         try {
+            // ─── MÉTODO 1: prospect_hash nativo (preferido, sem custo extra) ───
+            if (p._search_emails_start) {
+                const startRes = await fetch(p._search_emails_start, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (startRes.ok) {
+                    const startData = await startRes.json();
+                    const taskHash  = startData.meta?.task_hash;
+                    if (taskHash) {
+                        const resultUrl = startData.links?.result ||
+                            `${SNOVIO_BASE_URL}/v2/domain-search/prospects/search-emails/result/${taskHash}`;
+                        // Poll: 8×2s = 16s máx
+                        const resultData = await pollForResult(resultUrl, token, 8, 2000);
+                        if (resultData.status === 'completed') {
+                            const emails: any[] = resultData.data?.emails || [];
+                            const emailEntry = emails[0];
+                            if (emailEntry?.email) {
+                                emailMap.set(key, { email: emailEntry.email, status: emailEntry.smtp_status || 'unknown' });
+                                console.log(`✉️ [Snov.io] ${p.primeiro_nome} → ${emailEntry.email} (via prospect_hash)`);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ─── MÉTODO 2: fallback /v2/emails-by-domain-by-name ───
             const params = new URLSearchParams();
             params.append('rows[0][first_name]', p.primeiro_nome || '');
-            params.append('rows[0][last_name]',  p.ultimo_nome || '');
+            params.append('rows[0][last_name]',  p.ultimo_nome  || '');
             params.append('rows[0][domain]',     domain);
 
             const startRes = await fetch(`${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/start`, {
@@ -386,14 +520,13 @@ async function buscarEmailsBulk(
 
             const startData = await startRes.json();
 
-            // Resposta imediata (já completed)
+            // Resposta imediata
             if (startData.status === 'completed' && Array.isArray(startData.data)) {
-                const row = startData.data[0];
+                const row   = startData.data[0];
                 const email = row?.result?.[0]?.email || row?.email;
                 if (email) {
-                    const key = `${p.primeiro_nome.toLowerCase()}|${p.ultimo_nome.toLowerCase()}`;
                     emailMap.set(key, { email, status: row?.result?.[0]?.smtp_status || 'unknown' });
-                    console.log(`✉️ [Snov.io] ${p.primeiro_nome} → ${email}`);
+                    console.log(`✉️ [Snov.io] ${p.primeiro_nome} → ${email} (via name/domain)`);
                 }
                 return;
             }
@@ -404,36 +537,27 @@ async function buscarEmailsBulk(
             const resultUrl = startData.links?.result ||
                 `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result?task_hash=${taskHash}`;
 
-            // Poll individual: 6×3s = 18s máx por prospect
-            const resultData = await pollForResult(resultUrl, token, 6, 3000);
+            const resultData = await pollForResult(resultUrl, token, 8, 2500);
             if (resultData.status !== 'completed' || !Array.isArray(resultData.data)) return;
 
-            const row = resultData.data[0];
-            if (!row) return;
-
-            // Estrutura: {people: "Nome", result: [{email, smtp_status}]}
+            const row   = resultData.data[0];
             const email = row?.result?.[0]?.email || row?.email;
             if (!email) return;
 
-            const key = `${p.primeiro_nome.toLowerCase()}|${p.ultimo_nome.toLowerCase()}`;
-            emailMap.set(key, {
-                email,
-                status: row?.result?.[0]?.smtp_status || 'unknown'
-            });
-            console.log(`✉️ [Snov.io] ${p.primeiro_nome} → ${email}`);
+            emailMap.set(key, { email, status: row?.result?.[0]?.smtp_status || 'unknown' });
+            console.log(`✉️ [Snov.io] ${p.primeiro_nome} → ${email} (via name/domain fallback)`);
 
-        } catch (err: any) {
-            // Silencioso por prospect — não abortar os demais
+        } catch {
+            // Silencioso por prospect
         }
     };
 
     console.log(`📧 [Snov.io] Buscando emails: ${prospects.length} prospects (${CONCURRENCY} simultâneos)`);
 
-    // Processar em lotes de CONCURRENCY simultâneos
     for (let i = 0; i < prospects.length; i += CONCURRENCY) {
         const lote = prospects.slice(i, i + CONCURRENCY);
         await Promise.all(lote.map(buscarEmailUm));
-        console.log(`📧 [Snov.io] Lote ${Math.floor(i/CONCURRENCY)+1}: processado`);
+        console.log(`📧 [Snov.io] Lote ${Math.floor(i / CONCURRENCY) + 1}: processado`);
     }
 
     console.log(`📧 [Snov.io] Total emails encontrados: ${emailMap.size}`);
@@ -505,28 +629,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // ETAPA 5: MAPEAR
         const resultadosBrutos = rawProspects.map((p: any) => ({
-            snovio_id:        p.id || null,
-            nome_completo:    `${p.first_name || ''} ${p.last_name || ''}`.trim(),
-            primeiro_nome:    p.first_name || '',
-            ultimo_nome:      p.last_name || '',
-            cargo:            p.position || p.title || '',
-            email:            p.email || null,
-            email_status:     p.email_status || null,
-            linkedin_url:     p.source_page || p.linkedin || p.linkedin_url || null,
-            foto_url:         p.photo || p.photo_url || null,
-            empresa_nome:     companyResult.data?.company_name || domain,
-            empresa_dominio:  domain,
-            empresa_setor:    companyResult.data?.industry || null,
-            empresa_porte:    companyResult.data?.size || null,
-            empresa_linkedin: companyResult.data?.linkedin || null,
-            empresa_website:  companyResult.data?.website || domain,
-            cidade:           p.locality || p.city || null,
-            estado:           p.region || null,
-            pais:             p.country || null,
-            senioridade:      null,
-            departamentos:    [],
-            fonte:            'snovio' as const,
-            enriquecido:      false
+            snovio_id:              p.id || null,
+            nome_completo:          `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+            primeiro_nome:          p.first_name || '',
+            ultimo_nome:            p.last_name || '',
+            cargo:                  p.position || p.title || '',
+            email:                  p.email || null,
+            email_status:           p.email_status || null,
+            linkedin_url:           p.source_page || p.linkedin || p.linkedin_url || null,
+            foto_url:               p.photo || p.photo_url || null,
+            empresa_nome:           companyResult.data?.company_name || domain,
+            empresa_dominio:        domain,
+            empresa_setor:          companyResult.data?.industry || null,
+            empresa_porte:          companyResult.data?.size || null,
+            empresa_linkedin:       companyResult.data?.linkedin || null,
+            empresa_website:        companyResult.data?.website || domain,
+            cidade:                 p.locality || p.city || null,
+            estado:                 p.region || null,
+            pais:                   p.country || null,
+            senioridade:            null,
+            departamentos:          [],
+            fonte:                  'snovio' as const,
+            enriquecido:            false,
+            // Campo nativo para busca de email via prospect_hash
+            _search_emails_start:   p.search_emails_start || null,
         }));
 
         // ETAPA 6: FILTRO BACKEND — país + departamento + senioridade
@@ -622,7 +748,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             total_disponivel:   totalCount,
             filtro_aplicado:    filtroAplicado,
             creditos_consumidos: 1 + creditosEmails,
-            resultados:         resultadosFinais
+            // Remover campo interno _search_emails_start antes de enviar ao frontend
+            resultados: resultadosFinais.map(({ _search_emails_start, ...r }: any) => r)
         });
 
     } catch (error: any) {
