@@ -4,16 +4,21 @@
  * PROSPECT DUAL ENGINE — Motor Snov.io
  * Busca prospects por domínio via Domain Search API
  *
- * Versão: 1.6
+ * Versão: 1.7
  * Data: 04/03/2026
  *
- * MELHORIAS v1.6:
+ * MELHORIAS v1.6 + CORREÇÕES v1.7:
  * - Paginação automática: busca até 3 páginas para maximizar resultados
  * - Keywords de departamento expandidas (mais variações PT/EN)
  * - Filtro de senioridade como segunda camada (quando selecionado)
  * - Filtro de cargo mais permissivo: basta UMA palavra-chave no cargo
  * - Se após filtro restar menos de 5, retorna todos sem filtro
  *   (evita resultados muito escassos por filtro excessivo)
+ * CORREÇÕES v1.7:
+ * - BUG CRÍTICO: task_hash do Email Bulk estava em data.task_hash, não meta.task_hash
+ *   Polling de email nunca executava → 0 emails sempre
+ * - Fallback sem filtro agora também pagina (3 páginas)
+ *   Garante até 60 prospects mesmo quando API ignora filtros
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -295,13 +300,24 @@ async function buscarProspectsComPaginacao(
         if (pageProspects.length < 10) break;
     }
 
-    // Fallback: se ainda está vazio, buscar sem filtro
-    if (todosProspects.length === 0 && posicoes.length > 0) {
-        console.log('⚠️ [Snov.io] 0 prospects com filtro, tentando sem filtro p1...');
-        const resultData = await buscarPagina(1, true);
-        if (resultData) {
-            todosProspects = extrairProspects(resultData);
-            totalCount = resultData.meta?.total_count || todosProspects.length;
+    // Fallback: se ainda está vazio, buscar sem filtro com paginação
+    if (todosProspects.length === 0) {
+        console.log('⚠️ [Snov.io] 0 prospects com filtro, buscando sem filtro (3 páginas)...');
+        for (let page = 1; page <= maxPages; page++) {
+            const resultData = await buscarPagina(page, true);
+            if (!resultData) break;
+            const pageProspects = extrairProspects(resultData);
+            totalCount = resultData.meta?.total_count || resultData.meta?.count || totalCount;
+            console.log(`✅ [Snov.io] Fallback página ${page}: ${pageProspects.length} prospects`);
+            if (pageProspects.length === 0) break;
+            const idsExistentes = new Set(todosProspects.map(p => p.id || `${p.first_name}|${p.last_name}`));
+            const novos = pageProspects.filter(p => {
+                const key = p.id || `${p.first_name}|${p.last_name}`;
+                return !idsExistentes.has(key);
+            });
+            todosProspects.push(...novos);
+            console.log(`📊 [Snov.io] Fallback acumulado: ${todosProspects.length}`);
+            if (pageProspects.length < 10) break;
         }
     }
 
@@ -347,14 +363,24 @@ async function buscarEmailsBulk(
             if (startData.status === 'completed') {
                 resultData = startData;
             } else {
-                const taskHash = startData.meta?.task_hash;
-                if (!taskHash) continue;
+                // API retorna task_hash em data.task_hash OU meta.task_hash
+                const taskHash = startData.data?.task_hash || startData.meta?.task_hash;
+                if (!taskHash) {
+                    console.warn('⚠️ [Snov.io] Email bulk sem task_hash. RAW:', JSON.stringify(startData).substring(0, 200));
+                    continue;
+                }
                 const resultUrl = startData.links?.result ||
                     `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result/${taskHash}`;
-                resultData = await pollForResult(resultUrl, token, 6, 2000);
+                console.log(`⏳ [Snov.io] Email polling URL: ${resultUrl}`);
+                resultData = await pollForResult(resultUrl, token, 8, 2000);
             }
 
-            const rows: any[] = resultData.data || [];
+            console.log(`📦 [Snov.io] Email Bulk Result:`, JSON.stringify(resultData).substring(0, 400));
+            // Estrutura pode ser data[] (array direto) ou data.rows[] ou data (objeto com first_name)
+            const rawRows: any[] = Array.isArray(resultData.data)
+                ? resultData.data
+                : (resultData.data?.rows || resultData.rows || []);
+            const rows: any[] = rawRows;
             rows.forEach((row: any) => {
                 const key   = `${(row.first_name || '').toLowerCase()}|${(row.last_name || '').toLowerCase()}`;
                 const email = row.emails?.[0]?.email || row.email;
@@ -542,3 +568,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ success: false, error: error.message });
     }
 }
+
