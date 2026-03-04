@@ -911,9 +911,8 @@ const ProspectSearchPage: React.FC = () => {
                     <p className="text-sm mt-1">Ex: totvs.com.br, ambev.com.br, magazineluiza.com.br</p>
                 </div>
             )}
-        </div>
         </>
-            )}
+        )}
     </div>
     );
 };
