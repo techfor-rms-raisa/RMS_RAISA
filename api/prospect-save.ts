@@ -84,7 +84,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             empresa_nome:     p.empresa_nome   || null,
             empresa_dominio:  p.empresa_dominio|| null,
             empresa_setor:    p.empresa_setor  || null,
-            empresa_porte:    p.empresa_porte  || null,
+            empresa_porte:    (() => {
+                const v = p.empresa_porte;
+                if (!v) return null;
+                if (typeof v === 'number') return v;
+                // Snov.io retorna ranges como "1001-5000" → pegar o maior valor
+                const nums = String(v).match(/\d+/g);
+                return nums ? parseInt(nums[nums.length - 1]) : null;
+            })(),
             empresa_linkedin: p.empresa_linkedin || null,
             empresa_website:  p.empresa_website  || null,
             cidade:           p.cidade         || null,
@@ -134,4 +141,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ success: false, error: err.message });
     }
 }
-
