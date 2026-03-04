@@ -4,14 +4,13 @@
  * Página principal do módulo de prospecção B2B
  * Motor duplo: Apollo + Snov.io com fallback cruzado
  * 
- * Versão: 2.0
+ * Versão: 3.0
  * Data: 04/03/2026
  *
- * v2.0:
- * - Implementação real do botão Salvar (integrado com /api/prospect-save)
- * - Aba "Leads Salvos" com listagem do Supabase
- * - useAuth corrigido: { user: currentUser }
- * - Toast de feedback no save
+ * v3.0:
+ * - Aba "Leads Salvos": lista do Supabase com filtros status/empresa
+ * - Exportar XLS: gera planilha local sem dependência externa
+ * - Exportar XLS também disponível na aba Leads Salvos
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -51,6 +50,22 @@ interface SearchState {
     loading: boolean;
     motor: 'apollo' | 'snovio' | null;
     error: string | null;
+}
+
+interface ProspectLead {
+    id: number;
+    nome_completo: string;
+    cargo: string | null;
+    email: string | null;
+    empresa_nome: string | null;
+    empresa_dominio: string | null;
+    empresa_setor: string | null;
+    linkedin_url: string | null;
+    motor: string;
+    status: string;
+    criado_em: string;
+    senioridade: string | null;
+    departamentos: string[];
 }
 
 // ============================================
@@ -93,8 +108,15 @@ const ProspectSearchPage: React.FC = () => {
     const [resultados, setResultados] = useState<ProspectResult[]>([]);
     const [searchState, setSearchState] = useState<SearchState>({ loading: false, motor: null, error: null });
     const [creditosConsumidos, setCreditosConsumidos] = useState({ apollo: 0, snovio: 0 });
-    const [saving, setSaving]         = useState(false);
-    const [toastMsg, setToastMsg]     = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
+    const [saving, setSaving]           = useState(false);
+    const [toastMsg, setToastMsg]       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
+    // Aba ativa
+    const [abaAtiva, setAbaAtiva]       = useState<'busca'|'salvos'>('busca');
+    // Leads Salvos
+    const [leadsSalvos, setLeadsSalvos] = useState<ProspectLead[]>([]);
+    const [loadingSalvos, setLoadingSalvos] = useState(false);
+    const [filtroStatus, setFiltroStatus]   = useState('');
+    const [filtroEmpresa, setFiltroEmpresa] = useState('');
     const [empresaInfo, setEmpresaInfo] = useState<any>(null);
 
     // Seleção
@@ -309,6 +331,64 @@ const ProspectSearchPage: React.FC = () => {
     // ============================================
     // RENDER
     // ============================================
+    // ── CARREGAR LEADS SALVOS ────────────────────────────
+    const carregarLeadsSalvos = useCallback(async () => {
+        setLoadingSalvos(true);
+        try {
+            const params = new URLSearchParams();
+            if (filtroStatus)  params.set('status',  filtroStatus);
+            if (filtroEmpresa) params.set('empresa', filtroEmpresa);
+            const res = await fetch(`/api/prospect-leads?${params}`);
+            const data = await res.json();
+            if (data.success) setLeadsSalvos(data.leads || []);
+        } catch (e) {
+            console.error('Erro ao carregar leads salvos:', e);
+        } finally {
+            setLoadingSalvos(false);
+        }
+    }, [filtroStatus, filtroEmpresa]);
+
+    useEffect(() => {
+        if (abaAtiva === 'salvos') carregarLeadsSalvos();
+    }, [abaAtiva, carregarLeadsSalvos]);
+
+    // ── EXPORTAR XLS ─────────────────────────────────────
+    const exportarXLS = useCallback((dados: any[], nomeArquivo: string) => {
+        if (!dados.length) return;
+
+        // Cabeçalhos
+        const headers = ['Nome', 'Cargo', 'Email', 'Empresa', 'Setor', 'Porte', 'LinkedIn', 'Fonte', 'Status', 'Data'];
+        const rows = dados.map(p => [
+            p.nome_completo || '',
+            p.cargo         || '',
+            p.email         || '',
+            p.empresa_nome  || '',
+            p.empresa_setor || '',
+            p.empresa_porte || '',
+            p.linkedin_url  || '',
+            p.motor || p.fonte || '',
+            p.status        || 'novo',
+            p.criado_em ? new Date(p.criado_em).toLocaleDateString('pt-BR') : '',
+        ]);
+
+        // Gerar CSV com separador ponto-e-vírgula (compatível com Excel BR)
+        const csvContent = [headers, ...rows]
+            .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(';'))
+            .join('
+');
+
+        const BOM = '﻿'; // BOM para Excel reconhecer UTF-8
+        const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = `${nomeArquivo}_${new Date().toISOString().slice(0,10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setToastMsg({ tipo: 'ok', msg: `${dados.length} leads exportados!` });
+        setTimeout(() => setToastMsg(null), 3000);
+    }, []);
+
     // ── SALVAR SELECIONADOS ──────────────────────────────
     const handleSalvar = useCallback(async () => {
         if (!currentUser?.id) {
@@ -388,6 +468,154 @@ const ProspectSearchPage: React.FC = () => {
                     )}
                 </div>
             )}
+
+            {/* Abas */}
+            <div className="flex gap-1 mb-6 border-b border-gray-200">
+                <button
+                    onClick={() => setAbaAtiva('busca')}
+                    className={`px-5 py-2.5 text-sm font-medium rounded-t-lg transition-colors
+                        ${abaAtiva === 'busca'
+                            ? 'bg-white border border-b-white border-gray-200 text-blue-600 -mb-px'
+                            : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                    <i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca
+                </button>
+                <button
+                    onClick={() => setAbaAtiva('salvos')}
+                    className={`px-5 py-2.5 text-sm font-medium rounded-t-lg transition-colors
+                        ${abaAtiva === 'salvos'
+                            ? 'bg-white border border-b-white border-gray-200 text-blue-600 -mb-px'
+                            : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                    <i className="fa-solid fa-database mr-2"></i>Leads Salvos
+                    {leadsSalvos.length > 0 && (
+                        <span className="ml-2 bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full">
+                            {leadsSalvos.length}
+                        </span>
+                    )}
+                </button>
+            </div>
+
+            {/* ── ABA LEADS SALVOS ── */}
+            {abaAtiva === 'salvos' && (
+                <div className="bg-white rounded-lg shadow-md">
+                    {/* Filtros */}
+                    <div className="p-4 border-b flex flex-wrap gap-3 items-center">
+                        <input
+                            type="text"
+                            placeholder="Filtrar por empresa..."
+                            value={filtroEmpresa}
+                            onChange={e => setFiltroEmpresa(e.target.value)}
+                            className="px-3 py-1.5 border border-gray-300 rounded text-sm w-52 focus:ring-2 focus:ring-blue-500"
+                        />
+                        <select
+                            value={filtroStatus}
+                            onChange={e => setFiltroStatus(e.target.value)}
+                            className="px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500"
+                        >
+                            <option value="">Todos os status</option>
+                            <option value="novo">Novo</option>
+                            <option value="contatado">Contatado</option>
+                            <option value="em_negociacao">Em Negociação</option>
+                            <option value="convertido">Convertido</option>
+                            <option value="descartado">Descartado</option>
+                        </select>
+                        <button
+                            onClick={carregarLeadsSalvos}
+                            className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-sm"
+                        >
+                            <i className="fa-solid fa-rotate-right mr-1"></i>Atualizar
+                        </button>
+                        <button
+                            onClick={() => exportarXLS(leadsSalvos, 'leads_salvos')}
+                            disabled={leadsSalvos.length === 0}
+                            className="ml-auto px-3 py-1.5 bg-green-600 text-white rounded text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                        >
+                            <i className="fa-solid fa-file-excel mr-1"></i>Exportar XLS ({leadsSalvos.length})
+                        </button>
+                    </div>
+
+                    {/* Tabela */}
+                    {loadingSalvos ? (
+                        <div className="text-center py-16 text-gray-400">
+                            <i className="fa-solid fa-spinner fa-spin text-4xl mb-3 block"></i>
+                            <p>Carregando leads...</p>
+                        </div>
+                    ) : leadsSalvos.length === 0 ? (
+                        <div className="text-center py-16 text-gray-400">
+                            <i className="fa-solid fa-database text-5xl mb-3 block"></i>
+                            <p className="font-medium">Nenhum lead salvo encontrado</p>
+                            <p className="text-sm mt-1">Faça uma busca e salve os resultados</p>
+                        </div>
+                    ) : (
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-sm">
+                                <thead className="bg-gray-50 text-xs uppercase text-gray-600">
+                                    <tr>
+                                        <th className="px-4 py-3 text-left">Nome</th>
+                                        <th className="px-4 py-3 text-left">Cargo</th>
+                                        <th className="px-4 py-3 text-left">Empresa</th>
+                                        <th className="px-4 py-3 text-left">Email</th>
+                                        <th className="px-4 py-3 text-left">Fonte</th>
+                                        <th className="px-4 py-3 text-left">Status</th>
+                                        <th className="px-4 py-3 text-left">Data</th>
+                                        <th className="px-4 py-3 text-left">LinkedIn</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100">
+                                    {leadsSalvos.map(lead => (
+                                        <tr key={lead.id} className="hover:bg-gray-50 transition-colors">
+                                            <td className="px-4 py-3 font-medium text-gray-900">{lead.nome_completo}</td>
+                                            <td className="px-4 py-3 text-gray-600">{lead.cargo || '—'}</td>
+                                            <td className="px-4 py-3">
+                                                <div className="font-medium">{lead.empresa_nome || '—'}</div>
+                                                {lead.empresa_setor && <div className="text-xs text-gray-400">{lead.empresa_setor}</div>}
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                {lead.email
+                                                    ? <a href={`mailto:${lead.email}`} className="text-blue-600 hover:underline">{lead.email}</a>
+                                                    : <span className="text-gray-400">—</span>
+                                                }
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <span className={`text-xs px-2 py-1 rounded-full font-medium
+                                                    ${lead.motor === 'apollo' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
+                                                    {lead.motor}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                <span className={`text-xs px-2 py-1 rounded-full
+                                                    ${lead.status === 'novo'           ? 'bg-blue-100 text-blue-700'
+                                                    : lead.status === 'contatado'      ? 'bg-yellow-100 text-yellow-700'
+                                                    : lead.status === 'em_negociacao'  ? 'bg-orange-100 text-orange-700'
+                                                    : lead.status === 'convertido'     ? 'bg-green-100 text-green-700'
+                                                    : 'bg-gray-100 text-gray-600'}`}>
+                                                    {lead.status.replace('_', ' ')}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3 text-gray-500 text-xs">
+                                                {new Date(lead.criado_em).toLocaleDateString('pt-BR')}
+                                            </td>
+                                            <td className="px-4 py-3">
+                                                {lead.linkedin_url
+                                                    ? <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer"
+                                                         className="text-blue-600 hover:text-blue-800">
+                                                        <i className="fa-brands fa-linkedin text-lg"></i>
+                                                      </a>
+                                                    : <span className="text-gray-300">—</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* ── ABA NOVA BUSCA ── */}
+            {abaAtiva === 'busca' && <>
 
             {/* Formulário de Busca */}
             <div className="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -548,12 +776,12 @@ const ProspectSearchPage: React.FC = () => {
                                 }
                             </button>
                             <button
-                                onClick={() => alert('Fase 3: Exportar XLS')}
+                                onClick={() => exportarXLS(resultados, `prospects_${domain || 'busca'}`)}
                                 disabled={resultados.length === 0}
                                 className="px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 disabled:opacity-50"
                             >
                                 <i className="fa-solid fa-file-excel mr-1"></i>
-                                Exportar XLS
+                                Exportar XLS ({resultados.length})
                             </button>
                         </div>
                     </div>
@@ -685,6 +913,8 @@ const ProspectSearchPage: React.FC = () => {
                 </div>
             )}
         </div>
+        </>}
+    </div>
     );
 };
 
