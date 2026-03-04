@@ -118,8 +118,9 @@ async function buscarEmailSnovio(
         return null;
     }
 
+    // CORRETO: query param ?task_hash=, não path param /{hash}
     const resultUrl = startData.links?.result ||
-        `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result/${taskHash}`;
+        `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result?task_hash=${taskHash}`;
 
     const resultData = await pollResult(resultUrl, token);
     console.log(`📦 [EmailFinder/Snov.io] Result RAW:`, JSON.stringify(resultData).substring(0, 400));

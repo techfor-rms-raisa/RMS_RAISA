@@ -369,8 +369,9 @@ async function buscarEmailsBulk(
                     console.warn('⚠️ [Snov.io] Email bulk sem task_hash. RAW:', JSON.stringify(startData).substring(0, 200));
                     continue;
                 }
+                // CORRETO: query param ?task_hash=, não path param /{hash}
                 const resultUrl = startData.links?.result ||
-                    `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result/${taskHash}`;
+                    `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result?task_hash=${taskHash}`;
                 console.log(`⏳ [Snov.io] Email polling URL: ${resultUrl}`);
                 resultData = await pollForResult(resultUrl, token, 8, 2000);
             }
@@ -568,4 +569,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(500).json({ success: false, error: error.message });
     }
 }
-
