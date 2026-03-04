@@ -4,8 +4,8 @@
  * Página principal do módulo de prospecção B2B
  * Motor duplo: Apollo + Snov.io com fallback cruzado
  * 
- * Versão: 1.0
- * Data: 03/03/2026
+ * Versão: 1.1
+ * Data: 04/03/2026
  */
 
 import React, { useState, useCallback } from 'react';
@@ -179,13 +179,13 @@ const ProspectSearchPage: React.FC = () => {
     }, [domain, departamentosSelecionados, buscarEmailsSnovio]);
 
     // ============================================
-    // FALLBACK: BUSCAR EMAIL NO MOTOR ALTERNATIVO
+    // BUSCAR EMAIL INDIVIDUAL — endpoint dedicado
+    // Chama /api/prospect-email-finder com nome+domínio
+    // Tenta Snov.io primeiro, Apollo como fallback
     // ============================================
     const buscarEmailFallback = useCallback(async (index: number) => {
         const prospect = resultados[index];
         if (!prospect || prospect.email) return;
-
-        const motorAlternativo = prospect.fonte === 'apollo' ? 'snovio' : 'apollo';
 
         // Marcar como buscando
         setResultados(prev => {
@@ -195,81 +195,43 @@ const ProspectSearchPage: React.FC = () => {
         });
 
         try {
-            if (motorAlternativo === 'snovio') {
-                // Buscar email via Snov.io Email Finder (nome + domínio)
-                const response = await fetch('/api/prospect-snovio-search', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        domain: domain.trim(),
-                        buscar_emails: true,
-                        departamentos: []
-                    })
-                });
-                const data = await response.json();
-                // Tentar encontrar pelo nome
-                if (data.success && data.resultados) {
-                    const match = data.resultados.find((r: any) => 
-                        r.primeiro_nome?.toLowerCase() === prospect.primeiro_nome?.toLowerCase() &&
-                        r.email
-                    );
-                    if (match) {
-                        setResultados(prev => {
-                            const updated = [...prev];
-                            updated[index] = { 
-                                ...updated[index], 
-                                email: match.email, 
-                                email_status: match.email_status || 'found_via_snovio',
-                                fonte: 'ambos'
-                            };
-                            return updated;
-                        });
-                        setCreditosConsumidos(prev => ({ ...prev, snovio: prev.snovio + 1 }));
-                        return;
-                    }
-                }
-            } else {
-                // Buscar via Apollo People Match
-                const response = await fetch('/api/prospect-apollo-search', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        domain: domain.trim(),
-                        departamentos: [],
-                        enriquecer: true,
-                        max_resultados: 5
-                    })
-                });
-                const data = await response.json();
-                if (data.success && data.resultados) {
-                    const match = data.resultados.find((r: any) => 
-                        r.primeiro_nome?.toLowerCase() === prospect.primeiro_nome?.toLowerCase() &&
-                        r.email
-                    );
-                    if (match) {
-                        setResultados(prev => {
-                            const updated = [...prev];
-                            updated[index] = { 
-                                ...updated[index], 
-                                email: match.email,
-                                email_status: match.email_status || 'found_via_apollo',
-                                linkedin_url: updated[index].linkedin_url || match.linkedin_url,
-                                fonte: 'ambos'
-                            };
-                            return updated;
-                        });
-                        setCreditosConsumidos(prev => ({ ...prev, apollo: prev.apollo + 1 }));
-                        return;
-                    }
-                }
-            }
-
-            // Não encontrou
-            setResultados(prev => {
-                const updated = [...prev];
-                updated[index] = { ...updated[index], email_status: 'not_found' };
-                return updated;
+            const response = await fetch('/api/prospect-email-finder', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    primeiro_nome:  prospect.primeiro_nome,
+                    ultimo_nome:    prospect.ultimo_nome,
+                    domain:         prospect.empresa_dominio || domain.trim(),
+                    empresa_nome:   prospect.empresa_nome,
+                    fonte_original: prospect.fonte
+                })
             });
+
+            const data = await response.json();
+
+            if (data.success && data.email) {
+                if (data.motor === 'snovio') {
+                    setCreditosConsumidos(prev => ({ ...prev, snovio: prev.snovio + 1 }));
+                } else if (data.motor === 'apollo') {
+                    setCreditosConsumidos(prev => ({ ...prev, apollo: prev.apollo + 1 }));
+                }
+                setResultados(prev => {
+                    const updated = [...prev];
+                    updated[index] = {
+                        ...updated[index],
+                        email:        data.email,
+                        email_status: data.email_status || 'found',
+                        fonte:        (prospect.fonte === data.motor ? prospect.fonte : 'ambos') as 'apollo' | 'snovio' | 'ambos'
+                    };
+                    return updated;
+                });
+            } else {
+                setResultados(prev => {
+                    const updated = [...prev];
+                    updated[index] = { ...updated[index], email_status: 'not_found' };
+                    return updated;
+                });
+            }
         } catch (err: any) {
             setResultados(prev => {
                 const updated = [...prev];
