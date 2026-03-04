@@ -4,8 +4,14 @@
  * PROSPECT DUAL ENGINE — Motor Snov.io
  * Busca prospects por domínio via Domain Search API
  *
- * Versão: 1.7
+ * Versão: 1.8
  * Data: 04/03/2026
+ *
+ * FIX v1.8:
+ * - Filtro de cargo usa regex word boundary (era substring simples)
+ *   Bug: 'cto' batia em 'dire-cto-r' → falso positivo em todos os Directors
+ * - Keywords limpas: 'ti ', ' ti,' → 'ti' (boundary resolve)
+ * - Polling email bulk: 8×2s → 12×3s (mais tempo para Snov.io processar)
  *
  * MELHORIAS v1.6 + CORREÇÕES v1.7:
  * - Paginação automática: busca até 3 páginas para maximizar resultados
@@ -39,15 +45,15 @@ let tokenExpiresAt: number = 0;
 // ============================================
 const DEPARTAMENTO_KEYWORDS: Record<string, string[]> = {
     'ti_tecnologia': [
-        'tecnologia', 'technology', 'tech', 'ti ', ' ti,', 'cto', 'cio',
-        'it ', ' it,', 'it manager', 'it director',
+        'tecnologia', 'technology', 'tech', 'ti', 'cto', 'cio',
+        'it', 'it manager', 'it director',
         'software', 'sistemas', 'system', 'dados', 'data',
         'digital', 'cyber', 'infosec', 'segurança da informação',
         'devops', 'desenvolvimento', 'developer', 'engenheiro de software',
         'head of it', 'head of tech', 'head of technology',
         'infraestrutura de ti', 'arquitetura', 'architect',
         'cloud', 'erp', 'sap', 'oracle', 'totvs', 'microservices',
-        'inteligência artificial', 'machine learning', 'ia '
+        'inteligência artificial', 'machine learning', 'ia'
     ],
     'compras_procurement': [
         'compras', 'procurement', 'purchasing', 'suprimentos',
@@ -71,8 +77,8 @@ const DEPARTAMENTO_KEYWORDS: Record<string, string[]> = {
         'segurança corporativa', 'gestão de riscos'
     ],
     'rh_recursos_humanos': [
-        'recursos humanos', 'human resources', 'rh ', ' rh,',
-        'hr ', ' hr,', 'pessoas', 'people', 'chro',
+        'recursos humanos', 'human resources', 'rh',
+        'hr', 'pessoas', 'people', 'chro',
         'talent', 'talentos', 'cultura', 'treinamento',
         'desenvolvimento humano', 'aprendizagem', 'learning',
         'remuneração', 'compensation', 'benefícios', 'benefits',
@@ -99,7 +105,7 @@ const DEPARTAMENTO_KEYWORDS: Record<string, string[]> = {
         'ceo', 'coo', 'cto', 'cfo', 'cio', 'chro', 'cso', 'cpo',
         'diretor', 'director', 'diretora',
         'presidente', 'president', 'presidenta',
-        'vp ', ' vp,', 'vice-presidente', 'vice presidente', 'vice president',
+        'vp', 'vice-presidente', 'vice presidente', 'vice president',
         'managing director', 'diretor geral', 'general manager',
         'head of', 'gerente geral', 'country manager',
         'superintendente', 'superintendent',
@@ -111,7 +117,7 @@ const DEPARTAMENTO_KEYWORDS: Record<string, string[]> = {
 // Palavras-chave por senioridade para filtro backend
 const SENIORIDADE_KEYWORDS: Record<string, string[]> = {
     'c_level':       ['ceo', 'coo', 'cto', 'cfo', 'cio', 'chro', 'cso', 'cpo', 'presidente', 'president'],
-    'vp':            ['vp ', ' vp,', 'vice-presidente', 'vice president', 'vice presidente'],
+    'vp':            ['vp', 'vice-presidente', 'vice president', 'vice presidente'],
     'diretor':       ['diretor', 'director', 'diretora'],
     'gerente':       ['gerente', 'manager', 'gerência'],
     'coordenador':   ['coordenador', 'coordinator', 'coordenação', 'lead ', 'líder'],
@@ -133,21 +139,35 @@ const DEPARTAMENTO_POSICOES: Record<string, string[]> = {
 // ============================================
 // FILTROS DE CARGO E SENIORIDADE NO BACKEND
 // ============================================
+// Testa se uma keyword bate em um cargo usando word boundary (evita falsos positivos)
+// Ex: 'cto' NÃO bate em 'director' mas bate em 'cto of operations'
+function kwMatchesCargo(keyword: string, cargoLower: string): boolean {
+    const kw = keyword.trim().toLowerCase();
+    if (!kw) return false;
+    try {
+        // \b = word boundary: garante que 'cto' não bate dentro de 'director'
+        const pattern = new RegExp('\\b' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
+        return pattern.test(cargoLower);
+    } catch {
+        return cargoLower.includes(kw);
+    }
+}
+
 function cargoCorrespondeDepartamentos(cargo: string, departamentos: string[]): boolean {
     if (!cargo || departamentos.length === 0) return true;
-    const cargoLower = ` ${cargo.toLowerCase()} `; // espaços para match exato de palavras curtas
+    const cargoLower = cargo.toLowerCase();
     return departamentos.some(dep => {
         const keywords = DEPARTAMENTO_KEYWORDS[dep] || [];
-        return keywords.some(kw => cargoLower.includes(kw.toLowerCase()));
+        return keywords.some(kw => kwMatchesCargo(kw, cargoLower));
     });
 }
 
 function cargoCorrespondeSenioridade(cargo: string, senioridades: string[]): boolean {
     if (!cargo || senioridades.length === 0) return true;
-    const cargoLower = ` ${cargo.toLowerCase()} `;
+    const cargoLower = cargo.toLowerCase();
     return senioridades.some(sen => {
         const keywords = SENIORIDADE_KEYWORDS[sen] || [];
-        return keywords.some(kw => cargoLower.includes(kw.toLowerCase()));
+        return keywords.some(kw => kwMatchesCargo(kw, cargoLower));
     });
 }
 
@@ -373,7 +393,7 @@ async function buscarEmailsBulk(
                 const resultUrl = startData.links?.result ||
                     `${SNOVIO_BASE_URL}/v2/emails-by-domain-by-name/result?task_hash=${taskHash}`;
                 console.log(`⏳ [Snov.io] Email polling URL: ${resultUrl}`);
-                resultData = await pollForResult(resultUrl, token, 8, 2000);
+                resultData = await pollForResult(resultUrl, token, 12, 3000); // Email finder precisa de mais tempo
             }
 
             console.log(`📦 [Snov.io] Email Bulk Result:`, JSON.stringify(resultData).substring(0, 400));
