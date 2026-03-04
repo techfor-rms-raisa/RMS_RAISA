@@ -4,8 +4,13 @@
  * PROSPECT DUAL ENGINE — Motor Snov.io
  * Busca prospects por domínio via Domain Search API
  *
- * Versão: 1.8
+ * Versão: 1.9
  * Data: 04/03/2026
+ *
+ * FIX v1.9 (sobre v1.8):
+ * - CRÍTICO: parsing email bulk corrigido — API retorna {people, result[]} não {first_name, emails[]}
+ * - Threshold proteção filtro: 5 → 3 (respeita seleção do usuário)
+ * - Fallback páginas: 3 → 5 (100 prospects para filtro trabalhar)
  *
  * FIX v1.8:
  * - Filtro de cargo usa regex word boundary (era substring simples)
@@ -396,13 +401,54 @@ async function buscarEmailsBulk(
                 resultData = await pollForResult(resultUrl, token, 12, 3000); // Email finder precisa de mais tempo
             }
 
-            console.log(`📦 [Snov.io] Email Bulk Result:`, JSON.stringify(resultData).substring(0, 400));
-            // Estrutura pode ser data[] (array direto) ou data.rows[] ou data (objeto com first_name)
+            console.log(`📦 [Snov.io] Email Bulk Result:`, JSON.stringify(resultData).substring(0, 500));
+
+            // A API Snov.io retorna estrutura:
+            // data: [{people: "Jessica XU", result: [{email: "...", smtp_status: "valid"}]}]
+            // O campo "people" é o nome completo — fazer match com first_name|last_name do batch
             const rawRows: any[] = Array.isArray(resultData.data)
                 ? resultData.data
                 : (resultData.data?.rows || resultData.rows || []);
-            const rows: any[] = rawRows;
-            rows.forEach((row: any) => {
+
+            rawRows.forEach((row: any) => {
+                // Estrutura nova: {people: "Nome Completo", result: [{email, smtp_status}]}
+                if (row.people && Array.isArray(row.result)) {
+                    const emailEntry = row.result[0];
+                    if (!emailEntry?.email) return;
+
+                    // Fazer match pelo nome completo contra os prospects do batch atual
+                    // Normalizar: "Jean-Daniel" → "jean daniel" para comparação
+                    const norm = (s: string) => s.toLowerCase().replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+                    const peopleLower = norm(row.people);
+                    const prospect = batch.find((p: any) => {
+                        const fullName = norm(`${p.primeiro_nome} ${p.ultimo_nome}`);
+                        return fullName === peopleLower ||
+                               (norm(p.primeiro_nome) !== '' && peopleLower.includes(norm(p.primeiro_nome)) &&
+                               (p.ultimo_nome ? peopleLower.includes(norm(p.ultimo_nome)) : true));
+                    });
+
+                    if (prospect) {
+                        const key = `${prospect.primeiro_nome.toLowerCase()}|${prospect.ultimo_nome.toLowerCase()}`;
+                        emailMap.set(key, {
+                            email:  emailEntry.email,
+                            status: emailEntry.smtp_status || 'unknown'
+                        });
+                        console.log(`✉️ [Snov.io] Email mapeado: ${prospect.primeiro_nome} → ${emailEntry.email}`);
+                    } else {
+                        // Fallback: tentar chave pelo nome "people" split
+                        const parts = row.people.trim().split(' ');
+                        if (parts.length >= 2) {
+                            const keyAlt = `${parts[0].toLowerCase()}|${parts[parts.length - 1].toLowerCase()}`;
+                            emailMap.set(keyAlt, {
+                                email:  emailEntry.email,
+                                status: emailEntry.smtp_status || 'unknown'
+                            });
+                        }
+                    }
+                    return;
+                }
+
+                // Estrutura antiga (fallback): {first_name, last_name, emails[]}
                 const key   = `${(row.first_name || '').toLowerCase()}|${(row.last_name || '').toLowerCase()}`;
                 const email = row.emails?.[0]?.email || row.email;
                 if (email) {
@@ -479,7 +525,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const { prospects: rawProspects, totalCount } = await buscarProspectsComPaginacao(
             token, domain, posicoes, prospectsStartUrl,
-            3 // até 3 páginas
+            5 // até 5 páginas (mais dados para o filtro trabalhar)
         );
 
         console.log(`✅ [Snov.io] Total bruto: ${rawProspects.length} | total disponível: ${totalCount}`);
@@ -533,12 +579,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // Proteção: se filtro deixou menos de 5, usa bruto sem filtro
-        const resultadosFinais = resultadosFiltrados.length >= 5
+        // Proteção: se filtro deixou menos de 3, usa bruto sem filtro
+        // (threshold reduzido para respeitar seleção do usuário mesmo com poucos resultados)
+        const resultadosFinais = resultadosFiltrados.length >= 3
             ? resultadosFiltrados
             : resultadosBrutos;
 
-        const filtroAplicado = resultadosFiltrados.length >= 5;
+        const filtroAplicado = resultadosFiltrados.length >= 3;
 
         console.log(`✅ [Snov.io] Resultados finais: ${resultadosFinais.length} | filtro aplicado: ${filtroAplicado}`);
 
