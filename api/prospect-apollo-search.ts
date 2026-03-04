@@ -8,16 +8,17 @@
  * 1. Busca gratuita (api_search) → retorna lista de decisores (0 créditos)
  * 2. Enriquecimento (people/match) → dados completos (1 crédito/pessoa)
  * 
- * Versão: 2.2
+ * Versão: 2.3
  * Data: 04/03/2026
  *
- * CORREÇÕES v2.2 (documentação oficial Apollo):
- * - Endpoint correto: /mixed_people/api_search
- * - Método: POST com parâmetros na QUERY STRING (não body JSON)
- *   Apollo usa POST mas lê filtros via URLSearchParams na URL
- *   Ref: https://docs.apollo.io/reference/people-api-search
- * - Domínio: q_organization_domains_list[] na querystring
- * - Filtro Brasil: person_locations[]=Brazil
+ * CORREÇÕES v2.3:
+ * - Endpoint: POST /mixed_people/api_search (correto para API callers)
+ * - Parâmetros na QUERY STRING da URL (Apollo lê filtros via URLSearchParams)
+ *   body vazio — comportamento documentado em docs.apollo.io
+ * - q_organization_domains_list[] (array, não string)
+ * - filtrar_brasil → person_locations[]=Brazil
+ * - Suporte a searchData.contacts[] além de .people[]
+ * - Log diagnóstico completo da resposta para debug
  * - Títulos PT-BR expandidos + MAX_TITULOS=25
  */
 
@@ -28,7 +29,7 @@ const APOLLO_BASE_URL = 'https://api.apollo.io/api/v1';
 // ============================================
 // MAPEAMENTO DE DEPARTAMENTOS → TÍTULOS APOLLO
 // ============================================
-// Máximo de títulos por request (evitar query string muito longa)
+// Limite de títulos por request (evitar query string muito longa)
 const MAX_TITULOS = 25;
 
 const DEPARTAMENTO_TITULOS: Record<string, string[]> = {
@@ -114,7 +115,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // ============================================
         // ETAPA 1: BUSCA (0 créditos)
         // Apollo: POST /mixed_people/api_search
-        // Parâmetros obrigatoriamente na QUERY STRING (não body)
+        // IMPORTANTE: parâmetros vão na QUERY STRING da URL (não no body)
+        // Comportamento documentado: https://docs.apollo.io/reference/people-api-search
         // ============================================
 
         // ── Títulos por departamento ──────────────────────────
@@ -124,10 +126,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (depTitulos) titulos.push(...depTitulos);
         }
         if (titulos.length === 0) {
-            // Nenhum departamento selecionado → usar todos sem duplicatas
+            // Nenhum departamento → usar todos, sem duplicatas
             titulos.push(...[...new Set(Object.values(DEPARTAMENTO_TITULOS).flat())]);
         }
-        // Limitar para não exceder query string
         const titulosLimitados = titulos.slice(0, MAX_TITULOS);
 
         // ── Senioridades ──────────────────────────────────────
@@ -141,19 +142,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // ── Montar query string ───────────────────────────────
-        // Apollo: POST com todos filtros como URLSearchParams na URL
         const qs = new URLSearchParams();
 
-        // Domínio — formato array obrigatório
+        // Domínio como array (formato correto conforme docs Apollo)
         qs.append('q_organization_domains_list[]', domain);
 
-        // Títulos
-        for (const t of titulosLimitados) qs.append('person_titles[]', t);
+        for (const t of titulosLimitados)  qs.append('person_titles[]',     t);
+        for (const s of seniorities)        qs.append('person_seniorities[]', s);
 
-        // Senioridades
-        for (const s of seniorities) qs.append('person_seniorities[]', s);
-
-        // Filtro Brasil
         if (filtrar_brasil) {
             qs.append('person_locations[]', 'Brazil');
             console.log(`🌎 [Apollo Prospect] Filtro geográfico: Brasil`);
@@ -164,7 +160,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         console.log(`🔍 [Apollo Prospect] Domínio: ${domain} | Depts: ${departamentos.join(', ') || 'todos'} | ${titulosLimitados.length} títulos | Seniorities: ${seniorities.join(', ')}`);
 
-        // POST com parâmetros na URL (comportamento correto conforme docs Apollo)
+        // POST com parâmetros na URL, body vazio (comportamento correto Apollo)
         const searchUrl = `${APOLLO_BASE_URL}/mixed_people/api_search?${qs.toString()}`;
         const searchResponse = await fetch(searchUrl, {
             method: 'POST',
@@ -174,7 +170,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 'accept':        'application/json',
                 'x-api-key':     apiKey,
             },
-            // body vazio — Apollo lê os filtros da query string
         });
 
         if (!searchResponse.ok) {
@@ -187,17 +182,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
-        const searchData = await searchResponse.json();
-        const pessoas = searchData.people || [];
-
-        console.log(`✅ [Apollo Prospect] ${pessoas.length} decisores encontrados em ${domain} (total: ${searchData.pagination?.total_entries ?? '?'})`);
-        if (pessoas.length === 0) {
-            // Log diagnóstico — ajuda a entender se foi filtro geográfico ou ausência de dados
-            console.log(`⚠️  [Apollo Prospect] Detalhes:`, JSON.stringify({
-                total_entries: searchData.pagination?.total_entries,
-                breadcrumbs:   searchData.breadcrumbs,
-            }));
+        // Ler como texto → JSON para poder logar em caso de schema inesperado
+        const rawText = await searchResponse.text();
+        let searchData: any = {};
+        try {
+            searchData = JSON.parse(rawText);
+        } catch {
+            console.error(`❌ [Apollo Prospect] Resposta não é JSON:`, rawText.slice(0, 500));
+            return res.status(200).json({ success: false, error: 'Resposta inválida Apollo', raw: rawText.slice(0, 300) });
         }
+
+        // DIAGNÓSTICO — logar estrutura da resposta para identificar problemas
+        console.log(`📦 [Apollo Prospect] Chaves da resposta:`, Object.keys(searchData).join(', '));
+        if (!searchData.people?.length && !searchData.contacts?.length) {
+            console.log(`⚠️  [Apollo Prospect] Sem resultados. Preview:`, JSON.stringify(searchData).slice(0, 600));
+        }
+
+        // Apollo pode retornar 'people' (prospects) e/ou 'contacts' (salvos na conta)
+        const pessoas = [
+            ...(searchData.people   || []),
+            ...(searchData.contacts || []),
+        ];
+
+        const totalEntries = searchData.pagination?.total_entries ?? searchData.total_entries ?? '?';
+        console.log(`✅ [Apollo Prospect] ${pessoas.length} decisores encontrados em ${domain} (total_entries: ${totalEntries})`);
 
         // Se não precisa enriquecer, retornar dados básicos
         if (!enriquecer) {
