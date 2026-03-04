@@ -8,16 +8,17 @@
  * 1. Busca gratuita (api_search) → retorna lista de decisores (0 créditos)
  * 2. Enriquecimento (people/match) → dados completos (1 crédito/pessoa)
  * 
- * Versão: 2.7
+ * Versão: 2.8
  * Data: 04/03/2026
  *
- * CORREÇÕES v2.7 — Solução definitiva filtro Brasil:
- * - q_organization_domains_list[] + qualquer filtro de localização = total_entries:0
- *   A Apollo trata como interseção impossível (comportamento confirmado empiricamente)
- * - Regra: quando domínio é fornecido → NÃO aplicar nenhum filtro de localização
- *   Justificativa: domínio .com.br já garante empresa brasileira
- * - filtrar_brasil agora só é aplicado quando domínio NÃO é fornecido (busca por título)
- * - Documentado nos comentários para referência futura
+ * CORREÇÕES v2.8 — Estratégia dupla query para filtro Brasil:
+ * PROBLEMA RAIZ: domínio base (carrefour.com) retorna funcionários de 30+ países.
+ *   Ex: carrefour.com.br → extrai carrefour.com → traz Eric Xu (China), Ahmed Ragab (Egito)
+ * SOLUÇÃO: duas queries independentes + interseção por ID
+ *   Query A: por domínio completo .com.br (sem location)
+ *   Query B: person_locations[]=São Paulo, Brazil (sem domínio)
+ *   Interseção: IDs que aparecem em ambas → garantidamente BR + empresa correta
+ * Se domínio NÃO termina em .com.br: busca simples sem interseção
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -73,17 +74,23 @@ const DEPARTAMENTO_TITULOS: Record<string, string[]> = {
     ],
 };
 
-// ─── Extrai domínio base: carrefour.com.br → carrefour.com ─────────────────
-function extrairDominioBase(domain: string): string {
-    const partes = domain.toLowerCase().trim().split('.');
-    if (partes.length <= 2) return domain;
-    // Detecta ccTLD composto: .com.br, .org.br, .co.uk, etc.
-    const ccSLD = ['com', 'org', 'net', 'edu', 'gov', 'co', 'net'];
-    if (ccSLD.includes(partes[partes.length - 2])) {
-        return `${partes[partes.length - 3]}.${partes[partes.length - 2]}`;
-    }
-    return `${partes[partes.length - 2]}.${partes[partes.length - 1]}`;
+// ─── Verifica se domínio é ccTLD brasileiro ─────────────────────────────────
+function isDominioBR(domain: string): boolean {
+    return domain.toLowerCase().trim().endsWith('.com.br')
+        || domain.toLowerCase().trim().endsWith('.org.br')
+        || domain.toLowerCase().trim().endsWith('.net.br')
+        || domain.toLowerCase().trim().endsWith('.gov.br');
 }
+
+// ─── Localidades BR para person_locations ────────────────────────────────────
+// Apollo aceita cidade+país ou só país no formato "Cidade, Estado, País" ou "País"
+const BR_LOCATIONS = [
+    'São Paulo, São Paulo, Brazil',
+    'Rio de Janeiro, Rio de Janeiro, Brazil',
+    'Belo Horizonte, Minas Gerais, Brazil',
+    'Brasília, Federal District, Brazil',
+    'Brazil',
+];
 
 // ============================================
 // MAPEAMENTO DE SENIORIDADE → APOLLO VALUES
@@ -124,19 +131,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
         // ============================================
         // ETAPA 1: BUSCA (0 créditos)
-        // POST /mixed_people/api_search — filtros na query string, body vazio
-        // REGRA: nunca combinar q_organization_domains_list[] com location[]
-        //        Apollo retorna total_entries:0 quando ambos presentes
+        // Estratégia dupla query para domínios .com.br:
+        //   Query A: por domínio .com.br exato → traz todos na empresa
+        //   Query B: por person_locations[]=Brazil → traz todos no Brasil
+        //   Interseção por ID → apenas quem está na empresa E no Brasil
+        // Para domínios não-BR: query simples sem interseção
         // ============================================
 
-        // ── Domínios: base + completo para máxima cobertura ──
-        // Ex: carrefour.com.br → busca por carrefour.com E carrefour.com.br
-        const dominioCompleto = domain.trim().toLowerCase();
-        const dominioBase     = extrairDominioBase(dominioCompleto);
-        const dominios        = [...new Set([dominioBase, dominioCompleto])];
-        console.log(`🔗 [Apollo Prospect] Domínios: ${dominios.join(' + ')}`);
+        // ── Construtor de query reutilizável ──────────────────
+        async function executarBusca(params: URLSearchParams): Promise<any[]> {
+            const url = `${APOLLO_BASE_URL}/mixed_people/api_search?${params.toString()}`;
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json', 'Cache-Control': 'no-cache',
+                    'accept': 'application/json', 'x-api-key': apiKey,
+                },
+            });
+            if (!resp.ok) {
+                console.error(`❌ [Apollo] Erro ${resp.status}: ${await resp.text()}`);
+                return [];
+            }
+            const data = await resp.json();
+            return [...(data.people || []), ...(data.contacts || [])];
+        }
 
-        // ── Títulos ───────────────────────────────────────────
+        // ── Títulos e senioridades ────────────────────────────
         const titulos: string[] = [];
         for (const dep of departamentos) {
             const ts = DEPARTAMENTO_TITULOS[dep];
@@ -147,7 +167,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         const titulosLimitados = titulos.slice(0, MAX_TITULOS);
 
-        // ── Senioridades ──────────────────────────────────────
         const seniorities: string[] = [];
         for (const sen of senioridades) {
             const v = SENIORIDADE_MAP[sen];
@@ -155,63 +174,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         if (seniorities.length === 0) seniorities.push('c_suite', 'vp', 'director', 'manager');
 
-        // ── Query string (todos os filtros vão na URL) ────────
-        const qs = new URLSearchParams();
-        for (const d of dominios)          qs.append('q_organization_domains_list[]', d);
-        for (const t of titulosLimitados)  qs.append('person_titles[]',               t);
-        for (const s of seniorities)       qs.append('person_seniorities[]',           s);
-
-        // REGRA DEFINITIVA — Filtro de localização x Domínio:
-        // Apollo trata q_organization_domains_list[] + qualquer location[] como
-        // interseção impossível → total_entries: 0 sempre.
-        // Quando domínio é fornecido: empresa JÁ é identificada, localização é redundante.
-        // Quando domínio NÃO é fornecido: location filtra geograficamente por título/cargo.
-        const temDominio = dominios.length > 0;
-        if (filtrar_brasil && !temDominio) {
-            qs.append('organization_locations[]', 'Brazil');
-            console.log(`🌎 [Apollo Prospect] Filtro Brasil aplicado (busca sem domínio)`);
-        } else if (filtrar_brasil && temDominio) {
-            console.log(`🌎 [Apollo Prospect] Filtro Brasil ignorado — domínio já identifica a empresa`);
+        // ── Params base (títulos + senioridades) ──────────────
+        function montarParamsBase(): URLSearchParams {
+            const p = new URLSearchParams();
+            for (const t of titulosLimitados) p.append('person_titles[]',      t);
+            for (const s of seniorities)      p.append('person_seniorities[]', s);
+            p.append('per_page', String(max_resultados));
+            p.append('page',     String(pagina));
+            return p;
         }
 
-        qs.append('per_page', String(max_resultados));
-        qs.append('page',     String(pagina));
-
+        const dominioNormalizado = domain.trim().toLowerCase();
         console.log(`🔍 [Apollo Prospect] Domínio: ${domain} | Depts: ${departamentos.join(', ') || 'todos'} | ${titulosLimitados.length} títulos | Seniorities: ${seniorities.join(', ')}`);
 
-        // POST com body vazio — Apollo lê filtros da query string
-        const searchUrl = `${APOLLO_BASE_URL}/mixed_people/api_search?${qs.toString()}`;
-        const searchResponse = await fetch(searchUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type':  'application/json',
-                'Cache-Control': 'no-cache',
-                'accept':        'application/json',
-                'x-api-key':     apiKey,
-            },
-        });
+        let pessoas: any[];
 
-        if (!searchResponse.ok) {
-            const errText = await searchResponse.text();
-            console.error(`❌ [Apollo Prospect] Erro busca: ${searchResponse.status} - ${errText}`);
-            return res.status(200).json({ success: false, error: `Apollo API erro: ${searchResponse.status}`, detalhes: errText });
+        if (filtrar_brasil && isDominioBR(dominioNormalizado)) {
+            // ── ESTRATÉGIA DUPLA: domínio .com.br + interseção por localização ──
+            // O Apollo não aceita domínio + location juntos → duas queries + interseção
+            console.log(`🌎 [Apollo Prospect] Estratégia dupla: domínio BR + interseção por localização`);
+
+            // Query A: por domínio exato
+            const paramsA = montarParamsBase();
+            paramsA.append('q_organization_domains_list[]', dominioNormalizado);
+            const resultadosA = await executarBusca(paramsA);
+            const idsA = new Set(resultadosA.map((p: any) => p.id));
+            console.log(`📊 [Apollo Prospect] Query A (domínio): ${resultadosA.length} resultados`);
+
+            // Query B: por localização Brasil
+            const paramsB = montarParamsBase();
+            for (const loc of BR_LOCATIONS) paramsB.append('person_locations[]', loc);
+            const resultadosB = await executarBusca(paramsB);
+            const idsB = new Set(resultadosB.map((p: any) => p.id));
+            console.log(`📊 [Apollo Prospect] Query B (Brasil): ${resultadosB.length} resultados`);
+
+            // Interseção: IDs presentes em ambas as queries
+            const idsIntersecao = [...idsA].filter(id => idsB.has(id));
+            pessoas = resultadosA.filter((p: any) => idsIntersecao.includes(p.id));
+            console.log(`🌎 [Apollo Prospect] Interseção: ${pessoas.length} (de ${resultadosA.length} × ${resultadosB.length})`);
+
+            // Fallback: se interseção vazia, usar query A sem filtro de localização
+            // (pode acontecer se pessoa não tem localização indexada no Apollo)
+            if (pessoas.length === 0 && resultadosA.length > 0) {
+                console.log(`⚠️  [Apollo Prospect] Interseção vazia → usando Query A sem filtro BR`);
+                pessoas = resultadosA;
+            }
+
+        } else {
+            // ── ESTRATÉGIA SIMPLES: só domínio ───────────────────
+            const params = montarParamsBase();
+            if (domain) params.append('q_organization_domains_list[]', dominioNormalizado);
+            if (filtrar_brasil && !domain) {
+                for (const loc of BR_LOCATIONS) params.append('person_locations[]', loc);
+                console.log(`🌎 [Apollo Prospect] Filtro Brasil por localização (sem domínio)`);
+            }
+            pessoas = await executarBusca(params);
+            console.log(`📊 [Apollo Prospect] Resultados: ${pessoas.length}`);
         }
-
-        const rawText = await searchResponse.text();
-        let searchData: any = {};
-        try   { searchData = JSON.parse(rawText); }
-        catch { console.error(`❌ [Apollo Prospect] JSON inválido:`, rawText.slice(0, 300));
-                return res.status(200).json({ success: false, error: 'Resposta inválida Apollo' }); }
-
-        console.log(`📦 [Apollo Prospect] Chaves: ${Object.keys(searchData).join(', ')}`);
-
-        // Apollo pode retornar .people (novos) e/ou .contacts (salvos na conta)
-        let pessoas: any[] = [
-            ...(searchData.people   || []),
-            ...(searchData.contacts || []),
-        ];
-        const totalBruto = searchData.total_entries ?? searchData.pagination?.total_entries ?? 0;
-        console.log(`📊 [Apollo Prospect] Bruto: ${pessoas.length} | total_entries: ${totalBruto}`);
 
         console.log(`✅ [Apollo Prospect] ${pessoas.length} decisores encontrados em ${domain}`);
 
