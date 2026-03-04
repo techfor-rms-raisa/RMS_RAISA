@@ -329,7 +329,6 @@ const ProspectSearchPage: React.FC = () => {
                     filtros_busca: {
                         departamentos:   departamentosSelecionados,
                         senioridades:    senioridadesSelecionadas,
-                        filtrar_brasil:  filtrarBrasil,
                         dominio_buscado: domain.trim(),
                     },
                 }),
@@ -349,7 +348,7 @@ const ProspectSearchPage: React.FC = () => {
             setSaving(false);
             setTimeout(() => setToastMsg(null), 4000);
         }
-    }, [resultados, currentUser, departamentosSelecionados, senioridadesSelecionadas, filtrarBrasil, domain]);
+    }, [resultados, currentUser, departamentosSelecionados, senioridadesSelecionadas, domain]);
 
         return (
         <div className="p-6 max-w-full">
