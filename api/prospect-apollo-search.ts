@@ -8,17 +8,15 @@
  * 1. Busca gratuita (api_search) → retorna lista de decisores (0 créditos)
  * 2. Enriquecimento (people/match) → dados completos (1 crédito/pessoa)
  * 
- * Versão: 2.8
+ * Versão: 2.9
  * Data: 04/03/2026
  *
- * CORREÇÕES v2.8 — Estratégia dupla query para filtro Brasil:
- * PROBLEMA RAIZ: domínio base (carrefour.com) retorna funcionários de 30+ países.
- *   Ex: carrefour.com.br → extrai carrefour.com → traz Eric Xu (China), Ahmed Ragab (Egito)
- * SOLUÇÃO: duas queries independentes + interseção por ID
- *   Query A: por domínio completo .com.br (sem location)
- *   Query B: person_locations[]=São Paulo, Brazil (sem domínio)
- *   Interseção: IDs que aparecem em ambas → garantidamente BR + empresa correta
- * Se domínio NÃO termina em .com.br: busca simples sem interseção
+ * CORREÇÕES v2.9:
+ * - Query A usa domínio BASE (carrefour.com), não o ccTLD (carrefour.com.br)
+ *   Apollo não indexa domínios .com.br — indexa o domínio global da marca
+ * - Query B: person_locations[]=Brazil (sem domínio — incompatível se combinado)
+ * - Interseção: IDs comuns → funcionários da empresa que moram no Brasil
+ * - Fallback: se interseção vazia → retorna Query A (evita zero resultados)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -190,18 +188,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let pessoas: any[];
 
         if (filtrar_brasil && isDominioBR(dominioNormalizado)) {
-            // ── ESTRATÉGIA DUPLA: domínio .com.br + interseção por localização ──
-            // O Apollo não aceita domínio + location juntos → duas queries + interseção
+            // ── ESTRATÉGIA DUPLA: domínio base + interseção por localização ──
+            // Apollo indexa carrefour.com (não carrefour.com.br)
+            // Query A: domínio base sem ccTLD → retorna funcionários globais da empresa
+            // Query B: person_locations Brasil → retorna quem mora no Brasil
+            // Interseção: funcionários da empresa que moram no Brasil
             console.log(`🌎 [Apollo Prospect] Estratégia dupla: domínio BR + interseção por localização`);
 
-            // Query A: por domínio exato
-            const paramsA = montarParamsBase();
-            paramsA.append('q_organization_domains_list[]', dominioNormalizado);
-            const resultadosA = await executarBusca(paramsA);
-            const idsA = new Set(resultadosA.map((p: any) => p.id));
-            console.log(`📊 [Apollo Prospect] Query A (domínio): ${resultadosA.length} resultados`);
+            // Extrair domínio base: carrefour.com.br → carrefour.com
+            const partes = dominioNormalizado.split('.');
+            // ccTLD .com.br tem 3 partes: [nome, com, br] → pega [nome, com]
+            const dominioBase = partes.length >= 3
+                ? `${partes[partes.length - 3]}.${partes[partes.length - 2]}`
+                : dominioNormalizado;
 
-            // Query B: por localização Brasil
+            // Query A: por domínio base (carrefour.com) — sem filtro de location
+            const paramsA = montarParamsBase();
+            paramsA.append('q_organization_domains_list[]', dominioBase);
+            const resultadosA = await executarBusca(paramsA);
+            const mapaA = new Map(resultadosA.map((p: any) => [p.id, p]));
+            console.log(`📊 [Apollo Prospect] Query A (domínio ${dominioBase}): ${resultadosA.length} resultados`);
+
+            // Query B: por localização Brasil (sem domínio — os dois juntos = zero)
             const paramsB = montarParamsBase();
             for (const loc of BR_LOCATIONS) paramsB.append('person_locations[]', loc);
             const resultadosB = await executarBusca(paramsB);
@@ -209,21 +217,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.log(`📊 [Apollo Prospect] Query B (Brasil): ${resultadosB.length} resultados`);
 
             // Interseção: IDs presentes em ambas as queries
-            const idsIntersecao = [...idsA].filter(id => idsB.has(id));
-            pessoas = resultadosA.filter((p: any) => idsIntersecao.includes(p.id));
+            // Usa objetos da Query A (têm org info) filtrados pelo ID da Query B
+            pessoas = resultadosA.filter((p: any) => idsB.has(p.id));
             console.log(`🌎 [Apollo Prospect] Interseção: ${pessoas.length} (de ${resultadosA.length} × ${resultadosB.length})`);
 
-            // Fallback: se interseção vazia, usar query A sem filtro de localização
-            // (pode acontecer se pessoa não tem localização indexada no Apollo)
+            // Fallback: interseção vazia mas Query A tem dados → retornar Query A
+            // (pessoa pode não ter localização indexada no Apollo)
             if (pessoas.length === 0 && resultadosA.length > 0) {
-                console.log(`⚠️  [Apollo Prospect] Interseção vazia → usando Query A sem filtro BR`);
+                console.log(`⚠️  [Apollo Prospect] Interseção vazia → fallback: Query A sem filtro BR (${resultadosA.length} resultados)`);
                 pessoas = resultadosA;
             }
 
         } else {
-            // ── ESTRATÉGIA SIMPLES: só domínio ───────────────────
+            // ── ESTRATÉGIA SIMPLES ────────────────────────────
             const params = montarParamsBase();
-            if (domain) params.append('q_organization_domains_list[]', dominioNormalizado);
+            if (domain) {
+                // Para domínios .com.br usar base (carrefour.com) pois Apollo não indexa o ccTLD
+                const partes = dominioNormalizado.split('.');
+                const dominioParaBusca = isDominioBR(dominioNormalizado) && partes.length >= 3
+                    ? `${partes[partes.length - 3]}.${partes[partes.length - 2]}`
+                    : dominioNormalizado;
+                params.append('q_organization_domains_list[]', dominioParaBusca);
+                if (dominioParaBusca !== dominioNormalizado) {
+                    console.log(`🔗 [Apollo Prospect] Usando domínio base: ${dominioParaBusca}`);
+                }
+            }
             if (filtrar_brasil && !domain) {
                 for (const loc of BR_LOCATIONS) params.append('person_locations[]', loc);
                 console.log(`🌎 [Apollo Prospect] Filtro Brasil por localização (sem domínio)`);
