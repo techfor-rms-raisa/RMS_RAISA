@@ -141,7 +141,7 @@ Responda SOMENTE JSON sem markdown:
     console.log(`   Depts: ${deptoTermos.substring(0, 60)} | Sênior: ${seniorTermos.substring(0, 40)}`);
 
     const result = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-lite-preview-06-17', // rápido (~15-20s), atual, substituto oficial do 2.0-flash
+        model: 'gemini-2.5-flash-lite', // rápido, estável, substituto oficial do 2.0-flash (jun/2026)
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
@@ -427,4 +427,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
     }
 }
-
