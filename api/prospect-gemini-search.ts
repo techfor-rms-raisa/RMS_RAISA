@@ -141,12 +141,15 @@ Responda SOMENTE JSON sem markdown:
     console.log(`   Depts: ${deptoTermos.substring(0, 60)} | Sênior: ${seniorTermos.substring(0, 40)}`);
 
     const result = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-lite', // rápido, estável, substituto oficial do 2.0-flash (jun/2026)
+        model: 'gemini-2.5-flash',  // único modelo 2.5 com Search Grounding suportado
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
             temperature: 0.3,
             maxOutputTokens: 8192,
+            // Desativa o "thinking" interno do 2.5-flash → resposta ~15-20s (equivalente ao 2.0-flash)
+            // Thinking é útil para raciocínio complexo, mas desnecessário para extração de leads
+            thinkingConfig: { thinkingBudget: 0 },
         } as any
     });
 
