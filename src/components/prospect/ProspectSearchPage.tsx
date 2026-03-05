@@ -523,7 +523,7 @@ const ProspectSearchPage: React.FC = () => {
                             <input
                                 type="text"
                                 value={domain}
-                                onChange={e => setDomain(e.target.value)}
+                                onChange={e => { setDomain(e.target.value); setEmpresaNome(''); }}
                                 onKeyDown={e => e.key === 'Enter' && buscarGemini()}
                                 placeholder="Ex: totvs.com.br, ambev.com, carrefour.com.br"
                                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"

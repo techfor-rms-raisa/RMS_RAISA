@@ -174,10 +174,34 @@ Responda SOMENTE JSON sem markdown:
 
     let parsed: any;
     try {
-        parsed = JSON.parse(jsonMatch[0]);
+        // Sanitizar antes do parse:
+        // 1. Remove caracteres de controle ASCII (0x00-0x1F) exceto \n \r \t que são válidos em JSON
+        // 2. Normaliza aspas tipográficas " " → "
+        // 3. Remove null bytes
+        const sanitized = jsonMatch[0]
+            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')  // control chars exceto \t\n\r
+            .replace(/[\u201C\u201D\u201E\u201F]/g, '"')          // aspas tipográficas → "
+            .replace(/[\u2018\u2019\u201A\u201B]/g, "'")          // aspas simples tipográficas
+            .replace(/\u0000/g, '');                               // null bytes
+
+        parsed = JSON.parse(sanitized);
     } catch (e) {
         console.error('❌ [GeminiSearch] Falha ao parsear JSON:', e);
-        throw new Error('Erro ao interpretar resposta do Gemini.');
+        // Tentativa de recuperação: extrair só o array de pessoas com regex
+        try {
+            const pessoasMatch = jsonMatch[0].match(/"pessoas"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
+            if (pessoasMatch) {
+                const sanitizedPessoas = pessoasMatch[1]
+                    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+                    .replace(/[\u201C\u201D]/g, '"');
+                parsed = { pessoas: JSON.parse(sanitizedPessoas) };
+                console.log('⚠️ [GeminiSearch] Parse recuperado via extração de array');
+            } else {
+                throw new Error('Sem array de pessoas');
+            }
+        } catch {
+            throw new Error('Erro ao interpretar resposta do Gemini.');
+        }
     }
 
     const pessoas: any[] = parsed.pessoas || [];
