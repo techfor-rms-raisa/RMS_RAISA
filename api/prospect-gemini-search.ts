@@ -112,20 +112,29 @@ async function buscarLeadsGemini(
 
     // Instrução de desambiguação — só ativa quando usuário informou nome explícito
     const desambiguacaoInstrucao = empresaNomeExplicito?.trim()
-        ? `ATENÇÃO — DESAMBIGUAÇÃO: busque APENAS executivos de "${empresaNomeExplicito}". IGNORE outras unidades do grupo.`
+        ? `IMPORTANTE: busque APENAS executivos de "${empresaNomeExplicito}" — ignore outras unidades do grupo ${empresaHint}.`
         : '';
 
     const prompt = `
-Encontre executivos e decisores da empresa "${empresaNomeExplicito || empresaHint}" (domínio: ${domain}).
+Você é um especialista em prospecção B2B. Use o Google Search para encontrar executivos reais de "${empresaNomeExplicito || empresaHint}" (email: @${domain}).
 
-Foco: ${deptoTermos} | Níveis: ${seniorTermos} | País: Brasil
 ${desambiguacaoInstrucao}
 
-Use Google Search para localizar perfis reais. Busque por nome + empresa no LinkedIn e em press releases.
-Retorne ${maxResultados} pessoas no máximo. Inclua linkedin_url quando encontrado. Não invente dados.
+EXECUTE ESTAS BUSCAS (nesta ordem):
+1. site:linkedin.com/in "${empresaNomeExplicito || empresaHint}" ${seniorTermos.split(',').slice(0,3).join(' OR ')}
+2. site:linkedin.com/in "${empresaNomeExplicito || empresaHint}" ${deptoTermos.split(',').slice(0,3).join(' OR ')}
+3. "${empresaNomeExplicito || empresaHint}" executivos TI tecnologia liderança Brasil linkedin
 
-Responda SOMENTE com JSON válido, sem markdown:
-{"empresa_nome":"string","empresa_setor":"string","cidade_sede":"string|null","estado_sede":"string|null","pessoas":[{"nome_completo":"string","cargo":"string","nivel":"C-Level|VP|Diretor|Gerente|Coordenador|Superintendente|Outro","departamento":"TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria","linkedin_url":"string|null","cidade":"string|null","estado":"string|null","pais":"string"}]}
+REGRAS:
+- META: retorne entre 10 e ${maxResultados} pessoas — não pare com menos de 10
+- Para cada nome encontrado, tente localizar o perfil linkedin.com/in/* e inclua a URL completa
+- Inclua a pessoa mesmo que não tenha LinkedIn — campo fica null
+- Nivéis aceitos: ${seniorTermos}
+- Departamentos aceitos: ${deptoTermos}
+- Não invente nomes, cargos ou URLs
+
+Responda SOMENTE JSON sem markdown:
+{"empresa_nome":"string","empresa_setor":"string","cidade_sede":"string|null","estado_sede":"string|null","pessoas":[{"nome_completo":"string","cargo":"string","nivel":"C-Level|VP|Diretor|Gerente|Coordenador|Superintendente|Outro","departamento":"TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria","linkedin_url":"https://linkedin.com/in/... ou null","cidade":"string|null","estado":"UF|null","pais":"string"}]}
 `.trim();
 
     console.log(`🤖 [GeminiSearch] Buscando leads: ${domain}${empresaNomeExplicito ? ` / ${empresaNomeExplicito}` : ''}`);
@@ -136,8 +145,8 @@ Responda SOMENTE com JSON válido, sem markdown:
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.4,      // balanceia exploração e consistência
-            maxOutputTokens: 8192, // suporte a 20+ pessoas em JSON
+            temperature: 0.3,
+            maxOutputTokens: 8192,
         } as any
     });
 
