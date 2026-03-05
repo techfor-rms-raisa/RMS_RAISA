@@ -108,6 +108,7 @@ const ProspectSearchPage: React.FC = () => {
 
     // Form
     const [domain, setDomain]                           = useState('');
+    const [empresaNome, setEmpresaNome]                 = useState('');
     const [departamentosSelecionados, setDepts]         = useState<string[]>([]);
     const [senioridadesSelecionadas, setSeniors]        = useState<string[]>([]);
     const [enriquecerHunter, setEnriquecerHunter]       = useState(true);
@@ -174,6 +175,7 @@ const ProspectSearchPage: React.FC = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     domain:         domain.trim(),
+                    empresa_nome:   empresaNome.trim() || undefined,
                     departamentos:  departamentosSelecionados,
                     senioridades:   senioridadesSelecionadas,
                     max_resultados: 25,
@@ -489,7 +491,7 @@ const ProspectSearchPage: React.FC = () => {
             <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6 shadow-sm">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
-                    {/* Domínio */}
+                    {/* Domínio + Nome da Empresa */}
                     <div className="md:col-span-2">
                         <label className="block text-sm font-semibold text-gray-700 mb-2">
                             <i className="fa-solid fa-globe mr-2 text-blue-500"></i>
@@ -501,7 +503,7 @@ const ProspectSearchPage: React.FC = () => {
                                 value={domain}
                                 onChange={e => setDomain(e.target.value)}
                                 onKeyDown={e => e.key === 'Enter' && buscarGemini()}
-                                placeholder="Ex: totvs.com.br, ambev.com, claranet.com"
+                                placeholder="Ex: totvs.com.br, ambev.com, carrefour.com.br"
                                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
                             />
                             <button
@@ -515,6 +517,38 @@ const ProspectSearchPage: React.FC = () => {
                                 }
                             </button>
                         </div>
+
+                        {/* Nome específico da empresa — desambiguação */}
+                        <div className="mt-3">
+                            <label className="block text-xs font-medium text-gray-500 mb-1.5 flex items-center gap-1.5">
+                                <i className="fa-solid fa-building-flag text-amber-500"></i>
+                                Nome específico da unidade
+                                <span className="text-gray-400 font-normal">(opcional — use quando o domínio for genérico)</span>
+                            </label>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    value={empresaNome}
+                                    onChange={e => setEmpresaNome(e.target.value)}
+                                    placeholder='Ex: "Banco Carrefour", "Carrefour Soluções Financeiras"'
+                                    className="flex-1 px-3 py-2 border border-amber-200 bg-amber-50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-300 placeholder-gray-400"
+                                />
+                                {empresaNome && (
+                                    <button onClick={() => setEmpresaNome('')}
+                                        className="text-gray-400 hover:text-gray-600 text-xs px-2"
+                                        title="Limpar">
+                                        <i className="fa-solid fa-xmark"></i>
+                                    </button>
+                                )}
+                            </div>
+                            {empresaNome && (
+                                <p className="mt-1 text-xs text-amber-700 flex items-center gap-1">
+                                    <i className="fa-solid fa-circle-info"></i>
+                                    O Gemini vai buscar especificamente por <strong>"{empresaNome}"</strong>, filtrando outras unidades do grupo
+                                </p>
+                            )}
+                        </div>
+
                         {/* Progress feedback */}
                         {searchState.loading && (
                             <div className="mt-2 flex items-center gap-2 text-xs text-blue-600">

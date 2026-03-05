@@ -88,7 +88,8 @@ async function buscarLeadsGemini(
     domain: string,
     departamentos: string[],
     senioridades: string[],
-    maxResultados: number = 20
+    maxResultados: number = 20,
+    empresaNomeExplicito?: string   // ← desambiguador: "Banco Carrefour" vs "Carrefour Varejo"
 ): Promise<{ resultados: ProspectGemini[]; empresa_nome: string; queries_usadas: string[] }> {
 
     const ai = getAI();
@@ -102,21 +103,34 @@ async function buscarLeadsGemini(
         ? senioridades.map(s => SENIOR_LABELS[s] || s).join(', ')
         : 'CEO, CTO, CIO, Diretor, Gerente, VP';
 
-    // Extrair nome da empresa do domínio para contextualizar a busca
-    const empresaHint = domain
-        .replace(/\.(com\.br|com|org|net|io|tech|co)$/, '')
-        .replace(/^www\./, '')
-        .split('.')[0];
+    // Nome da empresa: usa o explícito se informado, senão deriva do domínio
+    const empresaHint = empresaNomeExplicito?.trim() ||
+        domain
+            .replace(/\.(com\.br|com|org|net|io|tech|co)$/, '')
+            .replace(/^www\./, '')
+            .split('.')[0];
+
+    // Instrução de desambiguação — só ativa quando usuário informou nome explícito
+    const desambiguacaoInstrucao = empresaNomeExplicito?.trim()
+        ? `
+ATENÇÃO — DESAMBIGUAÇÃO OBRIGATÓRIA:
+- O domínio "${domain}" pertence a um grupo maior, mas você deve buscar APENAS executivos de "${empresaNomeExplicito}"
+- IGNORE completamente outras unidades do grupo (ex: se buscar "Banco Carrefour", ignore Carrefour Varejo, Carrefour Soluções, etc.)
+- Valide que o cargo e a unidade de negócio da pessoa correspondem a "${empresaNomeExplicito}"
+- Se não tiver certeza se a pessoa é da unidade correta, NÃO a inclua
+`
+        : '';
 
     const prompt = `
 Você é um especialista em prospecção B2B. Sua tarefa é encontrar decisores e executivos que trabalham na empresa com domínio "${domain}".
 
 CRITÉRIOS DE BUSCA:
-- Empresa: domínio ${domain} (provável nome: ${empresaHint})
+- Empresa alvo: ${empresaNomeExplicito ? `"${empresaNomeExplicito}"` : `domínio ${domain} (provável nome: ${empresaHint})`}
+- Domínio de email: ${domain}
 - Departamentos alvo: ${deptoTermos}
 - Níveis hierárquicos: ${seniorTermos}
 - País: Brasil (prioridade) ou global
-
+${desambiguacaoInstrucao}
 INSTRUÇÕES:
 1. Use o Google Search para buscar executivos desta empresa
 2. Para cada pessoa, faça buscas específicas como:
@@ -129,7 +143,7 @@ INSTRUÇÕES:
 5. Se encontrou o nome da pessoa no LinkedIn, SEMPRE inclua a URL completa do perfil
 6. Retorne no máximo ${maxResultados} pessoas
 7. NÃO invente ou deduza pessoas nem URLs — só inclua o que você realmente encontrou
-8. Se encontrar o nome da empresa, inclua em empresa_nome
+8. Em empresa_nome retorne o nome oficial da unidade buscada (não do grupo)
 
 IMPORTANTE SOBRE LINKEDIN:
 - Busque ativamente perfis LinkedIn de cada executivo encontrado
@@ -139,8 +153,8 @@ IMPORTANTE SOBRE LINKEDIN:
 
 FORMATO DE RESPOSTA — JSON puro, sem markdown, sem backticks:
 {
-  "empresa_nome": "Nome oficial da empresa",
-  "empresa_setor": "Setor (ex: Tecnologia, Telecomunicações, Varejo)",
+  "empresa_nome": "Nome oficial da unidade (ex: Banco Carrefour — não Grupo Carrefour)",
+  "empresa_setor": "Setor (ex: Tecnologia, Telecomunicações, Varejo, Financeiro)",
   "cidade_sede": "Cidade sede se encontrada",
   "estado_sede": "Estado sede se encontrado",
   "pessoas": [
@@ -264,6 +278,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const {
         domain,
+        empresa_nome,       // ← desambiguador opcional: "Banco Carrefour"
         departamentos   = [],
         senioridades    = [],
         max_resultados  = 20,
@@ -274,23 +289,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const { resultados, empresa_nome, queries_usadas } = await buscarLeadsGemini(
+        const { resultados, empresa_nome: empresaRetornada, queries_usadas } = await buscarLeadsGemini(
             domain.trim().toLowerCase(),
             departamentos,
             senioridades,
-            Math.min(max_resultados, 30)
+            Math.min(max_resultados, 30),
+            empresa_nome || undefined
         );
 
-        console.log(`✅ [GeminiSearch] Retornando ${resultados.length} leads para ${domain}`);
+        console.log(`✅ [GeminiSearch] Retornando ${resultados.length} leads para ${domain}${empresa_nome ? ` (${empresa_nome})` : ''}`);
 
         return res.status(200).json({
-            success:            true,
+            success:             true,
             resultados,
-            total:              resultados.length,
-            empresa:            { nome: empresa_nome, dominio: domain },
-            queries_google:     queries_usadas,
-            motor:              'gemini',
-            creditos_consumidos: 0, // Gemini não usa sistema de créditos
+            total:               resultados.length,
+            empresa:             { nome: empresaRetornada, dominio: domain },
+            queries_google:      queries_usadas,
+            motor:               'gemini',
+            creditos_consumidos: 0,
         });
 
     } catch (error: any) {
