@@ -120,38 +120,36 @@ Você é um especialista em prospecção B2B. Use o Google Search para encontrar
 
 ${desambiguacaoInstrucao}
 
-EXECUTE ESTAS BUSCAS (nesta ordem):
+EXECUTE ATÉ 5 BUSCAS (pare ao ter 8+ pessoas ou quando esgotar as opções):
 1. site:linkedin.com/in "${empresaNomeExplicito || empresaHint}" ${seniorTermos.split(',').slice(0,3).join(' OR ')}
-2. site:linkedin.com/in "${empresaNomeExplicito || empresaHint}" ${deptoTermos.split(',').slice(0,3).join(' OR ')}
-3. "${empresaNomeExplicito || empresaHint}" executivos TI tecnologia liderança Brasil linkedin
+2. "${empresaNomeExplicito || empresaHint}" ${seniorTermos.split(',').slice(0,2).join(' OR ')} linkedin Brasil
+3. "${empresaNomeExplicito || empresaHint}" executivos diretores liderança
+4. (só se encontrou <5 pessoas) site:linkedin.com/in "${empresaNomeExplicito || empresaHint}" ${deptoTermos.split(',').slice(0,2).join(' OR ')}
 
 REGRAS:
-- META: retorne entre 10 e ${maxResultados} pessoas — não pare com menos de 10
-- linkedin_url é OBRIGATÓRIO para cada pessoa — busque ativamente o perfil linkedin.com/in/* de cada nome encontrado
-- Se não encontrar o LinkedIn de uma pessoa, faça uma busca adicional: "[nome completo]" "${empresaNomeExplicito || empresaHint}" linkedin
-- Só coloque null em linkedin_url se após busca específica não encontrar NADA
-- Inclua a pessoa mesmo que não tenha LinkedIn — campo fica null
-- Nivéis aceitos: ${seniorTermos}
-- Departamentos aceitos: ${deptoTermos}
+- Inclua TODA pessoa encontrada, mesmo sem LinkedIn — linkedin_url fica null
+- Para LinkedIn: se encontrou na busca, use a URL. Se não encontrou, não tente mais — coloque null
+- NÃO repita queries nem tente confirmar o mesmo nome mais de uma vez
 - Não invente nomes, cargos ou URLs
+- Retorne quem encontrou, mesmo que seja só 1 ou 2 pessoas
 
 Responda SOMENTE JSON sem markdown:
-{"empresa_nome":"string","empresa_setor":"string","cidade_sede":"string|null","estado_sede":"string|null","pessoas":[{"nome_completo":"string","cargo":"string","nivel":"C-Level|VP|Diretor|Gerente|Coordenador|Superintendente|Outro","departamento":"TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria","linkedin_url":"https://linkedin.com/in/slug-do-perfil ou null","cidade":"string|null","estado":"UF|null","pais":"string"}]}
+{"empresa_nome":"string","empresa_setor":"string","cidade_sede":"string|null","estado_sede":"string|null","pessoas":[{"nome_completo":"string","cargo":"string","nivel":"C-Level|VP|Diretor|Gerente|Coordenador|Superintendente|Outro","departamento":"TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria","linkedin_url":"https://linkedin.com/in/slug ou null","cidade":"string|null","estado":"UF|null","pais":"string"}]}
 `.trim();
 
     console.log(`🤖 [GeminiSearch] Buscando leads: ${domain}${empresaNomeExplicito ? ` / ${empresaNomeExplicito}` : ''}`);
     console.log(`   Depts: ${deptoTermos.substring(0, 60)} | Sênior: ${seniorTermos.substring(0, 40)}`);
 
     const result = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',  // único modelo 2.5 com Search Grounding suportado
+        model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.4,
+            temperature: 0.3,
             maxOutputTokens: 8192,
-            // thinkingBudget baixo: permite planejamento das buscas sem gastar 40s+ em raciocínio profundo
-            // 1024 tokens de thinking = ~10-20s vs 0 tokens (burro) ou ilimitado (~55s)
-            thinkingConfig: { thinkingBudget: 1024 },
+            // 4096: suficiente para planejar e executar 4-5 buscas Google sem loop infinito
+            // 1024 era pouco (desistia) | sem limite era demais (loop LinkedIn)
+            thinkingConfig: { thinkingBudget: 4096 },
         } as any
     });
 

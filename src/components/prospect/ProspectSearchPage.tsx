@@ -795,7 +795,21 @@ const ProspectSearchPage: React.FC = () => {
             )}
 
             {/* Estado vazio */}
-            {!searchState.loading && resultados.length === 0 && !searchState.error && (
+            {!searchState.loading && resultados.length === 0 && !searchState.error && searchState.fase === 'concluido' && (
+                <div className="text-center py-16 text-gray-400">
+                    <i className="fa-solid fa-user-slash text-5xl mb-4 block text-gray-200"></i>
+                    <p className="text-lg font-medium text-gray-500">Nenhum executivo encontrado</p>
+                    <p className="text-sm mt-2 text-gray-400 max-w-md mx-auto">
+                        A empresa pode ter baixa visibilidade pública no LinkedIn ou Google.
+                    </p>
+                    <div className="mt-4 text-xs text-gray-400 space-y-1">
+                        <p>💡 Tente sem filtros de departamento ou nível hierárquico</p>
+                        <p>💡 Verifique se o nome da unidade está correto</p>
+                        <p>💡 Empresas menores podem não ter perfis indexados</p>
+                    </div>
+                </div>
+            )}
+            {!searchState.loading && resultados.length === 0 && !searchState.error && searchState.fase !== 'concluido' && (
                 <div className="text-center py-16 text-gray-400">
                     <i className="fa-brands fa-google text-6xl mb-4 block text-blue-200"></i>
                     <p className="text-lg font-medium">Informe o domínio da empresa para começar</p>
