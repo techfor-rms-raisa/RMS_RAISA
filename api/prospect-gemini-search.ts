@@ -127,14 +127,16 @@ EXECUTE ESTAS BUSCAS (nesta ordem):
 
 REGRAS:
 - META: retorne entre 10 e ${maxResultados} pessoas — não pare com menos de 10
-- Para cada nome encontrado, tente localizar o perfil linkedin.com/in/* e inclua a URL completa
+- linkedin_url é OBRIGATÓRIO para cada pessoa — busque ativamente o perfil linkedin.com/in/* de cada nome encontrado
+- Se não encontrar o LinkedIn de uma pessoa, faça uma busca adicional: "[nome completo]" "${empresaNomeExplicito || empresaHint}" linkedin
+- Só coloque null em linkedin_url se após busca específica não encontrar NADA
 - Inclua a pessoa mesmo que não tenha LinkedIn — campo fica null
 - Nivéis aceitos: ${seniorTermos}
 - Departamentos aceitos: ${deptoTermos}
 - Não invente nomes, cargos ou URLs
 
 Responda SOMENTE JSON sem markdown:
-{"empresa_nome":"string","empresa_setor":"string","cidade_sede":"string|null","estado_sede":"string|null","pessoas":[{"nome_completo":"string","cargo":"string","nivel":"C-Level|VP|Diretor|Gerente|Coordenador|Superintendente|Outro","departamento":"TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria","linkedin_url":"https://linkedin.com/in/... ou null","cidade":"string|null","estado":"UF|null","pais":"string"}]}
+{"empresa_nome":"string","empresa_setor":"string","cidade_sede":"string|null","estado_sede":"string|null","pessoas":[{"nome_completo":"string","cargo":"string","nivel":"C-Level|VP|Diretor|Gerente|Coordenador|Superintendente|Outro","departamento":"TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria","linkedin_url":"https://linkedin.com/in/slug-do-perfil ou null","cidade":"string|null","estado":"UF|null","pais":"string"}]}
 `.trim();
 
     console.log(`🤖 [GeminiSearch] Buscando leads: ${domain}${empresaNomeExplicito ? ` / ${empresaNomeExplicito}` : ''}`);
@@ -145,10 +147,11 @@ Responda SOMENTE JSON sem markdown:
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.2,
+            temperature: 0.4,
             maxOutputTokens: 8192,
-            // thinkingBudget não definido = Gemini decide quanto pensar
-            // temperature baixa (0.2) já reduz o tempo de resposta significativamente
+            // thinkingBudget baixo: permite planejamento das buscas sem gastar 40s+ em raciocínio profundo
+            // 1024 tokens de thinking = ~10-20s vs 0 tokens (burro) ou ilimitado (~55s)
+            thinkingConfig: { thinkingBudget: 1024 },
         } as any
     });
 
@@ -385,21 +388,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (resB.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada B:', (resB as PromiseRejectedResult).reason?.message);
         }
 
-        // Filtra pós-merge: se havia filtro de senioridade, remove quem fugiu dele
+        // Filtra pós-merge: aceita qualquer termo do SENIOR_LABELS expandido
+        // Ex: superintendente → aceita "Superintendente" E "Head" (pois SENIOR_LABELS inclui ambos)
         let merged = deduplicar([...listA, ...listB]);
         if (temSenioridade) {
-            const niveisPermitidos = new Set(
-                senioridades.map((s: string) => (SENIOR_LABELS[s] || s).split(',').map((t: string) => t.trim().toLowerCase())).flat()
-            );
+            // Montar set com TODOS os termos aceitos (incluindo variações do label)
+            const termosAceitos: string[] = [];
+            senioridades.forEach((s: string) => {
+                const label = SENIOR_LABELS[s] || s;
+                label.split(',').forEach((t: string) => termosAceitos.push(t.trim().toLowerCase()));
+                // Também aceitar o próprio key (ex: "superintendente")
+                termosAceitos.push(s.replace('_', ' ').toLowerCase());
+            });
+
             const antes = merged.length;
             merged = merged.filter(p => {
                 const nivelLower = (p.nivel || '').toLowerCase();
-                // Aceita se o nivel bate com algum dos selecionados
-                return senioridades.some((s: string) => {
-                    const label = (SENIOR_LABELS[s] || '').toLowerCase();
-                    return nivelLower.includes(s.replace('_', '-')) ||
-                           label.split(',').some((t: string) => nivelLower.includes(t.trim().toLowerCase()));
-                });
+                const cargoLower = (p.cargo  || '').toLowerCase();
+                return termosAceitos.some(t =>
+                    nivelLower.includes(t) || cargoLower.includes(t)
+                );
             });
             if (antes !== merged.length) {
                 console.log(`🔍 [GeminiSearch] Filtro pós-merge: ${antes} → ${merged.length} (removidos ${antes - merged.length} fora do nível)`);
