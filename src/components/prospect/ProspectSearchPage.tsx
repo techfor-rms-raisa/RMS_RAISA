@@ -182,7 +182,17 @@ const ProspectSearchPage: React.FC = () => {
                 }),
             });
 
-            const dataGemini = await respGemini.json();
+            // Parse seguro — 504/502 retornam HTML/texto, não JSON
+            let dataGemini: any;
+            try {
+                dataGemini = await respGemini.json();
+            } catch {
+                const statusMsg = respGemini.status === 504
+                    ? 'A busca demorou mais que o esperado (timeout). Tente com menos filtros ou aguarde alguns segundos.'
+                    : `Erro de comunicação com o servidor (${respGemini.status}). Tente novamente.`;
+                setSearchState({ loading: false, fase: 'erro', error: statusMsg });
+                return;
+            }
 
             if (!dataGemini.success) {
                 setSearchState({ loading: false, fase: 'erro', error: dataGemini.error || 'Erro na busca Gemini' });

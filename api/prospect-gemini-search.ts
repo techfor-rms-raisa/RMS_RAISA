@@ -18,9 +18,9 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
-// ─── Timeout estendido (Gemini + Search Grounding pode levar ~10s) ───
+// ─── Timeout: Gemini com múltiplas Search Grounding queries pode levar ~30-50s
 export const config = {
-    maxDuration: 30,
+    maxDuration: 60,
 };
 
 // ─── Lazy init (padrão do gemini-analyze.ts) ─────────────────────────
@@ -112,84 +112,32 @@ async function buscarLeadsGemini(
 
     // Instrução de desambiguação — só ativa quando usuário informou nome explícito
     const desambiguacaoInstrucao = empresaNomeExplicito?.trim()
-        ? `
-ATENÇÃO — DESAMBIGUAÇÃO OBRIGATÓRIA:
-- O domínio "${domain}" pertence a um grupo maior, mas você deve buscar APENAS executivos de "${empresaNomeExplicito}"
-- IGNORE completamente outras unidades do grupo (ex: se buscar "Banco Carrefour", ignore Carrefour Varejo, Carrefour Soluções, etc.)
-- Valide que o cargo e a unidade de negócio da pessoa correspondem a "${empresaNomeExplicito}"
-- Se não tiver certeza se a pessoa é da unidade correta, NÃO a inclua
-`
+        ? `ATENÇÃO — DESAMBIGUAÇÃO: busque APENAS executivos de "${empresaNomeExplicito}". IGNORE outras unidades do grupo.`
         : '';
 
-    // Montar queries segmentadas por nível para maximizar cobertura
-    const queriesSegmentadas = [
-        `"${empresaHint}" Diretor Gerente TI Tecnologia Infraestrutura LinkedIn Brasil`,
-        `"${empresaHint}" CTO CIO VP Head Tecnologia site:linkedin.com`,
-        `"${empresaHint}" Superintendente Coordenador Segurança Cloud LinkedIn`,
-        ...(empresaNomeExplicito ? [`"${empresaNomeExplicito}" executivos liderança tecnologia`] : []),
-    ].join('\n   ');
-
     const prompt = `
-Você é um especialista em prospecção B2B com acesso ao Google Search. Sua missão é encontrar o MÁXIMO de decisores e executivos reais da empresa alvo.
+Encontre executivos e decisores da empresa "${empresaNomeExplicito || empresaHint}" (domínio: ${domain}).
 
-EMPRESA ALVO:
-- Nome: ${empresaNomeExplicito ? `"${empresaNomeExplicito}"` : empresaHint}
-- Domínio de email: ${domain}
-- Departamentos: ${deptoTermos}
-- Níveis hierárquicos: ${seniorTermos}
-- País: Brasil (prioridade)
+Foco: ${deptoTermos} | Níveis: ${seniorTermos} | País: Brasil
 ${desambiguacaoInstrucao}
-ESTRATÉGIA DE BUSCA — execute MÚLTIPLAS queries diferentes:
-   ${queriesSegmentadas}
-   site:linkedin.com/in "${empresaHint}" Gerente
-   site:linkedin.com/in "${empresaHint}" Diretor
-   "${empresaHint}" "Head de" OR "Gerente de" OR "Diretor de" TI
-   "${domain}" executivos linkedin.com/in
 
-REGRAS CRÍTICAS:
-1. Execute pelo menos 6 queries diferentes para maximizar cobertura
-2. META OBRIGATÓRIA: encontre entre ${Math.floor(maxResultados * 0.7)} e ${maxResultados} pessoas — NÃO pare antes de atingir a meta mínima
-3. Após cada query, adicione os novos nomes encontrados à lista — não descarte duplicatas ainda
-4. Ao final, remova duplicatas e retorne apenas pessoas únicas
-5. Inclua pessoas de TODOS os níveis solicitados: C-Level, VP, Diretor, Gerente, Superintendente
-6. Para cada pessoa encontrada, faça uma busca adicional pelo LinkedIn específico dela
-7. linkedin_url: inclua SEMPRE quando encontrado (formato: https://www.linkedin.com/in/usuario)
-8. NUNCA invente pessoas, cargos ou URLs — apenas dados verificados
-9. empresa_nome: use o nome da unidade específica, não do grupo
+Use Google Search para localizar perfis reais. Busque por nome + empresa no LinkedIn e em press releases.
+Retorne ${maxResultados} pessoas no máximo. Inclua linkedin_url quando encontrado. Não invente dados.
 
-FORMATO DE RESPOSTA — JSON puro, sem markdown, sem backticks:
-{
-  "empresa_nome": "Nome da unidade específica",
-  "empresa_setor": "Setor principal",
-  "cidade_sede": "Cidade ou null",
-  "estado_sede": "Estado (sigla) ou null",
-  "pessoas": [
-    {
-      "nome_completo": "Nome Sobrenome",
-      "cargo": "Cargo exato",
-      "nivel": "C-Level|VP|Diretor|Gerente|Coordenador|Superintendente|Outro",
-      "departamento": "TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria",
-      "linkedin_url": "https://www.linkedin.com/in/usuario ou null",
-      "cidade": "Cidade ou null",
-      "estado": "UF ou null",
-      "pais": "Brasil ou outro"
-    }
-  ]
-}
+Responda SOMENTE com JSON válido, sem markdown:
+{"empresa_nome":"string","empresa_setor":"string","cidade_sede":"string|null","estado_sede":"string|null","pessoas":[{"nome_completo":"string","cargo":"string","nivel":"C-Level|VP|Diretor|Gerente|Coordenador|Superintendente|Outro","departamento":"TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria","linkedin_url":"string|null","cidade":"string|null","estado":"string|null","pais":"string"}]}
 `.trim();
 
-    console.log(`🤖 [GeminiSearch] Buscando leads para domínio: ${domain}${empresaNomeExplicito ? ` (${empresaNomeExplicito})` : ''}`);
-    console.log(`   Departamentos: ${deptoTermos.substring(0, 80)}...`);
-    console.log(`   Senioridades: ${seniorTermos.substring(0, 60)}...`);
-    console.log(`   Meta: ${Math.floor(maxResultados * 0.7)}–${maxResultados} pessoas`);
+    console.log(`🤖 [GeminiSearch] Buscando leads: ${domain}${empresaNomeExplicito ? ` / ${empresaNomeExplicito}` : ''}`);
+    console.log(`   Depts: ${deptoTermos.substring(0, 60)} | Sênior: ${seniorTermos.substring(0, 40)}`);
 
     const result = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.7,      // ↑ mais exploratório (era 0.2 — muito conservador)
-            maxOutputTokens: 8192, // ↑ suporte a 20+ pessoas em JSON (era 4096)
+            temperature: 0.4,      // balanceia exploração e consistência
+            maxOutputTokens: 8192, // suporte a 20+ pessoas em JSON
         } as any
     });
 
