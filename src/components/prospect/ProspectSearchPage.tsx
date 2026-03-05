@@ -111,7 +111,7 @@ const ProspectSearchPage: React.FC = () => {
     const [empresaNome, setEmpresaNome]                 = useState('');
     const [departamentosSelecionados, setDepts]         = useState<string[]>([]);
     const [senioridadesSelecionadas, setSeniors]        = useState<string[]>([]);
-    const [enriquecerHunter, setEnriquecerHunter]       = useState(true);
+    const [enriquecerHunter, setEnriquecerHunter]       = useState(false);
 
     // Results
     const [resultados, setResultados]                   = useState<ProspectResult[]>([]);
@@ -206,40 +206,9 @@ const ProspectSearchPage: React.FC = () => {
             setEmpresaInfo(dataGemini.empresa);
             setQueriesGoogle(dataGemini.queries_google || []);
 
-            // Mostrar resultados parciais enquanto enriquece
-            setResultados(leadsGemini.map(l => ({ ...l, email_status: enriquecerHunter ? 'aguardando...' : null })));
-
-            if (!enriquecerHunter || leadsGemini.length === 0) {
-                setSearchState({ loading: false, fase: 'concluido', error: null });
-                return;
-            }
-
-            // ── FASE 2: Hunter enriquece com emails ──────────────────
-            setSearchState({ loading: true, fase: 'enriquecendo', error: null });
-
-            const respHunter = await fetch('/api/prospect-hunter-enrich', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    mode:      'enrich_list',
-                    domain:    domain.trim(),
-                    prospects: leadsGemini,
-                }),
-            });
-
-            const dataHunter = await respHunter.json();
-
-            if (dataHunter.success) {
-                setResultados((dataHunter.resultados || []).map((r: ProspectResult) => ({
-                    ...r, selecionado: false
-                })));
-                setSearchState({ loading: false, fase: 'concluido', error: null });
-            } else {
-                // Enriquecimento falhou mas temos os leads sem email
-                console.warn('⚠️ Hunter falhou, mantendo leads sem email:', dataHunter.error);
-                setResultados(leadsGemini.map(l => ({ ...l, email_status: 'not_found' })));
-                setSearchState({ loading: false, fase: 'concluido', error: null });
-            }
+            // Exibe resultados Gemini imediatamente — Hunter só roda se usuário ativar o checkbox
+            setResultados(leadsGemini);
+            setSearchState({ loading: false, fase: 'concluido', error: null });
 
         } catch (err: any) {
             setSearchState({ loading: false, fase: 'erro', error: err.message });
@@ -416,6 +385,49 @@ const ProspectSearchPage: React.FC = () => {
         setToastMsg({ tipo: 'ok', msg: `${dados.length} leads exportados!` });
         setTimeout(() => setToastMsg(null), 3000);
     }, []);
+
+    // ============================================
+    // HUNTER — dispara quando usuário ATIVA o checkbox (após ver os leads)
+    // Só roda se: checkbox ligado + há leads sem email + não está carregando
+    // ============================================
+    useEffect(() => {
+        if (!enriquecerHunter) return;
+        if (searchState.loading) return;
+        if (resultados.length === 0) return;
+        // Só dispara se houver leads sem email (evita rodar múltiplas vezes)
+        const semEmail = resultados.filter(r => !r.email);
+        if (semEmail.length === 0) return;
+
+        const runHunter = async () => {
+            setSearchState({ loading: true, fase: 'enriquecendo', error: null });
+            try {
+                const resp = await fetch('/api/prospect-hunter-enrich', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mode:      'enrich_list',
+                        domain:    domain.trim(),
+                        prospects: resultados,
+                    }),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    setResultados((data.resultados || []).map((r: ProspectResult) => ({
+                        ...r, selecionado: false
+                    })));
+                } else {
+                    console.warn('⚠️ Hunter falhou:', data.error);
+                }
+            } catch (err: any) {
+                console.warn('⚠️ Hunter erro:', err.message);
+            } finally {
+                setSearchState({ loading: false, fase: 'concluido', error: null });
+            }
+        };
+
+        runHunter();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [enriquecerHunter]);
 
     // ============================================
     // HELPERS DE STATUS

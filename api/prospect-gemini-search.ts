@@ -145,11 +145,10 @@ Responda SOMENTE JSON sem markdown:
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.3,
+            temperature: 0.2,
             maxOutputTokens: 8192,
-            // Desativa o "thinking" interno do 2.5-flash → resposta ~15-20s (equivalente ao 2.0-flash)
-            // Thinking é útil para raciocínio complexo, mas desnecessário para extração de leads
-            thinkingConfig: { thinkingBudget: 0 },
+            // thinkingBudget não definido = Gemini decide quanto pensar
+            // temperature baixa (0.2) já reduz o tempo de resposta significativamente
         } as any
     });
 
