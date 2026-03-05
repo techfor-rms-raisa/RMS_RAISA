@@ -157,9 +157,21 @@ const ProspectSearchPage: React.FC = () => {
 
     const selecionadosCount = resultados.filter(r => r.selecionado).length;
 
-    // ============================================
-    // BUSCA PRINCIPAL — GEMINI + HUNTER
-    // ============================================
+    // Reset completo — limpa todos os campos e resultados para nova pesquisa
+    const handleReset = useCallback(() => {
+        setDomain('');
+        setEmpresaNome('');
+        setDepts([]);
+        setSeniors([]);
+        setEnriquecerHunter(false);
+        setResultados([]);
+        setEmpresaInfo(null);
+        setQueriesGoogle([]);
+        setSearchState({ loading: false, fase: 'idle', error: null });
+        setAbaAtiva('busca');
+    }, []);
+
+
     const buscarGemini = useCallback(async () => {
         if (!domain.trim()) return;
 
@@ -491,7 +503,7 @@ const ProspectSearchPage: React.FC = () => {
         </div>
 
         {/* Abas */}
-        <div className="flex gap-1 mb-6 border-b border-gray-200">
+        <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
             {(['busca', 'salvos'] as const).map(aba => (
                 <button key={aba} onClick={() => setAbaAtiva(aba)}
                     className={`px-4 py-2 text-sm font-medium rounded-t transition-colors
@@ -502,6 +514,15 @@ const ProspectSearchPage: React.FC = () => {
                                       : <><i className="fa-solid fa-database mr-2"></i>Leads Salvos</>}
                 </button>
             ))}
+            {/* Botão Reset — limpa tudo para nova pesquisa */}
+            <button
+                onClick={handleReset}
+                title="Limpar tudo e iniciar nova pesquisa"
+                className="ml-2 px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-blue-600 hover:bg-blue-50 border border-gray-200 rounded-lg transition-colors flex items-center gap-1.5"
+            >
+                <i className="fa-solid fa-rotate-right"></i>
+                Nova Pesquisa
+            </button>
         </div>
 
         {/* ══════════════════════════════════════════ */}
