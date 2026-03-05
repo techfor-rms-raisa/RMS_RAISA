@@ -234,6 +234,17 @@ Responda SOMENTE JSON sem markdown:
     };
 }
 
+// ─── Deduplicação por nome normalizado ───────────────────────────────
+function deduplicar(lista: ProspectGemini[]): ProspectGemini[] {
+    const vistos = new Set<string>();
+    return lista.filter(p => {
+        const chave = p.nome_completo.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').trim();
+        if (vistos.has(chave)) return false;
+        vistos.add(chave);
+        return true;
+    });
+}
+
 // ─── HANDLER ─────────────────────────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
@@ -253,22 +264,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const { resultados, empresa_nome: empresaRetornada, queries_usadas } = await buscarLeadsGemini(
-            domain.trim().toLowerCase(),
-            departamentos,
-            senioridades,
-            Math.min(max_resultados, 30),
-            empresa_nome || undefined
-        );
+        const domainClean    = domain.trim().toLowerCase();
+        const maxPorChamada  = Math.min(max_resultados, 30);
 
-        console.log(`✅ [GeminiSearch] Retornando ${resultados.length} leads para ${domain}${empresa_nome ? ` (${empresa_nome})` : ''}`);
+        // ── Estratégia dual: 2 chamadas paralelas por faixa de senioridade ──
+        // O Google Search Grounding tem teto prático de ~10-12 por chamada.
+        // Dividindo por senioridade, cada chamada foca em perfis diferentes.
+        const SENIOR_ALTOS  = ['c_level', 'vp', 'diretor'];
+        const SENIOR_OPERAC = ['gerente', 'superintendente', 'coordenador'];
+
+        // Determinar divisão com base nos filtros selecionados
+        const seniorAltosFiltro  = senioridades.length === 0
+            ? SENIOR_ALTOS
+            : senioridades.filter((s: string) => SENIOR_ALTOS.includes(s));
+
+        const seniorOperacFiltro = senioridades.length === 0
+            ? SENIOR_OPERAC
+            : senioridades.filter((s: string) => SENIOR_OPERAC.includes(s));
+
+        console.log(`🚀 [GeminiSearch] Estratégia dual paralela para ${domainClean}${empresa_nome ? ` / ${empresa_nome}` : ''}`);
+        console.log(`   Chamada A: ${seniorAltosFiltro.join(', ') || 'todos níveis altos'}`);
+        console.log(`   Chamada B: ${seniorOperacFiltro.join(', ') || 'todos níveis operacionais'}`);
+
+        // Executa em paralelo — Promise.allSettled não cancela se uma falhar
+        const [resA, resB] = await Promise.allSettled([
+            seniorAltosFiltro.length > 0
+                ? buscarLeadsGemini(domainClean, departamentos, seniorAltosFiltro, maxPorChamada, empresa_nome || undefined)
+                : Promise.resolve({ resultados: [], empresa_nome: '', queries_usadas: [] }),
+
+            seniorOperacFiltro.length > 0
+                ? buscarLeadsGemini(domainClean, departamentos, seniorOperacFiltro, maxPorChamada, empresa_nome || undefined)
+                : Promise.resolve({ resultados: [], empresa_nome: '', queries_usadas: [] }),
+        ]);
+
+        // Coleta resultados — usa o que retornou mesmo se um falhou
+        const listA = resA.status === 'fulfilled' ? resA.value.resultados    : [];
+        const listB = resB.status === 'fulfilled' ? resB.value.resultados    : [];
+        const nomeA = resA.status === 'fulfilled' ? resA.value.empresa_nome  : '';
+        const nomeB = resB.status === 'fulfilled' ? resB.value.empresa_nome  : '';
+        const qrsA  = resA.status === 'fulfilled' ? resA.value.queries_usadas : [];
+        const qrsB  = resB.status === 'fulfilled' ? resB.value.queries_usadas : [];
+
+        if (resA.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada A falhou:', resA.reason?.message);
+        if (resB.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada B falhou:', resB.reason?.message);
+
+        // Merge: A primeiro (níveis altos têm prioridade), depois B, deduplicar
+        const merged      = deduplicar([...listA, ...listB]);
+        const empresaNome = nomeA || nomeB || empresa_nome || domain;
+        const queriesAll  = [...new Set([...qrsA, ...qrsB])];
+
+        console.log(`✅ [GeminiSearch] Chamada A: ${listA.length} | Chamada B: ${listB.length} | Após dedup: ${merged.length}`);
 
         return res.status(200).json({
             success:             true,
-            resultados,
-            total:               resultados.length,
-            empresa:             { nome: empresaRetornada, dominio: domain },
-            queries_google:      queries_usadas,
+            resultados:          merged,
+            total:               merged.length,
+            empresa:             { nome: empresaNome, dominio: domain },
+            queries_google:      queriesAll,
             motor:               'gemini',
             creditos_consumidos: 0,
         });
