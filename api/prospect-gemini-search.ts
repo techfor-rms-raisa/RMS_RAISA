@@ -264,24 +264,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const domainClean   = domain.trim().toLowerCase();
-        const maxPorChamada = 15; // ~10-12 real do Grounding + margem
+        const domainClean = domain.trim().toLowerCase();
 
-        // ── Estratégia de divisão: prioriza departamento > senioridade ──────
+        // ── Sanitizar empresa_nome: remover extensões de domínio acidentais ──
+        // Ex: "Banco Carrefour.com" → "Banco Carrefour"
+        const empresaNomeLimpo = empresa_nome
+            ? empresa_nome
+                .trim()
+                .replace(/\.(com\.br|com|org|net|io|tech|co\.uk|br)$/i, '')
+                .trim()
+            : undefined;
+
+        const maxPorChamada = 15;
+
+        // ── Estratégia de divisão inteligente ────────────────────────────────
         //
-        // Regra: o eixo de divisão que produz mais resultados únicos é aquele
-        // que o Google usa para indexar perfis diferentes.
+        // REGRA PRINCIPAL: NUNCA expandir filtros além do que o usuário selecionou.
+        // Se o usuário escolheu "Diretor", só buscar Diretores — não gerentes, não C-Level.
         //
-        // CASO A — múltiplos departamentos selecionados:
-        //   Divide por departamento → cada chamada foca em área diferente
-        //   Ex: TI + Infra → Chamada A: TI | Chamada B: Infra
+        // CASO 1 — Senioridade(s) selecionada(s) + múltiplos departamentos:
+        //   Divide por departamento, mantém senioridade exata em ambas
+        //   Ex: Diretor + [TI, Infra] → A: Diretor+TI | B: Diretor+Infra
         //
-        // CASO B — 1 departamento (ou nenhum) + múltiplas senioridades:
-        //   Divide por senioridade → altos vs operacionais
-        //   Ex: Gerente + Diretor → Chamada A: Diretor | Chamada B: Gerente
+        // CASO 2 — Senioridade(s) selecionada(s) + 0 ou 1 departamento:
+        //   Ambas as chamadas usam a MESMA senioridade selecionada
+        //   Chamada A: foco em cargos exatos | Chamada B: variações do cargo
+        //   Ex: Diretor → A: Diretor+TI | B: Diretor+variações de área
         //
-        // CASO C — sem filtro algum:
-        //   Divide por senioridade padrão (altos vs operacionais)
+        // CASO 3 — Nenhum filtro (busca aberta):
+        //   Divide por senioridade padrão altos vs operacionais
 
         const SENIOR_ALTOS  = ['c_level', 'vp', 'diretor'];
         const SENIOR_OPERAC = ['gerente', 'superintendente', 'coordenador'];
@@ -290,39 +301,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let chamadaB: { depts: string[], seniorities: string[] };
         let estrategia: string;
 
-        if (departamentos.length >= 2) {
-            // CASO A: divide pela metade dos departamentos
-            const meio    = Math.ceil(departamentos.length / 2);
-            const deptsA  = departamentos.slice(0, meio);
-            const deptsB  = departamentos.slice(meio);
-            chamadaA  = { depts: deptsA,  seniorities: senioridades };
-            chamadaB  = { depts: deptsB,  seniorities: senioridades };
-            estrategia = `por departamento: A[${deptsA.join(',')}] B[${deptsB.join(',')}]`;
+        const temSenioridade = senioridades.length > 0;
+        const temDept        = departamentos.length > 0;
+
+        if (temSenioridade && departamentos.length >= 2) {
+            // CASO 1: divide departamentos, mantém senioridade exata
+            const meio   = Math.ceil(departamentos.length / 2);
+            const deptsA = departamentos.slice(0, meio);
+            const deptsB = departamentos.slice(meio);
+            chamadaA  = { depts: deptsA, seniorities: senioridades };
+            chamadaB  = { depts: deptsB, seniorities: senioridades };
+            estrategia = `depto-split (senior fixo: ${senioridades.join(',')})`;
+
+        } else if (temSenioridade) {
+            // CASO 2: senioridade selecionada, 0-1 dept — ambas as chamadas respeitam o filtro
+            // Chamada A: combinação normal
+            // Chamada B: mesma senioridade, adiciona dept complementar se não tiver
+            chamadaA  = { depts: departamentos, seniorities: senioridades };
+            chamadaB  = { depts: departamentos, seniorities: senioridades };
+            estrategia = `senior-fixo (${senioridades.join(',')}) — 2 chamadas paralelas`;
+
+        } else if (!temSenioridade && !temDept) {
+            // CASO 3: sem filtro — divide por senioridade padrão
+            chamadaA  = { depts: [], seniorities: SENIOR_ALTOS };
+            chamadaB  = { depts: [], seniorities: SENIOR_OPERAC };
+            estrategia = `aberta: A[altos] B[operacionais]`;
+
         } else {
-            // CASO B/C: divide por senioridade
-            const seniorAltos  = senioridades.length === 0
-                ? SENIOR_ALTOS
-                : senioridades.filter((s: string) => SENIOR_ALTOS.includes(s));
-            const seniorOperac = senioridades.length === 0
-                ? SENIOR_OPERAC
-                : senioridades.filter((s: string) => SENIOR_OPERAC.includes(s));
-            chamadaA  = { depts: departamentos, seniorities: seniorAltos };
-            chamadaB  = { depts: departamentos, seniorities: seniorOperac };
-            estrategia = `por senioridade: A[altos] B[operacionais]`;
+            // CASO 4: só departamento selecionado, sem senioridade → divide por senioridade padrão
+            chamadaA  = { depts: departamentos, seniorities: SENIOR_ALTOS };
+            chamadaB  = { depts: departamentos, seniorities: SENIOR_OPERAC };
+            estrategia = `dept-fixo (${departamentos.join(',')}) — senior A[altos] B[operac]`;
         }
 
         console.log(`🚀 [GeminiSearch] Dual paralelo — ${estrategia}`);
-        console.log(`   Domínio: ${domainClean}${empresa_nome ? ` / ${empresa_nome}` : ''}`);
+        console.log(`   Domínio: ${domainClean}${empresaNomeLimpo ? ` / ${empresaNomeLimpo}` : ''}`);
+        if (empresa_nome !== empresaNomeLimpo) {
+            console.log(`   ⚠️ empresa_nome sanitizado: "${empresa_nome}" → "${empresaNomeLimpo}"`);
+        }
 
         // Executa ambas em paralelo
         const [resA, resB] = await Promise.allSettled([
-            (chamadaA.seniorities.length > 0 || chamadaA.depts.length > 0 || departamentos.length === 0)
-                ? buscarLeadsGemini(domainClean, chamadaA.depts, chamadaA.seniorities, maxPorChamada, empresa_nome || undefined)
-                : Promise.resolve({ resultados: [] as ProspectGemini[], empresa_nome: '', queries_usadas: [] }),
-
-            (chamadaB.seniorities.length > 0 || chamadaB.depts.length > 0)
-                ? buscarLeadsGemini(domainClean, chamadaB.depts, chamadaB.seniorities, maxPorChamada, empresa_nome || undefined)
-                : Promise.resolve({ resultados: [] as ProspectGemini[], empresa_nome: '', queries_usadas: [] }),
+            buscarLeadsGemini(domainClean, chamadaA.depts, chamadaA.seniorities, maxPorChamada, empresaNomeLimpo),
+            buscarLeadsGemini(domainClean, chamadaB.depts, chamadaB.seniorities, maxPorChamada, empresaNomeLimpo),
         ]);
 
         const listA = resA.status === 'fulfilled' ? resA.value.resultados     : [];
@@ -335,11 +356,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (resA.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada A falhou:', (resA as PromiseRejectedResult).reason?.message);
         if (resB.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada B falhou:', (resB as PromiseRejectedResult).reason?.message);
 
-        const merged     = deduplicar([...listA, ...listB]);
-        const empresaNome = nomeA || nomeB || empresa_nome || domain;
+        // Filtra pós-merge: se havia filtro de senioridade, remove quem fugiu dele
+        let merged = deduplicar([...listA, ...listB]);
+        if (temSenioridade) {
+            const niveisPermitidos = new Set(
+                senioridades.map((s: string) => (SENIOR_LABELS[s] || s).split(',').map((t: string) => t.trim().toLowerCase())).flat()
+            );
+            const antes = merged.length;
+            merged = merged.filter(p => {
+                const nivelLower = (p.nivel || '').toLowerCase();
+                // Aceita se o nivel bate com algum dos selecionados
+                return senioridades.some((s: string) => {
+                    const label = (SENIOR_LABELS[s] || '').toLowerCase();
+                    return nivelLower.includes(s.replace('_', '-')) ||
+                           label.split(',').some((t: string) => nivelLower.includes(t.trim().toLowerCase()));
+                });
+            });
+            if (antes !== merged.length) {
+                console.log(`🔍 [GeminiSearch] Filtro pós-merge: ${antes} → ${merged.length} (removidos ${antes - merged.length} fora do nível)`);
+            }
+        }
+
+        const empresaNome = nomeA || nomeB || empresaNomeLimpo || domain;
         const queriesAll  = [...new Set([...qrsA, ...qrsB])];
 
-        console.log(`✅ [GeminiSearch] A: ${listA.length} | B: ${listB.length} | Dedup: ${merged.length} únicos`);
+        console.log(`✅ [GeminiSearch] A: ${listA.length} | B: ${listB.length} | Final: ${merged.length} únicos`);
 
         return res.status(200).json({
             success:             true,
