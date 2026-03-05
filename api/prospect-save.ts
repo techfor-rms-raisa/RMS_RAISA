@@ -22,6 +22,7 @@ const supabase = createClient(
 interface ProspectPayload {
     apollo_id?:       string | null;
     snovio_id?:       string | null;
+    gemini_id?:       string | null;
     nome_completo:    string;
     primeiro_nome?:   string;
     ultimo_nome?:     string;
@@ -41,7 +42,7 @@ interface ProspectPayload {
     pais?:            string | null;
     senioridade?:     string | null;
     departamentos?:   string[];
-    fonte:            'apollo' | 'snovio' | 'ambos';
+    fonte:            'apollo' | 'snovio' | 'ambos' | 'gemini' | 'hunter' | 'gemini+hunter';
     enriquecido?:     boolean;
 }
 
@@ -70,9 +71,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // ── Montar registros para upsert ─────────────────────
         const rows = prospects.map(p => ({
             buscado_por:      user_id,
-            motor:            p.fonte || 'apollo',
+            motor:            p.fonte || 'gemini',
             fonte_id_apollo:  p.apollo_id  || null,
             fonte_id_snovio:  p.snovio_id  || null,
+            fonte_id_gemini:  (p as any).gemini_id || null,
             nome_completo:    (p.nome_completo || '').trim(),
             primeiro_nome:    p.primeiro_nome  || null,
             ultimo_nome:      p.ultimo_nome    || null,

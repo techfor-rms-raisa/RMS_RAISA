@@ -613,21 +613,6 @@ const ProspectSearchPage: React.FC = () => {
                                 </button>
                             ))}
                         </div>
-
-                        {/* Opção Hunter */}
-                        <div className="mt-4 flex items-center gap-2">
-                            <input
-                                type="checkbox"
-                                id="enriquecerHunter"
-                                checked={enriquecerHunter}
-                                onChange={e => setEnriquecerHunter(e.target.checked)}
-                                className="w-4 h-4 rounded"
-                            />
-                            <label htmlFor="enriquecerHunter" className="text-xs text-gray-600 cursor-pointer">
-                                <i className="fa-solid fa-envelope text-orange-500 mr-1"></i>
-                                Enriquecer emails via Hunter.io
-                            </label>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -653,15 +638,35 @@ const ProspectSearchPage: React.FC = () => {
                 <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
                     {/* Barra de ações */}
                     <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
-                        <span className="text-sm text-gray-600 font-medium">
-                            <i className="fa-solid fa-users mr-2 text-blue-500"></i>
-                            {resultados.length} leads encontrados
-                            {resultados.filter(r => r.email).length > 0 && (
-                                <span className="ml-2 text-xs text-green-600">
-                                    ({resultados.filter(r => r.email).length} com email)
-                                </span>
+                        <div className="flex items-center gap-3">
+                            <span className="text-sm text-gray-600 font-medium">
+                                <i className="fa-solid fa-users mr-2 text-blue-500"></i>
+                                {resultados.length} leads encontrados
+                                {resultados.filter(r => r.email).length > 0 && (
+                                    <span className="ml-2 text-xs text-green-600">
+                                        ({resultados.filter(r => r.email).length} com email)
+                                    </span>
+                                )}
+                            </span>
+
+                            {/* Hunter — só aparece após resultados, para evitar queima acidental de créditos */}
+                            {!searchState.loading && (
+                                <label className="flex items-center gap-2 px-3 py-1.5 bg-orange-50 border border-orange-200 rounded-lg cursor-pointer hover:bg-orange-100 transition-colors"
+                                    title="Ative somente após validar os contatos — cada email consome 1 crédito Hunter.io">
+                                    <input
+                                        type="checkbox"
+                                        checked={enriquecerHunter}
+                                        onChange={e => setEnriquecerHunter(e.target.checked)}
+                                        className="w-3.5 h-3.5 rounded accent-orange-500"
+                                    />
+                                    <span className="text-xs font-medium text-orange-700 flex items-center gap-1">
+                                        <i className="fa-solid fa-envelope text-orange-500"></i>
+                                        Buscar emails via Hunter.io
+                                        <span className="text-orange-400 font-normal">(consome créditos)</span>
+                                    </span>
+                                </label>
                             )}
-                        </span>
+                        </div>
                         <div className="flex gap-2">
                             <button
                                 onClick={handleSalvar}

@@ -178,6 +178,10 @@ Responda SOMENTE JSON sem markdown:
     const pessoas: any[] = parsed.pessoas || [];
     console.log(`✅ [GeminiSearch] ${pessoas.length} pessoas encontradas`);
 
+    // Log diagnóstico: quantas têm linkedin_url no JSON bruto
+    const comLinkedin = pessoas.filter(p => p.linkedin_url && p.linkedin_url !== 'null').length;
+    console.log(`🔗 [GeminiSearch] LinkedIn no JSON: ${comLinkedin}/${pessoas.length} pessoas`);
+
     // Normalizar e tipificar resultados
     const resultados: ProspectGemini[] = pessoas.map((p: any, idx: number) => {
         const nomeCompleto = (p.nome_completo || '').trim();
@@ -185,13 +189,18 @@ Responda SOMENTE JSON sem markdown:
         const primeiroNome = partes[0] || '';
         const ultimoNome  = partes.slice(1).join(' ') || '';
 
-        // Normalizar linkedin_url — garantir formato https://www.linkedin.com/in/...
-        const rawLinkedin = p.linkedin_url;
+        // Normalizar linkedin_url — aceita múltiplos formatos
+        const rawLinkedin = p.linkedin_url || p.linkedin || null;
         let linkedinNorm: string | null = null;
-        if (rawLinkedin && rawLinkedin !== 'null' && rawLinkedin.includes('linkedin.com/in/')) {
-            linkedinNorm = rawLinkedin.startsWith('http')
-                ? rawLinkedin.trim()
-                : `https://${rawLinkedin.trim()}`;
+        if (rawLinkedin && String(rawLinkedin) !== 'null' && String(rawLinkedin).includes('linkedin')) {
+            const raw = String(rawLinkedin).trim();
+            if (raw.includes('linkedin.com/in/')) {
+                linkedinNorm = raw.startsWith('http') ? raw : `https://www.${raw.replace(/^www\./, '')}`;
+            } else if (raw.startsWith('linkedin.com')) {
+                linkedinNorm = `https://www.${raw}`;
+            }
+            // Log apenas quando há URL para monitorar qualidade
+            if (linkedinNorm) console.log(`🔗 [GeminiSearch] LinkedIn encontrado: ${linkedinNorm}`);
         }
 
         return {
