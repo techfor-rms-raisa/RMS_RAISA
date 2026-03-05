@@ -139,7 +139,7 @@ const ProspectSearchPage: React.FC = () => {
         setDepts(prev => prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id]);
 
     const toggleSenior = (id: string) =>
-        setSeniors(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, s]);
+        setSeniors(prev => prev.includes(id) ? prev.filter(s => s !== id) : [...prev, id]);
 
     const toggleSelecionado = (index: number) =>
         setResultados(prev => {
