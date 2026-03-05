@@ -523,7 +523,7 @@ const ProspectSearchPage: React.FC = () => {
                             <input
                                 type="text"
                                 value={domain}
-                                onChange={e => { setDomain(e.target.value); setEmpresaNome(''); }}
+                                onChange={e => { setDomain(e.target.value); setEmpresaNome(''); setResultados([]); setEmpresaInfo(null); setQueriesGoogle([]); }}
                                 onKeyDown={e => e.key === 'Enter' && buscarGemini()}
                                 placeholder="Ex: totvs.com.br, ambev.com, carrefour.com.br"
                                 className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
@@ -551,7 +551,7 @@ const ProspectSearchPage: React.FC = () => {
                                 <input
                                     type="text"
                                     value={empresaNome}
-                                    onChange={e => setEmpresaNome(e.target.value)}
+                                    onChange={e => { setEmpresaNome(e.target.value); setResultados([]); setEmpresaInfo(null); setQueriesGoogle([]); }}
                                     placeholder='Ex: "Banco Carrefour", "Carrefour Soluções Financeiras"'
                                     className="flex-1 px-3 py-2 border border-amber-200 bg-amber-50 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-300 placeholder-gray-400"
                                 />
