@@ -307,60 +307,89 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const SENIOR_OPERAC = ['gerente', 'superintendente', 'coordenador'];
 
         let chamadaA: { depts: string[], seniorities: string[] };
-        let chamadaB: { depts: string[], seniorities: string[] };
+        let chamadaB: { depts: string[], seniorities: string[] } | null = null;
         let estrategia: string;
 
         const temSenioridade = senioridades.length > 0;
         const temDept        = departamentos.length > 0;
 
         if (temSenioridade && departamentos.length >= 2) {
-            // CASO 1: divide departamentos, mantém senioridade exata
+            // CASO 1: múltiplos deptos → divide por depto, senioridade fixa em ambas
             const meio   = Math.ceil(departamentos.length / 2);
-            const deptsA = departamentos.slice(0, meio);
-            const deptsB = departamentos.slice(meio);
-            chamadaA  = { depts: deptsA, seniorities: senioridades };
-            chamadaB  = { depts: deptsB, seniorities: senioridades };
-            estrategia = `depto-split (senior fixo: ${senioridades.join(',')})`;
+            chamadaA  = { depts: departamentos.slice(0, meio), seniorities: senioridades };
+            chamadaB  = { depts: departamentos.slice(meio),    seniorities: senioridades };
+            estrategia = `depto-split [${chamadaA.depts}] + [${chamadaB.depts}]`;
 
-        } else if (temSenioridade) {
-            // CASO 2: senioridade selecionada, 0-1 dept — ambas as chamadas respeitam o filtro
-            // Chamada A: combinação normal
-            // Chamada B: mesma senioridade, adiciona dept complementar se não tiver
+        } else if (temSenioridade && !temDept) {
+            // CASO 2a: senioridade + sem depto → 1 chamada apenas (evita timeout com 2 iguais)
+            chamadaA  = { depts: [], seniorities: senioridades };
+            chamadaB  = null; // ← chamada única
+            estrategia = `senior-unica (${senioridades.join(',')})`;
+
+        } else if (temSenioridade && temDept) {
+            // CASO 2b: senioridade + 1 depto → 1 chamada (parâmetros idênticos não justificam 2)
             chamadaA  = { depts: departamentos, seniorities: senioridades };
-            chamadaB  = { depts: departamentos, seniorities: senioridades };
-            estrategia = `senior-fixo (${senioridades.join(',')}) — 2 chamadas paralelas`;
+            chamadaB  = null; // ← chamada única
+            estrategia = `senior+dept-unica (${senioridades.join(',')}) [${departamentos.join(',')}]`;
 
         } else if (!temSenioridade && !temDept) {
-            // CASO 3: sem filtro — divide por senioridade padrão
+            // CASO 3: sem filtro → divide por senioridade padrão
             chamadaA  = { depts: [], seniorities: SENIOR_ALTOS };
             chamadaB  = { depts: [], seniorities: SENIOR_OPERAC };
             estrategia = `aberta: A[altos] B[operacionais]`;
 
         } else {
-            // CASO 4: só departamento selecionado, sem senioridade → divide por senioridade padrão
+            // CASO 4: só depto, sem senioridade → divide por senioridade padrão
             chamadaA  = { depts: departamentos, seniorities: SENIOR_ALTOS };
             chamadaB  = { depts: departamentos, seniorities: SENIOR_OPERAC };
-            estrategia = `dept-fixo (${departamentos.join(',')}) — senior A[altos] B[operac]`;
+            estrategia = `dept+senior-split [${departamentos.join(',')}]`;
         }
 
-        console.log(`🚀 [GeminiSearch] Dual paralelo — ${estrategia}`);
+        console.log(`🚀 [GeminiSearch] Estratégia: ${estrategia}`);
         console.log(`   Domínio: ${domainClean}${empresaNomeLimpo ? ` / ${empresaNomeLimpo}` : ''}`);
         if (empresa_nome !== empresaNomeLimpo) {
             console.log(`   ⚠️ empresa_nome sanitizado: "${empresa_nome}" → "${empresaNomeLimpo}"`);
         }
 
-        // Executa ambas em paralelo
-        const [resA, resB] = await Promise.allSettled([
-            buscarLeadsGemini(domainClean, chamadaA.depts, chamadaA.seniorities, maxPorChamada, empresaNomeLimpo),
-            buscarLeadsGemini(domainClean, chamadaB.depts, chamadaB.seniorities, maxPorChamada, empresaNomeLimpo),
-        ]);
+        // ── Timeout individual por chamada (50s) para não estourar o limite do Vercel ──
+        const withTimeout = (promise: Promise<any>, ms: number) =>
+            Promise.race([
+                promise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error(`Timeout após ${ms / 1000}s`)), ms)
+                )
+            ]);
 
-        const listA = resA.status === 'fulfilled' ? resA.value.resultados     : [];
-        const listB = resB.status === 'fulfilled' ? resB.value.resultados     : [];
-        const nomeA = resA.status === 'fulfilled' ? resA.value.empresa_nome   : '';
-        const nomeB = resB.status === 'fulfilled' ? resB.value.empresa_nome   : '';
-        const qrsA  = resA.status === 'fulfilled' ? resA.value.queries_usadas : [];
-        const qrsB  = resB.status === 'fulfilled' ? resB.value.queries_usadas : [];
+        let listA: ProspectGemini[] = [];
+        let listB: ProspectGemini[] = [];
+        let nomeA = '', nomeB = '';
+        let qrsA:  string[] = [], qrsB: string[] = [];
+
+        if (chamadaB === null) {
+            // ── Chamada única ──────────────────────────────────────────────────
+            try {
+                const res = await withTimeout(
+                    buscarLeadsGemini(domainClean, chamadaA.depts, chamadaA.seniorities, maxPorChamada, empresaNomeLimpo),
+                    50_000
+                ) as any;
+                listA = res.resultados;
+                nomeA = res.empresa_nome;
+                qrsA  = res.queries_usadas;
+            } catch (e: any) {
+                console.warn('⚠️ [GeminiSearch] Chamada única falhou:', e.message);
+            }
+        } else {
+            // ── Dual paralelo ──────────────────────────────────────────────────
+            const [resA, resB] = await Promise.allSettled([
+                withTimeout(buscarLeadsGemini(domainClean, chamadaA.depts, chamadaA.seniorities, maxPorChamada, empresaNomeLimpo), 50_000),
+                withTimeout(buscarLeadsGemini(domainClean, chamadaB.depts, chamadaB.seniorities, maxPorChamada, empresaNomeLimpo), 50_000),
+            ]);
+
+            if (resA.status === 'fulfilled') { listA = (resA.value as any).resultados; nomeA = (resA.value as any).empresa_nome; qrsA = (resA.value as any).queries_usadas; }
+            if (resB.status === 'fulfilled') { listB = (resB.value as any).resultados; nomeB = (resB.value as any).empresa_nome; qrsB = (resB.value as any).queries_usadas; }
+            if (resA.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada A:', (resA as PromiseRejectedResult).reason?.message);
+            if (resB.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada B:', (resB as PromiseRejectedResult).reason?.message);
+        }
 
         if (resA.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada A falhou:', (resA as PromiseRejectedResult).reason?.message);
         if (resB.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada B falhou:', (resB as PromiseRejectedResult).reason?.message);
@@ -409,3 +438,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
     }
 }
+
