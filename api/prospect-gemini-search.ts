@@ -391,9 +391,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (resB.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada B:', (resB as PromiseRejectedResult).reason?.message);
         }
 
-        if (resA.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada A falhou:', (resA as PromiseRejectedResult).reason?.message);
-        if (resB.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada B falhou:', (resB as PromiseRejectedResult).reason?.message);
-
         // Filtra pós-merge: se havia filtro de senioridade, remove quem fugiu dele
         let merged = deduplicar([...listA, ...listB]);
         if (temSenioridade) {
@@ -438,4 +435,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
     }
 }
-
