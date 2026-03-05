@@ -115,9 +115,9 @@ async function hunterEmailFinder(
         return null;
     }
 
-    // Hunter.io v2: campo de status pode ser 'status', 'verification_status' ou 'result'
-    // dependendo da versão e do plano — normalizar com fallback em cadeia
-    const emailStatus = d.status || d.verification_status || d.result || 'unknown';
+    // Hunter.io v2: status real está em d.verification.status (confirmado pelo Raw keys)
+    // Fallback para campos alternativos por segurança
+    const emailStatus = d.verification?.status || d.verification?.result || d.status || d.result || 'unknown';
 
     console.log(`✅ [Hunter/Finder] ${d.email} (score: ${d.score}, status: ${emailStatus})`);
 
@@ -208,13 +208,27 @@ async function hunterCompanyEnrich(
     // Log raw para diagnóstico de estrutura real da API
     console.log(`📦 [Hunter/Company] Raw keys: ${Object.keys(d).join(', ')}`);
 
-    // Hunter API v2 /companies/find retorna campos variáveis por plano
-    // industry pode estar em: d.industry | d.sector | d.category
-    // size pode estar em: d.size | d.company_size | d.employees | d.headcount
-    const industry   = d.industry    || d.sector       || d.category    || null;
-    const sizeRaw    = d.size        || d.company_size  || d.employees   || d.headcount || null;
-    const linkedinRaw = d.linkedin_url || d.linkedin    || null;
-    const websiteRaw  = d.website    || d.domain        || null;
+    // Hunter API: d.category é objeto {sector, industryGroup, industry, subIndustry}
+    // d.metrics contém employeesRange, estimatedAnnualRevenue, etc.
+    const categoryObj = d.category || {};
+    const industry = (
+        categoryObj.industry        ||   // "Internet Software & Services"
+        categoryObj.sector          ||   // "Information Technology"
+        categoryObj.industryGroup   ||   // "Software & Services"
+        d.industry                  ||
+        d.sector                    ||
+        null
+    );
+
+    // size está em d.metrics.employeesRange ex: "10001+"
+    const metricsObj = d.metrics || {};
+    const sizeRaw = metricsObj.employeesRange || metricsObj.employees || d.size || d.headcount || null;
+    // linkedin está em d.linkedin.handle, site em d.site.url
+    const linkedinHandle = d.linkedin?.handle || null;
+    const linkedinRaw    = linkedinHandle
+        ? `https://www.linkedin.com/company/${linkedinHandle}`
+        : d.linkedin_url || null;
+    const websiteRaw = d.site?.url || d.website || null;
 
     // Converter size range "1001-5000" → número (maior valor do range)
     let sizeNumber: number | null = null;
