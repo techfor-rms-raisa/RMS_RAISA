@@ -141,7 +141,7 @@ Responda SOMENTE JSON sem markdown:
     console.log(`   Depts: ${deptoTermos.substring(0, 60)} | Sênior: ${seniorTermos.substring(0, 40)}`);
 
     const result = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-2.5-flash-lite-preview-06-17', // rápido (~15-20s), atual, substituto oficial do 2.0-flash
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
@@ -351,42 +351,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.log(`   ⚠️ empresa_nome sanitizado: "${empresa_nome}" → "${empresaNomeLimpo}"`);
         }
 
-        // ── Timeout individual por chamada (50s) para não estourar o limite do Vercel ──
-        const withTimeout = (promise: Promise<any>, ms: number) =>
-            Promise.race([
-                promise,
-                new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error(`Timeout após ${ms / 1000}s`)), ms)
-                )
-            ]);
-
         let listA: ProspectGemini[] = [];
         let listB: ProspectGemini[] = [];
         let nomeA = '', nomeB = '';
         let qrsA:  string[] = [], qrsB: string[] = [];
 
         if (chamadaB === null) {
-            // ── Chamada única ──────────────────────────────────────────────────
+            // ── Chamada única — sem wrapper de timeout (Vercel controla os 60s) ──
             try {
-                const res = await withTimeout(
-                    buscarLeadsGemini(domainClean, chamadaA.depts, chamadaA.seniorities, maxPorChamada, empresaNomeLimpo),
-                    50_000
-                ) as any;
+                const res = await buscarLeadsGemini(
+                    domainClean, chamadaA.depts, chamadaA.seniorities, maxPorChamada, empresaNomeLimpo
+                );
                 listA = res.resultados;
                 nomeA = res.empresa_nome;
                 qrsA  = res.queries_usadas;
             } catch (e: any) {
-                console.warn('⚠️ [GeminiSearch] Chamada única falhou:', e.message);
+                console.warn('⚠️ [GeminiSearch] Chamada falhou:', e.message);
+                // Retorna vazio mas não estoura — o catch do handler vai responder 500
+                throw e;
             }
         } else {
-            // ── Dual paralelo ──────────────────────────────────────────────────
+            // ── Dual paralelo — sem wrapper de timeout ─────────────────────────
             const [resA, resB] = await Promise.allSettled([
-                withTimeout(buscarLeadsGemini(domainClean, chamadaA.depts, chamadaA.seniorities, maxPorChamada, empresaNomeLimpo), 50_000),
-                withTimeout(buscarLeadsGemini(domainClean, chamadaB.depts, chamadaB.seniorities, maxPorChamada, empresaNomeLimpo), 50_000),
+                buscarLeadsGemini(domainClean, chamadaA.depts, chamadaA.seniorities, maxPorChamada, empresaNomeLimpo),
+                buscarLeadsGemini(domainClean, chamadaB.depts, chamadaB.seniorities, maxPorChamada, empresaNomeLimpo),
             ]);
 
-            if (resA.status === 'fulfilled') { listA = (resA.value as any).resultados; nomeA = (resA.value as any).empresa_nome; qrsA = (resA.value as any).queries_usadas; }
-            if (resB.status === 'fulfilled') { listB = (resB.value as any).resultados; nomeB = (resB.value as any).empresa_nome; qrsB = (resB.value as any).queries_usadas; }
+            if (resA.status === 'fulfilled') { listA = resA.value.resultados; nomeA = resA.value.empresa_nome; qrsA = resA.value.queries_usadas; }
+            if (resB.status === 'fulfilled') { listB = resB.value.resultados; nomeB = resB.value.empresa_nome; qrsB = resB.value.queries_usadas; }
             if (resA.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada A:', (resA as PromiseRejectedResult).reason?.message);
             if (resB.status === 'rejected') console.warn('⚠️ [GeminiSearch] Chamada B:', (resB as PromiseRejectedResult).reason?.message);
         }
@@ -435,3 +427,4 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
     }
 }
+
