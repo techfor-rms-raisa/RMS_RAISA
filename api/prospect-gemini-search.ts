@@ -121,68 +121,75 @@ ATENÇÃO — DESAMBIGUAÇÃO OBRIGATÓRIA:
 `
         : '';
 
+    // Montar queries segmentadas por nível para maximizar cobertura
+    const queriesSegmentadas = [
+        `"${empresaHint}" Diretor Gerente TI Tecnologia Infraestrutura LinkedIn Brasil`,
+        `"${empresaHint}" CTO CIO VP Head Tecnologia site:linkedin.com`,
+        `"${empresaHint}" Superintendente Coordenador Segurança Cloud LinkedIn`,
+        ...(empresaNomeExplicito ? [`"${empresaNomeExplicito}" executivos liderança tecnologia`] : []),
+    ].join('\n   ');
+
     const prompt = `
-Você é um especialista em prospecção B2B. Sua tarefa é encontrar decisores e executivos que trabalham na empresa com domínio "${domain}".
+Você é um especialista em prospecção B2B com acesso ao Google Search. Sua missão é encontrar o MÁXIMO de decisores e executivos reais da empresa alvo.
 
-CRITÉRIOS DE BUSCA:
-- Empresa alvo: ${empresaNomeExplicito ? `"${empresaNomeExplicito}"` : `domínio ${domain} (provável nome: ${empresaHint})`}
+EMPRESA ALVO:
+- Nome: ${empresaNomeExplicito ? `"${empresaNomeExplicito}"` : empresaHint}
 - Domínio de email: ${domain}
-- Departamentos alvo: ${deptoTermos}
+- Departamentos: ${deptoTermos}
 - Níveis hierárquicos: ${seniorTermos}
-- País: Brasil (prioridade) ou global
+- País: Brasil (prioridade)
 ${desambiguacaoInstrucao}
-INSTRUÇÕES:
-1. Use o Google Search para buscar executivos desta empresa
-2. Para cada pessoa, faça buscas específicas como:
-   - site:linkedin.com/in "${empresaHint}" CEO
-   - site:linkedin.com/in "${empresaHint}" Diretor
-   - "${empresaHint}" executivos liderança
-   - "${domain}" "linkedin.com/in"
-3. Extraia SOMENTE pessoas reais e verificáveis com cargo + empresa confirmados
-4. O linkedin_url é OBRIGATÓRIO quando encontrado — formato exato: https://www.linkedin.com/in/nome-usuario
-5. Se encontrou o nome da pessoa no LinkedIn, SEMPRE inclua a URL completa do perfil
-6. Retorne no máximo ${maxResultados} pessoas
-7. NÃO invente ou deduza pessoas nem URLs — só inclua o que você realmente encontrou
-8. Em empresa_nome retorne o nome oficial da unidade buscada (não do grupo)
+ESTRATÉGIA DE BUSCA — execute MÚLTIPLAS queries diferentes:
+   ${queriesSegmentadas}
+   site:linkedin.com/in "${empresaHint}" Gerente
+   site:linkedin.com/in "${empresaHint}" Diretor
+   "${empresaHint}" "Head de" OR "Gerente de" OR "Diretor de" TI
+   "${domain}" executivos linkedin.com/in
 
-IMPORTANTE SOBRE LINKEDIN:
-- Busque ativamente perfis LinkedIn de cada executivo encontrado
-- A URL deve ser no formato: https://www.linkedin.com/in/primeiro-ultimo
-- Se não encontrou o perfil LinkedIn específico da pessoa, coloque null — NUNCA invente
-- Priorize pessoas cujo LinkedIn você conseguiu confirmar
+REGRAS CRÍTICAS:
+1. Execute pelo menos 6 queries diferentes para maximizar cobertura
+2. META OBRIGATÓRIA: encontre entre ${Math.floor(maxResultados * 0.7)} e ${maxResultados} pessoas — NÃO pare antes de atingir a meta mínima
+3. Após cada query, adicione os novos nomes encontrados à lista — não descarte duplicatas ainda
+4. Ao final, remova duplicatas e retorne apenas pessoas únicas
+5. Inclua pessoas de TODOS os níveis solicitados: C-Level, VP, Diretor, Gerente, Superintendente
+6. Para cada pessoa encontrada, faça uma busca adicional pelo LinkedIn específico dela
+7. linkedin_url: inclua SEMPRE quando encontrado (formato: https://www.linkedin.com/in/usuario)
+8. NUNCA invente pessoas, cargos ou URLs — apenas dados verificados
+9. empresa_nome: use o nome da unidade específica, não do grupo
 
 FORMATO DE RESPOSTA — JSON puro, sem markdown, sem backticks:
 {
-  "empresa_nome": "Nome oficial da unidade (ex: Banco Carrefour — não Grupo Carrefour)",
-  "empresa_setor": "Setor (ex: Tecnologia, Telecomunicações, Varejo, Financeiro)",
-  "cidade_sede": "Cidade sede se encontrada",
-  "estado_sede": "Estado sede se encontrado",
+  "empresa_nome": "Nome da unidade específica",
+  "empresa_setor": "Setor principal",
+  "cidade_sede": "Cidade ou null",
+  "estado_sede": "Estado (sigla) ou null",
   "pessoas": [
     {
       "nome_completo": "Nome Sobrenome",
-      "cargo": "Cargo exato conforme encontrado",
-      "nivel": "C-Level|VP|Diretor|Gerente|Coordenador|Outro",
+      "cargo": "Cargo exato",
+      "nivel": "C-Level|VP|Diretor|Gerente|Coordenador|Superintendente|Outro",
       "departamento": "TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria",
-      "linkedin_url": "https://www.linkedin.com/in/nome-usuario ou null",
+      "linkedin_url": "https://www.linkedin.com/in/usuario ou null",
       "cidade": "Cidade ou null",
-      "estado": "Estado (sigla) ou null",
+      "estado": "UF ou null",
       "pais": "Brasil ou outro"
     }
   ]
 }
 `.trim();
 
-    console.log(`🤖 [GeminiSearch] Buscando leads para domínio: ${domain}`);
+    console.log(`🤖 [GeminiSearch] Buscando leads para domínio: ${domain}${empresaNomeExplicito ? ` (${empresaNomeExplicito})` : ''}`);
     console.log(`   Departamentos: ${deptoTermos.substring(0, 80)}...`);
     console.log(`   Senioridades: ${seniorTermos.substring(0, 60)}...`);
+    console.log(`   Meta: ${Math.floor(maxResultados * 0.7)}–${maxResultados} pessoas`);
 
     const result = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.2,
-            maxOutputTokens: 4096,
+            temperature: 0.7,      // ↑ mais exploratório (era 0.2 — muito conservador)
+            maxOutputTokens: 8192, // ↑ suporte a 20+ pessoas em JSON (era 4096)
         } as any
     });
 

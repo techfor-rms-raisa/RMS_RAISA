@@ -107,21 +107,28 @@ async function hunterEmailFinder(
     const data = await res.json();
     const d = data?.data;
 
+    // Log raw para diagnóstico de campos desconhecidos
+    console.log(`📦 [Hunter/Finder] Raw keys: ${Object.keys(d || {}).join(', ')}`);
+
     if (!d?.email) {
         console.log(`ℹ️ [Hunter/Finder] Email não encontrado para ${firstName} ${lastName}`);
         return null;
     }
 
-    console.log(`✅ [Hunter/Finder] ${d.email} (score: ${d.score}, status: ${d.status})`);
+    // Hunter.io v2: campo de status pode ser 'status', 'verification_status' ou 'result'
+    // dependendo da versão e do plano — normalizar com fallback em cadeia
+    const emailStatus = d.status || d.verification_status || d.result || 'unknown';
+
+    console.log(`✅ [Hunter/Finder] ${d.email} (score: ${d.score}, status: ${emailStatus})`);
 
     return {
-        email:       d.email,
-        score:       d.score       || 0,
-        status:      d.status      || 'unknown',
-        first_name:  d.first_name  || null,
-        last_name:   d.last_name   || null,
-        position:    d.position    || null,
-        linkedin_url: d.linkedin   || null,
+        email:        d.email,
+        score:        d.score        || 0,
+        status:       emailStatus,
+        first_name:   d.first_name   || null,
+        last_name:    d.last_name    || null,
+        position:     d.position     || null,
+        linkedin_url: d.linkedin     || d.linkedin_url || null,
     };
 }
 
@@ -129,17 +136,20 @@ async function hunterEmailFinder(
 async function hunterDomainSearch(
     domain:  string,
     apiKey:  string,
-    limit:   number = 20
+    limit:   number = 10   // plano Starter: máximo 10 por requisição
 ): Promise<HunterDomainEmail[]> {
+
+    // Respeita o limite do plano: máximo 10 no Starter
+    const safeLimit = Math.min(limit, 10);
 
     const params = new URLSearchParams({
         domain,
-        limit:   String(limit),
+        limit:   String(safeLimit),
         type:    'personal',  // ignora info@, suporte@, etc.
         api_key: apiKey,
     });
 
-    console.log(`🔍 [Hunter/Domain] Domínio: ${domain} (limit: ${limit})`);
+    console.log(`🔍 [Hunter/Domain] Domínio: ${domain} (limit: ${safeLimit})`);
 
     const res = await fetch(`${HUNTER_BASE_URL}/domain-search?${params.toString()}`);
 
@@ -150,6 +160,7 @@ async function hunterDomainSearch(
     if (!res.ok) {
         const body = await res.text();
         console.error(`❌ [Hunter/Domain] ${res.status}: ${body.substring(0, 200)}`);
+        // Retorna vazio mas não quebra o pipeline
         return [];
     }
 
@@ -194,26 +205,37 @@ async function hunterCompanyEnrich(
     const d = data?.data;
     if (!d) return null;
 
+    // Log raw para diagnóstico de estrutura real da API
+    console.log(`📦 [Hunter/Company] Raw keys: ${Object.keys(d).join(', ')}`);
+
+    // Hunter API v2 /companies/find retorna campos variáveis por plano
+    // industry pode estar em: d.industry | d.sector | d.category
+    // size pode estar em: d.size | d.company_size | d.employees | d.headcount
+    const industry   = d.industry    || d.sector       || d.category    || null;
+    const sizeRaw    = d.size        || d.company_size  || d.employees   || d.headcount || null;
+    const linkedinRaw = d.linkedin_url || d.linkedin    || null;
+    const websiteRaw  = d.website    || d.domain        || null;
+
     // Converter size range "1001-5000" → número (maior valor do range)
     let sizeNumber: number | null = null;
-    if (d.size) {
-        const nums = String(d.size).match(/\d+/g);
+    if (sizeRaw) {
+        const nums = String(sizeRaw).match(/\d+/g);
         sizeNumber = nums ? parseInt(nums[nums.length - 1]) : null;
     }
 
-    console.log(`✅ [Hunter/Company] ${d.name} | ${d.industry} | porte: ${d.size}`);
+    console.log(`✅ [Hunter/Company] ${d.name} | industry: ${industry} | size: ${sizeRaw}`);
 
     return {
         name:         d.name         || null,
         domain:       d.domain       || domain,
-        industry:     d.industry     || null,
-        size:         d.size         || null,
+        industry,
+        size:         sizeRaw ? String(sizeRaw) : null,
         size_number:  sizeNumber,
         country:      d.country      || null,
         state:        d.state        || null,
         city:         d.city         || null,
-        linkedin_url: d.linkedin_url || null,
-        website:      d.website      || null,
+        linkedin_url: linkedinRaw,
+        website:      websiteRaw,
         description:  d.description  || null,
     };
 }
@@ -389,8 +411,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const company = await hunterCompanyEnrich(domain, apiKey);
         let creditosUsados = company ? 1 : 0;
 
-        // ETAPA 2: Domain Search — 1 crédito, retorna até 50 emails conhecidos
-        const domainEmails = await hunterDomainSearch(domain, apiKey, 50);
+        // ETAPA 2: Domain Search — 1 crédito, retorna até 10 emails (limite do plano Starter)
+        const domainEmails = await hunterDomainSearch(domain, apiKey, 10);
         if (domainEmails.length > 0) creditosUsados++;
 
         // ETAPA 3: Para cada prospect, tenta cruzar ou usar Email Finder
