@@ -119,12 +119,23 @@ CRITÉRIOS DE BUSCA:
 
 INSTRUÇÕES:
 1. Use o Google Search para buscar executivos desta empresa
-2. Procure por: LinkedIn profiles, press releases, notícias, site oficial, About Us
+2. Para cada pessoa, faça buscas específicas como:
+   - site:linkedin.com/in "${empresaHint}" CEO
+   - site:linkedin.com/in "${empresaHint}" Diretor
+   - "${empresaHint}" executivos liderança
+   - "${domain}" "linkedin.com/in"
 3. Extraia SOMENTE pessoas reais e verificáveis com cargo + empresa confirmados
-4. Inclua o LinkedIn URL quando encontrado (formato: linkedin.com/in/usuario)
-5. Retorne no máximo ${maxResultados} pessoas
-6. NÃO invente ou deduza pessoas — só inclua quem você realmente encontrou
-7. Se encontrar o nome da empresa, inclua em empresa_nome
+4. O linkedin_url é OBRIGATÓRIO quando encontrado — formato exato: https://www.linkedin.com/in/nome-usuario
+5. Se encontrou o nome da pessoa no LinkedIn, SEMPRE inclua a URL completa do perfil
+6. Retorne no máximo ${maxResultados} pessoas
+7. NÃO invente ou deduza pessoas nem URLs — só inclua o que você realmente encontrou
+8. Se encontrar o nome da empresa, inclua em empresa_nome
+
+IMPORTANTE SOBRE LINKEDIN:
+- Busque ativamente perfis LinkedIn de cada executivo encontrado
+- A URL deve ser no formato: https://www.linkedin.com/in/primeiro-ultimo
+- Se não encontrou o perfil LinkedIn específico da pessoa, coloque null — NUNCA invente
+- Priorize pessoas cujo LinkedIn você conseguiu confirmar
 
 FORMATO DE RESPOSTA — JSON puro, sem markdown, sem backticks:
 {
@@ -138,7 +149,7 @@ FORMATO DE RESPOSTA — JSON puro, sem markdown, sem backticks:
       "cargo": "Cargo exato conforme encontrado",
       "nivel": "C-Level|VP|Diretor|Gerente|Coordenador|Outro",
       "departamento": "TI|Compras|Infraestrutura|Governança|RH|Comercial|Financeiro|Diretoria",
-      "linkedin_url": "https://linkedin.com/in/usuario ou null",
+      "linkedin_url": "https://www.linkedin.com/in/nome-usuario ou null",
       "cidade": "Cidade ou null",
       "estado": "Estado (sigla) ou null",
       "pais": "Brasil ou outro"
@@ -196,6 +207,15 @@ FORMATO DE RESPOSTA — JSON puro, sem markdown, sem backticks:
         const primeiroNome = partes[0] || '';
         const ultimoNome  = partes.slice(1).join(' ') || '';
 
+        // Normalizar linkedin_url — garantir formato https://www.linkedin.com/in/...
+        const rawLinkedin = p.linkedin_url;
+        let linkedinNorm: string | null = null;
+        if (rawLinkedin && rawLinkedin !== 'null' && rawLinkedin.includes('linkedin.com/in/')) {
+            linkedinNorm = rawLinkedin.startsWith('http')
+                ? rawLinkedin.trim()
+                : `https://${rawLinkedin.trim()}`;
+        }
+
         return {
             gemini_id:      `gemini_${domain}_${idx}_${Date.now()}`,
             nome_completo:  nomeCompleto,
@@ -204,7 +224,7 @@ FORMATO DE RESPOSTA — JSON puro, sem markdown, sem backticks:
             cargo:          (p.cargo || '').trim(),
             nivel:          p.nivel || 'Outro',
             departamento:   p.departamento || 'TI',
-            linkedin_url:   p.linkedin_url && p.linkedin_url !== 'null' ? p.linkedin_url : null,
+            linkedin_url:   linkedinNorm,
             email:          null,
             email_status:   null,
             foto_url:       null,

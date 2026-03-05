@@ -258,6 +258,31 @@ async function hunterEmailVerifier(
     };
 }
 
+// ─── Busca LinkedIn no Domain Search por nome (mesmo sem email) ───────
+function buscarLinkedinNoDomainSearch(
+    firstName:    string,
+    lastName:     string,
+    domainEmails: HunterDomainEmail[]
+): string | null {
+    const fnNorm = firstName.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+    const lnNorm = lastName.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+
+    // Busca exata primeiro
+    const exact = domainEmails.find(e => {
+        const eFn = (e.first_name || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+        const eLn = (e.last_name  || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+        return eFn === fnNorm && eLn === lnNorm;
+    });
+    if (exact?.linkedin) return exact.linkedin;
+
+    // Busca por primeiro nome apenas (fallback)
+    const partial = domainEmails.find(e => {
+        const eFn = (e.first_name || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+        return eFn === fnNorm && e.linkedin;
+    });
+    return partial?.linkedin || null;
+}
+
 // ─── Cruzamento: tenta casar prospect Gemini com email do Domain Search ─
 function cruzarComDomainSearch(
     firstName:    string,
@@ -438,7 +463,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             email:        found.email,
                             email_status: emailStatus,
                             email_score:  found.score,
-                            linkedin_url: prospect.linkedin_url || found.linkedin_url || null,
+                            // Email Finder retorna campo 'linkedin' (não linkedin_url) — normalizar
+                            linkedin_url: prospect.linkedin_url
+                                       || (found as any).linkedin
+                                       || found.linkedin_url
+                                       || buscarLinkedinNoDomainSearch(fn, ln, domainEmails)
+                                       || null,
                             enriquecido:  true,
                             motor_email:  'hunter_finder',
                         });
@@ -450,13 +480,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
             }
 
-            // Sem email — mantém dados da empresa enriquecidos
+            // Sem email — mantém dados da empresa enriquecidos + tenta LinkedIn do domain search
             enriched.push({
                 ...prospect,
                 ...empresaEnriquecida,
                 email:        null,
                 email_status: 'not_found',
                 email_score:  0,
+                linkedin_url: prospect.linkedin_url
+                           || buscarLinkedinNoDomainSearch(fn, ln, domainEmails)
+                           || null,
                 enriquecido:  false,
                 motor_email:  null,
             });
