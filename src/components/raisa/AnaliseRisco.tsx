@@ -344,6 +344,8 @@ const AnaliseRisco: React.FC = () => {
     await extrairTexto(file);
   };
 
+  // v5.0: Usa action leve 'extrair_texto_pdf' (só Etapa 1)
+  // Evita timeout 504 que ocorria com 'extrair_cv' (3 extrações paralelas = 60s+)
   const extrairTexto = async (file: File) => {
     setIsExtraindo(true);
     setErro(null);
@@ -351,29 +353,33 @@ const AnaliseRisco: React.FC = () => {
     try {
       const base64 = await fileToBase64(file);
       setBase64Original(base64); // 🆕 v4.4: Persistir para re-uso nas análises
-      
+
       const response = await fetch('/api/gemini-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'extrair_cv',
+          action: 'extrair_texto_pdf',  // ✅ v5.0: action LEVE — só extrai texto bruto
           payload: {
-            base64PDF: base64,
-            textoCV: ''
+            base64PDF: base64
           }
         })
       });
+
+      // ✅ Verificar status HTTP antes de parsear JSON
+      if (!response.ok) {
+        const statusCode = response.status;
+        if (statusCode === 504 || statusCode === 408) {
+          throw new Error('⏱️ Extração do PDF excedeu o tempo limite. Tente um arquivo menor ou cole o texto manualmente.');
+        }
+        throw new Error(`Erro HTTP ${statusCode} ao extrair texto do PDF.`);
+      }
 
       const result = await response.json();
 
       if (result.success && result.data?.texto_original) {
         setTextoExtraido(result.data.texto_original);
-      } else if (result.success && result.data?.dados) {
-        const dados = result.data.dados;
-        const texto = montarTextoDeCV(dados);
-        setTextoExtraido(texto);
       } else {
-        throw new Error(result.error || 'Falha ao extrair texto do arquivo');
+        throw new Error(result.data?.erro || result.error || 'Falha ao extrair texto do arquivo');
       }
     } catch (err: any) {
       console.error('Erro ao extrair texto:', err);
@@ -467,7 +473,6 @@ const AnaliseRisco: React.FC = () => {
         if (statusCode === 429) {
           throw new Error('⏳ IA sobrecarregada (limite de requisições). Aguarde 1-2 minutos e tente novamente.');
         }
-        // Outros erros: tentar ler o corpo com proteção
         let errMsg = `Erro HTTP ${statusCode}`;
         try {
           const errText = await response.text();
@@ -481,7 +486,6 @@ const AnaliseRisco: React.FC = () => {
         throw new Error(errMsg);
       }
 
-      // ✅ Parse seguro da resposta bem-sucedida
       let result: any;
       try {
         result = await response.json();
@@ -496,7 +500,6 @@ const AnaliseRisco: React.FC = () => {
       const data = result.data;
       console.log(`✅ Triagem completa recebida. Score: ${data.score_geral}, Skills: ${data.skills?.length || 0}, Exp: ${data.experiencias?.length || 0}`);
 
-      // Montar objeto AnaliseTriagem para o estado (compatível com a interface existente)
       const analiseFormatada: AnaliseTriagem = {
         sucesso: true,
         score_geral: data.score_geral || 0,
@@ -514,13 +517,8 @@ const AnaliseRisco: React.FC = () => {
 
       setAnalise(analiseFormatada);
 
-      // ========================================
-      // PERSISTIR NO BANCO (SE SCORE >= SCORE_MINIMO_SALVAR)
-      // Os dados estruturados vêm da mesma resposta unificada
-      // ========================================
       const scoreGeral = data.score_geral || 0;
 
-      // Montar dadosExtraidos no formato esperado por salvarCandidatoNoBancoTriagem
       const dadosExtraidos = {
         dados_pessoais: data.dados_pessoais || {},
         dados_profissionais: data.dados_profissionais || {},

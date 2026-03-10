@@ -86,6 +86,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await extrairDadosCV(payload.textoCV, payload.base64PDF);
         break;
 
+      // ✅ NOVA ACTION v5.0: Extração LEVE de texto do PDF (só Etapa 1)
+      // Resolve timeout 504 no upload — não faz extração estruturada, apenas extrai texto bruto
+      case 'extrair_texto_pdf':
+        result = await extrairTextoPDF(payload.base64PDF);
+        break;
+
       // ✅ NOVA ACTION: Análise de CV do Candidato com contexto da Vaga
       case 'analisar_cv_candidatura':
         result = await analisarCVCandidatura(payload);
@@ -416,6 +422,50 @@ function detectarModulosSAP(titulo: string, descricao: string): string[] {
   }
   
   return detectados;
+}
+
+// ========================================
+// EXTRAÇÃO LEVE DE TEXTO DO PDF (apenas texto bruto)
+// v5.0 - Usada no upload do arquivo para evitar timeout
+// Faz APENAS a Etapa 1 (extrair texto), sem extrações estruturadas paralelas
+// ========================================
+
+async function extrairTextoPDF(base64PDF: string) {
+  console.log('📄 [extrairTextoPDF] Extraindo texto bruto do PDF (leve)...');
+
+  if (!base64PDF || base64PDF.length < 100) {
+    return { sucesso: false, erro: 'PDF não fornecido ou inválido.' };
+  }
+
+  try {
+    const result = await getAI().models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: [{
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'application/pdf', data: base64PDF } },
+          { text: 'Extraia TODO o texto deste currículo exatamente como está. Retorne APENAS o texto puro, sem formatação, sem JSON, sem markdown.' }
+        ]
+      }],
+      config: {
+        temperature: 0.1,
+        maxOutputTokens: 8192
+      }
+    });
+
+    const texto = result.text || '';
+
+    if (!texto || texto.trim().length < 50) {
+      return { sucesso: false, erro: 'Não foi possível extrair texto do PDF.' };
+    }
+
+    console.log(`✅ [extrairTextoPDF] Texto extraído: ${texto.length} caracteres`);
+    return { sucesso: true, texto_original: texto.trim() };
+
+  } catch (error: any) {
+    console.error('❌ [extrairTextoPDF] Erro:', error.message);
+    return { sucesso: false, erro: error.message };
+  }
 }
 
 // ========================================
