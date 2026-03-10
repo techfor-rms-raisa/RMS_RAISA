@@ -35,6 +35,8 @@ export type View =
   | 'dashboard_funil' | 'dashboard_aprovacao' | 'dashboard_analistas' 
   | 'dashboard_geral' | 'dashboard_clientes' | 'dashboard_tempo'
   | 'dashboard_ml' | 'dashboard_performance_ia' | 'dashboard_raisa_metrics'
+  // PROSPECT Views
+  | 'prospect_search' | 'prospect_list' | 'prospect_credits'
   // Movimentações e Posição
   | 'movimentacoes' | 'posicao_comercial' | 'profiles';
 

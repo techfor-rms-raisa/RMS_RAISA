@@ -86,6 +86,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await extrairDadosCV(payload.textoCV, payload.base64PDF);
         break;
 
+      // ✅ NOVA ACTION v5.0: Extração LEVE de texto do PDF (só Etapa 1)
+      // Resolve timeout 504 no upload — não faz extração estruturada, apenas extrai texto bruto
+      case 'extrair_texto_pdf':
+        result = await extrairTextoPDF(payload.base64PDF);
+        break;
+
       // ✅ NOVA ACTION: Análise de CV do Candidato com contexto da Vaga
       case 'analisar_cv_candidatura':
         result = await analisarCVCandidatura(payload);
@@ -94,6 +100,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ✅ NOVA ACTION: Triagem genérica de CV (sem contexto de vaga)
       case 'triagem_cv_generica':
         result = await triagemCVGenerica(payload.curriculo_texto);
+        break;
+
+      // ✅ NOVA ACTION v5.0: Triagem COMPLETA unificada (extração + triagem em 1 chamada Gemini)
+      // Resolve timeout 504 causado pelas 2 chamadas sequenciais anteriores (extrair_cv + triagem_cv_generica)
+      case 'triagem_cv_completa':
+        result = await triagemCVCompleta(payload.curriculo_texto);
         break;
 
       // ✅ NOVA ACTION: Classificar email de candidatura (webhook Resend)
@@ -410,6 +422,50 @@ function detectarModulosSAP(titulo: string, descricao: string): string[] {
   }
   
   return detectados;
+}
+
+// ========================================
+// EXTRAÇÃO LEVE DE TEXTO DO PDF (apenas texto bruto)
+// v5.0 - Usada no upload do arquivo para evitar timeout
+// Faz APENAS a Etapa 1 (extrair texto), sem extrações estruturadas paralelas
+// ========================================
+
+async function extrairTextoPDF(base64PDF: string) {
+  console.log('📄 [extrairTextoPDF] Extraindo texto bruto do PDF (leve)...');
+
+  if (!base64PDF || base64PDF.length < 100) {
+    return { sucesso: false, erro: 'PDF não fornecido ou inválido.' };
+  }
+
+  try {
+    const result = await getAI().models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: [{
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'application/pdf', data: base64PDF } },
+          { text: 'Extraia TODO o texto deste currículo exatamente como está. Retorne APENAS o texto puro, sem formatação, sem JSON, sem markdown.' }
+        ]
+      }],
+      config: {
+        temperature: 0.1,
+        maxOutputTokens: 8192
+      }
+    });
+
+    const texto = result.text || '';
+
+    if (!texto || texto.trim().length < 50) {
+      return { sucesso: false, erro: 'Não foi possível extrair texto do PDF.' };
+    }
+
+    console.log(`✅ [extrairTextoPDF] Texto extraído: ${texto.length} caracteres`);
+    return { sucesso: true, texto_original: texto.trim() };
+
+  } catch (error: any) {
+    console.error('❌ [extrairTextoPDF] Erro:', error.message);
+    return { sucesso: false, erro: error.message };
+  }
 }
 
 // ========================================
@@ -740,6 +796,104 @@ RESPONDA EM JSON:
     }
   } catch (error: any) {
     console.error('❌ Erro na análise:', error);
+    return { sucesso: false, erro: error.message };
+  }
+}
+
+// ========================================
+// TRIAGEM COMPLETA UNIFICADA (extração + triagem em 1 chamada Gemini)
+// v5.0 - Resolve timeout 504 das 2 chamadas sequenciais anteriores
+// ========================================
+
+async function triagemCVCompleta(curriculo_texto: string) {
+  console.log('🤖 [Gemini] Triagem CV completa unificada (v5.0)...');
+
+  if (!curriculo_texto || curriculo_texto.trim().length < 50) {
+    return { sucesso: false, erro: 'Texto do currículo muito curto.' };
+  }
+
+  const prompt = `Você é um especialista sênior em Recrutamento e Seleção para o mercado de TI.
+Analise o currículo abaixo e retorne UM ÚNICO JSON com dados estruturados do candidato E a triagem/avaliação do perfil.
+
+CV:
+${curriculo_texto.substring(0, 9000)}
+
+RESPONDA APENAS com este JSON válido (sem markdown, sem backticks, sem comentários):
+{
+  "sucesso": true,
+  "dados_pessoais": {
+    "nome": "",
+    "email": "",
+    "telefone": "",
+    "linkedin_url": "",
+    "cidade": "",
+    "estado": ""
+  },
+  "dados_profissionais": {
+    "titulo_profissional": "",
+    "senioridade": "Junior|Pleno|Senior|Especialista",
+    "resumo_profissional": ""
+  },
+  "skills": [{"nome": "", "categoria": "linguagem|framework|database|devops|cloud|mobile|sap|tool|methodology|soft_skill|other", "nivel": "basico|intermediario|avancado|especialista", "anos_experiencia": 0}],
+  "experiencias": [{"empresa": "", "cargo": "", "data_inicio": "YYYY-MM", "data_fim": "YYYY-MM", "atual": false, "descricao": "", "tecnologias": []}],
+  "formacao": [{"tipo": "graduacao|pos_graduacao|mba|mestrado|tecnico|bootcamp|certificacao", "curso": "", "instituicao": "", "ano_conclusao": null, "em_andamento": false}],
+  "certificacoes": [{"nome": "", "emissor": "", "ano": null}],
+  "idiomas": [{"idioma": "", "nivel": "basico|intermediario|avancado|fluente"}],
+  "score_geral": 75,
+  "nivel_risco": "Baixo|Médio|Alto|Crítico",
+  "recomendacao": "banco_talentos|analisar_mais|descartar",
+  "justificativa": "Resumo da avaliação do perfil",
+  "pontos_fortes": [""],
+  "pontos_fracos": [""],
+  "fatores_risco": [{"tipo": "job_hopping|gap_emprego|skills_desatualizadas|experiencia_insuficiente", "nivel": "Baixo|Médio|Alto", "descricao": "", "evidencia": ""}],
+  "skills_detectadas": [""],
+  "experiencia_anos": 0,
+  "senioridade_estimada": "Junior|Pleno|Senior|Especialista",
+  "areas_atuacao": [""]
+}`;
+
+  try {
+    const result = await getAI().models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: prompt,
+      config: {
+        temperature: 0.2,
+        maxOutputTokens: 8192
+      }
+    });
+
+    const text = result.text || '';
+    console.log(`📝 [triagemCVCompleta] Resposta recebida: ${text.length} chars`);
+
+    // Limpeza robusta do JSON
+    const jsonClean = text
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+
+    // Tentativa 1: parse direto
+    try {
+      const parsed = JSON.parse(jsonClean);
+      console.log(`✅ [triagemCVCompleta] Parse direto OK. Score: ${parsed.score_geral}, Skills: ${parsed.skills?.length || 0}`);
+      return { sucesso: true, ...parsed };
+    } catch {
+      // Tentativa 2: extrair bloco JSON com regex
+      const jsonMatch = jsonClean.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try {
+          const parsed = JSON.parse(jsonMatch[0]);
+          console.log(`✅ [triagemCVCompleta] Parse via regex OK. Score: ${parsed.score_geral}`);
+          return { sucesso: true, ...parsed };
+        } catch {
+          // ignorar
+        }
+      }
+      console.error('❌ [triagemCVCompleta] Falha ao parsear JSON. Texto recebido:', text.substring(0, 300));
+      return { sucesso: false, erro: 'Falha ao interpretar resposta da IA. Tente novamente.' };
+    }
+  } catch (error: any) {
+    console.error('❌ [triagemCVCompleta] Erro:', error.message);
     return { sucesso: false, erro: error.message };
   }
 }
