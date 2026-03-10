@@ -425,6 +425,9 @@ const AnaliseRisco: React.FC = () => {
   };
 
   // Análise genérica (sem vaga) - TAMBÉM salva no banco automaticamente
+  // v5.0 (10/03/2026): Unificada em 1 chamada (triagem_cv_completa)
+  // Resolve timeout 504 causado pelas 2 chamadas sequenciais anteriores:
+  // extrair_cv (~20s) + triagem_cv_generica (~15s) = ~35s → estoura Vercel
   const handleAnalisarTriagem = async () => {
     if (!textoExtraido || textoExtraido.length < 50) {
       setErro('Texto do currículo muito curto para análise.');
@@ -438,98 +441,129 @@ const AnaliseRisco: React.FC = () => {
 
     try {
       // ========================================
-      // PASSO 1: Extrair dados estruturados do CV
+      // CHAMADA ÚNICA: extração + triagem unificadas
+      // Elimina timeout 504 causado por 2 chamadas sequenciais
       // ========================================
-      console.log('🤖 Extraindo dados do CV via Gemini...');
-      
-      const extractResponse = await fetch('/api/gemini-analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'extrair_cv',
-          payload: {
-            textoCV: textoExtraido,
-            base64PDF: '' // ✅ Texto já extraído no upload, não reenviar PDF (evita timeout)
-          }
-        })
-      });
+      console.log('🤖 Triagem CV completa unificada (v5.0) — 1 chamada Gemini...');
 
-      let dadosExtraidos = null;
-      let textoOriginal = textoExtraido;
-
-      if (extractResponse.ok) {
-        const extractResult = await extractResponse.json();
-        if (extractResult.success && extractResult.data?.dados) {
-          dadosExtraidos = extractResult.data.dados;
-          textoOriginal = extractResult.data.texto_original || textoExtraido;
-        }
-      }
-
-      // ========================================
-      // PASSO 2: Triagem genérica
-      // ========================================
-      console.log('🎯 Realizando triagem genérica...');
-      
       const response = await fetch('/api/gemini-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'triagem_cv_generica',
+          action: 'triagem_cv_completa',
           payload: {
             curriculo_texto: textoExtraido
           }
         })
       });
 
-      const result = await response.json();
-
-      if (result.success && result.data?.sucesso) {
-        setAnalise(result.data);
-        
-        // ========================================
-        // PASSO 3: PERSISTIR NO BANCO (SE SCORE >= 40%)
-        // 🆕 v4.1: Só salva automaticamente se score for adequado
-        // ========================================
-        const scoreGeral = result.data.score_geral || 0;
-        
-        if (dadosExtraidos && scoreGeral >= SCORE_MINIMO_SALVAR) {
-          console.log(`💾 Score ${scoreGeral}% >= ${SCORE_MINIMO_SALVAR}% - Salvando candidato...`);
-          
-          const candidato = {
-            nome: dadosExtraidos.dados_pessoais?.nome || 'Candidato',
-            email: dadosExtraidos.dados_pessoais?.email || '',
-            telefone: dadosExtraidos.dados_pessoais?.telefone || '',
-            linkedin_url: dadosExtraidos.dados_pessoais?.linkedin_url || '',
-            cidade: dadosExtraidos.dados_pessoais?.cidade || '',
-            estado: dadosExtraidos.dados_pessoais?.estado || '',
-            titulo_profissional: dadosExtraidos.dados_profissionais?.titulo_profissional || result.data.areas_atuacao?.[0] || '',
-            senioridade: dadosExtraidos.dados_profissionais?.senioridade || result.data.senioridade_estimada || 'pleno',
-            resumo_profissional: dadosExtraidos.dados_profissionais?.resumo_profissional || result.data.justificativa || '',
-            skills: dadosExtraidos.skills || [],
-            experiencias: dadosExtraidos.experiencias || [],
-            formacao: dadosExtraidos.formacao || [],
-            certificacoes: dadosExtraidos.certificacoes || [],
-            idiomas: dadosExtraidos.idiomas || [],
-            cv_texto_original: textoOriginal
-          };
-
-          const pessoaSalva = await salvarCandidatoNoBancoTriagem(candidato, dadosExtraidos, textoOriginal, result.data);
-          
-          if (pessoaSalva) {
-            console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
-            setSalvouBanco(true);
+      // ✅ Tratamento robusto: verificar status HTTP ANTES de parsear JSON
+      // Evita o erro "An error o... is not valid JSON" quando o servidor retorna 504
+      if (!response.ok) {
+        const statusCode = response.status;
+        if (statusCode === 504 || statusCode === 408) {
+          throw new Error('⏱️ Processamento excedeu o tempo limite (timeout). Tente novamente em instantes.');
+        }
+        if (statusCode === 429) {
+          throw new Error('⏳ IA sobrecarregada (limite de requisições). Aguarde 1-2 minutos e tente novamente.');
+        }
+        // Outros erros: tentar ler o corpo com proteção
+        let errMsg = `Erro HTTP ${statusCode}`;
+        try {
+          const errText = await response.text();
+          if (errText.trim().startsWith('{')) {
+            const errJson = JSON.parse(errText);
+            errMsg = errJson.error || errMsg;
           }
-        } else if (dadosExtraidos) {
-          console.log(`⚠️ Score ${scoreGeral}% < ${SCORE_MINIMO_SALVAR}% - Candidato NÃO salvo automaticamente`);
-          // Guardar dados para salvamento manual
-          setDadosParaSalvarManual({ candidato: dadosExtraidos, textoOriginal, analiseResult: result.data });
+        } catch {
+          // ignorar falha de parse do corpo de erro
+        }
+        throw new Error(errMsg);
+      }
+
+      // ✅ Parse seguro da resposta bem-sucedida
+      let result: any;
+      try {
+        result = await response.json();
+      } catch {
+        throw new Error('Resposta da API em formato inválido. Tente novamente.');
+      }
+
+      if (!result.success || !result.data?.sucesso) {
+        throw new Error(result.data?.erro || result.error || 'Erro na análise de CV.');
+      }
+
+      const data = result.data;
+      console.log(`✅ Triagem completa recebida. Score: ${data.score_geral}, Skills: ${data.skills?.length || 0}, Exp: ${data.experiencias?.length || 0}`);
+
+      // Montar objeto AnaliseTriagem para o estado (compatível com a interface existente)
+      const analiseFormatada: AnaliseTriagem = {
+        sucesso: true,
+        score_geral: data.score_geral || 0,
+        nivel_risco: data.nivel_risco || 'Médio',
+        recomendacao: data.recomendacao || 'analisar_mais',
+        justificativa: data.justificativa || '',
+        pontos_fortes: data.pontos_fortes || [],
+        pontos_fracos: data.pontos_fracos || [],
+        fatores_risco: data.fatores_risco || [],
+        skills_detectadas: data.skills_detectadas || data.skills?.map((s: any) => s.nome) || [],
+        experiencia_anos: data.experiencia_anos || 0,
+        senioridade_estimada: data.senioridade_estimada || data.dados_profissionais?.senioridade || 'Pleno',
+        areas_atuacao: data.areas_atuacao || []
+      };
+
+      setAnalise(analiseFormatada);
+
+      // ========================================
+      // PERSISTIR NO BANCO (SE SCORE >= SCORE_MINIMO_SALVAR)
+      // Os dados estruturados vêm da mesma resposta unificada
+      // ========================================
+      const scoreGeral = data.score_geral || 0;
+
+      // Montar dadosExtraidos no formato esperado por salvarCandidatoNoBancoTriagem
+      const dadosExtraidos = {
+        dados_pessoais: data.dados_pessoais || {},
+        dados_profissionais: data.dados_profissionais || {},
+        skills: data.skills || [],
+        experiencias: data.experiencias || [],
+        formacao: data.formacao || [],
+        certificacoes: data.certificacoes || [],
+        idiomas: data.idiomas || []
+      };
+
+      const candidato = {
+        nome: dadosExtraidos.dados_pessoais?.nome || 'Candidato',
+        email: dadosExtraidos.dados_pessoais?.email || '',
+        telefone: dadosExtraidos.dados_pessoais?.telefone || '',
+        linkedin_url: dadosExtraidos.dados_pessoais?.linkedin_url || '',
+        cidade: dadosExtraidos.dados_pessoais?.cidade || '',
+        estado: dadosExtraidos.dados_pessoais?.estado || '',
+        titulo_profissional: dadosExtraidos.dados_profissionais?.titulo_profissional || data.areas_atuacao?.[0] || '',
+        senioridade: dadosExtraidos.dados_profissionais?.senioridade || data.senioridade_estimada || 'pleno',
+        resumo_profissional: dadosExtraidos.dados_profissionais?.resumo_profissional || data.justificativa || '',
+        skills: dadosExtraidos.skills || [],
+        experiencias: dadosExtraidos.experiencias || [],
+        formacao: dadosExtraidos.formacao || [],
+        certificacoes: dadosExtraidos.certificacoes || [],
+        idiomas: dadosExtraidos.idiomas || [],
+        cv_texto_original: textoExtraido
+      };
+
+      if (scoreGeral >= SCORE_MINIMO_SALVAR) {
+        console.log(`💾 Score ${scoreGeral}% >= ${SCORE_MINIMO_SALVAR}% - Salvando candidato...`);
+        const pessoaSalva = await salvarCandidatoNoBancoTriagem(candidato, dadosExtraidos, textoExtraido, analiseFormatada);
+        if (pessoaSalva) {
+          console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
+          setSalvouBanco(true);
         }
       } else {
-        throw new Error(result.data?.erro || result.error || 'Erro na análise');
+        console.log(`⚠️ Score ${scoreGeral}% < ${SCORE_MINIMO_SALVAR}% - Candidato NÃO salvo automaticamente`);
+        setDadosParaSalvarManual({ candidato: dadosExtraidos, textoOriginal: textoExtraido, analiseResult: analiseFormatada });
       }
+
     } catch (err: any) {
-      console.error('Erro na análise:', err);
-      setErro(`Erro na análise: ${err.message}`);
+      console.error('❌ Erro na triagem:', err);
+      setErro(formatarErroAPI(err));
     } finally {
       setIsAnalisando(false);
     }
