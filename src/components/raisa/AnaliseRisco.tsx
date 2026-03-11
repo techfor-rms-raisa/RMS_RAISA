@@ -583,9 +583,14 @@ const AnaliseRisco: React.FC = () => {
         ? new Date(dataInicio.getTime() + periodoExclusividade * 24 * 60 * 60 * 1000)
         : null;
 
+      // ✅ FIX v5.1: cv_texto_original sempre gravado como string (nunca undefined)
+      // Antes: `|| undefined` fazia o campo ser deletado pelo filtro abaixo → UPDATE ignorava o campo → NULL persistia
+      // Agora: string vazia '' é preferível a undefined, pois garante que o campo entre no UPDATE
+      const cvTextoFinal = textoOriginal?.trim() ? textoOriginal.substring(0, 50000) : '';
+
       // Montar objeto de atualização (só atualiza campos com valor)
       const dadosAtualizacao: Record<string, any> = {
-        cv_texto_original: textoOriginal?.substring(0, 50000) || undefined,
+        cv_texto_original: cvTextoFinal,
         cv_resumo: analiseResult?.justificativa || undefined,
         cv_processado: true,
         cv_processado_em: new Date().toISOString(),
@@ -615,7 +620,7 @@ const AnaliseRisco: React.FC = () => {
       if (candidato.pretensao_salarial) dadosAtualizacao.pretensao_salarial = candidato.pretensao_salarial;
       if (candidato.resumo_profissional) dadosAtualizacao.resumo_profissional = candidato.resumo_profissional.trim();
 
-      // Remover campos undefined
+      // Remover campos undefined (cv_texto_original protegido acima — nunca entra aqui como undefined)
       Object.keys(dadosAtualizacao).forEach(key => {
         if (dadosAtualizacao[key] === undefined) delete dadosAtualizacao[key];
       });
@@ -630,6 +635,28 @@ const AnaliseRisco: React.FC = () => {
       if (erroPessoa) {
         console.error('❌ Erro ao atualizar pessoa:', erroPessoa);
         return null;
+      }
+
+      // ✅ FIX v5.1: Propagar cv_texto_original para candidaturas existentes desta pessoa
+      // Cenário: candidato entrou via LinkedIn (curriculo_texto = NULL na candidatura)
+      // Após importar o PDF, garantir que candidaturas vinculadas recebam o texto do CV
+      // Isso resolve o erro "CV não encontrado" no Modal Entrevista Inteligente
+      if (cvTextoFinal) {
+        try {
+          const { error: erroCandidaturas } = await supabase
+            .from('candidaturas')
+            .update({ curriculo_texto: cvTextoFinal })
+            .eq('pessoa_id', pessoaId)
+            .is('curriculo_texto', null); // ✅ Só atualiza candidaturas que ainda não têm CV
+
+          if (erroCandidaturas) {
+            console.warn('⚠️ Erro ao propagar CV para candidaturas (não crítico):', erroCandidaturas.message);
+          } else {
+            console.log('✅ CV propagado para candidaturas existentes da pessoa ID:', pessoaId);
+          }
+        } catch (propErr: any) {
+          console.warn('⚠️ Erro ao propagar CV para candidaturas (não crítico):', propErr.message);
+        }
       }
 
       // Registrar no log de exclusividade
