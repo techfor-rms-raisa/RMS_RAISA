@@ -309,23 +309,57 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     setProgresso(10);
 
     try {
-      let texto = '';
-      
+      let textoParaProcessar = '';
+
       if (extensao === 'txt') {
-        texto = await file.text();
+        // TXT: leitura direta, sem chamada API
+        textoParaProcessar = await file.text();
+        setProgresso(40);
       } else {
-        texto = await extrairTextoPDF(file);
+        // PDF: v5.0 — ETAPA 1 LEVE: extrair apenas texto bruto via API
+        // Usa action 'extrair_texto_pdf' (1 chamada Gemini simples, ~8s)
+        // Evita timeout causado por 'extrair_cv' com base64PDF (4 chamadas, ~60s+)
+        console.log('📄 [CVImportIA v5.0] Extraindo texto do PDF (etapa leve)...');
+        setProgresso(20);
+
+        const base64 = await fileParaBase64(file);
+
+        const respostaTexto = await fetch('/api/gemini-analyze', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'extrair_texto_pdf',
+            payload: { base64PDF: base64 }
+          })
+        });
+
+        // Verificar status ANTES de parsear (evita "not valid JSON" no 504)
+        if (!respostaTexto.ok) {
+          const status = respostaTexto.status;
+          if (status === 504 || status === 408) {
+            throw new Error('⏱️ Extração do PDF excedeu o tempo limite. Tente um arquivo menor ou cole o texto manualmente.');
+          }
+          if (status === 413) {
+            throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
+          }
+          throw new Error(`Erro HTTP ${status} ao extrair texto do PDF.`);
+        }
+
+        const resultadoTexto = await respostaTexto.json();
+
+        if (!resultadoTexto.success || !resultadoTexto.data?.texto_original) {
+          throw new Error(resultadoTexto.data?.erro || 'Não foi possível extrair texto do PDF.');
+        }
+
+        textoParaProcessar = resultadoTexto.data.texto_original;
+        console.log(`✅ [CVImportIA v5.0] Texto extraído: ${textoParaProcessar.length} caracteres`);
+        setProgresso(40);
       }
 
-      // Verificar tamanho do base64 antes de enviar
-      if (texto.length > 15 * 1024 * 1024) {
-        throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA (10MB), tente um arquivo menor ou TXT.');
-      }
+      setTextoCV(textoParaProcessar);
 
-      setTextoCV(texto);
-      setProgresso(40);
-
-      await processarComIA(texto, file);
+      // ETAPA 2: Extrair dados estruturados a partir do texto (sem base64PDF)
+      await processarComIA(textoParaProcessar);
 
     } catch (err: any) {
       console.error('Erro no processamento:', err);
@@ -334,12 +368,11 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     }
   };
 
-  // Extrair texto do PDF - agora apenas converte para base64
-  const extrairTextoPDF = async (file: File): Promise<string> => {
+  // Converte File para base64 puro (sem prefixo data:...)
+  const fileParaBase64 = (file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
-        // Retorna apenas o base64, o backend vai extrair o texto
         const base64 = (reader.result as string).split(',')[1];
         resolve(base64);
       };
@@ -349,38 +382,37 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
   };
 
   // Processar CV usando API backend (Vercel + Gemini)
-  const processarComIA = async (textoOuBase64: string, file?: File) => {
+  // v5.0: Recebe SEMPRE texto puro — nunca mais base64PDF aqui
+  // Isso elimina o timeout: extrair_cv com textoCV é ~15s (vs ~60s+ com base64PDF)
+  const processarComIA = async (textoCV: string) => {
     setProgresso(50);
 
     try {
-      console.log('🤖 Enviando CV para processamento via API backend...');
-      
-      // Determinar se é PDF (base64) ou texto
-      const isPDF = file?.type === 'application/pdf';
-      
+      console.log('🤖 [CVImportIA v5.0] Extraindo dados estruturados do CV (texto)...');
+
       const response = await fetch('/api/gemini-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'extrair_cv',
-          payload: isPDF 
-            ? { base64PDF: textoOuBase64 }
-            : { textoCV: textoOuBase64 }
+          payload: { textoCV: textoCV }   // ✅ Sempre texto — nunca base64PDF
         })
       });
 
       if (!response.ok) {
-        // Tratar erro 413 especificamente
-        if (response.status === 413) {
+        const status = response.status;
+        if (status === 413) {
           throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
         }
-        
+        if (status === 504 || status === 408) {
+          throw new Error('⏱️ Processamento excedeu o tempo limite. Tente novamente ou cole o texto manualmente.');
+        }
         // Tentar parsear erro JSON
         try {
           const errorData = await response.json();
           throw new Error(errorData.error || 'Erro na API');
-        } catch (parseError) {
-          throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
+        } catch {
+          throw new Error(`Erro HTTP ${status} ao processar CV.`);
         }
       }
 
@@ -443,14 +475,10 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     } catch (err: any) {
       console.error('Erro ao processar com IA:', err);
       
-      // Verificar se é erro de tamanho (413) - mostrar mensagem específica
       const mensagemErro = err.message || 'Erro na IA. Preencha os dados manualmente.';
       
-      // Fallback: extração básica
-      const textoFallback = typeof textoOuBase64 === 'string' && !textoOuBase64.includes('base64') 
-        ? textoOuBase64 
-        : '';
-      const dadosBasicos = extrairDadosBasicos(textoFallback);
+      // Fallback: extração básica a partir do texto disponível
+      const dadosBasicos = extrairDadosBasicos(textoCV);
       setDadosExtraidos(dadosBasicos);
       setErro(mensagemErro);
       setProgresso(100);
