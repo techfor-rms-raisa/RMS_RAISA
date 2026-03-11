@@ -406,14 +406,41 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
           .single();
 
         if (!pessoaError && pessoa) {
+          // ✅ FIX v5.1: Fallback para curriculo_texto da candidatura
+          // Cenário: candidato entrou via LinkedIn → cv_texto_original = NULL em pessoas
+          // Após importar PDF via Análise de CV, o CV pode estar em candidaturas.curriculo_texto
+          // Garantir que a Entrevista Inteligente sempre encontre o CV disponível
+          let cvTexto = pessoa.cv_texto_original || null;
+
+          if (!cvTexto && candidaturaAtual.curriculo_texto) {
+            console.log('ℹ️ cv_texto_original vazio — usando curriculo_texto da candidatura como fallback');
+            cvTexto = candidaturaAtual.curriculo_texto;
+
+            // Aproveitar para sincronizar: gravar em pessoas.cv_texto_original se ainda estiver NULL
+            try {
+              await supabase
+                .from('pessoas')
+                .update({
+                  cv_texto_original: cvTexto.substring(0, 50000),
+                  cv_processado: true,
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', candidaturaAtual.pessoa_id)
+                .is('cv_texto_original', null); // Só atualiza se ainda for NULL
+              console.log('✅ cv_texto_original sincronizado em pessoas a partir da candidatura');
+            } catch (syncErr) {
+              console.warn('⚠️ Sincronização de cv_texto_original falhou (não crítico):', syncErr);
+            }
+          }
+
           dadosCandidato = {
             nome: pessoa.nome || candidaturaAtual.candidato_nome,
             titulo_profissional: pessoa.titulo_profissional,
             senioridade: pessoa.senioridade,
             resumo_profissional: pessoa.resumo_profissional,
-            cv_texto: pessoa.cv_texto_original
+            cv_texto: cvTexto
           };
-          console.log(`✅ Dados do candidato carregados: ${dadosCandidato.titulo_profissional || 'Sem título'}`);
+          console.log(`✅ Dados do candidato carregados: ${dadosCandidato.titulo_profissional || 'Sem título'}, CV: ${cvTexto ? cvTexto.length + ' chars' : 'AUSENTE'}`);
         }
       }
 
