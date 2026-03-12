@@ -10,7 +10,7 @@
  * - Filtrar por termo, senioridade
  * - Comparar origens (LinkedIn vs CV vs Manual)
  * - Instruções de uso da extensão Chrome
- * - 🆕 v4.0: Pesquisar Candidatos LinkedIn via Talent Finder (Gemini AI)
+ * - 🆕 v4.0: Pesquisar Candidatos via Talent Finder (Gemini AI)
  * 
  * 🆕 v57.0: Controle de acesso por permissão
  * 🆕 v4.0 (12/03/2026): Aba Talent Finder integrada
@@ -551,11 +551,12 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
         </div>
       )}
 
-      {/* Tab Instruções */}
+      {/* Tab Talent Finder — Pesquisar Candidatos */}
       {tab === 'pesquisar' && (
         <TalentFinderTab />
       )}
 
+      {/* Tab Instruções */}
       {tab === 'instrucoes' && (
         <div className="bg-white rounded-xl p-6 shadow-sm space-y-6">
           <div className="flex items-center gap-3">
