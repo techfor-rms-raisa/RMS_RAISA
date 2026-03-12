@@ -10,8 +10,9 @@
  *
  * Arquitetura: mesmo padrão do Prospect Engine (ProspectSearchPage.tsx)
  *
- * Versão: 1.0
+ * Versão: 1.0.1
  * Data: 12/03/2026
+ * BUILD_MARKER: TALENT-FINDER-ACTIVE-20260312
  */
 
 import React, { useState, useCallback } from 'react';
@@ -528,4 +529,3 @@ const TalentFinderTab: React.FC = () => {
 };
 
 export default TalentFinderTab;
-

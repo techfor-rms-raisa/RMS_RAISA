@@ -15,8 +15,9 @@
  * 🆕 v57.0: Controle de acesso por permissão
  * 🆕 v4.0 (12/03/2026): Aba Talent Finder integrada
  * 
- * Versão: 4.0
+ * Versão: 4.0.1
  * Data: 12/03/2026
+ * BUILD_MARKER: TALENT-FINDER-ACTIVE-20260312
  */
 
 import React, { useState, useEffect } from 'react';
@@ -925,4 +926,3 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
 };
 
 export default LinkedInImportPanel;
-
