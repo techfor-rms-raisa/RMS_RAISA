@@ -528,3 +528,4 @@ const TalentFinderTab: React.FC = () => {
 };
 
 export default TalentFinderTab;
+
