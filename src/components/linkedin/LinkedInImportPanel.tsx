@@ -10,7 +10,7 @@
  * - Filtrar por termo, senioridade
  * - Comparar origens (LinkedIn vs CV vs Manual)
  * - Instruções de uso da extensão Chrome
- * - 🆕 v4.0: Pesquisar Candidatos via Talent Finder (Gemini AI)
+ * - 🆕 v4.0.1: Pesquisar Candidatos via Talent Finder (Gemini AI)
  * 
  * 🆕 v57.0: Controle de acesso por permissão
  * 🆕 v4.0 (12/03/2026): Aba Talent Finder integrada
