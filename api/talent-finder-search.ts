@@ -71,21 +71,36 @@ async function gerarQueriesBooleanas(requisitos: string): Promise<string[]> {
     const ai = getAI();
 
     const prompt = `
-Você é um especialista em Boolean Search para recrutamento de talentos no LinkedIn.
-
-Sua única tarefa é gerar queries de busca para o Google que encontrem profissionais no LinkedIn.
+Você é um especialista em sourcing de talentos. Gere queries de busca para o Google encontrar profissionais no LinkedIn.
 
 REQUISITOS DA VAGA:
 "${requisitos}"
 
-REGRAS PARA AS QUERIES:
-- Use site:linkedin.com/in para focar em perfis LinkedIn
-- Use OR para variações de cargo em PT-BR e inglês
-- Use AND para combinar tecnologias obrigatórias
-- Use aspas para termos compostos: "IS-Oil", "React Native", "Analista de Testes"
-- Queries 1-3: específicas (cargo + tecnologias + localização)
-- Queries 4-5: intermediárias (cargo + tecnologia principal, sem localização)
-- Query 6: ampla (cargo principal + Brasil)
+SINTAXE OBRIGATÓRIA DO GOOGLE SEARCH — leia com atenção:
+- SEMPRE comece com: site:linkedin.com/in
+- Para VARIAÇÕES use OR entre parênteses: ("Consultor SAP" OR "SAP Consultant")
+- Para termos que devem aparecer juntos: coloque na mesma query separados por espaço
+- NUNCA use AND explícito — o Google ignora AND entre termos normais
+- Use aspas para termos compostos: "IS-Oil", "React Native", "Front End"
+- Localização: inclua como texto simples ao final: "São Paulo" Brasil
+
+EXEMPLOS DE QUERIES VÁLIDAS (siga exatamente este padrão):
+- site:linkedin.com/in ("Consultor SAP" OR "SAP Consultant") "IS-Oil" "São Paulo" Brasil
+- site:linkedin.com/in ("Consultor SAP" OR "Especialista SAP") SD MM FI Brasil
+- site:linkedin.com/in "SAP IS-Oil" ("São Paulo" OR SP) especialista
+- site:linkedin.com/in "React Native" ("Desenvolvedor" OR "Developer") "São Paulo"
+- site:linkedin.com/in ("Analista de Testes" OR "QA Engineer") Selenium Brasil
+
+EXEMPLOS INVÁLIDOS — nunca gere assim:
+- site:linkedin.com/in AND "SAP"  ← ERRADO: AND após site: quebra a query
+- site:linkedin.com/in SD AND MM AND FI ← ERRADO: AND explícito
+- site:linkedin.com/in (região: "São Paulo") ← ERRADO: operador inválido
+
+ESTRUTURA DAS 6 QUERIES:
+- Queries 1-2: específicas — cargo + tecnologias principais + localização
+- Queries 3-4: intermediárias — variações de cargo/tecnologia, sem localização restrita
+- Query 5: ampla — cargo principal + Brasil apenas
+- Query 6: termos em inglês ou sinônimos não usados nas anteriores
 
 Retorne SOMENTE este JSON sem markdown:
 {"queries":["query1","query2","query3","query4","query5","query6"]}
