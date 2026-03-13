@@ -226,7 +226,35 @@ Responda SOMENTE JSON sem markdown:
         console.log(`📝 [TalentFinder] ETAPA 2 — Preview resposta: ${textoResposta.substring(0, 300)}`);
     }
 
-    // Parse defensivo — a Etapa 2 agora retorna JSON diretamente (padrão Prospect Engine)
+    // ── Mapa de URLs do LinkedIn extraídas dos groundingChunks ─────────────
+    // O Google retorna as URLs reais nas chunks — usamos para enriquecer candidatos
+    // que o Gemini não conseguiu recuperar a URL no JSON
+    const linkedinUrlsDoGoogle = new Map<string, string>();
+    chunks.forEach((c: any) => {
+        const uri: string = c?.web?.uri || '';
+        const title: string = c?.web?.title || '';
+        if (uri.includes('linkedin.com/in/')) {
+            // Normalizar URL
+            const urlLimpa = uri.split('?')[0].replace(/\/$/, '');
+            // Extrair slug do perfil como chave de busca
+            const slugMatch = urlLimpa.match(/linkedin\.com\/in\/([^/]+)/);
+            if (slugMatch) {
+                // Indexar pelo título do chunk (geralmente "Nome Sobrenome - Cargo | LinkedIn")
+                const nomeDoTitulo = title.split(' - ')[0].split(' | ')[0].trim().toLowerCase();
+                if (nomeDoTitulo) {
+                    linkedinUrlsDoGoogle.set(nomeDoTitulo, urlLimpa.startsWith('http') ? urlLimpa : `https://${urlLimpa}`);
+                }
+                // Também indexar pelo slug normalizado
+                linkedinUrlsDoGoogle.set(slugMatch[1].toLowerCase(), urlLimpa.startsWith('http') ? urlLimpa : `https://${urlLimpa}`);
+            }
+        }
+    });
+    console.log(`🔗 [TalentFinder] ETAPA 2 — ${linkedinUrlsDoGoogle.size} URLs LinkedIn extraídas dos chunks`);
+    if (linkedinUrlsDoGoogle.size > 0) {
+        linkedinUrlsDoGoogle.forEach((url, chave) => console.log(`   ${chave} → ${url}`));
+    }
+
+    // Parse defensivo — a Etapa 2 retorna JSON diretamente (padrão Prospect Engine)
     if (textoResposta.length < 20) {
         console.log('⚠️ [TalentFinder] ETAPA 2 — Resposta vazia');
         return { candidatos: [], queries_usadas: queriesUsadas, chunks: chunks.length };
@@ -245,8 +273,38 @@ Responda SOMENTE JSON sem markdown:
             .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
             .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
         const parsed = JSON.parse(sanitized);
-        const candidatos = parsed.candidatos || [];
-        console.log(`✅ [TalentFinder] ETAPA 2 — ${candidatos.length} candidatos no JSON`);
+        let candidatos: any[] = parsed.candidatos || [];
+
+        // ── Enriquecimento de URL via groundingChunks ────────────────────────
+        // Para candidatos sem linkedin_url, tenta recuperar do mapa de chunks
+        candidatos = candidatos.map((c: any) => {
+            if (c.linkedin_url && c.linkedin_url !== 'null') return c;
+
+            // Tenta match por nome normalizado
+            const nomeNorm = (c.nome_completo || '').toLowerCase()
+                .normalize('NFD').replace(/\p{M}/gu, '').trim();
+
+            // Busca por substring do nome no mapa
+            let urlEncontrada: string | null = null;
+            linkedinUrlsDoGoogle.forEach((url, chave) => {
+                if (!urlEncontrada) {
+                    const chaveNorm = chave.normalize('NFD').replace(/\p{M}/gu, '');
+                    // Match se o nome do candidato contém a chave ou vice-versa
+                    if (nomeNorm.includes(chaveNorm) || chaveNorm.includes(nomeNorm.split(' ')[0])) {
+                        urlEncontrada = url;
+                    }
+                }
+            });
+
+            if (urlEncontrada) {
+                console.log(`🔗 [TalentFinder] URL recuperada via chunk para "${c.nome_completo}": ${urlEncontrada}`);
+                return { ...c, linkedin_url: urlEncontrada };
+            }
+            return c;
+        });
+
+        const comUrl = candidatos.filter((c: any) => c.linkedin_url && c.linkedin_url !== 'null').length;
+        console.log(`✅ [TalentFinder] ETAPA 2 — ${candidatos.length} candidatos | ${comUrl} com LinkedIn URL`);
         return { candidatos, queries_usadas: queriesUsadas, chunks: chunks.length };
     } catch (e) {
         console.error('❌ [TalentFinder] ETAPA 2 — Falha parse JSON:', e);
