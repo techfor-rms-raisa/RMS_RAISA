@@ -150,30 +150,31 @@ async function buscarPerfisTexto(
 ): Promise<{ textoResposta: string; queries_usadas: string[]; chunks: number }> {
 
     const ai = getAI();
-    const queriesFormatadas = queries.map((q, i) => `${i + 1}. ${q}`).join('\n');
+    // IMPORTANTE: NÃO passar queries pré-montadas para o Gemini
+    // Passar queries faz o modelo achar que "já tem a resposta" e não ativa o Search
+    // O Gemini decide autonomamente as queries — apenas fornecemos o objetivo
+    // Usamos as queries da Etapa 1 como referência de termos no prompt, não como instruções
+    const termosChave = queries.slice(0, 3)
+        .map(q => q.replace(/site:linkedin\.com\/in\s*/gi, '').replace(/\(|\)/g, '').trim())
+        .join('; ');
 
     const prompt = `
-Você é um especialista em recrutamento. Use o Google Search para encontrar profissionais reais que atendam estes requisitos.
+Você é um especialista em recrutamento. Preciso que você use o Google Search para encontrar profissionais no LinkedIn que atendam esta vaga.
 
-REQUISITOS DA VAGA:
-"${requisitos}"
+VAGA:
+${requisitos}
 
-EXECUTE ESTAS BUSCAS EM ORDEM (pare ao ter ${maxResultados}+ candidatos ou ao esgotar a lista):
-${queriesFormatadas}
+Termos de busca sugeridos: ${termosChave}
 
-PARA CADA PERFIL ENCONTRADO, descreva em texto simples:
-- Nome completo (exatamente como aparece no LinkedIn/Google)
-- Cargo atual (exatamente como aparece)
+Busque perfis públicos de profissionais com essa experiência no LinkedIn. Para cada pessoa encontrada, descreva:
+- Nome completo
+- Cargo atual
 - Empresa atual (se visível)
-- URL do LinkedIn (exata, se disponível)
-- Cidade/Estado (se visível)
-- Trecho do perfil/snippet que descreve a experiência
+- URL do LinkedIn
+- Localização (se visível)
+- Resumo da experiência (baseado no snippet do Google)
 
-REGRAS:
-- Inclua APENAS pessoas reais encontradas nas buscas — JAMAIS invente
-- Se não encontrou ninguém, diga explicitamente: "Nenhum perfil encontrado"
-- Se encontrou mas a URL do LinkedIn não estava disponível, diga "URL não disponível"
-- Não avalie aderência — apenas descreva o que encontrou
+Se não encontrar ninguém, diga: "Nenhum perfil encontrado nas buscas."
 `.trim();
 
     console.log(`🔍 [TalentFinder] ETAPA 2 — Buscando perfis via Google Search Grounding...`);
