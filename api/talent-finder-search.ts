@@ -197,17 +197,29 @@ Retorne SOMENTE JSON puro sem markdown:
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.1,   // baixíssima temperatura — modo coleta fiel
+            temperature: 0.1,
             maxOutputTokens: 8192,
-            thinkingConfig: { thinkingBudget: 4096 },
+            // thinkingConfig REMOVIDO: conflita com coleta JSON estruturada —
+            // o modelo gasta tokens de thinking e entrega JSON vazio
         } as any
     });
 
     const rawText = result.text || '';
-    console.log(`📦 [TalentFinder] ETAPA 2 — Resposta raw (${rawText.length} chars)`);
+    console.log(`📦 [TalentFinder] ETAPA 2 — Resposta raw (${rawText.length} chars): ${rawText.substring(0, 200)}`);
 
-    const groundingMeta = (result as any).candidates?.[0]?.groundingMetadata;
+    const candidate = (result as any).candidates?.[0];
+    const groundingMeta = candidate?.groundingMetadata;
     const queriesUsadas: string[] = groundingMeta?.webSearchQueries || [];
+
+    // Log dos groundingChunks — dados reais que o Google retornou
+    const chunks = groundingMeta?.groundingChunks || [];
+    console.log(`🌐 [TalentFinder] ETAPA 2 — ${chunks.length} groundingChunks do Google`);
+    chunks.slice(0, 5).forEach((c: any, i: number) => {
+        const uri = c?.web?.uri || 'sem URI';
+        const title = c?.web?.title || 'sem título';
+        console.log(`   chunk ${i+1}: ${title} | ${uri.substring(0, 80)}`);
+    });
+
     console.log(`🔗 [TalentFinder] ETAPA 2 — Google queries executadas: ${queriesUsadas.join(' | ')}`);
 
     if (rawText.length < 20) {
