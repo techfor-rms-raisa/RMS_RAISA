@@ -289,9 +289,15 @@ const TalentFinderTab: React.FC = () => {
                                     <span className="text-sm text-green-600 font-medium">
                                         {resultados.filter(r => r.relevancia === 'alta').length} alta relevância
                                     </span>
-                                    <span className="text-sm text-gray-400">
-                                        {resultados.filter(r => r.linkedin_url).length} com LinkedIn
-                                    </span>
+                                    {resultados.filter(r => r.linkedin_url).length > 0 ? (
+                                        <span className="text-sm text-blue-600 font-medium">
+                                            {resultados.filter(r => r.linkedin_url).length} link direto
+                                        </span>
+                                    ) : (
+                                        <span className="text-sm text-gray-400">
+                                            busca por nome disponível
+                                        </span>
+                                    )}
                                 </>
                             )}
                         </div>
@@ -353,7 +359,7 @@ const TalentFinderTab: React.FC = () => {
                                                 )}
                                                 {c.resumo && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{c.resumo}</p>}
                                             </div>
-                                            <div className="flex-shrink-0">
+                                            <div className="flex-shrink-0 flex flex-col gap-1.5 items-end">
                                                 {c.linkedin_url ? (
                                                     <a href={c.linkedin_url} target="_blank" rel="noopener noreferrer"
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors font-medium">
@@ -363,7 +369,16 @@ const TalentFinderTab: React.FC = () => {
                                                         Ver Perfil
                                                     </a>
                                                 ) : (
-                                                    <span className="text-xs text-gray-400 italic">Sem link</span>
+                                                    // Sem URL direta — abre busca pelo nome no LinkedIn
+                                                    <a href={`https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(c.nome_completo)}`}
+                                                        target="_blank" rel="noopener noreferrer"
+                                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-600 text-xs rounded-lg hover:bg-blue-50 hover:text-blue-700 hover:border-blue-200 transition-colors font-medium border border-gray-200"
+                                                        title={`Buscar "${c.nome_completo}" no LinkedIn`}>
+                                                        <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                                                            <path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/>
+                                                        </svg>
+                                                        Buscar no LI
+                                                    </a>
                                                 )}
                                             </div>
                                         </div>
