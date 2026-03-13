@@ -147,34 +147,51 @@ async function buscarPerfisTexto(
     queries: string[],
     requisitos: string,
     maxResultados: number
-): Promise<{ textoResposta: string; queries_usadas: string[]; chunks: number }> {
+): Promise<{ candidatos: any[]; queries_usadas: string[]; chunks: number }> {
 
     const ai = getAI();
-    // IMPORTANTE: NÃO passar queries pré-montadas para o Gemini
-    // Passar queries faz o modelo achar que "já tem a resposta" e não ativa o Search
-    // O Gemini decide autonomamente as queries — apenas fornecemos o objetivo
-    // Usamos as queries da Etapa 1 como referência de termos no prompt, não como instruções
-    const termosChave = queries.slice(0, 3)
-        .map(q => q.replace(/site:linkedin\.com\/in\s*/gi, '').replace(/\(|\)/g, '').trim())
-        .join('; ');
+    // Extrair âncora principal dos requisitos (mesmo padrão do Prospect Engine)
+    // O Prospect Engine usa empresaAncora — aqui usamos o cargo/tecnologia principal
+    // Âncora concreta força o Gemini a buscar em vez de responder com conhecimento interno
+    const primeiraQuery = queries[0] || '';
+    const ancoraPrincipal = primeiraQuery
+        .replace(/site:linkedin\.com\/in\s*/gi, '')
+        .replace(/\(|\)/g, '')
+        .replace(/OR/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .split('"').filter(t => t.trim().length > 2)[0]?.trim()
+        || requisitos.split(/[,\-]/)[0].trim();
+
+    // Queries interpoladas com variáveis — padrão idêntico ao Prospect Engine validado
+    const cargosQuery = queries.slice(0, 2)
+        .map(q => q.replace(/site:linkedin\.com\/in\s*/gi, '').trim())
+        .join(' OR ');
 
     const prompt = `
-Você é um especialista em recrutamento. Preciso que você use o Google Search para encontrar profissionais no LinkedIn que atendam esta vaga.
+Você é um especialista em recrutamento. Use o Google Search para encontrar profissionais reais com o perfil abaixo.
 
-VAGA:
-${requisitos}
+PERFIL BUSCADO: "${ancoraPrincipal}"
+REQUISITOS COMPLETOS: ${requisitos}
 
-Termos de busca sugeridos: ${termosChave}
+EXECUTE ATÉ 6 BUSCAS DISTINTAS (pare ao ter ${maxResultados}+ candidatos ou ao esgotar opções):
 
-Busque perfis públicos de profissionais com essa experiência no LinkedIn. Para cada pessoa encontrada, descreva:
-- Nome completo
-- Cargo atual
-- Empresa atual (se visível)
-- URL do LinkedIn
-- Localização (se visível)
-- Resumo da experiência (baseado no snippet do Google)
+1. site:linkedin.com/in ${cargosQuery}
+2. "${ancoraPrincipal}" linkedin profissional Brasil
+3. ${queries[2] || `"${ancoraPrincipal}" linkedin Brasil`}
+4. ${queries[3] || `"${ancoraPrincipal}" especialista linkedin`}
+5. (se ainda abaixo de ${Math.ceil(maxResultados / 2)} candidatos) ${queries[4] || `"${ancoraPrincipal}" Brasil`}
+6. (se ainda abaixo de ${Math.ceil(maxResultados / 2)} candidatos) ${queries[5] || `"${ancoraPrincipal}" sênior linkedin`}
 
-Se não encontrar ninguém, diga: "Nenhum perfil encontrado nas buscas."
+REGRAS ABSOLUTAS:
+- Inclua TODA pessoa encontrada, mesmo sem LinkedIn (linkedin_url fica null)
+- Para LinkedIn: se encontrou na busca, use a URL exata. Se não, coloque null
+- NÃO repita queries nem confirme o mesmo nome mais de uma vez
+- JAMAIS invente nomes, cargos ou URLs
+- Retorne quem encontrou, mesmo que seja só 1 ou 2 pessoas
+
+Responda SOMENTE JSON sem markdown:
+{"candidatos":[{"nome_completo":"string","cargo_atual":"string","empresa_atual":"string ou null","linkedin_url":"https://linkedin.com/in/slug ou null","cidade":"string ou null","estado":"UF ou null","resumo":"string ou null","relevancia":"alta|media|baixa"}]}
 `.trim();
 
     console.log(`🔍 [TalentFinder] ETAPA 2 — Buscando perfis via Google Search Grounding...`);
@@ -209,7 +226,32 @@ Se não encontrar ninguém, diga: "Nenhum perfil encontrado nas buscas."
         console.log(`📝 [TalentFinder] ETAPA 2 — Preview resposta: ${textoResposta.substring(0, 300)}`);
     }
 
-    return { textoResposta, queries_usadas: queriesUsadas, chunks: chunks.length };
+    // Parse defensivo — a Etapa 2 agora retorna JSON diretamente (padrão Prospect Engine)
+    if (textoResposta.length < 20) {
+        console.log('⚠️ [TalentFinder] ETAPA 2 — Resposta vazia');
+        return { candidatos: [], queries_usadas: queriesUsadas, chunks: chunks.length };
+    }
+
+    const cleanText = textoResposta.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+        console.log('⚠️ [TalentFinder] ETAPA 2 — Sem JSON válido');
+        return { candidatos: [], queries_usadas: queriesUsadas, chunks: chunks.length };
+    }
+
+    try {
+        const sanitized = jsonMatch[0]
+            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+            .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+            .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+        const parsed = JSON.parse(sanitized);
+        const candidatos = parsed.candidatos || [];
+        console.log(`✅ [TalentFinder] ETAPA 2 — ${candidatos.length} candidatos no JSON`);
+        return { candidatos, queries_usadas: queriesUsadas, chunks: chunks.length };
+    } catch (e) {
+        console.error('❌ [TalentFinder] ETAPA 2 — Falha parse JSON:', e);
+        return { candidatos: [], queries_usadas: queriesUsadas, chunks: chunks.length };
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -217,49 +259,39 @@ Se não encontrar ninguém, diga: "Nenhum perfil encontrado nas buscas."
 // Recebe o texto livre da Etapa 2 e estrutura em JSON validado
 // ════════════════════════════════════════════════════════════════════════════
 async function estruturarEValidar(
-    textoResposta: string,
+    candidatosBrutos: any[],
     requisitos: string
 ): Promise<CandidatoEncontrado[]> {
 
-    if (!textoResposta || textoResposta.length < 20) return [];
-
-    // Se o Gemini explicitamente disse que não encontrou nada
-    const naoEncontrou = /nenhum perfil encontrado|não encontr|no results|nothing found/i.test(textoResposta);
-    if (naoEncontrou && textoResposta.length < 200) {
-        console.log('ℹ️ [TalentFinder] ETAPA 3 — Gemini confirmou: sem perfis encontrados');
-        return [];
-    }
+    if (!candidatosBrutos || candidatosBrutos.length === 0) return [];
 
     const ai = getAI();
 
     const prompt = `
-Você é um recrutador técnico sênior. Abaixo está uma descrição em texto de profissionais encontrados no Google/LinkedIn.
+Você é um recrutador técnico sênior. Avalie os candidatos abaixo e filtre apenas os aderentes à vaga.
 
 REQUISITOS DA VAGA:
 "${requisitos}"
 
-TEXTO COM PERFIS ENCONTRADOS:
-${textoResposta}
+CANDIDATOS ENCONTRADOS PELO GOOGLE:
+${JSON.stringify(candidatosBrutos, null, 2)}
 
 SUA TAREFA:
-1. Extraia cada profissional mencionado no texto
-2. Avalie se cada um é aderente aos requisitos da vaga
-3. Inclua apenas os aderentes no JSON final (pode ser 0 se nenhum for aderente)
+Avalie cada candidato e inclua apenas os aderentes aos requisitos.
 
 CRITÉRIOS DE RELEVÂNCIA:
-- "alta": cargo e experiência indicam claramente domínio dos requisitos principais
+- "alta": cargo e resumo indicam claramente domínio dos requisitos principais
 - "media": cargo relacionado, experiência parcial com os requisitos
 - "baixa": alguma relação mas não é o foco principal
-- EXCLUIR: sem nenhuma relação com os requisitos
+- EXCLUIR: sem relação com os requisitos
 
 REGRAS ANTI-ALUCINAÇÃO:
-- Use APENAS informações presentes no texto acima
-- NÃO invente dados que não estão no texto
-- Se a URL do LinkedIn não foi mencionada, coloque null
-- O resumo deve ser baseado apenas no que está no texto
+- Use APENAS as informações já presentes em cada candidato — NÃO invente dados
+- Mantenha linkedin_url, cidade, estado exatamente como estão (ou null)
+- O resumo pode ser refinado mas deve ser baseado no campo resumo original
 
 Retorne SOMENTE JSON puro sem markdown:
-{"candidatos":[{"nome_completo":"string","cargo_atual":"string","empresa_atual":"string ou null","linkedin_url":"URL exata ou null","cidade":"string ou null","estado":"UF ou null","resumo":"baseado apenas no texto ou null","relevancia":"alta|media|baixa"}]}
+{"candidatos":[{"nome_completo":"string","cargo_atual":"string","empresa_atual":"string ou null","linkedin_url":"URL exata ou null","cidade":"string ou null","estado":"UF ou null","resumo":"string ou null","relevancia":"alta|media|baixa"}]}
 `.trim();
 
     console.log(`🔎 [TalentFinder] ETAPA 3 — Estruturando e validando perfis...`);
@@ -345,12 +377,12 @@ async function buscarCandidatos(
     // ETAPA 1: queries booleanas
     const queries = await gerarQueriesBooleanas(requisitos);
 
-    // ETAPA 2: busca em texto livre (grounding ativo)
-    const { textoResposta, queries_usadas, chunks } =
+    // ETAPA 2: busca via Google Search Grounding (retorna JSON — padrão Prospect Engine)
+    const { candidatos: candidatosBrutos, queries_usadas, chunks } =
         await buscarPerfisTexto(queries, requisitos, maxResultados);
 
-    // ETAPA 3: estruturar + validar
-    const validados = await estruturarEValidar(textoResposta, requisitos);
+    // ETAPA 3: validar aderência aos requisitos
+    const validados = await estruturarEValidar(candidatosBrutos, requisitos);
 
     console.log(`📊 [TalentFinder] Chunks: ${chunks} | Validados: ${validados.length} | Meta: ${maxResultados}`);
 
