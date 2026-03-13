@@ -461,6 +461,24 @@ async function buscarCandidatos(
 
     console.log(`📊 [TalentFinder] Brutos: ${perfisBrutos.length} | Validados: ${validados.length} | Meta: ${maxResultados}`);
 
+    // Log diagnóstico: mostra os primeiros perfis brutos coletados
+    if (perfisBrutos.length > 0) {
+        console.log(`🗂️ [TalentFinder] Amostra de perfis brutos (primeiros 5):`);
+        perfisBrutos.slice(0, 5).forEach((p, i) => {
+            console.log(`   ${i + 1}. "${p.nome_completo}" | cargo: "${p.cargo_atual}" | snippet: "${(p.snippet_google || '').substring(0, 80)}"`);
+        });
+    } else {
+        console.log(`⚠️ [TalentFinder] ETAPA 2 retornou 0 perfis brutos — Google Search não encontrou resultados para as queries`);
+    }
+
+    // Log diagnóstico: mostra resultado da validação
+    if (validados.length > 0) {
+        console.log(`✔️ [TalentFinder] Perfis aprovados na validação:`);
+        validados.forEach((v, i) => console.log(`   ${i + 1}. "${v.nome_completo}" | ${v.cargo_atual} | ${v.relevancia}`));
+    } else if (perfisBrutos.length > 0) {
+        console.log(`🚫 [TalentFinder] ETAPA 3 reprovou TODOS os ${perfisBrutos.length} perfis brutos — nenhum aderente aos requisitos`);
+    }
+
     // Sinaliza se o frontend deve oferecer "Buscar mais" (refinamento sob demanda)
     const metaMinima = Math.ceil(maxResultados * 0.5);
     const podeRefinar = validados.length < metaMinima;
