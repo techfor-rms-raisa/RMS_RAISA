@@ -17,7 +17,7 @@
  * 
  * Versão: 4.0.1
  * Data: 12/03/2026
- * BUILD_MARKER: TALENT-FINDER-ACTIVE-20260312
+ * BUILD_MARKER: TALENT-FINDER-ACTIVE-20260312-2026-03-12 21:12:01
  */
 
 import React, { useState, useEffect } from 'react';
