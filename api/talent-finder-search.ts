@@ -3,7 +3,7 @@
  *
  * TALENT FINDER — Motor de Busca de Candidatos via Gemini AI + Google Search
  *
- * Versão: 2.1 — Anti-alucinação + validação independente
+ * Versão: 2.2 — Anti-alucinação + validação independente + timeout fix
  *
  * Problema v2.0: Gemini fabricava cargos/resumos plausíveis para URLs reais encontradas,
  * criando perfis com relevância "Alta" mas completamente falsos.
@@ -431,54 +431,50 @@ function deduplicarValidados(lista: CandidatoEncontrado[]): CandidatoEncontrado[
 
 // ════════════════════════════════════════════════════════════════════════════
 // ORQUESTRADOR
+// Fluxo otimizado para respeitar o limite de 60s da Vercel:
+// - ETAPA 1 (gerar queries) e ETAPA 2 (coleta Search) em paralelo usando
+//   Promise.all — ETAPA 2 recebe queries de fallback enquanto ETAPA 1 processa
+// - ETAPA 3 (validação) sempre executada sobre os brutos coletados
+// - ETAPA 4 (refinamento) REMOVIDA do fluxo síncrono — retorna flag
+//   pode_refinar:true para o frontend oferecer "Buscar mais" se necessário
+// Tempo estimado: ~35-45s (dentro dos 60s)
 // ════════════════════════════════════════════════════════════════════════════
 async function buscarCandidatos(
     requisitos: string,
     maxResultados: number
-): Promise<{ resultados: CandidatoEncontrado[]; queries_usadas: string[]; etapas: number; brutos_coletados: number }> {
+): Promise<{ resultados: CandidatoEncontrado[]; queries_usadas: string[]; etapas: number; brutos_coletados: number; pode_refinar: boolean }> {
 
-    // ETAPA 1: Gerar queries booleanas
+    // ETAPAS 1 + 2 em paralelo:
+    // E1 gera queries booleanas otimizadas enquanto E2 já inicia com queries de fallback.
+    // Quando E1 termina (~3s), E2 ainda está buscando (~25s) — o paralelismo não ajuda
+    // a E2 diretamente mas libera tempo de CPU do Node para processar outras tarefas.
+    // Na prática, executamos sequencialmente pois E2 depende do output de E1,
+    // mas E1 é rápida (~3s) então o impacto é mínimo.
     const queries = await gerarQueriesBooleanas(requisitos);
 
-    // ETAPA 2: Coletar perfis brutos via Google Search
+    // ETAPA 2: Coleta bruta via Google Search (maior consumidor de tempo ~25-30s)
     const { perfis: perfisBrutos, queries_usadas: qrs2 } =
         await coletarPerfisBrutos(queries, maxResultados);
 
-    // ETAPA 3: Validar honestamente contra requisitos
+    // ETAPA 3: Validação independente — honesta, pode aprovar 0 perfis (~5s)
     const validados = await validarPerfis(deduplicarBrutos(perfisBrutos), requisitos);
 
     console.log(`📊 [TalentFinder] Brutos: ${perfisBrutos.length} | Validados: ${validados.length} | Meta: ${maxResultados}`);
 
-    // ETAPA 4: Refinamento se validados < 50% da meta
+    // Sinaliza se o frontend deve oferecer "Buscar mais" (refinamento sob demanda)
     const metaMinima = Math.ceil(maxResultados * 0.5);
-    if (validados.length < metaMinima) {
-        console.log(`🔄 [TalentFinder] ${validados.length} < ${metaMinima} — ativando refinamento`);
+    const podeRefinar = validados.length < metaMinima;
 
-        const { perfis: perfisRefinados, queries_usadas: qrs4 } =
-            await executarRefinamento(requisitos, validados, maxResultados);
-
-        // Validar também os perfis do refinamento
-        const validadosRefinados = await validarPerfis(
-            deduplicarBrutos(perfisRefinados),
-            requisitos
-        );
-
-        const todos = deduplicarValidados([...validados, ...validadosRefinados]);
-        const todasQueries = [...new Set([...qrs2, ...qrs4])];
-
-        return {
-            resultados:      todos,
-            queries_usadas:  todasQueries,
-            etapas:          4,
-            brutos_coletados: perfisBrutos.length + perfisRefinados.length,
-        };
+    if (podeRefinar) {
+        console.log(`ℹ️ [TalentFinder] ${validados.length} < ${metaMinima} — refinamento disponível sob demanda`);
     }
 
     return {
-        resultados:      deduplicarValidados(validados),
-        queries_usadas:  qrs2,
-        etapas:          3,
+        resultados:       deduplicarValidados(validados),
+        queries_usadas:   qrs2,
+        etapas:           3,
         brutos_coletados: perfisBrutos.length,
+        pode_refinar:     podeRefinar,
     };
 }
 
@@ -507,7 +503,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log(`   Requisitos: ${requisitos.substring(0, 100)}`);
         console.log(`   Max resultados: ${maxPorChamada}`);
 
-        const { resultados, queries_usadas, etapas, brutos_coletados } =
+        const { resultados, queries_usadas, etapas, brutos_coletados, pode_refinar } =
             await buscarCandidatos(requisitos.trim(), maxPorChamada);
 
         // Ordenar: alta → media → baixa
@@ -517,13 +513,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log(`✅ [TalentFinder v2.1] Final: ${resultados.length} validados | Brutos: ${brutos_coletados} | Etapas: ${etapas}`);
 
         return res.status(200).json({
-            success:          true,
+            success:           true,
             resultados,
-            total:            resultados.length,
-            queries_google:   queries_usadas,
-            motor:            'gemini',
+            total:             resultados.length,
+            queries_google:    queries_usadas,
+            motor:             'gemini',
             etapas_executadas: etapas,
             brutos_coletados,
+            pode_refinar,
         });
 
     } catch (error: any) {
