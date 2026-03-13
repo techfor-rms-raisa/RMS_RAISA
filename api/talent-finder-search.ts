@@ -224,6 +224,19 @@ Responda SOMENTE JSON sem markdown:
         chunks.slice(0, 5).forEach((c: any, i: number) => {
             console.log(`   chunk ${i+1}: ${(c?.web?.title || '').substring(0, 60)} | ${(c?.web?.uri || '').substring(0, 60)}`);
         });
+        // Log completo do primeiro chunk para diagnóstico de campos disponíveis
+        console.log(`   [DEBUG chunk[0] completo]:`, JSON.stringify(chunks[0], null, 2).substring(0, 500));
+    }
+    // Log do groundingSupports — mapeia trechos do texto gerado para chunks de origem
+    const groundingSupports: any[] = groundingMeta?.groundingSupports || [];
+    console.log(`📎 [TalentFinder] ETAPA 2 — ${groundingSupports.length} groundingSupports`);
+    if (groundingSupports.length > 0) {
+        console.log(`   [DEBUG support[0]]:`, JSON.stringify(groundingSupports[0], null, 2).substring(0, 300));
+    }
+    // Log do searchEntryPoint — pode conter URLs adicionais
+    const searchEntry = groundingMeta?.searchEntryPoint;
+    if (searchEntry) {
+        console.log(`🔎 [TalentFinder] searchEntryPoint:`, JSON.stringify(searchEntry).substring(0, 200));
     }
     if (textoResposta.length > 0) {
         console.log(`📝 [TalentFinder] ETAPA 2 — Preview resposta: ${textoResposta.substring(0, 300)}`);
