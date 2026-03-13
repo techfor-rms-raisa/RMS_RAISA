@@ -76,31 +76,48 @@ Você é um especialista em sourcing de talentos. Gere queries de busca para o G
 REQUISITOS DA VAGA:
 "${requisitos}"
 
-SINTAXE OBRIGATÓRIA DO GOOGLE SEARCH — leia com atenção:
-- SEMPRE comece com: site:linkedin.com/in
-- Para VARIAÇÕES use OR entre parênteses: ("Consultor SAP" OR "SAP Consultant")
-- Para termos que devem aparecer juntos: coloque na mesma query separados por espaço
-- NUNCA use AND explícito — o Google ignora AND entre termos normais
-- Use aspas para termos compostos: "IS-Oil", "React Native", "Front End"
-- Localização: inclua como texto simples ao final: "São Paulo" Brasil
+PRINCÍPIOS FUNDAMENTAIS PARA GERAR QUERIES EFICAZES:
 
-EXEMPLOS DE QUERIES VÁLIDAS (siga exatamente este padrão):
-- site:linkedin.com/in ("Consultor SAP" OR "SAP Consultant") "IS-Oil" "São Paulo" Brasil
-- site:linkedin.com/in ("Consultor SAP" OR "Especialista SAP") SD MM FI Brasil
-- site:linkedin.com/in "SAP IS-Oil" ("São Paulo" OR SP) especialista
-- site:linkedin.com/in "React Native" ("Desenvolvedor" OR "Developer") "São Paulo"
-- site:linkedin.com/in ("Analista de Testes" OR "QA Engineer") Selenium Brasil
+1. SINTAXE DO GOOGLE — regras absolutas:
+   - Sempre comece com: site:linkedin.com/in
+   - Use OR entre parênteses para variações: ("Consultor SAP" OR "SAP Consultant")
+   - NUNCA use AND explícito entre termos — o Google não suporta
+   - Aspas apenas em termos compostos obrigatórios: "IS-Oil", "React Native"
+   - Siglas curtas (SD, MM, FI, RJ) NÃO precisam de aspas — podem distorcer a busca
 
-EXEMPLOS INVÁLIDOS — nunca gere assim:
-- site:linkedin.com/in AND "SAP"  ← ERRADO: AND após site: quebra a query
-- site:linkedin.com/in SD AND MM AND FI ← ERRADO: AND explícito
-- site:linkedin.com/in (região: "São Paulo") ← ERRADO: operador inválido
+2. AMPLITUDE DAS QUERIES — regra crítica:
+   - Se os requisitos têm MÚLTIPLOS módulos/tecnologias (ex: SD, MM, FI, IS-Oil):
+     → NÃO exija todos na mesma query — isso resulta em zero resultados
+     → Cada query deve usar apenas 1-2 dos módulos principais como filtro
+     → Use OR para cobrir variações do mesmo termo
+   - Prefira queries que retornem resultados parciais a queries que retornem zero
 
-ESTRUTURA DAS 6 QUERIES:
-- Queries 1-2: específicas — cargo + tecnologias principais + localização
-- Queries 3-4: intermediárias — variações de cargo/tecnologia, sem localização restrita
-- Query 5: ampla — cargo principal + Brasil apenas
-- Query 6: termos em inglês ou sinônimos não usados nas anteriores
+3. COBERTURA DE VARIAÇÕES:
+   - Cubra variações ortográficas: "IS-Oil" OR "IS Oil" OR "ISOil" OR "IS-OIL"
+   - Cubra PT-BR e inglês: "Consultor SAP" OR "SAP Consultant" OR "SAP Specialist"
+   - Cubra níveis: especialista, sênior, pleno, senior, lead
+
+4. PROGRESSÃO DO ESPECÍFICO AO AMPLO:
+   - Queries 1-2: termo mais diferenciador dos requisitos + localização
+   - Queries 3-4: variações de cargo/módulo sem localização restrita
+   - Query 5: apenas cargo principal + Brasil (sem módulos específicos)
+   - Query 6: termos em inglês ou abordagem completamente diferente
+
+EXEMPLOS CORRETOS para "Consultor SAP IS-Oil SD MM FI São Paulo":
+- site:linkedin.com/in ("Consultor SAP" OR "SAP Consultant") ("IS-Oil" OR "IS Oil" OR "ISOil") "São Paulo"
+- site:linkedin.com/in ("Especialista SAP" OR "Consultor SAP") "IS-Oil" Brasil
+- site:linkedin.com/in ("Consultor SAP" OR "SAP Consultant") SD MM "São Paulo" Brasil
+- site:linkedin.com/in ("SAP IS-Oil" OR "SAP Oil Gas") ("Consultor" OR "Especialista") Brasil
+- site:linkedin.com/in ("Consultor SAP" OR "SAP Consultant") Brasil
+- site:linkedin.com/in ("SAP IS-Oil Consultant" OR "SAP Oil and Gas") Brasil
+
+EXEMPLOS CORRETOS para "Desenvolvedor React Native São Paulo":
+- site:linkedin.com/in ("Desenvolvedor React Native" OR "React Native Developer") "São Paulo"
+- site:linkedin.com/in "React Native" ("Desenvolvedor" OR "Developer") "São Paulo" Brasil
+- site:linkedin.com/in "React Native" Android Kotlin Brasil
+- site:linkedin.com/in ("Mobile Developer" OR "Desenvolvedor Mobile") "React Native"
+- site:linkedin.com/in "React Native" Brasil
+- site:linkedin.com/in ("Mobile Engineer" OR "Frontend Mobile") "React Native" Brasil
 
 Retorne SOMENTE este JSON sem markdown:
 {"queries":["query1","query2","query3","query4","query5","query6"]}
