@@ -184,11 +184,14 @@ EXECUTE ATÉ 6 BUSCAS DISTINTAS (pare ao ter ${maxResultados}+ candidatos ou ao 
 6. (se ainda abaixo de ${Math.ceil(maxResultados / 2)} candidatos) ${queries[5] || `"${ancoraPrincipal}" sênior linkedin`}
 
 REGRAS ABSOLUTAS:
-- Inclua TODA pessoa encontrada, mesmo sem LinkedIn (linkedin_url fica null)
-- Para LinkedIn: se encontrou na busca, use a URL exata. Se não, coloque null
-- NÃO repita queries nem confirme o mesmo nome mais de uma vez
-- JAMAIS invente nomes, cargos ou URLs
-- Retorne quem encontrou, mesmo que seja só 1 ou 2 pessoas
+- Inclua TODA pessoa encontrada nas buscas
+- Para linkedin_url: procure a URL do perfil LinkedIn em TODAS as fontes encontradas:
+  * Se o resultado for diretamente um perfil LinkedIn → use a URL da página
+  * Se o resultado for um site de vagas/emprego que menciona o candidato → busque a URL do LinkedIn mencionada no texto
+  * Se não encontrou a URL LinkedIn em nenhuma fonte → coloque null
+- JAMAIS invente URLs — use apenas URLs encontradas nas buscas
+- JAMAIS invente nomes ou cargos
+- Retorne quem encontrou, mesmo que seja só 1 pessoa
 
 Responda SOMENTE JSON sem markdown:
 {"candidatos":[{"nome_completo":"string","cargo_atual":"string","empresa_atual":"string ou null","linkedin_url":"https://linkedin.com/in/slug ou null","cidade":"string ou null","estado":"UF ou null","resumo":"string ou null","relevancia":"alta|media|baixa"}]}
@@ -233,20 +236,33 @@ Responda SOMENTE JSON sem markdown:
     chunks.forEach((c: any) => {
         const uri: string = c?.web?.uri || '';
         const title: string = c?.web?.title || '';
+        const snippet: string = c?.web?.snippet || '';
+
+        // Fonte 1: chunk é diretamente um perfil LinkedIn
         if (uri.includes('linkedin.com/in/')) {
-            // Normalizar URL
             const urlLimpa = uri.split('?')[0].replace(/\/$/, '');
-            // Extrair slug do perfil como chave de busca
             const slugMatch = urlLimpa.match(/linkedin\.com\/in\/([^/]+)/);
             if (slugMatch) {
-                // Indexar pelo título do chunk (geralmente "Nome Sobrenome - Cargo | LinkedIn")
                 const nomeDoTitulo = title.split(' - ')[0].split(' | ')[0].trim().toLowerCase();
-                if (nomeDoTitulo) {
-                    linkedinUrlsDoGoogle.set(nomeDoTitulo, urlLimpa.startsWith('http') ? urlLimpa : `https://${urlLimpa}`);
-                }
-                // Também indexar pelo slug normalizado
-                linkedinUrlsDoGoogle.set(slugMatch[1].toLowerCase(), urlLimpa.startsWith('http') ? urlLimpa : `https://${urlLimpa}`);
+                const urlFinal = urlLimpa.startsWith('http') ? urlLimpa : `https://${urlLimpa}`;
+                if (nomeDoTitulo) linkedinUrlsDoGoogle.set(nomeDoTitulo, urlFinal);
+                linkedinUrlsDoGoogle.set(slugMatch[1].toLowerCase(), urlFinal);
             }
+            return;
+        }
+
+        // Fonte 2: chunk é site de vagas/emprego — procura URLs LinkedIn no título ou snippet
+        const textoCompleto = `${title} ${snippet}`;
+        const linkedinMatches = textoCompleto.matchAll(/linkedin\.com\/in\/([a-zA-Z0-9_-]+)/g);
+        for (const match of linkedinMatches) {
+            const slug = match[1];
+            const urlFinal = `https://www.linkedin.com/in/${slug}`;
+            // Tenta extrair nome do contexto ao redor da URL
+            const nomeMatch = textoCompleto.match(new RegExp(`([A-Z][a-z]+ [A-Z][a-zÀ-ú]+)(?:[^a-z].*)?linkedin\.com\/in\/${slug}`));
+            if (nomeMatch) {
+                linkedinUrlsDoGoogle.set(nomeMatch[1].toLowerCase(), urlFinal);
+            }
+            linkedinUrlsDoGoogle.set(slug.toLowerCase(), urlFinal);
         }
     });
     console.log(`🔗 [TalentFinder] ETAPA 2 — ${linkedinUrlsDoGoogle.size} URLs LinkedIn extraídas dos chunks`);
