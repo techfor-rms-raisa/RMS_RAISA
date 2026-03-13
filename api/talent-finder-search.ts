@@ -3,19 +3,18 @@
  *
  * TALENT FINDER — Motor de Busca de Candidatos via Gemini AI + Google Search
  *
- * Versão: 2.0 — Arquitetura multi-etapas (baseada em análise Manus AI 13/03/2026)
+ * Versão: 2.1 — Anti-alucinação + validação independente
  *
- * Fluxo v2.0:
- * ETAPA 1 — Gemini sem Search: analisa requisitos e gera queries booleanas otimizadas
- * ETAPA 2 — Gemini com Google Search Grounding: executa as queries geradas na Etapa 1
- * ETAPA 3 — (Opcional) Se resultado < metade do esperado: refinamento com novas queries
+ * Problema v2.0: Gemini fabricava cargos/resumos plausíveis para URLs reais encontradas,
+ * criando perfis com relevância "Alta" mas completamente falsos.
  *
- * Melhorias vs v1.x:
- * - Eliminada a função extrairAncoras() (heurística frágil) → IA gera as queries
- * - Operadores booleanos avançados: OR, AND, site:, intitle:, inurl:
- * - Separação de responsabilidades: LLM de planejamento ≠ LLM de busca
- * - Loop de refinamento automático quando resultado < 50% do esperado
- * - Sem sobrecarga cognitiva: cada chamada tem uma única responsabilidade
+ * Correção v2.1:
+ * ETAPA 1 — gemini-2.0-flash: analisa requisitos → gera queries booleanas otimizadas
+ * ETAPA 2 — gemini-2.5-flash + Google Search: coleta APENAS dados brutos encontrados
+ *            (sem avaliar relevância, sem inferir campos ausentes)
+ * ETAPA 3 — gemini-2.0-flash (sem search): valida cada perfil honestamente
+ *            contra os requisitos — pode reprovar todos se nenhum for aderente
+ * ETAPA 4 — (Opcional) Refinamento se resultado validado < 50% da meta
  *
  * Data: 13/03/2026
  */
@@ -37,6 +36,20 @@ function getAI(): GoogleGenAI {
     return aiInstance;
 }
 
+// ─── Interfaces ──────────────────────────────────────────────────────────────
+
+// Dado bruto da busca — sem avaliação de relevância ainda
+interface PerfilBruto {
+    nome_completo:  string;
+    cargo_atual:    string | null;
+    empresa_atual:  string | null;
+    linkedin_url:   string | null;
+    cidade:         string | null;
+    estado:         string | null;
+    snippet_google: string | null; // texto exato do snippet do Google — âncora contra alucinação
+}
+
+// Perfil validado — passou pela avaliação independente
 export interface CandidatoEncontrado {
     finder_id:     string;
     nome_completo: string;
@@ -49,47 +62,39 @@ export interface CandidatoEncontrado {
     relevancia:    'alta' | 'media' | 'baixa';
 }
 
-// ════════════════════════════════════════════════════════════════════
-// ETAPA 1 — Geração de queries booleanas via LLM (SEM Google Search)
-// Responsabilidade única: analisar requisitos e gerar queries otimizadas
-// ════════════════════════════════════════════════════════════════════
-async function gerarQueriesBooleanas(
-    requisitos: string,
-    maxResultados: number
-): Promise<string[]> {
+// ════════════════════════════════════════════════════════════════════════════
+// ETAPA 1 — Geração de queries booleanas (gemini-2.0-flash, SEM Google Search)
+// Responsabilidade: interpretar requisitos e gerar queries otimizadas
+// ════════════════════════════════════════════════════════════════════════════
+async function gerarQueriesBooleanas(requisitos: string): Promise<string[]> {
 
     const ai = getAI();
 
     const prompt = `
-Você é um especialista em sourcing de talentos e Boolean Search para LinkedIn.
+Você é um especialista em Boolean Search para recrutamento de talentos no LinkedIn.
 
-Sua tarefa é gerar queries de busca para o Google que encontrem profissionais no LinkedIn com os seguintes requisitos:
+Sua única tarefa é gerar queries de busca para o Google que encontrem profissionais no LinkedIn.
 
 REQUISITOS DA VAGA:
 "${requisitos}"
 
-REGRAS PARA GERAR AS QUERIES:
-1. Use o operador site:linkedin.com/in para focar em perfis do LinkedIn
-2. Use operadores booleanos: OR para variações de cargo/tecnologia, AND para combinar requisitos obrigatórios
-3. Use aspas para termos compostos: "React Native", "Front End", "Analista de Testes"
-4. Inclua variações de cargo: PT-BR e inglês (ex: "Analista de Testes" OR "QA Engineer" OR "Test Engineer")
-5. Inclua sinônimos de tecnologias quando relevante
-6. Inclua a localização quando mencionada nos requisitos
-7. Gere queries do mais específico (todos os requisitos) ao mais amplo (requisitos principais apenas)
+REGRAS PARA AS QUERIES:
+- Use site:linkedin.com/in para focar em perfis LinkedIn
+- Use OR para variações de cargo em PT-BR e inglês
+- Use AND para combinar tecnologias obrigatórias
+- Use aspas para termos compostos: "IS-Oil", "React Native", "Analista de Testes"
+- Queries 1-3: específicas (cargo + tecnologias + localização)
+- Queries 4-5: intermediárias (cargo + tecnologia principal, sem localização)
+- Query 6: ampla (cargo principal + Brasil)
 
-FORMATO DE SAÍDA — retorne APENAS um JSON puro sem markdown:
+Retorne SOMENTE este JSON sem markdown:
 {"queries":["query1","query2","query3","query4","query5","query6"]}
-
-Gere exatamente 6 queries, sendo:
-- Queries 1-3: específicas (combinam cargo + tecnologias principais + localização)
-- Queries 4-5: intermediárias (cargo + tecnologia principal, sem localização restritiva)  
-- Query 6: ampla (cargo principal + Brasil, para fallback se as outras falharem)
 `.trim();
 
-    console.log(`🧠 [TalentFinder] ETAPA 1 — Gerando queries booleanas para: ${requisitos.substring(0, 60)}...`);
+    console.log(`🧠 [TalentFinder] ETAPA 1 — Gerando queries para: ${requisitos.substring(0, 60)}...`);
 
     const result = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',   // modelo rápido — tarefa de planejamento, sem search
+        model: 'gemini-2.0-flash',
         contents: prompt,
         config: {
             temperature: 0.2,
@@ -99,22 +104,20 @@ Gere exatamente 6 queries, sendo:
     });
 
     const rawText = result.text || '';
-    console.log(`📋 [TalentFinder] ETAPA 1 — Queries geradas (${rawText.length} chars)`);
 
     try {
         const cleanText = rawText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
         const parsed = JSON.parse(cleanText);
-        const queries: string[] = parsed.queries || [];
+        const queries: string[] = (parsed.queries || []).filter((q: any) => typeof q === 'string' && q.trim());
 
         if (queries.length === 0) throw new Error('Nenhuma query gerada');
 
-        console.log(`✅ [TalentFinder] ETAPA 1 — ${queries.length} queries geradas:`);
-        queries.forEach((q, i) => console.log(`   ${i + 1}. ${q.substring(0, 100)}`));
+        console.log(`✅ [TalentFinder] ETAPA 1 — ${queries.length} queries:`);
+        queries.forEach((q, i) => console.log(`   ${i + 1}. ${q.substring(0, 120)}`));
 
         return queries;
-    } catch (e) {
-        console.error('⚠️ [TalentFinder] ETAPA 1 — Falha no parse, usando fallback básico');
-        // Fallback: queries simples se o parse falhar
+    } catch {
+        console.error('⚠️ [TalentFinder] ETAPA 1 — Fallback para queries básicas');
         const termos = requisitos.split(/[\s,]+/).slice(0, 4).join(' ');
         return [
             `site:linkedin.com/in ${termos} Brasil`,
@@ -123,52 +126,46 @@ Gere exatamente 6 queries, sendo:
     }
 }
 
-// ════════════════════════════════════════════════════════════════════
-// ETAPA 2 — Busca com Google Search Grounding usando as queries da Etapa 1
-// Responsabilidade única: executar buscas e extrair candidatos
-// ════════════════════════════════════════════════════════════════════
-async function executarBuscaComQueries(
-    requisitos: string,
+// ════════════════════════════════════════════════════════════════════════════
+// ETAPA 2 — Coleta de dados BRUTOS via Google Search Grounding
+// Responsabilidade: retornar APENAS o que o Google encontrou — sem inventar nada
+// ════════════════════════════════════════════════════════════════════════════
+async function coletarPerfisBrutos(
     queries: string[],
     maxResultados: number
-): Promise<{ resultados: CandidatoEncontrado[]; queries_usadas: string[] }> {
+): Promise<{ perfis: PerfilBruto[]; queries_usadas: string[] }> {
 
     const ai = getAI();
 
-    // Monta o bloco de queries numeradas para o prompt
-    const queriesFormatadas = queries
-        .map((q, i) => `${i + 1}. ${q}`)
-        .join('\n');
+    const queriesFormatadas = queries.map((q, i) => `${i + 1}. ${q}`).join('\n');
 
+    // ANTI-ALUCINAÇÃO: prompt focado em coleta fiel, sem avaliação de aderência
     const prompt = `
-Você é um especialista em recrutamento. Use o Google Search para encontrar profissionais reais no LinkedIn.
+Você é um robô de coleta de dados. Use o Google Search para executar as buscas abaixo e colete os dados de cada perfil exatamente como aparecem nos resultados.
 
-REQUISITOS DA VAGA (para avaliar relevância):
-"${requisitos}"
-
-EXECUTE ESTAS BUSCAS EM ORDEM (pare ao ter ${maxResultados}+ candidatos ou ao esgotar a lista):
+EXECUTE ESTAS BUSCAS EM ORDEM (pare ao ter ${maxResultados}+ perfis):
 ${queriesFormatadas}
 
-REGRAS ABSOLUTAS:
-- Inclua APENAS pessoas reais encontradas nas buscas — JAMAIS invente nomes, cargos ou URLs
-- Não repita o mesmo profissional mesmo que apareça em múltiplas buscas
-- Para LinkedIn: use a URL exata encontrada. Se não encontrou URL, coloque linkedin_url: null
-- Avalie relevância vs os requisitos: "alta" = atende os requisitos principais, "media" = atende parcialmente, "baixa" = atende apenas alguns
-- Inclua empresa_atual, cidade, estado se visíveis no perfil; caso contrário null
-- Retorne quem encontrou mesmo que seja 1 ou 2 pessoas
+REGRAS RÍGIDAS DE COLETA — leia com atenção:
+- Colete APENAS perfis que o Google efetivamente retornou — NUNCA invente ou deduza perfis
+- Para cada perfil, copie o cargo_atual EXATAMENTE como aparece no resultado da busca — não reescreva, não melhore
+- O campo snippet_google deve conter o texto exato do snippet/descrição que o Google mostrou
+- Se um campo não apareceu no resultado da busca, coloque null — NUNCA invente empresa, cidade ou cargo
+- Se o Google não retornou nenhum perfil relevante para uma query, pule para a próxima
+- Não avalie se o perfil é adequado ou não — isso será feito depois
 
-Responda SOMENTE JSON puro sem markdown:
-{"candidatos":[{"nome_completo":"string","cargo_atual":"string","empresa_atual":"string ou null","linkedin_url":"https://linkedin.com/in/slug ou null","cidade":"string ou null","estado":"UF ou null","resumo":"resumo em 1 frase do perfil ou null","relevancia":"alta|media|baixa"}]}
+Retorne SOMENTE JSON puro sem markdown:
+{"perfis":[{"nome_completo":"string ou null","cargo_atual":"exatamente como apareceu no Google ou null","empresa_atual":"exatamente como apareceu no Google ou null","linkedin_url":"URL exata ou null","cidade":"string ou null","estado":"UF ou null","snippet_google":"texto exato do snippet do Google ou null"}]}
 `.trim();
 
-    console.log(`🔍 [TalentFinder] ETAPA 2 — Executando busca com ${queries.length} queries via Google Search Grounding`);
+    console.log(`🔍 [TalentFinder] ETAPA 2 — Coletando perfis brutos via Google Search...`);
 
     const result = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.3,
+            temperature: 0.1,   // baixíssima temperatura — modo coleta fiel
             maxOutputTokens: 8192,
             thinkingConfig: { thinkingBudget: 4096 },
         } as any
@@ -177,216 +174,317 @@ Responda SOMENTE JSON puro sem markdown:
     const rawText = result.text || '';
     console.log(`📦 [TalentFinder] ETAPA 2 — Resposta raw (${rawText.length} chars)`);
 
+    const groundingMeta = (result as any).candidates?.[0]?.groundingMetadata;
+    const queriesUsadas: string[] = groundingMeta?.webSearchQueries || [];
+    console.log(`🔗 [TalentFinder] ETAPA 2 — Google queries executadas: ${queriesUsadas.join(' | ')}`);
+
     if (rawText.length < 20) {
-        console.error('❌ [TalentFinder] ETAPA 2 — Resposta muito curta:', JSON.stringify(rawText));
-        return { resultados: [], queries_usadas: [] };
+        console.log('⚠️ [TalentFinder] ETAPA 2 — Resposta vazia, nenhum perfil coletado');
+        return { perfis: [], queries_usadas: queriesUsadas };
     }
 
-    const candidatos = parsearCandidatos(rawText);
+    const cleanText = rawText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
 
-    // Extrair queries realmente usadas pelo grounding
-    const groundingMeta = (result as any).candidates?.[0]?.groundingMetadata;
-    const queriesUsadas: string[] = groundingMeta?.webSearchQueries || queries;
-    console.log(`🔗 [TalentFinder] ETAPA 2 — Queries Google: ${queriesUsadas.join(' | ')}`);
+    if (!jsonMatch) {
+        console.log('⚠️ [TalentFinder] ETAPA 2 — Nenhum JSON válido, nenhum perfil coletado');
+        return { perfis: [], queries_usadas: queriesUsadas };
+    }
 
-    return { resultados: candidatos, queries_usadas: queriesUsadas };
+    try {
+        const sanitized = jsonMatch[0]
+            .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+            .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+            .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+
+        const parsed = JSON.parse(sanitized);
+        const perfis: PerfilBruto[] = (parsed.perfis || []).filter(
+            (p: any) => p.nome_completo && p.nome_completo !== 'null'
+        );
+
+        console.log(`✅ [TalentFinder] ETAPA 2 — ${perfis.length} perfis brutos coletados`);
+        return { perfis, queries_usadas: queriesUsadas };
+
+    } catch (e) {
+        console.error('❌ [TalentFinder] ETAPA 2 — Falha no parse JSON:', e);
+        return { perfis: [], queries_usadas: queriesUsadas };
+    }
 }
 
-// ════════════════════════════════════════════════════════════════════
-// ETAPA 3 — Refinamento (opcional): se resultado < 50% do esperado
-// Gera novas queries com foco em sinônimos e cargos alternativos
-// ════════════════════════════════════════════════════════════════════
-async function executarRefinamento(
-    requisitos: string,
-    resultadosParciais: CandidatoEncontrado[],
-    maxResultados: number
-): Promise<{ resultados: CandidatoEncontrado[]; queries_usadas: string[] }> {
+// ════════════════════════════════════════════════════════════════════════════
+// ETAPA 3 — Validação independente (gemini-2.0-flash, SEM Google Search)
+// Responsabilidade: avaliar honestamente cada perfil bruto contra os requisitos
+// Pode e deve reprovar candidatos que não atendem — honestidade > quantidade
+// ════════════════════════════════════════════════════════════════════════════
+async function validarPerfis(
+    perfis: PerfilBruto[],
+    requisitos: string
+): Promise<CandidatoEncontrado[]> {
+
+    if (perfis.length === 0) return [];
 
     const ai = getAI();
 
-    const nomesCandidatosAtuais = resultadosParciais
-        .map(c => c.nome_completo)
-        .join(', ');
+    const perfisJson = JSON.stringify(perfis, null, 2);
 
     const prompt = `
-Você é um especialista em sourcing de talentos. A primeira rodada de buscas retornou apenas ${resultadosParciais.length} candidatos para a vaga abaixo. Precisamos de mais.
+Você é um recrutador técnico sênior avaliando candidatos para uma vaga.
 
 REQUISITOS DA VAGA:
 "${requisitos}"
 
-Candidatos já encontrados (NÃO repita estes): ${nomesCandidatosAtuais || 'nenhum'}
+PERFIS COLETADOS DO GOOGLE (dados brutos — podem ser irrelevantes):
+${perfisJson}
 
-TAREFA: Execute novas buscas no Google usando cargos alternativos, sinônimos de tecnologias e combinações diferentes das que foram tentadas. Exemplos de variações a explorar:
-- Títulos alternativos em inglês/PT-BR que não foram tentados
-- Tecnologias equivalentes ou do mesmo ecossistema
-- Buscas sem restrição de localização se a localização limitou os resultados
-- Perfis em outros estados/regiões que possam ser remotos ou relocar
+SUA TAREFA:
+Para cada perfil, avalie se o cargo_atual e snippet_google indicam que a pessoa realmente trabalha com os requisitos da vaga.
 
-META: encontrar mais ${maxResultados - resultadosParciais.length} candidatos adicionais.
+CRITÉRIOS DE AVALIAÇÃO RIGOROSOS:
+- "alta": cargo e/ou snippet indicam claramente experiência com os requisitos principais
+- "media": cargo e/ou snippet sugerem experiência parcial ou relacionada
+- "baixa": cargo e/ou snippet têm alguma relação mas não é o foco principal
+- EXCLUIR (não incluir no JSON): perfil não tem nenhuma relação com os requisitos
 
-Responda SOMENTE JSON puro sem markdown:
-{"candidatos":[{"nome_completo":"string","cargo_atual":"string","empresa_atual":"string ou null","linkedin_url":"https://linkedin.com/in/slug ou null","cidade":"string ou null","estado":"UF ou null","resumo":"resumo em 1 frase do perfil ou null","relevancia":"alta|media|baixa"}]}
+REGRAS ANTI-ALUCINAÇÃO:
+- Use APENAS as informações presentes nos campos cargo_atual e snippet_google para avaliar
+- NÃO invente experiências que não estão no snippet
+- NÃO melhore ou reescreva o cargo — use o campo cargo_atual como está
+- O campo resumo deve ser baseado APENAS no snippet_google disponível; se snippet for null, coloque null
+- Se a maioria dos perfis não for aderente, retorne apenas os aderentes — pode ser 0
+
+Retorne SOMENTE JSON puro sem markdown (inclua apenas os perfis aprovados):
+{"candidatos":[{"nome_completo":"string","cargo_atual":"string","empresa_atual":"string ou null","linkedin_url":"string ou null","cidade":"string ou null","estado":"string ou null","resumo":"baseado apenas no snippet ou null","relevancia":"alta|media|baixa"}]}
 `.trim();
 
-    console.log(`🔄 [TalentFinder] ETAPA 3 — Refinamento: buscando mais candidatos...`);
+    console.log(`🔎 [TalentFinder] ETAPA 3 — Validando ${perfis.length} perfis contra requisitos...`);
+
+    const result = await ai.models.generateContent({
+        model: 'gemini-2.0-flash',
+        contents: prompt,
+        config: {
+            temperature: 0.1,
+            maxOutputTokens: 4096,
+            responseMimeType: 'application/json',
+        }
+    });
+
+    const rawText = result.text || '';
+
+    try {
+        const cleanText = rawText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+        const parsed = JSON.parse(cleanText);
+        const candidatos: any[] = parsed.candidatos || [];
+
+        const validados: CandidatoEncontrado[] = candidatos
+            .filter((c: any) => c.nome_completo && c.nome_completo !== 'null')
+            .map((c: any, idx: number) => {
+                // Normalizar linkedin_url
+                const rawLinkedin = c.linkedin_url || null;
+                let linkedinNorm: string | null = null;
+                if (rawLinkedin && String(rawLinkedin) !== 'null' && String(rawLinkedin).includes('linkedin')) {
+                    const raw = String(rawLinkedin).trim();
+                    if (raw.includes('linkedin.com/in/')) {
+                        linkedinNorm = raw.startsWith('http') ? raw : `https://www.${raw.replace(/^www\./, '')}`;
+                    } else if (raw.startsWith('linkedin.com')) {
+                        linkedinNorm = `https://www.${raw}`;
+                    }
+                }
+
+                const relevancia = ['alta', 'media', 'baixa'].includes(c.relevancia)
+                    ? c.relevancia as 'alta' | 'media' | 'baixa'
+                    : 'media';
+
+                return {
+                    finder_id:     `finder_${idx}_${Date.now()}`,
+                    nome_completo: (c.nome_completo || '').trim(),
+                    cargo_atual:   (c.cargo_atual || '').trim(),
+                    empresa_atual: c.empresa_atual && c.empresa_atual !== 'null' ? c.empresa_atual : null,
+                    linkedin_url:  linkedinNorm,
+                    cidade:        c.cidade && c.cidade !== 'null' ? c.cidade : null,
+                    estado:        c.estado && c.estado !== 'null' ? c.estado : null,
+                    resumo:        c.resumo && c.resumo !== 'null' ? c.resumo : null,
+                    relevancia,
+                };
+            });
+
+        console.log(`✅ [TalentFinder] ETAPA 3 — ${validados.length} aprovados de ${perfis.length} avaliados`);
+        const reprovados = perfis.length - validados.length;
+        if (reprovados > 0) {
+            console.log(`🚫 [TalentFinder] ETAPA 3 — ${reprovados} perfis reprovados por não aderência`);
+        }
+
+        return validados;
+
+    } catch (e) {
+        console.error('❌ [TalentFinder] ETAPA 3 — Falha no parse, retornando 0 validados');
+        return [];
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ETAPA 4 — Refinamento (se validados < 50% da meta)
+// Usa cargos alternativos e sinônimos para expandir a busca
+// ════════════════════════════════════════════════════════════════════════════
+async function executarRefinamento(
+    requisitos: string,
+    jaEncontrados: CandidatoEncontrado[],
+    maxResultados: number
+): Promise<{ perfis: PerfilBruto[]; queries_usadas: string[] }> {
+
+    const ai = getAI();
+
+    const nomesJaEncontrados = jaEncontrados.map(c => c.nome_completo).join(', ') || 'nenhum';
+    const faltam = maxResultados - jaEncontrados.length;
+
+    const prompt = `
+Você é um robô de coleta de dados para recrutamento. A busca inicial retornou poucos resultados.
+
+REQUISITOS ORIGINAIS DA VAGA:
+"${requisitos}"
+
+Candidatos já encontrados (NÃO repita): ${nomesJaEncontrados}
+
+TAREFA: Execute novas buscas no Google focando em:
+- Títulos alternativos em inglês que não foram tentados
+- Tecnologias equivalentes do mesmo ecossistema
+- Remova restrição de localização nas buscas
+- Tente variações de seniority: pleno, senior, lead, especialista
+
+META: Coletar até ${faltam} perfis adicionais.
+
+REGRAS RÍGIDAS — igual à coleta principal:
+- Copie cargo e snippet EXATAMENTE como aparecem no Google
+- Se campo não apareceu no resultado, coloque null — NUNCA invente
+- Não avalie aderência
+
+Retorne SOMENTE JSON puro sem markdown:
+{"perfis":[{"nome_completo":"string ou null","cargo_atual":"exatamente como apareceu no Google ou null","empresa_atual":"string ou null","linkedin_url":"URL exata ou null","cidade":"string ou null","estado":"UF ou null","snippet_google":"texto exato do snippet ou null"}]}
+`.trim();
+
+    console.log(`🔄 [TalentFinder] ETAPA 4 — Refinamento: buscando ${faltam} candidatos adicionais...`);
 
     const result = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.4,
+            temperature: 0.1,
             maxOutputTokens: 8192,
             thinkingConfig: { thinkingBudget: 4096 },
         } as any
     });
 
     const rawText = result.text || '';
-    console.log(`📦 [TalentFinder] ETAPA 3 — Resposta raw (${rawText.length} chars)`);
+    console.log(`📦 [TalentFinder] ETAPA 4 — Resposta raw (${rawText.length} chars)`);
 
-    if (rawText.length < 20) {
-        console.log('⚠️ [TalentFinder] ETAPA 3 — Sem resultados adicionais');
-        return { resultados: [], queries_usadas: [] };
-    }
-
-    const candidatos = parsearCandidatos(rawText);
     const groundingMeta = (result as any).candidates?.[0]?.groundingMetadata;
     const queriesUsadas: string[] = groundingMeta?.webSearchQueries || [];
 
-    console.log(`✅ [TalentFinder] ETAPA 3 — ${candidatos.length} candidatos adicionais encontrados`);
-    return { resultados: candidatos, queries_usadas: queriesUsadas };
-}
-
-// ════════════════════════════════════════════════════════════════════
-// HELPERS — Parse e normalização
-// ════════════════════════════════════════════════════════════════════
-function parsearCandidatos(rawText: string): CandidatoEncontrado[] {
-    const cleanText = rawText
-        .replace(/```json\s*/gi, '')
-        .replace(/```\s*/gi, '')
-        .trim();
-
-    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-        console.error('❌ [TalentFinder] Nenhum JSON válido na resposta');
-        return [];
+    if (rawText.length < 20) {
+        return { perfis: [], queries_usadas: queriesUsadas };
     }
 
-    let parsed: any;
+    const cleanText = rawText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
+    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { perfis: [], queries_usadas: queriesUsadas };
+
     try {
         const sanitized = jsonMatch[0]
             .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
             .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
-            .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
-            .replace(/\u0000/g, '');
-        parsed = JSON.parse(sanitized);
-    } catch (e) {
-        // Tentativa de recuperação via extração do array
-        try {
-            const arrayMatch = jsonMatch[0].match(/"candidatos"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
-            if (arrayMatch) {
-                const sanitizedArray = arrayMatch[1]
-                    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-                    .replace(/[\u201C\u201D]/g, '"');
-                parsed = { candidatos: JSON.parse(sanitizedArray) };
-                console.log('⚠️ [TalentFinder] Parse recuperado via extração de array');
-            } else {
-                return [];
-            }
-        } catch {
-            console.error('❌ [TalentFinder] Falha total no parse JSON');
-            return [];
-        }
+            .replace(/[\u2018\u2019\u201A\u201B]/g, "'");
+
+        const parsed = JSON.parse(sanitized);
+        const perfis: PerfilBruto[] = (parsed.perfis || []).filter(
+            (p: any) => p.nome_completo && p.nome_completo !== 'null'
+        );
+
+        console.log(`✅ [TalentFinder] ETAPA 4 — ${perfis.length} perfis adicionais coletados`);
+        return { perfis, queries_usadas: queriesUsadas };
+    } catch {
+        return { perfis: [], queries_usadas: queriesUsadas };
     }
-
-    const candidatos: any[] = parsed.candidatos || [];
-
-    return candidatos.map((c: any, idx: number) => {
-        // Normalizar linkedin_url
-        const rawLinkedin = c.linkedin_url || null;
-        let linkedinNorm: string | null = null;
-        if (rawLinkedin && String(rawLinkedin) !== 'null' && String(rawLinkedin).includes('linkedin')) {
-            const raw = String(rawLinkedin).trim();
-            if (raw.includes('linkedin.com/in/')) {
-                linkedinNorm = raw.startsWith('http') ? raw : `https://www.${raw.replace(/^www\./, '')}`;
-            } else if (raw.startsWith('linkedin.com')) {
-                linkedinNorm = `https://www.${raw}`;
-            }
-        }
-
-        const relevancia = ['alta', 'media', 'baixa'].includes(c.relevancia)
-            ? c.relevancia as 'alta' | 'media' | 'baixa'
-            : 'media';
-
-        return {
-            finder_id:     `finder_${idx}_${Date.now()}`,
-            nome_completo: (c.nome_completo || '').trim(),
-            cargo_atual:   (c.cargo_atual || '').trim(),
-            empresa_atual: c.empresa_atual && c.empresa_atual !== 'null' ? c.empresa_atual : null,
-            linkedin_url:  linkedinNorm,
-            cidade:        c.cidade && c.cidade !== 'null' ? c.cidade : null,
-            estado:        c.estado && c.estado !== 'null' ? c.estado : null,
-            resumo:        c.resumo && c.resumo !== 'null' ? c.resumo : null,
-            relevancia,
-        };
-    });
 }
 
-function deduplicar(lista: CandidatoEncontrado[]): CandidatoEncontrado[] {
+// ════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ════════════════════════════════════════════════════════════════════════════
+function deduplicarBrutos(lista: PerfilBruto[]): PerfilBruto[] {
     const vistos = new Set<string>();
-    return lista.filter(c => {
-        const chave = c.nome_completo
-            .toLowerCase()
-            .normalize('NFD')
-            .replace(/\p{M}/gu, '')
-            .trim();
+    return lista.filter(p => {
+        const chave = (p.nome_completo || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').trim();
         if (!chave || vistos.has(chave)) return false;
         vistos.add(chave);
         return true;
     });
 }
 
-// ════════════════════════════════════════════════════════════════════
-// ORQUESTRADOR — Coordena as 3 etapas
-// ════════════════════════════════════════════════════════════════════
+function deduplicarValidados(lista: CandidatoEncontrado[]): CandidatoEncontrado[] {
+    const vistos = new Set<string>();
+    return lista.filter(c => {
+        const chave = c.nome_completo.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').trim();
+        if (!chave || vistos.has(chave)) return false;
+        vistos.add(chave);
+        return true;
+    });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ORQUESTRADOR
+// ════════════════════════════════════════════════════════════════════════════
 async function buscarCandidatos(
     requisitos: string,
     maxResultados: number
-): Promise<{ resultados: CandidatoEncontrado[]; queries_usadas: string[]; etapas_executadas: number }> {
+): Promise<{ resultados: CandidatoEncontrado[]; queries_usadas: string[]; etapas: number; brutos_coletados: number }> {
 
-    // ETAPA 1: Gerar queries booleanas otimizadas
-    const queries = await gerarQueriesBooleanas(requisitos, maxResultados);
+    // ETAPA 1: Gerar queries booleanas
+    const queries = await gerarQueriesBooleanas(requisitos);
 
-    // ETAPA 2: Executar busca com as queries geradas
-    const { resultados: resultadosEtapa2, queries_usadas: qrs2 } =
-        await executarBuscaComQueries(requisitos, queries, maxResultados);
+    // ETAPA 2: Coletar perfis brutos via Google Search
+    const { perfis: perfisBrutos, queries_usadas: qrs2 } =
+        await coletarPerfisBrutos(queries, maxResultados);
 
-    console.log(`📊 [TalentFinder] Etapa 2: ${resultadosEtapa2.length} candidatos | Meta: ${maxResultados}`);
+    // ETAPA 3: Validar honestamente contra requisitos
+    const validados = await validarPerfis(deduplicarBrutos(perfisBrutos), requisitos);
 
-    // ETAPA 3: Refinamento se resultado < 50% da meta
+    console.log(`📊 [TalentFinder] Brutos: ${perfisBrutos.length} | Validados: ${validados.length} | Meta: ${maxResultados}`);
+
+    // ETAPA 4: Refinamento se validados < 50% da meta
     const metaMinima = Math.ceil(maxResultados * 0.5);
-    if (resultadosEtapa2.length < metaMinima) {
-        console.log(`🔄 [TalentFinder] Resultado abaixo de 50% da meta (${resultadosEtapa2.length} < ${metaMinima}) — ativando refinamento`);
+    if (validados.length < metaMinima) {
+        console.log(`🔄 [TalentFinder] ${validados.length} < ${metaMinima} — ativando refinamento`);
 
-        const { resultados: resultadosEtapa3, queries_usadas: qrs3 } =
-            await executarRefinamento(requisitos, resultadosEtapa2, maxResultados);
+        const { perfis: perfisRefinados, queries_usadas: qrs4 } =
+            await executarRefinamento(requisitos, validados, maxResultados);
 
-        const todos = deduplicar([...resultadosEtapa2, ...resultadosEtapa3]);
-        const todasQueries = [...new Set([...qrs2, ...qrs3])];
+        // Validar também os perfis do refinamento
+        const validadosRefinados = await validarPerfis(
+            deduplicarBrutos(perfisRefinados),
+            requisitos
+        );
 
-        return { resultados: todos, queries_usadas: todasQueries, etapas_executadas: 3 };
+        const todos = deduplicarValidados([...validados, ...validadosRefinados]);
+        const todasQueries = [...new Set([...qrs2, ...qrs4])];
+
+        return {
+            resultados:      todos,
+            queries_usadas:  todasQueries,
+            etapas:          4,
+            brutos_coletados: perfisBrutos.length + perfisRefinados.length,
+        };
     }
 
     return {
-        resultados:        deduplicar(resultadosEtapa2),
-        queries_usadas:    qrs2,
-        etapas_executadas: 2,
+        resultados:      deduplicarValidados(validados),
+        queries_usadas:  qrs2,
+        etapas:          3,
+        brutos_coletados: perfisBrutos.length,
     };
 }
 
-// ════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // HANDLER
-// ════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Use POST.' });
@@ -405,30 +503,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     try {
         const maxPorChamada = Math.min(Math.max(max_resultados || 20, 5), 50);
 
-        console.log(`🚀 [TalentFinder v2.0] Iniciando busca multi-etapas`);
+        console.log(`🚀 [TalentFinder v2.1] Iniciando busca anti-alucinação`);
         console.log(`   Requisitos: ${requisitos.substring(0, 100)}`);
         console.log(`   Max resultados: ${maxPorChamada}`);
 
-        const { resultados, queries_usadas, etapas_executadas } =
+        const { resultados, queries_usadas, etapas, brutos_coletados } =
             await buscarCandidatos(requisitos.trim(), maxPorChamada);
 
-        // Ordenar por relevância: alta → media → baixa
+        // Ordenar: alta → media → baixa
         const ordemRelevancia = { alta: 0, media: 1, baixa: 2 };
         resultados.sort((a, b) => ordemRelevancia[a.relevancia] - ordemRelevancia[b.relevancia]);
 
-        console.log(`✅ [TalentFinder v2.0] Final: ${resultados.length} únicos | Etapas: ${etapas_executadas}`);
+        console.log(`✅ [TalentFinder v2.1] Final: ${resultados.length} validados | Brutos: ${brutos_coletados} | Etapas: ${etapas}`);
 
         return res.status(200).json({
-            success:           true,
+            success:          true,
             resultados,
-            total:             resultados.length,
-            queries_google:    queries_usadas,
-            motor:             'gemini',
-            etapas_executadas,
+            total:            resultados.length,
+            queries_google:   queries_usadas,
+            motor:            'gemini',
+            etapas_executadas: etapas,
+            brutos_coletados,
         });
 
     } catch (error: any) {
-        console.error('❌ [TalentFinder v2.0] Erro:', error.message);
+        console.error('❌ [TalentFinder v2.1] Erro:', error.message);
         return res.status(500).json({
             success: false,
             error:   error.message || 'Erro ao buscar candidatos via Gemini',
