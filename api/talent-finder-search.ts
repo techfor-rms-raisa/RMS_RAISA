@@ -3,29 +3,23 @@
  *
  * TALENT FINDER — Motor de Busca de Candidatos via Gemini AI + Google Search
  *
- * Conceito: mesmo padrão do Prospect Engine (prospect-gemini-search.ts),
- * mas voltado para busca de CANDIDATOS no LinkedIn com base em requisitos
- * mandatórios informados pelo Analista de R&S.
- *
  * Fluxo:
  * 1. Analista informa requisitos em texto livre (ex: "Consultor SAP FI Senior, SP")
  * 2. Gemini 2.5 Flash + Google Search Grounding descobre perfis públicos no LinkedIn
  * 3. Retorna: Nome / Cargo / Empresa / LinkedIn URL / Cidade / Relevância
  * 4. Sem gravação no banco — apenas exibição + exportação XLS opcional
  *
- * Versão: 1.1 — Prompt reescrito (padrão validado Prospect Engine)
+ * Versão: 1.3 — Prompt corrigido com queries pré-montadas (padrão Prospect Engine v2.1)
  * Data: 13/03/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
-// ─── Timeout: Gemini com múltiplas Search Grounding queries pode levar ~30-50s
 export const config = {
     maxDuration: 60,
 };
 
-// ─── Lazy init ────────────────────────────────────────────────────────
 let aiInstance: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
     if (!aiInstance) {
@@ -36,7 +30,6 @@ function getAI(): GoogleGenAI {
     return aiInstance;
 }
 
-// ─── Interface do candidato encontrado ──────────────────────────────
 export interface CandidatoEncontrado {
     finder_id:      string;
     nome_completo:  string;
@@ -49,53 +42,84 @@ export interface CandidatoEncontrado {
     relevancia:     'alta' | 'media' | 'baixa';
 }
 
-// ─── Função principal de busca ────────────────────────────────────────
+// ─── Extrai termos-âncora dos requisitos para montar as queries ──────────────
+// Pega os 4-5 primeiros termos técnicos relevantes (ex: "SAP ISOil SD MM FI")
+// sem palavras genéricas, para montar queries curtas e eficazes no Google
+function extrairAncoras(requisitos: string): { tecnologias: string; localizacao: string } {
+    const stopWords = new Set([
+        'com', 'sem', 'para', 'por', 'que', 'ou', 'e', 'de', 'do', 'da',
+        'como', 'nível', 'nivel', 'região', 'regiao', 'capital', 'grande',
+        'é', 'são', 'ser', 'ter', 'conhecimento', 'conhecimentos',
+        'básico', 'basico', 'avançado', 'avancado', 'intermediario', 'intermediário',
+        'obrigatório', 'obrigatorio', 'desejável', 'desejavel', 'profissional',
+    ]);
+
+    // Localização: detecta padrões como "São Paulo", "SP", "Rio de Janeiro", "RJ", "Brasil"
+    const locMatch = requisitos.match(
+        /\b(São Paulo|SP|Rio de Janeiro|RJ|Curitiba|PR|Belo Horizonte|BH|MG|Grande SP|Campinas|Brasil|Brazil|Remote|Remoto)\b/gi
+    );
+    const localizacao = locMatch ? [...new Set(locMatch.map(l => l.trim()))].slice(0, 2).join(' OR ') : 'Brasil';
+
+    // Tecnologias/skills: palavras relevantes, sem stop words, máx 5 termos
+    const palavras = requisitos
+        .split(/[\s,;:/\n()+\-]+/)
+        .map(p => p.trim())
+        .filter(p => p.length > 2 && !stopWords.has(p.toLowerCase()));
+
+    const tecnologias = palavras.slice(0, 5).join(' ');
+
+    return { tecnologias, localizacao };
+}
+
 async function buscarCandidatosGemini(
     requisitos: string,
     maxResultados: number = 20
 ): Promise<{ resultados: CandidatoEncontrado[]; queries_usadas: string[] }> {
 
     const ai = getAI();
+    const { tecnologias, localizacao } = extrairAncoras(requisitos);
 
-    // ── PROMPT: objetivo claro + liberdade total para o Gemini decidir as queries
-    // Padrão validado no Prospect Engine v2.1 — NÃO pré-montar queries no template
+    // ── PROMPT: mesmo padrão do Prospect Engine v2.1
+    // Queries pré-montadas com âncoras extraídas — obriga o Gemini a executar buscas
     const prompt = `
-Você é um especialista em recrutamento técnico com acesso ao Google Search.
-
-Sua missão: encontrar até ${maxResultados} profissionais reais no LinkedIn que atendam os requisitos abaixo.
+Você é um especialista em recrutamento técnico. Use o Google Search para encontrar profissionais reais que atendam os requisitos abaixo.
 
 REQUISITOS DA VAGA:
-${requisitos}
+"${requisitos}"
 
-INSTRUÇÕES DE BUSCA:
-- Use o Google Search para descobrir perfis públicos do LinkedIn de profissionais com esses requisitos
-- Execute MÚLTIPLAS buscas com variações de termos técnicos, nível de senioridade e localização
-- Priorize perfis do LinkedIn (site:linkedin.com/in) mas aceite outros perfis profissionais públicos
-- Busque também variações como: "sênior" / "senior" / "sr.", "pleno" / "pl.", nomes de tecnologias em inglês e português
-- Se houver indicação de localização nos requisitos, inclua nas buscas (ex: "São Paulo", "SP", "Grande SP")
-- Pare de buscar ao atingir ${maxResultados} candidatos únicos ou ao esgotar as combinações relevantes
+EXECUTE ATÉ 6 BUSCAS DISTINTAS (pare ao ter ${maxResultados}+ candidatos ou ao esgotar opções):
+
+1. site:linkedin.com/in ${tecnologias} "${localizacao}"
+2. "${tecnologias}" linkedin.com/in profissional Brasil
+3. ${tecnologias} linkedin Brasil "${localizacao}"
+4. ${tecnologias} especialista senior linkedin site:linkedin.com
+5. (se ainda abaixo de ${Math.ceil(maxResultados / 2)} candidatos) ${tecnologias} consultor especialista linkedin Brasil
+6. (se ainda abaixo de ${Math.ceil(maxResultados / 2)} candidatos) ${tecnologias} pleno sênior linkedin "${localizacao}"
 
 REGRAS ABSOLUTAS:
 - Inclua APENAS pessoas reais encontradas nas buscas — JAMAIS invente nomes, cargos ou URLs
 - Não repita o mesmo profissional mesmo que apareça em múltiplas buscas
-- Se não encontrou o perfil no LinkedIn, coloque linkedin_url: null
-- Avalie relevância: "alta" = atende todos os requisitos principais, "media" = atende a maioria, "baixa" = atende parcialmente
-- Inclua empresa_atual, cidade e estado se visíveis no perfil; caso contrário, null
+- Para LinkedIn: use a URL exata encontrada. Se não encontrou, coloque linkedin_url: null
+- NÃO tente confirmar o mesmo perfil mais de uma vez
+- Avalie a relevância em relação aos requisitos informados: "alta" = atende todos os requisitos principais, "media" = atende a maioria, "baixa" = atende parcialmente
+- Inclua empresa_atual, cidade e estado se visíveis no perfil encontrado; caso contrário, null
+- Retorne quem encontrou, mesmo que seja só 1 ou 2 pessoas
 
-FORMATO DE RESPOSTA — Somente JSON puro, sem markdown, sem explicações:
+Responda SOMENTE JSON puro sem markdown:
 {"candidatos":[{"nome_completo":"string","cargo_atual":"string","empresa_atual":"string ou null","linkedin_url":"https://linkedin.com/in/slug ou null","cidade":"string ou null","estado":"UF ou null","resumo":"resumo em 1 frase do perfil ou null","relevancia":"alta|media|baixa"}]}
 `.trim();
 
-    console.log(`🤖 [TalentFinder] Iniciando busca Gemini para: ${requisitos.substring(0, 80)}...`);
+    console.log(`🤖 [TalentFinder] Iniciando busca Gemini`);
+    console.log(`   Âncora tecnologias: "${tecnologias}"`);
+    console.log(`   Localização: "${localizacao}"`);
 
     const result = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
             tools: [{ googleSearch: {} }],
-            temperature: 0.1,
+            temperature: 0.3,
             maxOutputTokens: 8192,
-            // 4096: validado no Prospect Engine — suficiente para 5-6 buscas Google sem loop
             thinkingConfig: { thinkingBudget: 4096 },
         } as any
     });
@@ -104,28 +128,26 @@ FORMATO DE RESPOSTA — Somente JSON puro, sem markdown, sem explicações:
     console.log(`📦 [TalentFinder] Resposta raw (${rawText.length} chars)`);
 
     if (rawText.length < 20) {
-        console.error('❌ [TalentFinder] Resposta muito curta — Gemini provavelmente não executou buscas');
+        console.error('❌ [TalentFinder] Resposta muito curta');
         console.error('Raw text:', JSON.stringify(rawText));
-        throw new Error('O Gemini não retornou resultados. Tente reformular os requisitos ou aguarde alguns instantes.');
+        throw new Error('O Gemini não retornou resultados. Tente reformular os requisitos.');
     }
 
-    // Parse defensivo — remove markdown se vier
+    // Parse defensivo
     const cleanText = rawText
         .replace(/```json\s*/gi, '')
         .replace(/```\s*/gi, '')
         .trim();
 
-    // Extrai bloco JSON
     const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
         console.error('❌ [TalentFinder] Nenhum JSON válido na resposta');
         console.error('Raw:', rawText.substring(0, 500));
-        throw new Error('Gemini não retornou JSON válido. Tente novamente em alguns instantes.');
+        throw new Error('Gemini não retornou JSON válido. Tente novamente.');
     }
 
     let parsed: any;
     try {
-        // Sanitizar: remove controles ASCII, normaliza aspas tipográficas
         const sanitized = jsonMatch[0]
             .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
             .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
@@ -135,7 +157,6 @@ FORMATO DE RESPOSTA — Somente JSON puro, sem markdown, sem explicações:
         parsed = JSON.parse(sanitized);
     } catch (e) {
         console.error('❌ [TalentFinder] Falha ao parsear JSON:', e);
-        // Tentativa de recuperação via extração do array
         try {
             const arrayMatch = jsonMatch[0].match(/"candidatos"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
             if (arrayMatch) {
@@ -158,11 +179,8 @@ FORMATO DE RESPOSTA — Somente JSON puro, sem markdown, sem explicações:
     const comLinkedin = candidatos.filter(c => c.linkedin_url && c.linkedin_url !== 'null').length;
     console.log(`🔗 [TalentFinder] Com LinkedIn: ${comLinkedin}/${candidatos.length}`);
 
-    // Normalizar e tipar resultados
+    // Normalizar resultados
     const resultados: CandidatoEncontrado[] = candidatos.map((c: any, idx: number) => {
-        const nomeCompleto = (c.nome_completo || '').trim();
-
-        // Normalizar linkedin_url
         const rawLinkedin = c.linkedin_url || null;
         let linkedinNorm: string | null = null;
         if (rawLinkedin && String(rawLinkedin) !== 'null' && String(rawLinkedin).includes('linkedin')) {
@@ -179,14 +197,14 @@ FORMATO DE RESPOSTA — Somente JSON puro, sem markdown, sem explicações:
             : 'media';
 
         return {
-            finder_id:      `finder_${idx}_${Date.now()}`,
-            nome_completo:  nomeCompleto,
-            cargo_atual:    (c.cargo_atual || '').trim(),
-            empresa_atual:  c.empresa_atual && c.empresa_atual !== 'null' ? c.empresa_atual : null,
-            linkedin_url:   linkedinNorm,
-            cidade:         c.cidade && c.cidade !== 'null' ? c.cidade : null,
-            estado:         c.estado && c.estado !== 'null' ? c.estado : null,
-            resumo:         c.resumo && c.resumo !== 'null' ? c.resumo : null,
+            finder_id:     `finder_${idx}_${Date.now()}`,
+            nome_completo: (c.nome_completo || '').trim(),
+            cargo_atual:   (c.cargo_atual || '').trim(),
+            empresa_atual: c.empresa_atual && c.empresa_atual !== 'null' ? c.empresa_atual : null,
+            linkedin_url:  linkedinNorm,
+            cidade:        c.cidade && c.cidade !== 'null' ? c.cidade : null,
+            estado:        c.estado && c.estado !== 'null' ? c.estado : null,
+            resumo:        c.resumo && c.resumo !== 'null' ? c.resumo : null,
             relevancia,
         };
     });
@@ -216,10 +234,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Use POST.' });
     }
 
-    const {
-        requisitos,
-        max_resultados = 20,
-    } = req.body;
+    const { requisitos, max_resultados = 20 } = req.body;
 
     if (!requisitos || typeof requisitos !== 'string' || !requisitos.trim()) {
         return res.status(400).json({ error: 'requisitos é obrigatório.' });
