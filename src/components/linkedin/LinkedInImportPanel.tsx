@@ -15,8 +15,9 @@
  * 🆕 v57.0: Controle de acesso por permissão
  * 🆕 v4.0 (12/03/2026): Aba Talent Finder integrada
  * 
- * Versão: 4.0
+ * Versão: 4.0.1
  * Data: 12/03/2026
+ * BUILD_MARKER: TALENT-FINDER-ACTIVE-20260312-2026-03-12 21:12:01
  */
 
 import React, { useState, useEffect } from 'react';
@@ -32,22 +33,6 @@ interface LinkedInImportPanelProps {
 const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => {
   // 🆕 v57.0: Verificar permissão de acesso
   const { user } = useAuth();
-  
-  // Se não tem permissão, mostrar mensagem de acesso restrito
-  if (!user || !podeUsarLinkedIn(user.tipo_usuario)) {
-    return (
-      <div className="p-8 text-center bg-white rounded-lg shadow-md">
-        <div className="text-6xl mb-4">🔒</div>
-        <h2 className="text-xl font-bold text-gray-700 mb-2">Acesso Restrito</h2>
-        <p className="text-gray-500 mb-4">
-          Você não tem permissão para acessar a importação do LinkedIn.
-        </p>
-        <p className="text-sm text-gray-400">
-          Esta funcionalidade está disponível para: Administrador, Gestão de R&S e Analista de R&S.
-        </p>
-      </div>
-    );
-  }
 
   const {
     loading,
@@ -336,6 +321,22 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
   // ============================================
   // RENDER PRINCIPAL
   // ============================================
+
+  // 🆕 v57.0: Verificar permissão APÓS todos os hooks (regra dos hooks do React)
+  if (!user || !podeUsarLinkedIn(user.tipo_usuario)) {
+    return (
+      <div className="p-8 text-center bg-white rounded-lg shadow-md">
+        <div className="text-6xl mb-4">🔒</div>
+        <h2 className="text-xl font-bold text-gray-700 mb-2">Acesso Restrito</h2>
+        <p className="text-gray-500 mb-4">
+          Você não tem permissão para acessar a importação do LinkedIn.
+        </p>
+        <p className="text-sm text-gray-400">
+          Esta funcionalidade está disponível para: Administrador, Gestão de R&S e Analista de R&S.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 p-6">

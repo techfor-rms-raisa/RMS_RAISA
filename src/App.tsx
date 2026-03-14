@@ -43,7 +43,7 @@ import DashboardPerformanceCliente from './components/raisa/DashboardPerformance
 import DashboardAnaliseTempo from './components/raisa/DashboardAnaliseTempo';
 import DashboardIndicacoes from './components/raisa/DashboardIndicacoes'; // 🆕 Dashboard de Indicações
 // ✅ NOVO: Imports dos componentes faltantes (28/12/2024)
-import LinkedInImportPanel from './components/raisa/LinkedInImportPanel';
+import LinkedInImportPanel from './components/linkedin/LinkedInImportPanel';
 import DashboardMLLearning from './components/raisa/DashboardMLLearning';
 import DashboardPerformanceIA from './components/raisa/DashboardPerformanceIA';
 import DashboardRaisaMetrics from './components/raisa/DashboardRaisaMetrics';

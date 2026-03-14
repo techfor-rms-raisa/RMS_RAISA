@@ -18,5 +18,15 @@ export default defineConfig({
       '@/hooks': path.resolve(__dirname, './src/hooks'),
       '@/config': path.resolve(__dirname, './src/config'),
     }
+  },
+  build: {
+    // Força novo hash em cada build — invalida CDN cache da Vercel
+    rollupOptions: {
+      output: {
+        entryFileNames: `assets/[name]-[hash].js`,
+        chunkFileNames: `assets/[name]-[hash].js`,
+        assetFileNames: `assets/[name]-[hash].[ext]`,
+      }
+    }
   }
 });
