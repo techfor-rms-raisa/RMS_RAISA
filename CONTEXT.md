@@ -1,6 +1,6 @@
 # RMS-RAISA — Contexto do Projeto
 > Atualizado automaticamente pelo script `scripts/update-context.js`
-> Última atualização automática: 12/03/2027, 12:27
+> Última atualização automática: 14/03/2026, 09:22
 
 ---
 
@@ -249,13 +249,13 @@ case 'nome_da_action':
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 38 arquivos | 430.6 KB | 12/03/2026 |
-| `src/components/` | 105 arquivos | 808.0 KB | 12/03/2027 |
+| `api/` | 39 arquivos | 435.9 KB | 14/03/2026 |
+| `src/components/` | 107 arquivos | 807.6 KB | 14/03/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 28/12/2025 |
-| `src/types/` | 6 arquivos | 30.3 KB | 10/03/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 05/12/2025 |
-| `scripts/` | 1 arquivos | 6.8 KB | 12/03/2027 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 14/03/2026 |
+| `src/types/` | 6 arquivos | 29.7 KB | 14/03/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 14/03/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 14/03/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -281,6 +281,7 @@ case 'nome_da_action':
 - `api/questoes-inteligentes.ts`
 - `api/recomendacao-analista.ts`
 - `api/send-email.ts`
+- `api/talent-finder-search.ts`
 - `api/upload-audio.ts`
 - `api/vaga-analistas-recomendados.ts`
 - `api/vaga-prioridade.ts`
