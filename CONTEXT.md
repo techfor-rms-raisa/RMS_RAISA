@@ -1,6 +1,6 @@
 # RMS-RAISA — Contexto do Projeto
 > Atualizado automaticamente pelo script `scripts/update-context.js`
-> Última atualização automática: 13/03/2026, 09:30
+> Última atualização automática: 14/03/2026, 09:22
 
 ---
 
@@ -249,13 +249,13 @@ case 'nome_da_action':
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 39 arquivos | 435.9 KB | 13/03/2026 |
-| `src/components/` | 107 arquivos | 807.6 KB | 13/03/2026 |
+| `api/` | 39 arquivos | 435.9 KB | 14/03/2026 |
+| `src/components/` | 107 arquivos | 807.6 KB | 14/03/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 13/03/2026 |
-| `src/types/` | 6 arquivos | 29.7 KB | 13/03/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 13/03/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 13/03/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 14/03/2026 |
+| `src/types/` | 6 arquivos | 29.7 KB | 14/03/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 14/03/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 14/03/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
