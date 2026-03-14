@@ -1,5 +1,5 @@
 /**
- * ProspectSearchPage.tsx — Prospect Engine v2.0
+ * ProspectSearchPage.tsx — Prospect Engine v2.1
  *
  * Motor: Gemini AI (Search Grounding) + Hunter.io
  * Substitui: Apollo + Snov.io
@@ -49,7 +49,7 @@ interface ProspectResult {
     pais:           string | null;
     senioridade:    string | null;
     departamentos:  string[];
-    fonte:          'gemini';
+    fonte:          'gemini' | 'extension';
     enriquecido:    boolean;
     motor_email?:   string | null;
     selecionado?:   boolean;
@@ -175,6 +175,40 @@ const ProspectSearchPage: React.FC = () => {
         setAbaAtiva('busca');
     }, []);
 
+    // ============================================
+    // RECEBER LEADS DA PROSPECT EXTENSION
+    // A Extension envia via /api/prospect-capture → frontend
+    // atualiza a lista de resultados automaticamente
+    // ============================================
+    useEffect(() => {
+        const handleExtensionMessage = (event: MessageEvent) => {
+            if (event.data?.type !== 'PROSPECT_EXTENSION_LEADS') return;
+
+            const leads: ProspectResult[] = (event.data.leads || []).map((r: ProspectResult) => ({
+                ...r, selecionado: false
+            }));
+
+            if (leads.length === 0) return;
+
+            setResultados(prev => {
+                // Deduplicar por linkedin_url — evita duplicatas se o analista capturar a mesma página duas vezes
+                const urlsExistentes = new Set(prev.map(l => l.linkedin_url).filter(Boolean));
+                const novos = leads.filter(l => !l.linkedin_url || !urlsExistentes.has(l.linkedin_url));
+                return [...prev, ...novos];
+            });
+
+            setSearchState({ loading: false, fase: 'concluido', error: null });
+            setAbaAtiva('busca');
+
+            // Mostrar toast informativo
+            setToastMsg({ tipo: 'ok', msg: `${leads.length} lead${leads.length > 1 ? 's' : ''} capturado${leads.length > 1 ? 's' : ''} pela Extension!` });
+            setTimeout(() => setToastMsg(null), 4000);
+        };
+
+        window.addEventListener('message', handleExtensionMessage);
+        return () => window.removeEventListener('message', handleExtensionMessage);
+    }, []);
+
 
     const buscarGemini = useCallback(async () => {
         if (!domain.trim()) return;
@@ -238,6 +272,17 @@ const ProspectSearchPage: React.FC = () => {
         const prospect = resultados[index];
         if (!prospect || prospect.email) return;
 
+        // Leads da Extension podem não ter domínio no form — usar o do próprio lead
+        const dominioEmail = domain.trim() || prospect.empresa_dominio || '';
+        if (!dominioEmail) {
+            setResultados(prev => {
+                const u = [...prev];
+                u[index] = { ...u[index], email_status: 'sem domínio' };
+                return u;
+            });
+            return;
+        }
+
         setResultados(prev => {
             const u = [...prev];
             u[index] = { ...u[index], email_status: 'buscando...' };
@@ -250,7 +295,7 @@ const ProspectSearchPage: React.FC = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     mode:          'email_finder',
-                    domain:        domain.trim(),
+                    domain:        dominioEmail,
                     primeiro_nome: prospect.primeiro_nome,
                     ultimo_nome:   prospect.ultimo_nome,
                 }),
@@ -312,7 +357,7 @@ const ProspectSearchPage: React.FC = () => {
                 pais:             p.pais,
                 senioridade:      p.senioridade || p.nivel,
                 departamentos:    p.departamentos,
-                fonte:            'gemini' as const,
+                fonte:            (p.fonte || 'gemini') as 'gemini' | 'extension',
                 enriquecido:      p.enriquecido,
             }));
 
@@ -492,7 +537,7 @@ const ProspectSearchPage: React.FC = () => {
         <div className="mb-6">
             <h1 className="text-2xl font-bold text-gray-800 flex items-center gap-3">
                 <i className="fa-solid fa-magnifying-glass-dollar text-blue-600"></i>
-                Prospect Engine v2.0
+                Prospect Engine v2.1
             </h1>
             <p className="text-sm text-gray-500 mt-1 flex items-center gap-2">
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-xs font-medium">
@@ -711,7 +756,13 @@ const ProspectSearchPage: React.FC = () => {
                                 )}
                             </span>
 
-                            {/* Hunter — só aparece após resultados, para evitar queima acidental de créditos */}
+                            {/* Badge de origem dos leads */}
+                            {resultados.some(r => r.fonte === 'extension') && (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">
+                                    <span className="w-4 h-4 rounded bg-blue-600 text-white text-[9px] font-bold flex items-center justify-center leading-none">P</span>
+                                    Extension
+                                </span>
+                            )}
                             {!searchState.loading && (
                                 <label className="flex items-center gap-2 px-3 py-1.5 bg-orange-50 border border-orange-200 rounded-lg cursor-pointer hover:bg-orange-100 transition-colors"
                                     title="Ative somente após validar os contatos — cada email consome 1 crédito Hunter.io">
