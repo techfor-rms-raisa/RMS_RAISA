@@ -298,8 +298,24 @@ Responda SOMENTE JSON sem markdown:
 
     // Extrair queries usadas pelo grounding
     const groundingMeta = (result as any).candidates?.[0]?.groundingMetadata;
-    const queriesUsadas: string[] = groundingMeta?.webSearchQueries || [];
-    console.log(`🔍 [GeminiSearch] Google queries: ${queriesUsadas.join(' | ')}`);
+    const queriesGrounding: string[] = groundingMeta?.webSearchQueries || [];
+    console.log(`🔍 [GeminiSearch] Google queries: ${queriesGrounding.join(' | ')}`);
+
+    // ── Gerar queries booleanas com site:linkedin.com/in para a Extension P ──
+    // Estas queries são exibidas no painel como sugestão para o analista
+    // abrir no Google e usar a Extension para capturar leads adicionais.
+    const queriesExtension: string[] = [
+        `site:linkedin.com/in "${empresaAncora}" (${cargosQuery})`,
+        `site:linkedin.com/in "${empresaAncora}" ${deptosQuery.split(' OR ')[0]} Brasil`,
+    ];
+
+    // Combina: queries booleanas p/ Extension primeiro, depois as do grounding
+    const queriesUsadas: string[] = [
+        ...queriesExtension,
+        ...queriesGrounding.filter(q =>
+            !queriesExtension.some(e => e.toLowerCase() === q.toLowerCase())
+        ),
+    ];
 
     return {
         resultados,
