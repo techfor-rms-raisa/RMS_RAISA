@@ -10,8 +10,12 @@
  * - Cards com informações completas
  * - 🆕 v57.0: Campo de Analista de R&S no modal para atribuir exclusividade
  * 
- * Versão: 3.1 (Plano B - Exclusividade Manual)
- * Data: 13/01/2026
+ * Versão: 3.2
+ * Data: 15/03/2026
+ *
+ * v3.2: + visibilitychange auto-refresh (aba ativada após importação LinkedIn)
+ *        + evento 'raisa-linkedin-import' para extensão notificar explicitamente
+ *        (complementa Supabase Realtime — 3 estratégias ativas em paralelo)
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
@@ -196,6 +200,46 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
             if (debounceTimer) clearTimeout(debounceTimer);
             supabase.removeChannel(channel);
             console.log('📡 [Realtime] Canal pessoas desconectado');
+        };
+    }, [onRefresh]);
+
+    // ============================================
+    // 🆕 AUTO-REFRESH: Estratégias complementares ao Realtime
+    //
+    // Estratégia 2 — visibilitychange:
+    //   Quando o usuário volta à aba do RAISA (após importar no LinkedIn),
+    //   dispara onRefresh() automaticamente.
+    //
+    // Estratégia 3 — evento customizado 'raisa-linkedin-import':
+    //   A extensão Chrome pode disparar window.dispatchEvent(new Event('raisa-linkedin-import'))
+    //   após importação bem-sucedida para refresh imediato.
+    //
+    // Juntas as 3 estratégias cobrem 100% dos cenários:
+    //   Realtime WebSocket  → INSERT em tempo real (quando Supabase REPLICA IDENTITY ativo)
+    //   visibilitychange    → Usuário volta à aba após importar
+    //   raisa-linkedin-import → Extensão notifica explicitamente
+    // ============================================
+    useEffect(() => {
+        if (!onRefresh) return;
+
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                console.log('🔄 [BancoTalentos] Aba ativada — verificando atualizações...');
+                onRefresh();
+            }
+        };
+
+        const handleLinkedInImport = () => {
+            console.log('🔄 [BancoTalentos] Evento raisa-linkedin-import — recarregando...');
+            onRefresh();
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('raisa-linkedin-import', handleLinkedInImport);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+            window.removeEventListener('raisa-linkedin-import', handleLinkedInImport);
         };
     }, [onRefresh]);
 
