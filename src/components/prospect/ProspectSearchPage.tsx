@@ -9,14 +9,18 @@
  * 2. Hunter.io enriquece com email verificado
  * 3. Salvar selecionados no Supabase
  *
- * Versão: 4.0
- * Data: 05/03/2026
+ * Versão: 4.1
+ * Data: 15/03/2026
  *
  * v4.0:
  * - Motor principal: Gemini + Google Search Grounding
  * - Enriquecimento: Hunter.io (substitui Apollo)
  * - Remove dependência Apollo + Snov.io
  * - Mantém: Leads Salvos, Exportar XLS, Salvar Selecionados
+ *
+ * v4.1:
+ * - Coluna "ORIGEM E-MAIL" na tabela de resultados (Hunter Finder / Hunter Domain / Snov.io)
+ * - motor_email propagado no buscarEmailIndividual (botão por linha)
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -329,6 +333,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     email_score:  data.score        || 0,
                     linkedin_url: u[index].linkedin_url || data.linkedin_url || null,
                     enriquecido:  !!data.email,
+                    motor_email:  data.email ? (data.motor || 'hunter_finder') : null,
                 };
                 return u;
             });
@@ -878,6 +883,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">CARGO / NÍVEL</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM E-MAIL</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">LINKEDIN</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÕES</th>
                                 </tr>
@@ -925,6 +931,23 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                                     {prospect.email_status === 'aguardando...' && <i className="fa-solid fa-clock mr-1"></i>}
                                                     {prospect.email_status || '—'}
                                                 </span>
+                                            )}
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            {prospect.motor_email ? (
+                                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${
+                                                    prospect.motor_email === 'hunter_finder' ? 'bg-orange-100 text-orange-700' :
+                                                    prospect.motor_email === 'hunter_domain' ? 'bg-yellow-100 text-yellow-700' :
+                                                    prospect.motor_email === 'snovio'        ? 'bg-purple-100 text-purple-700' :
+                                                    'bg-gray-100 text-gray-500'
+                                                }`}>
+                                                    {prospect.motor_email === 'hunter_finder' ? '🎯 Hunter Finder' :
+                                                     prospect.motor_email === 'hunter_domain' ? '🔵 Hunter Domain' :
+                                                     prospect.motor_email === 'snovio'        ? '🟣 Snov.io' :
+                                                     prospect.motor_email}
+                                                </span>
+                                            ) : (
+                                                <span className="text-gray-300 text-xs">—</span>
                                             )}
                                         </td>
                                         <td className="px-3 py-2 text-center">
