@@ -472,15 +472,22 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
     // ============================================
     // HUNTER — dispara quando usuário ATIVA o checkbox (após ver os leads)
-    // Só roda se: checkbox ligado + há leads sem email + não está carregando
+    // Comportamento:
+    //   - Se há prospects SELECIONADOS sem email → enriquece apenas os selecionados
+    //   - Se nenhum selecionado sem email → enriquece todos sem email
+    // Após retorno: merge cirúrgico — preserva prospects não-enviados intactos
     // ============================================
     useEffect(() => {
         if (!enriquecerHunter) return;
         if (searchState.loading) return;
         if (resultados.length === 0) return;
-        // Só dispara se houver leads sem email (evita rodar múltiplas vezes)
-        const semEmail = resultados.filter(r => !r.email);
-        if (semEmail.length === 0) return;
+
+        // Determinar alvo: selecionados sem email, ou todos sem email
+        const selecionadosSemEmail = resultados.filter(r => r.selecionado && !r.email);
+        const todosSemEmail        = resultados.filter(r => !r.email);
+        const alvo = selecionadosSemEmail.length > 0 ? selecionadosSemEmail : todosSemEmail;
+
+        if (alvo.length === 0) return;
 
         const runHunter = async () => {
             setSearchState({ loading: true, fase: 'enriquecendo', error: null });
@@ -491,14 +498,27 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     body: JSON.stringify({
                         mode:      'enrich_list',
                         domain:    domain.trim(),
-                        prospects: resultados,
+                        prospects: alvo,
                     }),
                 });
                 const data = await resp.json();
                 if (data.success) {
-                    setResultados((data.resultados || []).map((r: ProspectResult) => ({
-                        ...r, selecionado: false
-                    })));
+                    const enriquecidos: ProspectResult[] = data.resultados || [];
+
+                    // Merge cirúrgico: atualiza apenas os prospects enviados,
+                    // preservando todos os outros (seleção, dados, ordem) intactos
+                    setResultados(prev => prev.map(original => {
+                        const atualizado = enriquecidos.find(
+                            e => e.gemini_id
+                                ? e.gemini_id === original.gemini_id
+                                : e.nome_completo === original.nome_completo
+                        );
+                        if (!atualizado) return original;
+                        return {
+                            ...atualizado,
+                            selecionado: original.selecionado,
+                        };
+                    }));
                 } else {
                     console.warn('⚠️ Hunter falhou:', data.error);
                 }
