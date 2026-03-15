@@ -14,12 +14,19 @@
  * Taxa de enriquecimento: ~32,5% (benchmark 2025)
  * Custo/email válido: ~$0,085
  *
- * Versão: 1.1
- * Data: 05/03/2026
+ * Versão: 1.2
+ * Data: 15/03/2026
  * v1.1: + Company Enrichment (/companies/find) + Email Verifier (/email-verifier)
+ * v1.2: + Snov.io fallback no enrich_list (MODE 5) — Hunter → Snov.io → not_found
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+    process.env.SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 // ─── Timeout estendido: Company Enrichment + verificação podem somar ~15s ──
 export const config = {
@@ -335,6 +342,80 @@ function cruzarComDomainSearch(
     }) || null;
 }
 
+
+// ─── Snov.io: fallback quando Hunter não encontra email ──────────────
+let snovCachedToken: string | null = null;
+let snovTokenExpiresAt = 0;
+
+async function getSnovioToken(): Promise<string | null> {
+    const now = Date.now();
+    if (snovCachedToken && snovTokenExpiresAt > now) return snovCachedToken;
+    const userId    = process.env.SNOVIO_USER_ID;
+    const apiSecret = process.env.SNOVIO_API_SECRET;
+    if (!userId || !apiSecret) return null;
+    const params = new URLSearchParams();
+    params.append('grant_type',    'client_credentials');
+    params.append('client_id',     userId);
+    params.append('client_secret', apiSecret);
+    const res = await fetch('https://api.snov.io/v1/oauth/access_token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.access_token) return null;
+    snovCachedToken    = data.access_token;
+    snovTokenExpiresAt = now + 50 * 60 * 1000;
+    return snovCachedToken!;
+}
+
+async function snovioEmailFinder(
+    firstName: string,
+    lastName:  string,
+    domain:    string
+): Promise<{ email: string; status: string } | null> {
+    const token = await getSnovioToken();
+    if (!token) return null;
+    const params = new URLSearchParams();
+    params.append('rows[0][first_name]', firstName);
+    params.append('rows[0][last_name]',  lastName);
+    params.append('rows[0][domain]',     domain);
+    console.log(`📧 [Snov.io/Finder] ${firstName} ${lastName} @ ${domain}`);
+    const startRes = await fetch('https://api.snov.io/v2/emails-by-domain-by-name/start', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params.toString(),
+    });
+    if (!startRes.ok) return null;
+    const startData = await startRes.json();
+    // Às vezes retorna direto sem polling
+    if (startData.data?.[0]?.email) {
+        return { email: startData.data[0].email, status: startData.data[0].smtp_status || 'unknown' };
+    }
+    const taskHash = startData.meta?.task_hash || startData.data?.[0]?.task_hash;
+    if (!taskHash) return null;
+    const resultUrl = `https://api.snov.io/v2/emails-by-domain-by-name/result?task_hash=${taskHash}`;
+    // Poll até 6x (15s)
+    for (let i = 0; i < 6; i++) {
+        await new Promise(r => setTimeout(r, 2500));
+        const pollRes = await fetch(resultUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+        if (!pollRes.ok) break;
+        const pollData = await pollRes.json();
+        if (pollData.status === 'completed') {
+            const emailEntry = pollData.data?.[0]?.emails?.[0] || pollData.data?.[0];
+            const email = emailEntry?.email;
+            if (email) {
+                console.log(`✅ [Snov.io/Finder] ${email}`);
+                return { email, status: emailEntry?.smtp_status || 'unknown' };
+            }
+            break;
+        }
+        if (pollData.status === 'failed') break;
+    }
+    return null;
+}
+
 // ─── HANDLER ─────────────────────────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'POST') {
@@ -354,6 +435,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         ultimo_nome,
         email,          // string — usado no mode 'email_verifier'
         verificar_emails = false,  // boolean — no enrich_list, verifica emails encontrados (consome créditos extras)
+        supabase_id,    // number — id do registro em prospect_leads para UPDATE após encontrar email
     } = req.body;
 
     if (!domain && mode !== 'email_verifier') {
@@ -367,23 +449,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json({ success: true, emails, total: emails.length });
         }
 
-        // ── MODE 2: Email Finder Individual ───────────────────────────
+        // ── MODE 2: Email Finder Individual (Hunter → Snov.io fallback) ────
         if (mode === 'email_finder') {
             if (!primeiro_nome) {
                 return res.status(400).json({ error: 'primeiro_nome obrigatório para email_finder.' });
             }
-            const result = await hunterEmailFinder(primeiro_nome, ultimo_nome || '', domain, apiKey);
-            if (result) {
+
+            // Tentativa 1: Hunter.io
+            let emailResult: { email: string | null; status: string; score?: number; linkedin_url?: string | null; motor: string } | null = null;
+            const hunterResult = await hunterEmailFinder(primeiro_nome, ultimo_nome || '', domain, apiKey);
+            if (hunterResult?.email) {
+                emailResult = {
+                    email:        hunterResult.email,
+                    status:       hunterResult.status,
+                    score:        hunterResult.score,
+                    linkedin_url: hunterResult.linkedin_url,
+                    motor:        'hunter',
+                };
+            }
+
+            // Tentativa 2: Snov.io fallback
+            if (!emailResult) {
+                console.log(`🔄 [EmailFinder] Hunter não encontrou — tentando Snov.io...`);
+                const snovResult = await snovioEmailFinder(primeiro_nome, ultimo_nome || '', domain);
+                if (snovResult?.email) {
+                    emailResult = {
+                        email:        snovResult.email,
+                        status:       snovResult.status,
+                        score:        undefined,
+                        linkedin_url: null,
+                        motor:        'snovio',
+                    };
+                }
+            }
+
+            if (emailResult?.email) {
+                // UPDATE no Supabase se supabase_id foi fornecido
+                if (supabase_id) {
+                    const { error: upErr } = await supabase
+                        .from('prospect_leads')
+                        .update({
+                            email:       emailResult.email,
+                            email_status: emailResult.status,
+                            motor:       emailResult.motor === 'snovio' ? 'gemini+hunter' : emailResult.motor,
+                            enriquecido: true,
+                            atualizado_em: new Date().toISOString(),
+                        })
+                        .eq('id', supabase_id);
+                    if (upErr) console.error('⚠️ [EmailFinder] UPDATE Supabase falhou:', upErr.message);
+                    else console.log(`💾 [EmailFinder] Supabase atualizado — id ${supabase_id}`);
+                }
+
                 return res.status(200).json({
                     success:      true,
-                    email:        result.email,
-                    email_status: result.status,
-                    score:        result.score,
-                    linkedin_url: result.linkedin_url,
-                    motor:        'hunter',
+                    email:        emailResult.email,
+                    email_status: emailResult.status,
+                    score:        emailResult.score || 0,
+                    linkedin_url: emailResult.linkedin_url || null,
+                    motor:        emailResult.motor,
                 });
             }
-            return res.status(200).json({ success: false, email: null, email_status: 'not_found', motor: 'hunter' });
+
+            return res.status(200).json({ success: false, email: null, email_status: 'not_found', motor: null });
         }
 
         // ── MODE 3: Email Verifier ─────────────────────────────────────
@@ -516,7 +643,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
             }
 
-            // Sem email — mantém dados da empresa enriquecidos + tenta LinkedIn do domain search
+            // Tentativa 3: Snov.io fallback (quando Hunter não encontrou)
+            if (fn && ln) {
+                try {
+                    console.log(`🔄 [Hunter/Enrich] Hunter sem resultado — tentando Snov.io para ${fn} ${ln}...`);
+                    const snovResult = await snovioEmailFinder(fn, ln, domain);
+                    if (snovResult?.email) {
+                        enriched.push({
+                            ...prospect,
+                            ...empresaEnriquecida,
+                            email:        snovResult.email,
+                            email_status: snovResult.status,
+                            email_score:  0,
+                            linkedin_url: prospect.linkedin_url
+                                       || buscarLinkedinNoDomainSearch(fn, ln, domainEmails)
+                                       || null,
+                            enriquecido:  true,
+                            motor_email:  'snovio',
+                        });
+                        console.log(`✅ [Snov.io/Enrich] ${fn} ${ln} → ${snovResult.email}`);
+                        continue;
+                    }
+                } catch (e) {
+                    console.warn(`⚠️ [Snov.io/Enrich] Falhou para ${fn} ${ln}:`, e);
+                }
+            }
+
+            // Sem email em nenhum motor — mantém dados da empresa enriquecidos + tenta LinkedIn do domain search
             enriched.push({
                 ...prospect,
                 ...empresaEnriquecida,

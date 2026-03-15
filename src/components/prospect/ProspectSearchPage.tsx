@@ -9,14 +9,18 @@
  * 2. Hunter.io enriquece com email verificado
  * 3. Salvar selecionados no Supabase
  *
- * Versão: 4.0
- * Data: 05/03/2026
+ * Versão: 4.1
+ * Data: 15/03/2026
  *
  * v4.0:
  * - Motor principal: Gemini + Google Search Grounding
  * - Enriquecimento: Hunter.io (substitui Apollo)
  * - Remove dependência Apollo + Snov.io
  * - Mantém: Leads Salvos, Exportar XLS, Salvar Selecionados
+ *
+ * v4.1:
+ * - Coluna "ORIGEM E-MAIL" na tabela de resultados (Hunter Finder / Hunter Domain / Snov.io)
+ * - motor_email propagado no buscarEmailIndividual (botão por linha)
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
@@ -103,7 +107,11 @@ const SENIORIDADES = [
 // ============================================
 // COMPONENTE PRINCIPAL
 // ============================================
-const ProspectSearchPage: React.FC = () => {
+interface ProspectSearchPageProps {
+    initialTab?: 'busca' | 'salvos';
+}
+
+const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'busca' }) => {
     const { user: currentUser } = useAuth();
 
     // Form
@@ -122,7 +130,13 @@ const ProspectSearchPage: React.FC = () => {
     const [toastMsg, setToastMsg]                       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
 
     // Abas
-    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'>('busca');
+    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'>(initialTab ?? 'busca');
+
+    // Sincronizar abaAtiva quando initialTab mudar
+    // (ex: usuário navega de "Buscar Leads" → "Meus Prospects" sem desmontar o componente)
+    useEffect(() => {
+        if (initialTab) setAbaAtiva(initialTab);
+    }, [initialTab]);
 
     // Leads Salvos
     const [leadsSalvos, setLeadsSalvos]                 = useState<ProspectLead[]>([]);
@@ -135,6 +149,9 @@ const ProspectSearchPage: React.FC = () => {
 
     // BUG 3 FIX: controle de quantidade máxima de resultados (configurável)
     const [maxResultados, setMaxResultados]             = useState(25);
+
+    // Controle de queries já executadas — para marcação visual
+    const [queriesExecutadas, setQueriesExecutadas]     = useState<Set<string>>(new Set());
 
     // ============================================
     // TOGGLES
@@ -173,6 +190,7 @@ const ProspectSearchPage: React.FC = () => {
         setMaxResultados(25);
         setSearchState({ loading: false, fase: 'idle', error: null });
         setAbaAtiva('busca');
+        setQueriesExecutadas(new Set());
     }, []);
 
     // ============================================
@@ -203,6 +221,9 @@ const ProspectSearchPage: React.FC = () => {
             // Mostrar toast informativo
             setToastMsg({ tipo: 'ok', msg: `${leads.length} lead${leads.length > 1 ? 's' : ''} capturado${leads.length > 1 ? 's' : ''} pela Extension!` });
             setTimeout(() => setToastMsg(null), 4000);
+
+            // Auto-refresh: recarregar Leads Salvos para exibir os novos leads
+            setTimeout(() => carregarLeadsSalvos(), 1500);
         };
 
         window.addEventListener('message', handleExtensionMessage);
@@ -298,6 +319,7 @@ const ProspectSearchPage: React.FC = () => {
                     domain:        dominioEmail,
                     primeiro_nome: prospect.primeiro_nome,
                     ultimo_nome:   prospect.ultimo_nome,
+                    supabase_id:   (prospect as any).supabase_id || null,
                 }),
             });
             const data = await res.json();
@@ -311,6 +333,7 @@ const ProspectSearchPage: React.FC = () => {
                     email_score:  data.score        || 0,
                     linkedin_url: u[index].linkedin_url || data.linkedin_url || null,
                     enriquecido:  !!data.email,
+                    motor_email:  data.email ? (data.motor || 'hunter_finder') : null,
                 };
                 return u;
             });
@@ -449,15 +472,22 @@ const ProspectSearchPage: React.FC = () => {
 
     // ============================================
     // HUNTER — dispara quando usuário ATIVA o checkbox (após ver os leads)
-    // Só roda se: checkbox ligado + há leads sem email + não está carregando
+    // Comportamento:
+    //   - Se há prospects SELECIONADOS sem email → enriquece apenas os selecionados
+    //   - Se nenhum selecionado sem email → enriquece todos sem email
+    // Após retorno: merge cirúrgico — preserva prospects não-enviados intactos
     // ============================================
     useEffect(() => {
         if (!enriquecerHunter) return;
         if (searchState.loading) return;
         if (resultados.length === 0) return;
-        // Só dispara se houver leads sem email (evita rodar múltiplas vezes)
-        const semEmail = resultados.filter(r => !r.email);
-        if (semEmail.length === 0) return;
+
+        // Determinar alvo: selecionados sem email, ou todos sem email
+        const selecionadosSemEmail = resultados.filter(r => r.selecionado && !r.email);
+        const todosSemEmail        = resultados.filter(r => !r.email);
+        const alvo = selecionadosSemEmail.length > 0 ? selecionadosSemEmail : todosSemEmail;
+
+        if (alvo.length === 0) return;
 
         const runHunter = async () => {
             setSearchState({ loading: true, fase: 'enriquecendo', error: null });
@@ -468,14 +498,27 @@ const ProspectSearchPage: React.FC = () => {
                     body: JSON.stringify({
                         mode:      'enrich_list',
                         domain:    domain.trim(),
-                        prospects: resultados,
+                        prospects: alvo,
                     }),
                 });
                 const data = await resp.json();
                 if (data.success) {
-                    setResultados((data.resultados || []).map((r: ProspectResult) => ({
-                        ...r, selecionado: false
-                    })));
+                    const enriquecidos: ProspectResult[] = data.resultados || [];
+
+                    // Merge cirúrgico: atualiza apenas os prospects enviados,
+                    // preservando todos os outros (seleção, dados, ordem) intactos
+                    setResultados(prev => prev.map(original => {
+                        const atualizado = enriquecidos.find(
+                            e => e.gemini_id
+                                ? e.gemini_id === original.gemini_id
+                                : e.nome_completo === original.nome_completo
+                        );
+                        if (!atualizado) return original;
+                        return {
+                            ...atualizado,
+                            selecionado: original.selecionado,
+                        };
+                    }));
                 } else {
                     console.warn('⚠️ Hunter falhou:', data.error);
                 }
@@ -643,9 +686,18 @@ const ProspectSearchPage: React.FC = () => {
 
                         {/* Progress feedback */}
                         {searchState.loading && (
-                            <div className="mt-2 flex items-center gap-2 text-xs text-blue-600">
-                                <i className="fa-solid fa-spinner fa-spin"></i>
-                                <span>{faseLabel[searchState.fase]}</span>
+                            <div className="mt-3 flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
+                                <i className="fa-solid fa-spinner fa-spin text-2xl text-blue-600 flex-shrink-0"></i>
+                                <div>
+                                    <p className="text-sm font-semibold text-blue-700">
+                                        {searchState.fase === 'descobrindo' ? '🤖 Gemini AI está pesquisando...' : '📧 Enriquecendo emails via Hunter.io...'}
+                                    </p>
+                                    <p className="text-xs text-blue-500 mt-0.5">
+                                        {searchState.fase === 'descobrindo'
+                                            ? 'Consultando o Google Search — pode levar até 30 segundos'
+                                            : 'Buscando emails corporativos — 1 crédito por lead'}
+                                    </p>
+                                </div>
                             </div>
                         )}
                         {searchState.error && (
@@ -726,15 +778,53 @@ const ProspectSearchPage: React.FC = () => {
 
             {/* Info empresa + queries Google */}
             {empresaInfo && (
-                <div className="mb-4 flex flex-wrap items-center gap-3">
-                    <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg text-sm">
+                <div className="mb-4 flex flex-col gap-3">
+                    {/* Badge empresa */}
+                    <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg text-sm w-fit">
                         <i className="fa-solid fa-building text-blue-600"></i>
                         <span className="font-medium text-blue-800">{empresaInfo.nome}</span>
                     </div>
+
+                    {/* Queries — dica para Extension P */}
                     {queriesGoogle.length > 0 && (
-                        <div className="flex items-center gap-1 text-xs text-gray-400">
-                            <i className="fa-brands fa-google text-gray-400"></i>
-                            <span>Queries: {queriesGoogle.slice(0,2).join(' · ')}</span>
+                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                            <div className="flex items-center gap-2 mb-3">
+                                <span className="w-5 h-5 rounded bg-[#0A66C2] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">P</span>
+                                <p className="text-xs font-semibold text-amber-800">
+                                    Quer mais leads? Execute as queries abaixo no Google — o botão <strong>"Capturar Leads"</strong> da Extension aparece automaticamente.
+                                </p>
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                {queriesGoogle.map((q, i) => (
+                                    <div key={i} className="flex items-center gap-2">
+                                        <code className={`flex-1 text-[11px] rounded-lg px-3 py-1.5 truncate font-mono select-all cursor-text border ${
+                                            queriesExecutadas.has(q)
+                                                ? 'bg-green-50 border-green-300 text-green-800'
+                                                : 'bg-white border-amber-200 text-gray-700'
+                                        }`}>
+                                            {queriesExecutadas.has(q) && <i className="fa-solid fa-check mr-1.5 text-green-600"></i>}
+                                            {q}
+                                        </code>
+                                        <button
+                                            onClick={() => {
+                                                window.open(`https://www.google.com/search?q=${encodeURIComponent(q)}`, '_blank');
+                                                setQueriesExecutadas(prev => new Set([...prev, q]));
+                                            }}
+                                            className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                                queriesExecutadas.has(q)
+                                                    ? 'bg-green-600 text-white hover:bg-green-700'
+                                                    : 'bg-[#0A66C2] text-white hover:bg-[#004182]'
+                                            }`}
+                                            title={queriesExecutadas.has(q) ? 'Já executada' : 'Abrir no Google'}
+                                        >
+                                            {queriesExecutadas.has(q)
+                                                ? <><i className="fa-solid fa-check text-xs"></i> Executada</>
+                                                : <><i className="fa-brands fa-google text-xs"></i> Abrir</>
+                                            }
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -813,6 +903,7 @@ const ProspectSearchPage: React.FC = () => {
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">CARGO / NÍVEL</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM E-MAIL</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">LINKEDIN</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÕES</th>
                                 </tr>
@@ -860,6 +951,23 @@ const ProspectSearchPage: React.FC = () => {
                                                     {prospect.email_status === 'aguardando...' && <i className="fa-solid fa-clock mr-1"></i>}
                                                     {prospect.email_status || '—'}
                                                 </span>
+                                            )}
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            {prospect.motor_email ? (
+                                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${
+                                                    prospect.motor_email === 'hunter_finder' ? 'bg-orange-100 text-orange-700' :
+                                                    prospect.motor_email === 'hunter_domain' ? 'bg-yellow-100 text-yellow-700' :
+                                                    prospect.motor_email === 'snovio'        ? 'bg-purple-100 text-purple-700' :
+                                                    'bg-gray-100 text-gray-500'
+                                                }`}>
+                                                    {prospect.motor_email === 'hunter_finder' ? '🎯 Hunter Finder' :
+                                                     prospect.motor_email === 'hunter_domain' ? '🔵 Hunter Domain' :
+                                                     prospect.motor_email === 'snovio'        ? '🟣 Snov.io' :
+                                                     prospect.motor_email}
+                                                </span>
+                                            ) : (
+                                                <span className="text-gray-300 text-xs">—</span>
                                             )}
                                         </td>
                                         <td className="px-3 py-2 text-center">
