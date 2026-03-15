@@ -14,9 +14,10 @@
  * Taxa de enriquecimento: ~32,5% (benchmark 2025)
  * Custo/email válido: ~$0,085
  *
- * Versão: 1.1
- * Data: 05/03/2026
+ * Versão: 1.2
+ * Data: 15/03/2026
  * v1.1: + Company Enrichment (/companies/find) + Email Verifier (/email-verifier)
+ * v1.2: + Snov.io fallback no enrich_list (MODE 5) — Hunter → Snov.io → not_found
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -642,7 +643,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 }
             }
 
-            // Sem email — mantém dados da empresa enriquecidos + tenta LinkedIn do domain search
+            // Tentativa 3: Snov.io fallback (quando Hunter não encontrou)
+            if (fn && ln) {
+                try {
+                    console.log(`🔄 [Hunter/Enrich] Hunter sem resultado — tentando Snov.io para ${fn} ${ln}...`);
+                    const snovResult = await snovioEmailFinder(fn, ln, domain);
+                    if (snovResult?.email) {
+                        enriched.push({
+                            ...prospect,
+                            ...empresaEnriquecida,
+                            email:        snovResult.email,
+                            email_status: snovResult.status,
+                            email_score:  0,
+                            linkedin_url: prospect.linkedin_url
+                                       || buscarLinkedinNoDomainSearch(fn, ln, domainEmails)
+                                       || null,
+                            enriquecido:  true,
+                            motor_email:  'snovio',
+                        });
+                        console.log(`✅ [Snov.io/Enrich] ${fn} ${ln} → ${snovResult.email}`);
+                        continue;
+                    }
+                } catch (e) {
+                    console.warn(`⚠️ [Snov.io/Enrich] Falhou para ${fn} ${ln}:`, e);
+                }
+            }
+
+            // Sem email em nenhum motor — mantém dados da empresa enriquecidos + tenta LinkedIn do domain search
             enriched.push({
                 ...prospect,
                 ...empresaEnriquecida,
