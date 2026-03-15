@@ -180,6 +180,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         setMaxResultados(25);
         setSearchState({ loading: false, fase: 'idle', error: null });
         setAbaAtiva('busca');
+        setQueriesExecutadas(new Set());
     }, []);
 
     // ============================================
@@ -308,6 +309,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     domain:        dominioEmail,
                     primeiro_nome: prospect.primeiro_nome,
                     ultimo_nome:   prospect.ultimo_nome,
+                    supabase_id:   (prospect as any).supabase_id || null,
                 }),
             });
             const data = await res.json();
@@ -653,9 +655,18 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
                         {/* Progress feedback */}
                         {searchState.loading && (
-                            <div className="mt-2 flex items-center gap-2 text-xs text-blue-600">
-                                <i className="fa-solid fa-spinner fa-spin"></i>
-                                <span>{faseLabel[searchState.fase]}</span>
+                            <div className="mt-3 flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
+                                <i className="fa-solid fa-spinner fa-spin text-2xl text-blue-600 flex-shrink-0"></i>
+                                <div>
+                                    <p className="text-sm font-semibold text-blue-700">
+                                        {searchState.fase === 'descobrindo' ? '🤖 Gemini AI está pesquisando...' : '📧 Enriquecendo emails via Hunter.io...'}
+                                    </p>
+                                    <p className="text-xs text-blue-500 mt-0.5">
+                                        {searchState.fase === 'descobrindo'
+                                            ? 'Consultando o Google Search — pode levar até 30 segundos'
+                                            : 'Buscando emails corporativos — 1 crédito por lead'}
+                                    </p>
+                                </div>
                             </div>
                         )}
                         {searchState.error && (
