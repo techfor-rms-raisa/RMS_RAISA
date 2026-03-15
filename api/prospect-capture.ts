@@ -5,15 +5,21 @@
  * a partir de páginas de resultados do Google Search.
  *
  * Os leads chegam com: nome, cargo, empresa, linkedin_url, localização.
- * Este endpoint normaliza, valida e devolve para o frontend do
- * Prospect Engine exibir na lista de seleção — sem salvar ainda.
- * O analista seleciona quais enriquecer e salvar.
+ * Este endpoint normaliza, valida, salva no Supabase (prospect_leads)
+ * e devolve para o frontend do Prospect Engine exibir na lista.
+ * user_id vem da Extension via localStorage rms_user.
  *
- * Versão: 1.0
- * Data: 14/03/2026
+ * Versão: 2.0
+ * Data: 15/03/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 // ─── Timeout: operação leve, sem IA ───────────────────────────────────
 export const config = {
@@ -190,10 +196,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Use POST.' });
   }
 
-  const { leads, query, pagina_url } = req.body as {
+  const { leads, query, pagina_url, user_id } = req.body as {
     leads:       LeadCapturado[];
     query:       string;
     pagina_url:  string;
+    user_id?:    number | null;
   };
 
   if (!Array.isArray(leads) || leads.length === 0) {
@@ -231,11 +238,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     console.log(`✅ [prospect-capture] ${deduplicados.length} válidos, ${descartados.length} descartados`);
 
+    // ── Salvar no Supabase se user_id disponível ───────────────────────
+    let savedIds: number[] = [];
+    if (user_id && deduplicados.length > 0) {
+      const rows = deduplicados.map(p => ({
+        buscado_por:      user_id,
+        motor:            'extension',
+        fonte_id_gemini:  p.gemini_id,
+        nome_completo:    p.nome_completo,
+        primeiro_nome:    p.primeiro_nome,
+        ultimo_nome:      p.ultimo_nome,
+        cargo:            p.cargo            || null,
+        email:            null,
+        email_status:     null,
+        linkedin_url:     p.linkedin_url     || null,
+        foto_url:         null,
+        empresa_nome:     p.empresa_nome     || null,
+        empresa_dominio:  p.empresa_dominio  || null,
+        empresa_setor:    null,
+        empresa_porte:    null,
+        empresa_linkedin: null,
+        empresa_website:  null,
+        cidade:           p.cidade           || null,
+        estado:           p.estado           || null,
+        pais:             p.pais             || null,
+        senioridade:      p.senioridade      || null,
+        departamentos:    p.departamentos    || [],
+        filtros_busca:    { query, pagina_url, motor: 'extension' },
+        enriquecido:      false,
+        status:           'novo',
+      }));
+
+      const { data: saved, error: saveError } = await supabase
+        .from('prospect_leads')
+        .insert(rows)
+        .select('id');
+
+      if (saveError) {
+        console.error('⚠️ [prospect-capture] Erro ao salvar no Supabase:', saveError.message);
+        // Não falha — retorna os leads mesmo sem salvar
+      } else {
+        savedIds = (saved || []).map((r: any) => r.id);
+        console.log(`💾 [prospect-capture] ${savedIds.length} leads salvos no Supabase`);
+      }
+    } else {
+      console.log(`ℹ️ [prospect-capture] user_id não enviado — leads não salvos no Supabase`);
+    }
+
     return res.status(200).json({
       success:     true,
       resultados:  deduplicados,
       total:       deduplicados.length,
       descartados: descartados.length,
+      salvos:      savedIds.length,
       query:       query,
       motor:       'extension',
       creditos_consumidos: 0,
