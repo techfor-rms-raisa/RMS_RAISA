@@ -140,6 +140,9 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     // BUG 3 FIX: controle de quantidade máxima de resultados (configurável)
     const [maxResultados, setMaxResultados]             = useState(25);
 
+    // Controle de queries já executadas — para marcação visual
+    const [queriesExecutadas, setQueriesExecutadas]     = useState<Set<string>>(new Set());
+
     // ============================================
     // TOGGLES
     // ============================================
@@ -207,6 +210,9 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             // Mostrar toast informativo
             setToastMsg({ tipo: 'ok', msg: `${leads.length} lead${leads.length > 1 ? 's' : ''} capturado${leads.length > 1 ? 's' : ''} pela Extension!` });
             setTimeout(() => setToastMsg(null), 4000);
+
+            // Auto-refresh: recarregar Leads Salvos para exibir os novos leads
+            setTimeout(() => carregarLeadsSalvos(), 1500);
         };
 
         window.addEventListener('message', handleExtensionMessage);
@@ -749,16 +755,30 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                             <div className="flex flex-col gap-2">
                                 {queriesGoogle.map((q, i) => (
                                     <div key={i} className="flex items-center gap-2">
-                                        <code className="flex-1 text-[11px] bg-white border border-amber-200 rounded-lg px-3 py-1.5 text-gray-700 truncate font-mono select-all cursor-text">
+                                        <code className={`flex-1 text-[11px] rounded-lg px-3 py-1.5 truncate font-mono select-all cursor-text border ${
+                                            queriesExecutadas.has(q)
+                                                ? 'bg-green-50 border-green-300 text-green-800'
+                                                : 'bg-white border-amber-200 text-gray-700'
+                                        }`}>
+                                            {queriesExecutadas.has(q) && <i className="fa-solid fa-check mr-1.5 text-green-600"></i>}
                                             {q}
                                         </code>
                                         <button
-                                            onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(q)}`, '_blank')}
-                                            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-[#0A66C2] text-white rounded-lg text-xs font-medium hover:bg-[#004182] transition-colors"
-                                            title="Abrir no Google"
+                                            onClick={() => {
+                                                window.open(`https://www.google.com/search?q=${encodeURIComponent(q)}`, '_blank');
+                                                setQueriesExecutadas(prev => new Set([...prev, q]));
+                                            }}
+                                            className={`flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                                                queriesExecutadas.has(q)
+                                                    ? 'bg-green-600 text-white hover:bg-green-700'
+                                                    : 'bg-[#0A66C2] text-white hover:bg-[#004182]'
+                                            }`}
+                                            title={queriesExecutadas.has(q) ? 'Já executada' : 'Abrir no Google'}
                                         >
-                                            <i className="fa-brands fa-google text-xs"></i>
-                                            Abrir
+                                            {queriesExecutadas.has(q)
+                                                ? <><i className="fa-solid fa-check text-xs"></i> Executada</>
+                                                : <><i className="fa-brands fa-google text-xs"></i> Abrir</>
+                                            }
                                         </button>
                                     </div>
                                 ))}
