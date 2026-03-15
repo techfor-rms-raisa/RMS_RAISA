@@ -126,7 +126,13 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [toastMsg, setToastMsg]                       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
 
     // Abas
-    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'>(initialTab);
+    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'>(initialTab ?? 'busca');
+
+    // Sincronizar abaAtiva quando initialTab mudar
+    // (ex: usuário navega de "Buscar Leads" → "Meus Prospects" sem desmontar o componente)
+    useEffect(() => {
+        if (initialTab) setAbaAtiva(initialTab);
+    }, [initialTab]);
 
     // Leads Salvos
     const [leadsSalvos, setLeadsSalvos]                 = useState<ProspectLead[]>([]);
