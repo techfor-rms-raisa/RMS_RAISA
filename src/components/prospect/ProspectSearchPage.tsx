@@ -103,7 +103,11 @@ const SENIORIDADES = [
 // ============================================
 // COMPONENTE PRINCIPAL
 // ============================================
-const ProspectSearchPage: React.FC = () => {
+interface ProspectSearchPageProps {
+    initialTab?: 'busca' | 'salvos';
+}
+
+const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'busca' }) => {
     const { user: currentUser } = useAuth();
 
     // Form
@@ -122,7 +126,7 @@ const ProspectSearchPage: React.FC = () => {
     const [toastMsg, setToastMsg]                       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
 
     // Abas
-    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'>('busca');
+    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'>(initialTab);
 
     // Leads Salvos
     const [leadsSalvos, setLeadsSalvos]                 = useState<ProspectLead[]>([]);
@@ -726,39 +730,15 @@ const ProspectSearchPage: React.FC = () => {
 
             {/* Info empresa + queries Google */}
             {empresaInfo && (
-                <div className="mb-4 flex flex-col gap-3">
-                    {/* Badge empresa */}
-                    <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg text-sm w-fit">
+                <div className="mb-4 flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-lg text-sm">
                         <i className="fa-solid fa-building text-blue-600"></i>
                         <span className="font-medium text-blue-800">{empresaInfo.nome}</span>
                     </div>
-
-                    {/* Queries — dica para Extension P */}
                     {queriesGoogle.length > 0 && (
-                        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                            <div className="flex items-center gap-2 mb-3">
-                                <span className="w-5 h-5 rounded bg-[#0A66C2] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">P</span>
-                                <p className="text-xs font-semibold text-amber-800">
-                                    Quer mais leads? Execute as queries abaixo no Google — o botão <strong>"Capturar Leads"</strong> da Extension aparece automaticamente.
-                                </p>
-                            </div>
-                            <div className="flex flex-col gap-2">
-                                {queriesGoogle.map((q, i) => (
-                                    <div key={i} className="flex items-center gap-2">
-                                        <code className="flex-1 text-[11px] bg-white border border-amber-200 rounded-lg px-3 py-1.5 text-gray-700 truncate font-mono select-all cursor-text">
-                                            {q}
-                                        </code>
-                                        <button
-                                            onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(q)}`, '_blank')}
-                                            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 bg-[#0A66C2] text-white rounded-lg text-xs font-medium hover:bg-[#004182] transition-colors"
-                                            title="Abrir no Google"
-                                        >
-                                            <i className="fa-brands fa-google text-xs"></i>
-                                            Abrir
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
+                        <div className="flex items-center gap-1 text-xs text-gray-400">
+                            <i className="fa-brands fa-google text-gray-400"></i>
+                            <span>Queries: {queriesGoogle.slice(0,2).join(' · ')}</span>
                         </div>
                     )}
                 </div>

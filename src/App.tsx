@@ -443,7 +443,7 @@ const App: React.FC = () => {
       case 'prospect_search':
           return <ProspectSearchPage />;
       case 'prospect_list':
-          return <div className="p-8 text-center text-gray-400"><i className="fa-solid fa-address-book text-5xl mb-4 block"></i><p className="text-lg">Meus Prospects — Fase 3</p></div>;
+          return <ProspectSearchPage initialTab="salvos" />;
       case 'prospect_credits':
           return <div className="p-8 text-center text-gray-400"><i className="fa-solid fa-chart-column text-5xl mb-4 block"></i><p className="text-lg">Consumo de Créditos — Fase 3</p></div>;
 
