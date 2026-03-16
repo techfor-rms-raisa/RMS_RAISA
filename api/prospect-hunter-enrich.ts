@@ -376,43 +376,93 @@ async function snovioEmailFinder(
     domain:    string
 ): Promise<{ email: string; status: string } | null> {
     const token = await getSnovioToken();
-    if (!token) return null;
+    if (!token) {
+        console.warn(`⚠️ [Snov.io/Finder] Token não obtido — verifique SNOVIO_USER_ID e SNOVIO_API_SECRET`);
+        return null;
+    }
     const params = new URLSearchParams();
     params.append('rows[0][first_name]', firstName);
     params.append('rows[0][last_name]',  lastName);
     params.append('rows[0][domain]',     domain);
-    console.log(`📧 [Snov.io/Finder] ${firstName} ${lastName} @ ${domain}`);
+    console.log(`📧 [Snov.io/Finder] Iniciando busca: ${firstName} ${lastName} @ ${domain}`);
+
     const startRes = await fetch('https://api.snov.io/v2/emails-by-domain-by-name/start', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: params.toString(),
     });
-    if (!startRes.ok) return null;
+
+    if (!startRes.ok) {
+        console.error(`❌ [Snov.io/Finder] Start falhou: ${startRes.status} ${await startRes.text()}`);
+        return null;
+    }
+
     const startData = await startRes.json();
+    console.log(`📦 [Snov.io/Finder] Start response: ${JSON.stringify(startData).substring(0, 300)}`);
+
     // Às vezes retorna direto sem polling
     if (startData.data?.[0]?.email) {
+        console.log(`✅ [Snov.io/Finder] Email direto: ${startData.data[0].email}`);
         return { email: startData.data[0].email, status: startData.data[0].smtp_status || 'unknown' };
     }
-    const taskHash = startData.meta?.task_hash || startData.data?.[0]?.task_hash;
-    if (!taskHash) return null;
+
+    // Extrai taskHash de múltiplos locais possíveis na resposta
+    const taskHash = startData.meta?.task_hash
+                  || startData.data?.meta?.task_hash
+                  || startData.data?.[0]?.task_hash
+                  || startData.task_hash;
+
+    if (!taskHash) {
+        console.warn(`⚠️ [Snov.io/Finder] taskHash não encontrado. Keys: ${Object.keys(startData).join(', ')}`);
+        return null;
+    }
+
+    console.log(`⏳ [Snov.io/Finder] taskHash: ${taskHash} — iniciando polling...`);
+
     const resultUrl = `https://api.snov.io/v2/emails-by-domain-by-name/result?task_hash=${taskHash}`;
-    // Poll até 6x (15s)
-    for (let i = 0; i < 6; i++) {
+
+    // Poll até 8x com 2.5s de intervalo (20s total)
+    for (let i = 0; i < 8; i++) {
         await new Promise(r => setTimeout(r, 2500));
         const pollRes = await fetch(resultUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-        if (!pollRes.ok) break;
-        const pollData = await pollRes.json();
-        if (pollData.status === 'completed') {
-            const emailEntry = pollData.data?.[0]?.emails?.[0] || pollData.data?.[0];
-            const email = emailEntry?.email;
-            if (email) {
-                console.log(`✅ [Snov.io/Finder] ${email}`);
-                return { email, status: emailEntry?.smtp_status || 'unknown' };
-            }
+
+        if (!pollRes.ok) {
+            console.warn(`⚠️ [Snov.io/Finder] Poll ${i+1} HTTP ${pollRes.status}`);
             break;
         }
-        if (pollData.status === 'failed') break;
+
+        const pollData = await pollRes.json();
+        // Log compacto do poll para diagnóstico
+        const pollStatus = pollData.status || pollData.meta?.status || pollData.data?.status || 'unknown';
+        console.log(`⏳ [Snov.io/Finder] Poll ${i+1}/8 — status: "${pollStatus}" | raw: ${JSON.stringify(pollData).substring(0, 200)}`);
+
+        // Verificar status em múltiplos locais (Snov.io não é consistente entre versões)
+        const isCompleted = pollStatus === 'completed'
+                         || pollData.meta?.status === 'completed'
+                         || Array.isArray(pollData.data) && pollData.data.length > 0;
+
+        if (isCompleted) {
+            // Tentar extrair email de múltiplas estruturas possíveis
+            const row       = pollData.data?.[0];
+            const emailEntry = row?.emails?.[0] || row?.email_data?.[0] || row;
+            const email      = emailEntry?.email || row?.email;
+
+            if (email) {
+                console.log(`✅ [Snov.io/Finder] Email encontrado: ${email}`);
+                return { email, status: emailEntry?.smtp_status || emailEntry?.status || 'unknown' };
+            }
+
+            console.log(`ℹ️ [Snov.io/Finder] Completo mas sem email. Data: ${JSON.stringify(pollData.data).substring(0, 200)}`);
+            break;
+        }
+
+        if (pollStatus === 'failed') {
+            console.warn(`❌ [Snov.io/Finder] Task falhou`);
+            break;
+        }
     }
+
+    console.log(`ℹ️ [Snov.io/Finder] Email não encontrado para ${firstName} ${lastName}`);
     return null;
 }
 
