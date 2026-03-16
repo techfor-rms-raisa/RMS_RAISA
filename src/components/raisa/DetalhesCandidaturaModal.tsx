@@ -17,8 +17,8 @@
  * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
  * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
  * 
- * Versão: 2.1 - Exibição de descrição das experiências
- * Data: 30/01/2026
+ * Versão: 2.2 - Status 'Sem Interesse' com modal de motivos
+ * Data: 16/03/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -191,6 +191,15 @@ const STATUS_CONFIG: Record<string, {
     proximosStatus: [],
     etapa: 8,
     descricao: 'Aguardando Ficha de Inclusão → Consultor Ativo'
+  },
+  'sem_interesse': { 
+    label: 'Sem Interesse', 
+    cor: 'text-amber-700', 
+    bgCor: 'bg-amber-100',
+    icon: AlertTriangle,
+    proximosStatus: [],
+    etapa: 99,
+    descricao: 'Candidato declinou a proposta'
   }
 };
 
@@ -216,6 +225,20 @@ const MOTIVOS_REPROVACAO_CLIENTE = [
   { value: 'vaga_cancelada', label: 'Vaga Cancelada/Suspensa' },
   { value: 'sem_retorno', label: 'Cliente Não Deu Retorno' },
   { value: 'outro', label: 'Outro Motivo' }
+];
+
+// Motivos de Sem Interesse (candidato declina a proposta)
+const MOTIVOS_SEM_INTERESSE = [
+  { value: 'aceita_somente_remoto',          label: 'Aceita somente Remoto' },
+  { value: 'estabilidade_projeto',           label: 'Estabilidade no projeto' },
+  { value: 'localizacao',                    label: 'Localização' },
+  { value: 'nao_avaliando_propostas',        label: 'Não está avaliando propostas' },
+  { value: 'sem_remuneracao',                label: 'Não participa sem saber a remuneração' },
+  { value: 'sem_cliente',                    label: 'Não participa sem saber quem é o cliente' },
+  { value: 'outro_motivo',                   label: 'Outro Motivo' },
+  { value: 'sem_disponibilidade_viagem',     label: 'Sem disponibilidade para viagem' },
+  { value: 'somente_clt',                    label: 'Só avalia a modalidade CLT' },
+  { value: 'valor_abaixo_pretendido',        label: 'Valor abaixo do pretendido' },
 ];
 
 // ============================================
@@ -246,6 +269,9 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
   const [motivoOutro, setMotivoOutro] = useState<string>('');
   const [observacao, setObservacao] = useState<string>('');
   const [showConfirmacao, setShowConfirmacao] = useState(false);
+  // 🆕 Sem Interesse
+  const [showSemInteresseModal, setShowSemInteresseModal] = useState(false);
+  const [motivoSemInteresse, setMotivoSemInteresse] = useState<string>('');
 
   // 🆕 v57.2: Estado para modal de Geração de CV Padronizado
   const [showCVGenerator, setShowCVGenerator] = useState(false);
@@ -282,6 +308,9 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
 
   // Verificar se é reprovação
   const isReprovacao = (status: string) => status === 'reprovado' || status === 'reprovado_cliente';
+  
+  // Verificar se é sem interesse
+  const isSemInteresse = (status: string) => status === 'sem_interesse';
   
   // Verificar se currículo está disponível
   const curriculoDisponivel = !!(candidatura as any).curriculo_texto && 
@@ -539,15 +568,23 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
         getMotivosReprovacao().find(m => m.value === motivoReprovacao)?.label || motivoReprovacao;
 
       // 1. Atualizar status da candidatura
+      const updatePayload: any = {
+        status: novoStatus,
+        atualizado_em: new Date().toISOString(),
+        observacoes: observacao ? 
+          `${candidatura.observacoes || ''}\n\n[${new Date().toLocaleString('pt-BR')}] ${observacao}`.trim() : 
+          candidatura.observacoes
+      };
+
+      // 🆕 Salvar motivo_sem_interesse quando aplicável
+      if (isSemInteresse(novoStatus) && motivoSemInteresse) {
+        const motivoLabel = MOTIVOS_SEM_INTERESSE.find(m => m.value === motivoSemInteresse)?.label || motivoSemInteresse;
+        updatePayload.motivo_sem_interesse = motivoLabel;
+      }
+
       const { error: updateError } = await supabase
         .from('candidaturas')
-        .update({ 
-          status: novoStatus,
-          atualizado_em: new Date().toISOString(),
-          observacoes: observacao ? 
-            `${candidatura.observacoes || ''}\n\n[${new Date().toLocaleString('pt-BR')}] ${observacao}`.trim() : 
-            candidatura.observacoes
-        })
+        .update(updatePayload)
         .eq('id', candidatura.id);
 
       if (updateError) throw updateError;
@@ -580,6 +617,8 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
       setMotivoOutro('');
       setObservacao('');
       setShowConfirmacao(false);
+      setShowSemInteresseModal(false);
+      setMotivoSemInteresse('');
 
       await carregarHistorico();
 
@@ -1189,8 +1228,13 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                   <select
                     value={novoStatus}
                     onChange={e => {
-                      setNovoStatus(e.target.value);
-                      if (e.target.value) setShowConfirmacao(true);
+                      const val = e.target.value;
+                      setNovoStatus(val);
+                      if (val === 'sem_interesse') {
+                        setShowSemInteresseModal(true);
+                      } else if (val) {
+                        setShowConfirmacao(true);
+                      }
                     }}
                     className="w-full border-2 border-gray-200 rounded-xl p-3 focus:border-blue-500"
                   >
@@ -1203,6 +1247,80 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                   </select>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* 🆕 MODAL SEM INTERESSE */}
+          {showSemInteresseModal && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
+              <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4 shadow-2xl">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center">
+                    <AlertTriangle className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-800">
+                    😔 Candidato Sem Interesse
+                  </h3>
+                </div>
+
+                <p className="text-sm text-gray-600 mb-4">
+                  Selecione o motivo pelo qual o candidato <strong>{candidatura.candidato_nome || pessoa?.nome}</strong> declinou a proposta para a vaga <strong>{vaga?.titulo}</strong>.
+                </p>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Motivo do Declínio *
+                  </label>
+                  <select
+                    value={motivoSemInteresse}
+                    onChange={e => setMotivoSemInteresse(e.target.value)}
+                    className="w-full border-2 border-gray-200 rounded-xl p-3 focus:border-amber-500 focus:outline-none"
+                  >
+                    <option value="">Selecione o motivo...</option>
+                    {MOTIVOS_SEM_INTERESSE.map(m => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-sm font-semibold text-gray-700 mb-2">
+                    Observação (opcional)
+                  </label>
+                  <textarea
+                    value={observacao}
+                    onChange={e => setObservacao(e.target.value)}
+                    placeholder="Adicione detalhes sobre o declínio..."
+                    className="w-full border rounded-lg p-2 h-20 resize-none"
+                  />
+                </div>
+
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowSemInteresseModal(false);
+                      setNovoStatus('');
+                      setMotivoSemInteresse('');
+                      setObservacao('');
+                    }}
+                    className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                    disabled={loading}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleMudarStatus}
+                    disabled={loading || !motivoSemInteresse}
+                    className="flex-1 px-4 py-2 rounded-lg text-white font-semibold bg-amber-500 hover:bg-amber-600 disabled:opacity-50"
+                  >
+                    {loading ? (
+                      <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+                    ) : (
+                      'Confirmar'
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
