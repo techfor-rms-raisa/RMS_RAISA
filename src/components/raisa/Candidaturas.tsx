@@ -20,7 +20,8 @@
  * - Modal de Detalhes da Candidatura ao clicar na linha
  * - Histórico de mudanças de status
  * 
- * Data: 14/01/2026
+ * 🆕 v57.2: Status 'Sem Interesse' com motivo — badge âmbar
+ * Data: 16/03/2026
  */
 
 import React, { useState, useMemo } from 'react';
@@ -252,6 +253,7 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                 c.status === 'reprovado' || 
                 c.status === 'reprovado_cliente'
             ).length,
+            sem_interesse: candidaturasParaContar.filter(c => c.status === 'sem_interesse').length,
             total: candidaturasParaContar.length
         };
     }, [safeCandidaturas, filterCliente, safeVagas, filtroVagaEscopo, filtroCandidatoEscopo, currentUserId]);
@@ -417,7 +419,8 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         'entrevista_cliente': 'bg-indigo-100 text-indigo-800',
         'aprovado_cliente': 'bg-emerald-100 text-emerald-800',
         'reprovado_cliente': 'bg-rose-100 text-rose-800',
-        'contratado': 'bg-teal-100 text-teal-800'
+        'contratado': 'bg-teal-100 text-teal-800',
+        'sem_interesse': 'bg-amber-100 text-amber-800'
     };
 
     // Labels amigáveis para status - FLUXO ATUALIZADO
@@ -431,7 +434,8 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         'entrevista_cliente': 'Entrevista Cliente',
         'aprovado_cliente': 'Aprovado pelo Cliente',
         'reprovado_cliente': 'Reprovado pelo Cliente',
-        'contratado': 'Contratado'
+        'contratado': 'Contratado',
+        'sem_interesse': 'Sem Interesse'
     };
 
     // 🆕 Labels para status_posicao da VAGA (posição no funil)
