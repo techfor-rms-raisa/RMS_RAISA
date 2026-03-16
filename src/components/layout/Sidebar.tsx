@@ -331,19 +331,19 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
             view: 'prospect_search', 
             label: 'Buscar Leads', 
             icon: 'fa-solid fa-magnifying-glass-dollar', 
-            roles: ['Administrador', 'Gestão Comercial'] 
+            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
         },
         { 
             view: 'prospect_list', 
             label: 'Meus Prospects', 
             icon: 'fa-solid fa-address-book', 
-            roles: ['Administrador', 'Gestão Comercial', 'Gestão de R&S'] 
+            roles: ['Administrador', 'Gestão Comercial', 'Gestão de R&S', 'SDR'] 
         },
         { 
             view: 'prospect_credits', 
             label: 'Consumo Créditos', 
             icon: 'fa-solid fa-chart-column', 
-            roles: ['Administrador', 'Gestão Comercial'] 
+            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
         },
     ] as any;
 
@@ -361,7 +361,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
     const temAcessoAtividades = ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Gestão de Pessoas', 'Consulta']
         .includes(currentUser.tipo_usuario);
 
-    const temAcessoPROSPECT = ['Administrador', 'Gestão Comercial', 'Gestão de R&S']
+    const temAcessoPROSPECT = ['Administrador', 'Gestão Comercial', 'Gestão de R&S', 'SDR']
         .includes(currentUser.tipo_usuario);
 
     return (

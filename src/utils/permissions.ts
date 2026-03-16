@@ -1,10 +1,12 @@
 /**
  * permissions.ts - Sistema Centralizado de Permissões
  * 
+ * 🆕 v58.4: Adicionado perfil SDR — acesso exclusivo ao módulo Prospect
+ *            + podeUsarProspect() para controle centralizado
  * 🆕 v58.3: Adicionada função podeEditarVagas() para Gestão Comercial
  * 🆕 v57.0: Matriz de Permissões Implementada
  * 
- * Data: 21/01/2026
+ * Data: 15/03/2026
  */
 
 import { UserRole } from '@/types';
@@ -19,7 +21,7 @@ import { UserRole } from '@/types';
 export function getPerfisPodeVer(perfilLogado: UserRole): UserRole[] {
   switch (perfilLogado) {
     case 'Administrador':
-      return ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Gestão de Pessoas', 'Analista de R&S', 'Consulta', 'Cliente'];
+      return ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Gestão de Pessoas', 'Analista de R&S', 'Consulta', 'Cliente', 'SDR'];
     
     case 'Gestão de R&S':
       // Gestão de R&S vê todos EXCETO Admin e Gestão Comercial
@@ -30,6 +32,7 @@ export function getPerfisPodeVer(perfilLogado: UserRole): UserRole[] {
     case 'Gestão Comercial':
     case 'Consulta':
     case 'Cliente':
+    case 'SDR':
       // Esses perfis só veem o próprio perfil (próprio usuário)
       return [perfilLogado];
     
@@ -44,7 +47,7 @@ export function getPerfisPodeVer(perfilLogado: UserRole): UserRole[] {
 export function getPerfisPodeCriar(perfilLogado: UserRole): UserRole[] {
   switch (perfilLogado) {
     case 'Administrador':
-      return ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Gestão de Pessoas', 'Analista de R&S', 'Consulta', 'Cliente'];
+      return ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Gestão de Pessoas', 'Analista de R&S', 'Consulta', 'Cliente', 'SDR'];
     
     case 'Gestão de R&S':
       // Gestão de R&S pode criar todos EXCETO Admin e Gestão Comercial
@@ -113,6 +116,14 @@ export function podeInserirCandidatos(perfilLogado: UserRole): boolean {
 
 export function podeUsarLinkedIn(perfilLogado: UserRole): boolean {
   return ['Administrador', 'Gestão de R&S', 'Analista de R&S'].includes(perfilLogado);
+}
+
+/**
+ * Verifica se pode acessar o módulo Prospect (Prospecção B2B)
+ * Perfis: Administrador, Gestão Comercial, SDR
+ */
+export function podeUsarProspect(perfilLogado: UserRole): boolean {
+  return ['Administrador', 'Gestão Comercial', 'SDR'].includes(perfilLogado);
 }
 
 export function podeInserirVagas(perfilLogado: UserRole): boolean {

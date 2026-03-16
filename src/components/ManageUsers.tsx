@@ -7,7 +7,8 @@
  * - Gestão de R&S não vê Admin nem Gestão Comercial
  * - Perfis básicos só veem/editam próprio cadastro
  * 
- * Data: 11/01/2026
+ * 🆕 v58.4: Perfil SDR adicionado — acesso exclusivo ao módulo Prospect
+ * Data: 15/03/2026
  */
 
 import React, { useState, useMemo } from 'react';
@@ -84,7 +85,8 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
         'Gestão de Pessoas',
         'Analista de R&S',
         'Consulta',
-        'Cliente'
+        'Cliente',
+        'SDR'
     ];
 
     // Roles visíveis no filtro (apenas as que pode ver)
@@ -262,7 +264,8 @@ const ManageUsers: React.FC<ManageUsersProps> = ({ users, addUser, updateUser, c
             'Gestão de Pessoas': 'bg-green-100 text-green-800',
             'Analista de R&S': 'bg-purple-100 text-purple-800',
             'Consulta': 'bg-gray-100 text-gray-800',
-            'Cliente': 'bg-yellow-100 text-yellow-800'
+            'Cliente': 'bg-yellow-100 text-yellow-800',
+            'SDR': 'bg-teal-100 text-teal-800'
         };
         return colors[role] || 'bg-gray-100 text-gray-800';
     };
