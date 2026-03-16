@@ -198,7 +198,7 @@ const STATUS_CONFIG: Record<string, {
     bgCor: 'bg-amber-100',
     icon: AlertTriangle,
     proximosStatus: [],
-    etapa: 99,
+    etapa: 9,
     descricao: 'Candidato declinou a proposta'
   }
 };
@@ -683,23 +683,25 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
           {/* Barra de Progresso do Fluxo */}
           <div className="mt-4 pt-4 border-t border-white/20">
             <div className="flex items-center justify-between text-xs">
-              {['Triagem', 'Entrevista', 'Aprovado', 'Env. Cliente', 'Aguardando', 'Entrev. Cliente', 'Aprov. Cliente', 'Contratado'].map((etapa, index) => {
+              {['Triagem', 'Entrevista', 'Aprovado', 'Env. Cliente', 'Aguardando', 'Entrev. Cliente', 'Aprov. Cliente', 'Contratado', 'Sem Int.'].map((etapa, index) => {
                 const etapaNum = index + 1;
                 const isAtual = statusAtual.etapa === etapaNum;
                 const isPast = statusAtual.etapa > etapaNum && statusAtual.etapa !== 99;
-                const isFinal = statusAtual.etapa === 99; // Reprovado
+                const isFinal = statusAtual.etapa === 99; // Reprovado/Reprovado Cliente
+                const isSemInt = statusAtual.etapa === 9 && etapaNum === 9;
                 
                 return (
                   <div key={index} className="flex flex-col items-center">
                     <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
+                      isSemInt ? 'bg-amber-400 text-white' :
                       isAtual ? 'bg-white text-blue-600' :
                       isPast ? 'bg-green-400 text-white' :
                       isFinal && index < 3 ? 'bg-red-400 text-white' :
                       'bg-white/30 text-white/70'
                     }`}>
-                      {isPast ? '✓' : isFinal && index === 2 ? '✗' : etapaNum}
+                      {isPast ? '✓' : isSemInt ? '😔' : isFinal && index === 2 ? '✗' : etapaNum}
                     </div>
-                    <span className={`mt-1 ${isAtual ? 'text-white font-semibold' : 'text-white/60'}`}>
+                    <span className={`mt-1 ${isAtual || isSemInt ? 'text-white font-semibold' : 'text-white/60'}`}>
                       {etapa}
                     </span>
                   </div>
@@ -1199,11 +1201,23 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
 
               {statusAtual.proximosStatus.length === 0 && (
                 <div className={`rounded-xl p-6 text-center ${
-                  isReprovacao(candidatura.status) 
-                    ? 'bg-red-50 border border-red-200' 
+                  isReprovacao(candidatura.status) || isSemInteresse(candidatura.status)
+                    ? isSemInteresse(candidatura.status)
+                      ? 'bg-amber-50 border border-amber-200'
+                      : 'bg-red-50 border border-red-200'
                     : 'bg-green-50 border border-green-200'
                 }`}>
-                  {isReprovacao(candidatura.status) ? (
+                  {isSemInteresse(candidatura.status) ? (
+                    <>
+                      <AlertTriangle className="w-12 h-12 text-amber-500 mx-auto mb-3" />
+                      <p className="text-gray-700 font-medium">😔 Candidato Declinou a Proposta</p>
+                      <p className="text-sm text-gray-500">
+                        {(candidatura as any).motivo_sem_interesse
+                          ? `Motivo: ${(candidatura as any).motivo_sem_interesse}`
+                          : 'O candidato não tem interesse nesta oportunidade.'}
+                      </p>
+                    </>
+                  ) : isReprovacao(candidatura.status) ? (
                     <>
                       <XCircle className="w-12 h-12 text-red-500 mx-auto mb-3" />
                       <p className="text-gray-700 font-medium">Processo Encerrado</p>
