@@ -406,14 +406,15 @@ async function snovioEmailFinder(
         return { email: startData.data[0].email, status: startData.data[0].smtp_status || 'unknown' };
     }
 
-    // Extrai taskHash de múltiplos locais possíveis na resposta
-    const taskHash = startData.meta?.task_hash
-                  || startData.data?.meta?.task_hash
-                  || startData.data?.[0]?.task_hash
+    // Extrai taskHash — Snov.io v2 retorna {"data":{"task_hash":"..."},"meta":{...}}
+    // data é objeto simples, não array
+    const taskHash = startData.data?.task_hash      // ← estrutura real confirmada
+                  || startData.meta?.task_hash
+                  || startData.data?.[0]?.task_hash  // fallback array (versões antigas)
                   || startData.task_hash;
 
     if (!taskHash) {
-        console.warn(`⚠️ [Snov.io/Finder] taskHash não encontrado. Keys: ${Object.keys(startData).join(', ')}`);
+        console.warn(`⚠️ [Snov.io/Finder] taskHash não encontrado. Keys: ${Object.keys(startData).join(', ')} | data: ${JSON.stringify(startData.data)}`);
         return null;
     }
 
