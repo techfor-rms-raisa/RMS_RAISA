@@ -9,7 +9,8 @@ export type UserRole =
   | 'Gestão de Pessoas' 
   | 'Analista de R&S' 
   | 'Consulta' 
-  | 'Cliente';
+  | 'Cliente'
+  | 'SDR';  // 🆕 v58.4: Perfil SDR — acesso exclusivo ao módulo Prospect
 
 export interface User {
   id: number;

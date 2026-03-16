@@ -376,43 +376,94 @@ async function snovioEmailFinder(
     domain:    string
 ): Promise<{ email: string; status: string } | null> {
     const token = await getSnovioToken();
-    if (!token) return null;
+    if (!token) {
+        console.warn(`⚠️ [Snov.io/Finder] Token não obtido — verifique SNOVIO_USER_ID e SNOVIO_API_SECRET`);
+        return null;
+    }
     const params = new URLSearchParams();
     params.append('rows[0][first_name]', firstName);
     params.append('rows[0][last_name]',  lastName);
     params.append('rows[0][domain]',     domain);
-    console.log(`📧 [Snov.io/Finder] ${firstName} ${lastName} @ ${domain}`);
+    console.log(`📧 [Snov.io/Finder] Iniciando busca: ${firstName} ${lastName} @ ${domain}`);
+
     const startRes = await fetch('https://api.snov.io/v2/emails-by-domain-by-name/start', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: params.toString(),
     });
-    if (!startRes.ok) return null;
+
+    if (!startRes.ok) {
+        console.error(`❌ [Snov.io/Finder] Start falhou: ${startRes.status} ${await startRes.text()}`);
+        return null;
+    }
+
     const startData = await startRes.json();
+    console.log(`📦 [Snov.io/Finder] Start response: ${JSON.stringify(startData).substring(0, 300)}`);
+
     // Às vezes retorna direto sem polling
     if (startData.data?.[0]?.email) {
+        console.log(`✅ [Snov.io/Finder] Email direto: ${startData.data[0].email}`);
         return { email: startData.data[0].email, status: startData.data[0].smtp_status || 'unknown' };
     }
-    const taskHash = startData.meta?.task_hash || startData.data?.[0]?.task_hash;
-    if (!taskHash) return null;
+
+    // Extrai taskHash — Snov.io v2 retorna {"data":{"task_hash":"..."},"meta":{...}}
+    // data é objeto simples, não array
+    const taskHash = startData.data?.task_hash      // ← estrutura real confirmada
+                  || startData.meta?.task_hash
+                  || startData.data?.[0]?.task_hash  // fallback array (versões antigas)
+                  || startData.task_hash;
+
+    if (!taskHash) {
+        console.warn(`⚠️ [Snov.io/Finder] taskHash não encontrado. Keys: ${Object.keys(startData).join(', ')} | data: ${JSON.stringify(startData.data)}`);
+        return null;
+    }
+
+    console.log(`⏳ [Snov.io/Finder] taskHash: ${taskHash} — iniciando polling...`);
+
     const resultUrl = `https://api.snov.io/v2/emails-by-domain-by-name/result?task_hash=${taskHash}`;
-    // Poll até 6x (15s)
-    for (let i = 0; i < 6; i++) {
+
+    // Poll até 8x com 2.5s de intervalo (20s total)
+    for (let i = 0; i < 8; i++) {
         await new Promise(r => setTimeout(r, 2500));
         const pollRes = await fetch(resultUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-        if (!pollRes.ok) break;
-        const pollData = await pollRes.json();
-        if (pollData.status === 'completed') {
-            const emailEntry = pollData.data?.[0]?.emails?.[0] || pollData.data?.[0];
-            const email = emailEntry?.email;
-            if (email) {
-                console.log(`✅ [Snov.io/Finder] ${email}`);
-                return { email, status: emailEntry?.smtp_status || 'unknown' };
-            }
+
+        if (!pollRes.ok) {
+            console.warn(`⚠️ [Snov.io/Finder] Poll ${i+1} HTTP ${pollRes.status}`);
             break;
         }
-        if (pollData.status === 'failed') break;
+
+        const pollData = await pollRes.json();
+        // Log compacto do poll para diagnóstico
+        const pollStatus = pollData.status || pollData.meta?.status || pollData.data?.status || 'unknown';
+        console.log(`⏳ [Snov.io/Finder] Poll ${i+1}/8 — status: "${pollStatus}" | raw: ${JSON.stringify(pollData).substring(0, 200)}`);
+
+        // Verificar status em múltiplos locais (Snov.io não é consistente entre versões)
+        const isCompleted = pollStatus === 'completed'
+                         || pollData.meta?.status === 'completed'
+                         || Array.isArray(pollData.data) && pollData.data.length > 0;
+
+        if (isCompleted) {
+            // Tentar extrair email de múltiplas estruturas possíveis
+            const row       = pollData.data?.[0];
+            const emailEntry = row?.emails?.[0] || row?.email_data?.[0] || row;
+            const email      = emailEntry?.email || row?.email;
+
+            if (email) {
+                console.log(`✅ [Snov.io/Finder] Email encontrado: ${email}`);
+                return { email, status: emailEntry?.smtp_status || emailEntry?.status || 'unknown' };
+            }
+
+            console.log(`ℹ️ [Snov.io/Finder] Completo mas sem email. Data: ${JSON.stringify(pollData.data).substring(0, 200)}`);
+            break;
+        }
+
+        if (pollStatus === 'failed') {
+            console.warn(`❌ [Snov.io/Finder] Task falhou`);
+            break;
+        }
     }
+
+    console.log(`ℹ️ [Snov.io/Finder] Email não encontrado para ${firstName} ${lastName}`);
     return null;
 }
 
@@ -557,13 +608,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (domainEmails.length > 0) creditosUsados++;
 
         // ETAPA 3: Para cada prospect, tenta cruzar ou usar Email Finder
-        const enriched = [];
+        // Processamento em lotes paralelos para evitar timeout do Vercel (60s)
+        // Lote de 4 prospects simultâneos — balanceia velocidade vs rate limits
+        const BATCH_SIZE = 4;
+        const enriched: any[] = [];
 
-        for (const prospect of prospects) {
+        // Função de enriquecimento individual — usada no Promise.all
+        const enriquecerProspect = async (prospect: any): Promise<any> => {
             const fn = prospect.primeiro_nome || '';
             const ln = prospect.ultimo_nome   || '';
 
-            // Dados da empresa enriquecidos pelo Company Enrichment
             const empresaEnriquecida = company ? {
                 empresa_setor:   company.industry     || prospect.empresa_setor,
                 empresa_porte:   company.size_number  || prospect.empresa_porte,
@@ -577,18 +631,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // Tentativa 1: cruzamento com Domain Search (sem custo adicional)
             const match = cruzarComDomainSearch(fn, ln, domainEmails);
             if (match && match.value) {
-                // Verificação opcional do email encontrado
-                let emailStatus = match.confidence >= 70 ? 'valid' : 'unknown';
-                if (verificar_emails) {
-                    const verification = await hunterEmailVerifier(match.value, apiKey);
-                    creditosUsados++;
-                    if (verification) {
-                        emailStatus = verification.result === 'deliverable' ? 'valid'
-                                    : verification.result === 'undeliverable' ? 'invalid'
-                                    : 'unknown';
-                    }
-                }
-                enriched.push({
+                const emailStatus = match.confidence >= 70 ? 'valid' : 'unknown';
+                console.log(`✅ [Hunter/Enrich] Domain match: ${fn} ${ln} → ${match.value}`);
+                return {
                     ...prospect,
                     ...empresaEnriquecida,
                     email:        match.value,
@@ -597,36 +642,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     linkedin_url: prospect.linkedin_url || match.linkedin || null,
                     enriquecido:  true,
                     motor_email:  'hunter_domain',
-                });
-                console.log(`✅ [Hunter/Enrich] Domain match: ${fn} ${ln} → ${match.value}`);
-                continue;
+                };
             }
 
-            // Tentativa 2: Email Finder (1 crédito por pessoa)
+            // Tentativa 2: Hunter Email Finder (1 crédito por pessoa)
             if (fn && ln) {
                 try {
                     const found = await hunterEmailFinder(fn, ln, domain, apiKey);
-                    creditosUsados++;
-
                     if (found?.email) {
-                        // Verificação opcional
-                        let emailStatus = found.status;
-                        if (verificar_emails) {
-                            const verification = await hunterEmailVerifier(found.email, apiKey);
-                            creditosUsados++;
-                            if (verification) {
-                                emailStatus = verification.result === 'deliverable' ? 'valid'
-                                            : verification.result === 'undeliverable' ? 'invalid'
-                                            : found.status;
-                            }
-                        }
-                        enriched.push({
+                        console.log(`✅ [Hunter/Enrich] Finder: ${fn} ${ln} → ${found.email} (${found.score})`);
+                        return {
                             ...prospect,
                             ...empresaEnriquecida,
                             email:        found.email,
-                            email_status: emailStatus,
+                            email_status: found.status,
                             email_score:  found.score,
-                            // Email Finder retorna campo 'linkedin' (não linkedin_url) — normalizar
                             linkedin_url: prospect.linkedin_url
                                        || (found as any).linkedin
                                        || found.linkedin_url
@@ -634,22 +664,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                                        || null,
                             enriquecido:  true,
                             motor_email:  'hunter_finder',
-                        });
-                        console.log(`✅ [Hunter/Enrich] Finder: ${fn} ${ln} → ${found.email} (${found.score})`);
-                        continue;
+                        };
                     }
                 } catch (e) {
                     console.warn(`⚠️ [Hunter/Enrich] Finder falhou para ${fn} ${ln}:`, e);
                 }
             }
 
-            // Tentativa 3: Snov.io fallback (quando Hunter não encontrou)
+            // Tentativa 3: Snov.io fallback
             if (fn && ln) {
                 try {
                     console.log(`🔄 [Hunter/Enrich] Hunter sem resultado — tentando Snov.io para ${fn} ${ln}...`);
                     const snovResult = await snovioEmailFinder(fn, ln, domain);
                     if (snovResult?.email) {
-                        enriched.push({
+                        console.log(`✅ [Snov.io/Enrich] ${fn} ${ln} → ${snovResult.email}`);
+                        return {
                             ...prospect,
                             ...empresaEnriquecida,
                             email:        snovResult.email,
@@ -660,17 +689,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                                        || null,
                             enriquecido:  true,
                             motor_email:  'snovio',
-                        });
-                        console.log(`✅ [Snov.io/Enrich] ${fn} ${ln} → ${snovResult.email}`);
-                        continue;
+                        };
                     }
                 } catch (e) {
                     console.warn(`⚠️ [Snov.io/Enrich] Falhou para ${fn} ${ln}:`, e);
                 }
             }
 
-            // Sem email em nenhum motor — mantém dados da empresa enriquecidos + tenta LinkedIn do domain search
-            enriched.push({
+            // Sem email em nenhum motor
+            return {
                 ...prospect,
                 ...empresaEnriquecida,
                 email:        null,
@@ -681,7 +708,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                            || null,
                 enriquecido:  false,
                 motor_email:  null,
-            });
+            };
+        };
+
+        // Processar em lotes paralelos (BATCH_SIZE por vez)
+        for (let i = 0; i < prospects.length; i += BATCH_SIZE) {
+            const lote = prospects.slice(i, i + BATCH_SIZE);
+            console.log(`⚡ [Hunter/Enrich] Processando lote ${Math.floor(i/BATCH_SIZE)+1}/${Math.ceil(prospects.length/BATCH_SIZE)} (${lote.length} prospects)...`);
+            const resultados = await Promise.all(lote.map(p => enriquecerProspect(p)));
+            enriched.push(...resultados);
+            // Contabilizar créditos aproximados do lote
+            creditosUsados += lote.length;
         }
 
         const comEmail = enriched.filter(p => p.email).length;

@@ -132,7 +132,8 @@ const App: React.FC = () => {
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
-    setCurrentView('dashboard');
+    // 🆕 v58.4: SDR vai direto para Prospect — não tem acesso ao Dashboard RMS
+    setCurrentView(user.tipo_usuario === 'SDR' ? 'prospect_search' : 'dashboard');
     // ✅ Carregar dados APÓS autenticação bem-sucedida
     loadAllData();
     
@@ -449,6 +450,10 @@ const App: React.FC = () => {
 
       case 'dashboard':
       default:
+        // 🆕 v58.4: SDR não tem acesso ao Dashboard RMS — redireciona para Prospect
+        if (currentUser?.tipo_usuario === 'SDR') {
+          return <ProspectSearchPage />;
+        }
         return <Dashboard 
           consultants={consultants} 
           clients={clients} 
