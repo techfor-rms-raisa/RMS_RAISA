@@ -1,6 +1,5 @@
 # RMS-RAISA — Contexto do Projeto
-> Atualizado automaticamente pelo script `scripts/update-context.js`
-> Última atualização automática: 15/03/2026, 09:23
+> Atualizado manualmente em 16/03/2026
 
 ---
 
@@ -34,22 +33,26 @@ RMS_RAISA/
 ├── api/                          # Serverless functions (Vercel)
 │   ├── gemini-analyze.ts         # Hub central de IA — todas as actions Gemini
 │   ├── prospect-gemini-search.ts # Motor de prospecção B2B via Gemini + Google Search
-│   ├── prospect-hunter-enrich.ts # Enriquecimento de email via Hunter.io
+│   ├── prospect-hunter-enrich.ts # Enriquecimento de email via Hunter.io + Snov.io fallback
 │   ├── prospect-save.ts          # Salvar leads no Supabase
 │   ├── prospect-leads.ts         # Listar leads salvos
 │   └── [outros endpoints...]
 ├── src/
 │   ├── components/
 │   │   ├── prospect/
-│   │   │   └── ProspectSearchPage.tsx  # UI do Prospect Engine v2.0
+│   │   │   └── ProspectSearchPage.tsx  # UI do Prospect Engine v4.1
 │   │   ├── cv/                         # Geração de CV (DOCX)
 │   │   ├── candidates/                 # Gestão de candidatos
 │   │   ├── jobs/                       # Gestão de vagas
 │   │   └── interviews/                 # Entrevistas técnicas
 │   ├── contexts/
 │   │   └── AuthContext.tsx             # Autenticação Supabase
-│   ├── pages/                          # Roteamento principal
-│   └── types/                          # TypeScript types
+│   ├── types/
+│   │   └── types_users.ts              # UserRole union type (inclui 'SDR')
+│   ├── utils/
+│   │   └── permissions.ts              # Sistema centralizado de permissões v58.4
+│   └── components/layout/
+│       └── Sidebar.tsx                 # Menu lateral com controle de acesso v58.4
 ├── database/                           # Scripts SQL e migrations
 ├── docs/                               # Documentação
 ├── scripts/
@@ -64,71 +67,78 @@ RMS_RAISA/
 ## 4. Módulos Funcionais
 
 ### 4.1 Prospect Engine v2.1 ✅ PRODUÇÃO
-**Arquivo principal:** `api/prospect-gemini-search.ts`
-**Status:** Operacional — última correção 12/03/2026
+**Arquivo principal:** `api/prospect-gemini-search.ts` + `api/prospect-hunter-enrich.ts`
+**Status:** Operacional — última correção 16/03/2026
 
 **Fluxo:**
 1. Usuário informa domínio + filtros (departamento, nível hierárquico, max resultados)
 2. Gemini 2.5 Flash + Google Search Grounding descobre executivos publicamente indexados
 3. Resultados exibidos imediatamente
 4. Hunter.io enriquece emails sob demanda (checkbox — consome créditos)
-5. Leads selecionados salvos no Supabase
+5. **Fallback automático:** se Hunter não encontra → Snov.io tenta
+6. Leads selecionados salvos no Supabase
+
+**Pipeline de enriquecimento (Hunter + Snov.io):**
+```
+Tentativa 1: Domain Search cross-reference  (sem crédito extra)
+Tentativa 2: Hunter Email Finder            (1 crédito Hunter)
+Tentativa 3: Snov.io Email Finder           (fallback automático)
+Sem email:   not_found
+```
+
+**Processamento paralelo:** lotes de 4 prospects simultâneos via `Promise.all` — evita timeout 504 do Vercel (limite 60s).
+
+**Coluna "Origem E-mail"** na tabela de resultados:
+- 🎯 Hunter Finder — laranja
+- 🔵 Hunter Domain — amarelo
+- 🟣 Snov.io — roxo
 
 **Configurações validadas:**
 - `thinkingBudget: 4096` — sweet spot para 5-6 queries Google sem loop
 - `maxPorChamada: 10–50` — configurável via slider no frontend
 - Estratégia dual paralela: divide por departamento ou senioridade para maximizar cobertura
 
-**DEPT_LABELS** (mapeamento de filtros → termos de busca):
-```
-ti_tecnologia → TI, Tecnologia, Tecnologia da Informação, Technology, IT, Sistemas, Inovação, Digital
-compras_procurement → Compras, Procurement, Suprimentos, Aquisições
-infraestrutura → Infraestrutura, Cloud, Data Center, Redes
-governanca_compliance → Governança, Compliance, Segurança da Informação, Cybersecurity
-rh_recursos_humanos → Recursos Humanos, RH, People, Gente e Gestão
-comercial_vendas → Comercial, Vendas, Revenue, Sales, Business Development
-financeiro → Financeiro, CFO, Controladoria, Finanças, Tesouraria
-diretoria_clevel → CEO, COO, Diretor Geral, Presidente, Vice-Presidente
-```
-
-**SENIOR_LABELS** (mapeamento de níveis → termos de busca):
-```
-c_level → CEO, CTO, CIO, COO, CFO, CISO, CPO, CHRO, CMO
-vp → Vice-Presidente, VP, Vice President
-diretor → Diretor, Diretor Executivo, Director, Managing Director
-gerente → Gerente, Manager, Gerente-Executivo, Gerente Executivo, Gerente Geral, Gerente Sênior
-coordenador → Coordenador, Coordinator
-superintendente → Superintendente, Head, Head of, Head de
-```
-
 **Bugs resolvidos (v2.1):**
-- ✅ Stellantis Seguros: prompt reformulado para usar nome explícito como âncora das queries
-- ✅ Gerente-Executivo: SENIOR_LABELS expandido com variações brasileiras
-- ✅ Filtro pós-merge: aceita hífen/espaço em variações de cargo
-- ✅ Slider de max resultados (10–50) no frontend
+- ✅ Snov.io `taskHash` — estava em `startData.data.task_hash` (não `meta.task_hash`)
+- ✅ Timeout 504 — resolvido com processamento paralelo em lotes de 4
+- ✅ Hunter enriquece apenas prospects selecionados (não toda a lista)
+- ✅ Merge cirúrgico preserva seleção e dados ao retornar do Hunter
+- ✅ Variáveis env `\r\n` — usar prompt interativo do CLI, nunca `echo |`
+
+**DEPT_LABELS** e **SENIOR_LABELS** — ver seção anterior (sem mudanças)
 
 ### 4.2 CV Generator ✅ PRODUÇÃO
 **Biblioteca:** `docx-js`
 **Templates:** TechFor Simple | TechFor Detailed | T-Systems
-**Letterhead:** TechFor
-**Bugs resolvidos:** dimensões da imagem de fundo, margens, conflito INSERT/UPDATE em `candidatura_id`
 
 ### 4.3 LinkedIn Chrome Extension v5.45+ ✅ PRODUÇÃO
-**Estratégia:** text-parsing (não CSS selectors — LinkedIn usa hash-based dynamic classes)
-**Lookahead parsing:** identifica job titles via H2 headings → parent SECTION → innerText
-**Auto-refresh:** Supabase Realtime WebSocket atualiza banco de talentos ao importar
+**Estratégia:** text-parsing (não CSS selectors)
+**Auto-refresh:** Supabase Realtime WebSocket + visibilitychange + evento `raisa-linkedin-import`
 
 ### 4.4 Entrevistas Técnicas ✅ PRODUÇÃO
-**Fluxo:** Gemini gera perguntas personalizadas por vaga + CV → candidato responde → Gemini avalia + detecta uso de IA
 
 ### 4.5 Relatórios de Atividade (Consultores) ✅ PRODUÇÃO
-**Análise:** Gemini extrai behavioral flags, risco de saída (1–5), recomendações
 
-### 4.6 Talent Finder 🔲 PENDENTE — PRÓXIMO MÓDULO
+### 4.6 Banco de Talentos v3.2 ✅ PRODUÇÃO
+**Auto-refresh triplo:**
+- Estratégia 1: Supabase Realtime WebSocket (INSERT/UPDATE/DELETE na tabela `pessoas`)
+- Estratégia 2: `visibilitychange` — refresh ao voltar para a aba
+- Estratégia 3: evento `raisa-linkedin-import` — extensão notifica explicitamente
+**SQL necessário:** `ALTER TABLE pessoas REPLICA IDENTITY FULL;`
+
+### 4.7 Perfil SDR ✅ PREVIEW / PRODUÇÃO
+**Status:** Deployado em 16/03/2026
+**Acesso:** exclusivo ao módulo Prospect (Buscar Leads, Meus Prospects, Consumo Créditos)
+**Arquivos alterados:**
+- `src/types/types_users.ts` — `'SDR'` adicionado ao union type `UserRole`
+- `src/utils/permissions.ts` — SDR em `getPerfisPodeVer/Criar` + `podeUsarProspect()`
+- `src/components/layout/Sidebar.tsx` — SDR nos 3 itens Prospect + `temAcessoPROSPECT`
+- `src/components/ManageUsers.tsx` — SDR em `allUserRoles` + badge teal
+- `src/App.tsx` — SDR redireciona para `prospect_search` ao logar (não vê Dashboard RMS)
+**Banco de dados:** nenhuma query necessária — `tipo_usuario` é `VARCHAR(50)` sem CHECK constraint
+
+### 4.8 Talent Finder 🔲 PENDENTE — PRÓXIMO MÓDULO
 **Status:** Decisões de design pendentes antes do desenvolvimento
-- Menu placement / posição na sidebar
-- Campos a exibir nos resultados
-- Ações pós-busca
 
 ---
 
@@ -138,14 +148,17 @@ superintendente → Superintendente, Head, Head of, Head de
 |---|---|---|
 | Gemini 2.5 Flash | Prospect Engine (Search Grounding) | `API_KEY` |
 | Gemini 2.0 Flash | CV, triagem, entrevistas, relatórios | `API_KEY` |
-| Hunter.io | Email finder/enrichment | `HUNTER_API_KEY` |
+| Hunter.io | Email finder/enrichment (motor principal) | `HUNTER_API_KEY` |
+| Snov.io | Email finder (fallback quando Hunter falha) | `SNOVIO_USER_ID`, `SNOVIO_API_SECRET` |
 | Supabase | Banco de dados + Auth + Realtime | `SUPABASE_URL`, `SUPABASE_ANON_KEY` |
 | Vercel | Deploy + Serverless functions | (configurado no projeto) |
-| Sentry | Monitoramento de erros (via Vercel) | — |
+
+**⚠️ Atenção ao cadastrar variáveis no Vercel CLI:**
+- NUNCA usar `echo "valor" | npx vercel env add` — adiciona `\r\n` no final da chave
+- SEMPRE usar `npx vercel env add NOME ambiente` e colar o valor diretamente no prompt interativo
 
 **Removidos/Descartados:**
-- ❌ Apollo.io — Free Tier não permite filtrar domain + location simultaneamente para empresas brasileiras
-- ❌ Snov.io — substituído pelo Gemini Search Grounding
+- ❌ Apollo.io — Free Tier não permite filtrar domain + location para empresas brasileiras
 
 ---
 
@@ -154,28 +167,25 @@ superintendente → Superintendente, Head, Head of, Head de
 ### Tabelas principais
 | Tabela | Descrição |
 |---|---|
-| `usuarios` | Usuários do sistema (16 registros, 14 colunas) |
-| `candidatos` | Banco de talentos |
+| `app_users` | Usuários do sistema — `tipo_usuario VARCHAR(50)` sem CHECK constraint |
+| `candidatos` / `pessoas` | Banco de talentos |
 | `vagas` | Vagas abertas |
 | `candidaturas` | Relacionamento candidato ↔ vaga |
 | `prospect_leads` | Leads B2B salvos pelo Prospect Engine |
 | `relatorios_consultores` | Relatórios mensais de atividade |
 | `entrevistas` | Entrevistas técnicas geradas |
 
-### Coluna importante — prospect_leads
+### Constraints importantes — prospect_leads
 ```sql
--- Adicionada em 05/03/2026
-ALTER TABLE prospect_leads ADD COLUMN fonte_id_gemini TEXT;
--- Constraint motor atualizada para incluir novos valores
-ALTER TABLE prospect_leads DROP CONSTRAINT prospect_leads_motor_check;
-ALTER TABLE prospect_leads ADD CONSTRAINT prospect_leads_motor_check
-  CHECK (motor IN ('gemini', 'hunter', 'gemini+hunter', 'apollo', 'snovio'));
+-- motor CHECK constraint atual (inclui 'extension')
+CHECK (motor IN ('apollo', 'snovio', 'ambos', 'gemini', 'hunter', 'gemini+hunter', 'extension'));
 ```
 
 ### Regras importantes
 - **RLS:** pode bloquear silenciosamente o frontend sem policies → sempre verificar quando houver 403
-- **`.single()`:** lança erro se não encontrar registro → usar `.maybeSingle()` para queries opcionais
-- **Session Pooler:** usar connection string do Session Pooler quando direct connection falhar DNS (IPv4)
+- **`.single()`:** lança erro se não encontrar registro → usar `.maybeSingle()`
+- **Session Pooler:** usar connection string do Session Pooler quando direct connection falhar DNS
+- **REPLICA IDENTITY:** executar `ALTER TABLE pessoas REPLICA IDENTITY FULL` para Realtime funcionar
 
 ---
 
@@ -201,17 +211,34 @@ git commit -m "tipo(escopo): descrição"
 git push origin preview
 
 # Preview → Produção (após validação)
+# ⚠️ SEMPRE seguir esta ordem para evitar conflito com script update-context.js
 git checkout main
-git merge preview
+git merge preview --no-ff -m "descrição"
+git pull origin main --no-rebase   # ← integra commit automático do CONTEXT.md
 git push origin main
+git checkout preview
 ```
 
-### Padrão de actions no gemini-analyze.ts
-Toda nova funcionalidade de IA deve ser adicionada como uma nova `case` no switch:
-```typescript
-case 'nome_da_action':
-  result = await minhaFuncao(payload);
-  break;
+### Vercel CLI — Variáveis de Ambiente
+```powershell
+# Listar variáveis
+npx vercel env ls
+
+# Adicionar (SEMPRE interativo — nunca echo |)
+npx vercel env rm NOME ambiente
+npx vercel env add NOME ambiente
+# → colar valor diretamente no prompt, branch vazio = todos
+
+# Baixar .env.local do preview
+npx vercel env pull .env.local --environment preview
+# ⚠️ Nunca commitar .env.local
+
+# Redeploy de deployment específico
+npx vercel ls   # pegar URL do deployment
+npx vercel redeploy https://rms-raisa-[id]-techfor.vercel.app
+
+# Trocar de team
+npx vercel switch   # selecionar Techfor (techfor)
 ```
 
 ---
@@ -226,7 +253,12 @@ case 'nome_da_action':
 | Supabase `.single()` estoura em query vazia | Usar `.maybeSingle()` |
 | RLS sem policies bloqueia silenciosamente | Verificar RLS em erros 403 |
 | Vercel dashboard para env vars é instável | Usar Vercel CLI |
-| `node_modules` no Git quebra Knowledge Base Claude.ai | `.gitignore` + `.claudeignore` corretos |
+| `echo \|` no PowerShell adiciona `\r\n` às env vars | Usar prompt interativo do CLI |
+| `git push origin main` rejeitado após merge | Sempre `git pull origin main --no-rebase` antes do push (script update-context.js commita no main automaticamente) |
+| Timeout 504 no Hunter com muitos prospects | Processamento paralelo em lotes de 4 via Promise.all |
+| Snov.io `taskHash` não encontrado | `task_hash` está em `startData.data.task_hash` (objeto simples, não array) |
+| `node_modules` no Git quebra Knowledge Base | `.gitignore` + `.claudeignore` corretos |
+| Vercel CLI `switch` — "cannot set Personal Account as scope" | Usar `npx vercel switch` sem parâmetros e selecionar Techfor |
 
 ---
 
@@ -242,49 +274,3 @@ case 'nome_da_action':
 | 👥 Claude RH | Gestão de Pessoas Sênior | Onboarding, adoção |
 | 📊 Claude Processos | Gestão de Processos Sênior | Workflows, automações |
 | 🗄️ Claude DBA | Supabase/PostgreSQL Sênior | Queries, performance, RLS |
----
-
-## 10. Métricas do Repositório
-> Gerado automaticamente pelo script update-context.js
-
-| Módulo | Arquivos | Tamanho | Última modificação |
-|---|---|---|---|
-| `api/` | 39 arquivos | 431.1 KB | 15/03/2026 |
-| `src/components/` | 107 arquivos | 807.6 KB | 15/03/2026 |
-| `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 15/03/2026 |
-| `src/types/` | 6 arquivos | 29.7 KB | 15/03/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 15/03/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 15/03/2026 |
-
-### Endpoints API ativos
-- `api/analise-adequacao-perfil.ts`
-- `api/analyze-activity-report.ts`
-- `api/apollo-prospect-test.ts`
-- `api/claude-analyze.ts`
-- `api/cv-generator-docx-bg.ts`
-- `api/cv-generator-docx.ts`
-- `api/debug-env.ts`
-- `api/entrevista-docx.ts`
-- `api/gemini-analyze.ts`
-- `api/gemini-audio-transcription.ts`
-- `api/gemini-cv-generator-v2.ts`
-- `api/gemini-cv.ts`
-- `api/predicao-riscos.ts`
-- `api/prospect-apollo-search.ts`
-- `api/prospect-email-finder.ts`
-- `api/prospect-gemini-search.ts`
-- `api/prospect-hunter-enrich.ts`
-- `api/prospect-leads.ts`
-- `api/prospect-save.ts`
-- `api/prospect-snovio-search.ts`
-- `api/questoes-inteligentes.ts`
-- `api/recomendacao-analista.ts`
-- `api/send-email.ts`
-- `api/talent-finder-search.ts`
-- `api/upload-audio.ts`
-- `api/vaga-analistas-recomendados.ts`
-- `api/vaga-prioridade.ts`
-- `api/version.ts`
-
----
