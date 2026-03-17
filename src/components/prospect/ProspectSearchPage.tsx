@@ -79,6 +79,7 @@ interface ProspectLead {
     criado_em:      string;
     senioridade:    string | null;
     departamentos:  string[];
+    gravado_por_nome: string | null;
 }
 
 // ============================================
@@ -149,6 +150,9 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
     // BUG 3 FIX: controle de quantidade máxima de resultados (configurável)
     const [maxResultados, setMaxResultados]             = useState(25);
+
+    // Progresso do Hunter.io — exibido durante enriquecimento
+    const [hunterProgresso, setHunterProgresso]         = useState<{ processados: number; total: number; atual: string } | null>(null);
 
     // Controle de queries já executadas — para marcação visual
     const [queriesExecutadas, setQueriesExecutadas]     = useState<Set<string>>(new Set());
@@ -322,7 +326,14 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     supabase_id:   (prospect as any).supabase_id || null,
                 }),
             });
-            const data = await res.json();
+
+            // Parse seguro — 504/502 retornam HTML, não JSON
+            let data: any = {};
+            try {
+                data = await res.json();
+            } catch {
+                throw new Error(res.status === 504 ? 'Timeout ao buscar email. Tente novamente.' : `Erro ${res.status} ao buscar email.`);
+            }
 
             setResultados(prev => {
                 const u = [...prev];
@@ -491,6 +502,21 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
         const runHunter = async () => {
             setSearchState({ loading: true, fase: 'enriquecendo', error: null });
+            setHunterProgresso({ processados: 0, total: alvo.length, atual: 'Iniciando...' });
+
+            // Simula progresso em lotes de 4 (tempo médio ~8s por lote)
+            let processadosSim = 0;
+            const BATCH = 4;
+            const intervalo = setInterval(() => {
+                processadosSim = Math.min(processadosSim + BATCH, alvo.length);
+                const nome = alvo[processadosSim - 1]?.primeiro_nome || '';
+                setHunterProgresso(prev => prev
+                    ? { ...prev, processados: processadosSim, atual: nome ? `Verificando ${nome}...` : 'Finalizando...' }
+                    : null
+                );
+                if (processadosSim >= alvo.length) clearInterval(intervalo);
+            }, 8000);
+
             try {
                 const resp = await fetch('/api/prospect-hunter-enrich', {
                     method:  'POST',
@@ -501,9 +527,27 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                         prospects: alvo,
                     }),
                 });
-                const data = await resp.json();
+
+                // Parse seguro — 504/502 retornam HTML, não JSON
+                let data: any = {};
+                try {
+                    data = await resp.json();
+                } catch {
+                    clearInterval(intervalo);
+                    const statusMsg = resp.status === 504
+                        ? 'Timeout no enriquecimento de email (muitos prospects). Tente com menos selecionados.'
+                        : `Erro ${resp.status} no enriquecimento de email.`;
+                    console.warn('⚠️ Hunter erro:', statusMsg);
+                    setSearchState({ loading: false, fase: 'concluido', error: null });
+                    setHunterProgresso(null);
+                    return;
+                }
+
+                clearInterval(intervalo);
+
                 if (data.success) {
                     const enriquecidos: ProspectResult[] = data.resultados || [];
+                    setHunterProgresso({ processados: alvo.length, total: alvo.length, atual: '✅ Concluído!' });
 
                     // Merge cirúrgico: atualiza apenas os prospects enviados,
                     // preservando todos os outros (seleção, dados, ordem) intactos
@@ -514,18 +558,18 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                 : e.nome_completo === original.nome_completo
                         );
                         if (!atualizado) return original;
-                        return {
-                            ...atualizado,
-                            selecionado: original.selecionado,
-                        };
+                        return { ...atualizado, selecionado: original.selecionado };
                     }));
                 } else {
+                    clearInterval(intervalo);
                     console.warn('⚠️ Hunter falhou:', data.error);
                 }
             } catch (err: any) {
+                clearInterval(intervalo);
                 console.warn('⚠️ Hunter erro:', err.message);
             } finally {
                 setSearchState({ loading: false, fase: 'concluido', error: null });
+                setTimeout(() => setHunterProgresso(null), 2500);
             }
         };
 
@@ -832,7 +876,41 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
             {/* Tabela de resultados */}
             {resultados.length > 0 && (
-                <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden relative">
+
+                    {/* ── Banner de progresso Hunter.io ────────────────── */}
+                    {hunterProgresso && (
+                        <div className="absolute inset-0 z-10 bg-white/90 backdrop-blur-sm flex flex-col items-center justify-center gap-4 rounded-xl">
+                            <div className="flex flex-col items-center gap-3 px-8 py-6 bg-white border border-orange-200 rounded-2xl shadow-lg max-w-sm w-full mx-4">
+                                {/* Ícone animado */}
+                                <div className="relative">
+                                    <div className="w-14 h-14 rounded-full border-4 border-orange-100 border-t-orange-500 animate-spin"/>
+                                    <span className="absolute inset-0 flex items-center justify-center text-xl">📧</span>
+                                </div>
+                                {/* Título */}
+                                <div className="text-center">
+                                    <p className="font-bold text-gray-800 text-sm">Buscando emails via Hunter.io</p>
+                                    <p className="text-xs text-orange-600 mt-0.5">{hunterProgresso.atual}</p>
+                                </div>
+                                {/* Barra de progresso */}
+                                <div className="w-full">
+                                    <div className="flex justify-between text-xs text-gray-500 mb-1">
+                                        <span>{hunterProgresso.processados} de {hunterProgresso.total} prospects</span>
+                                        <span>{Math.round((hunterProgresso.processados / hunterProgresso.total) * 100)}%</span>
+                                    </div>
+                                    <div className="w-full bg-gray-100 rounded-full h-2">
+                                        <div
+                                            className="bg-orange-500 h-2 rounded-full transition-all duration-700 ease-out"
+                                            style={{ width: `${Math.round((hunterProgresso.processados / hunterProgresso.total) * 100)}%` }}
+                                        />
+                                    </div>
+                                </div>
+                                <p className="text-[11px] text-gray-400 text-center">
+                                    Cada prospect consome 1 crédito Hunter.io · Aguarde sem fechar a aba
+                                </p>
+                            </div>
+                        </div>
+                    )}
                     {/* Barra de ações */}
                     <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-200">
                         <div className="flex items-center gap-3">
@@ -1088,6 +1166,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">LINKEDIN</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">MOTOR</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">GRAVADO POR</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
                                 </tr>
@@ -1110,6 +1189,15 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                             <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
                                                 {lead.motor || 'gemini'}
                                             </span>
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            {lead.gravado_por_nome ? (
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium whitespace-nowrap">
+                                                    {lead.gravado_por_nome.split(' ').slice(0, 2).join(' ')}
+                                                </span>
+                                            ) : (
+                                                <span className="text-gray-300 text-xs">—</span>
+                                            )}
                                         </td>
                                         <td className="px-3 py-2 text-center">
                                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${

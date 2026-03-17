@@ -68,6 +68,9 @@ REGRAS DE CONSTRUÇÃO:
 - Use aspas para termos compostos: "React Native", "Front End", "IS-Oil"
 - Inclua localização quando mencionada nos requisitos
 - NÃO use AND entre grupos OR — coloque cada grupo em parênteses
+- HÍFEN EM TECNOLOGIAS: sempre gere as duas formas — com hífen E sem hífen usando OR.
+  Exemplos: ("IS-Oil" OR "IS Oil"), ("Front-End" OR "Front End"), ("e-commerce" OR "ecommerce")
+  Isso é OBRIGATÓRIO para tecnologias como SAP IS-Oil, que têm uso variado no LinkedIn.
 
 EXEMPLOS DO PADRÃO CORRETO:
 Para "Dev React Native, Android/Kotlin, São Paulo":
