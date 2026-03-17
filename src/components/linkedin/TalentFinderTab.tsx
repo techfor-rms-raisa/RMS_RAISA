@@ -11,7 +11,7 @@
  * 4. Recrutador pode copiar e editar a query manualmente se necessário
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 
 const TALENT_FINDER_VERSION = '2.0';
 
@@ -26,7 +26,7 @@ interface QueryGerada {
 
 interface SearchState {
     loading: boolean;
-    fase:    'idle' | 'gerando' | 'concluido' | 'erro' | 'rate_limit';
+    fase:    'idle' | 'gerando' | 'concluido' | 'erro';
     error:   string | null;
 }
 
@@ -50,11 +50,43 @@ const TalentFinderTab: React.FC = () => {
     const [searchState, setSearch]    = useState<SearchState>({ loading: false, fase: 'idle', error: null });
     const [copiado, setCopiado]       = useState<string | null>(null);
 
+    // ── Leads capturados pela Prospect Extension ──────────────────────
+    const [leadsExtensao, setLeadsExtensao] = useState<any[]>([]);
+    const [toastExtensao, setToastExtensao] = useState<string | null>(null);
+
+    // ── Listener: recebe leads da Prospect Extension via window.postMessage ──
+    useEffect(() => {
+        const handleExtensionMessage = (event: MessageEvent) => {
+            if (event.data?.type !== 'PROSPECT_EXTENSION_LEADS') return;
+
+            const leads: any[] = event.data.leads || [];
+            if (leads.length === 0) return;
+
+            console.log(`📥 [TalentFinderTab] ${leads.length} leads recebidos da Extension`);
+
+            setLeadsExtensao(prev => {
+                // Deduplicar por linkedin_url
+                const urlsExistentes = new Set(prev.map((l: any) => l.linkedin_url).filter(Boolean));
+                const novos = leads.filter((l: any) => !l.linkedin_url || !urlsExistentes.has(l.linkedin_url));
+                return [...prev, ...novos];
+            });
+
+            // Toast informativo
+            setToastExtensao(`✅ ${leads.length} perfil${leads.length > 1 ? 'is' : ''} capturado${leads.length > 1 ? 's' : ''} pelo Prospect Engine!`);
+            setTimeout(() => setToastExtensao(null), 5000);
+        };
+
+        window.addEventListener('message', handleExtensionMessage);
+        return () => window.removeEventListener('message', handleExtensionMessage);
+    }, []);
+
     const handleReset = useCallback(() => {
         setRequisitos('');
         setQueries([]);
         setSearch({ loading: false, fase: 'idle', error: null });
         setCopiado(null);
+        setLeadsExtensao([]);
+        setToastExtensao(null);
     }, []);
 
     const handleCopiar = useCallback((id: string, query: string) => {
@@ -83,12 +115,6 @@ const TalentFinderTab: React.FC = () => {
             const data = await resp.json();
             console.log(`📦 [TalentFinderTab] Resposta:`, data);
 
-            // Rate limit — tratamento visual específico (não é erro da aplicação)
-            if (resp.status === 429) {
-                setSearch({ loading: false, fase: 'rate_limit', error: null });
-                return;
-            }
-
             if (!resp.ok || !data.success) throw new Error(data.error || 'Erro ao gerar queries.');
 
             setQueries(data.queries || []);
@@ -97,22 +123,70 @@ const TalentFinderTab: React.FC = () => {
 
         } catch (err: any) {
             console.error(`❌ [TalentFinderTab] Erro:`, err);
-
-            // Detectar rate limit — backend retorna 429 com mensagem_usuario
-            const isRateLimit = err.message?.includes('rate_limit') ||
-                                err.message?.includes('429') ||
-                                err.message?.includes('Resource exhausted');
-
-            if (isRateLimit) {
-                setSearch({ loading: false, fase: 'rate_limit', error: null });
-            } else {
-                setSearch({ loading: false, fase: 'erro', error: err.message || 'Erro desconhecido.' });
-            }
+            setSearch({ loading: false, fase: 'erro', error: err.message || 'Erro desconhecido.' });
         }
     }, [requisitos]);
 
     return (
         <div className="space-y-5">
+
+            {/* ── Toast: leads recebidos da Extension ───────────────── */}
+            {toastExtensao && (
+                <div className="bg-green-50 border border-green-300 rounded-xl px-4 py-3 flex items-center gap-3">
+                    <span className="text-lg">✅</span>
+                    <p className="text-sm font-medium text-green-800">{toastExtensao}</p>
+                </div>
+            )}
+
+            {/* ── Leads capturados pela Extension ───────────────────── */}
+            {leadsExtensao.length > 0 && (
+                <div className="bg-white border border-indigo-200 rounded-xl shadow-sm overflow-hidden">
+                    <div className="px-4 py-3 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <span className="text-base">🔗</span>
+                            <span className="font-semibold text-indigo-800 text-sm">
+                                {leadsExtensao.length} perfil{leadsExtensao.length > 1 ? 'is' : ''} capturado{leadsExtensao.length > 1 ? 's' : ''} pelo Prospect Engine
+                            </span>
+                        </div>
+                        <button
+                            onClick={() => setLeadsExtensao([])}
+                            className="text-xs text-indigo-500 hover:text-indigo-700 underline">
+                            Limpar
+                        </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="bg-gray-50 text-left">
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">NOME</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">CARGO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">EMPRESA</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">LOCALIZAÇÃO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">LINKEDIN</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {leadsExtensao.map((lead: any, idx: number) => (
+                                    <tr key={lead.linkedin_url || idx} className="border-t border-gray-100 hover:bg-gray-50">
+                                        <td className="px-3 py-2 font-medium text-gray-800 text-xs">{lead.nome_completo || '—'}</td>
+                                        <td className="px-3 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={lead.cargo || ''}>{lead.cargo || '—'}</td>
+                                        <td className="px-3 py-2 text-gray-600 text-xs">{lead.empresa_nome || '—'}</td>
+                                        <td className="px-3 py-2 text-gray-500 text-xs">{lead.localizacao || lead.cidade || '—'}</td>
+                                        <td className="px-3 py-2 text-center">
+                                            {lead.linkedin_url ? (
+                                                <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer"
+                                                    className="text-blue-600 hover:text-blue-800 text-xs">
+                                                    <i className="fa-brands fa-linkedin"></i>
+                                                </a>
+                                            ) : '—'}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
 
             {/* ── Header ────────────────────────────────────────────── */}
             <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100 rounded-xl p-5">
@@ -198,26 +272,6 @@ const TalentFinderTab: React.FC = () => {
                         <div>
                             <p className="font-semibold text-gray-700">Gemini analisando os requisitos...</p>
                             <p className="text-sm text-gray-500 mt-1">Gerando queries booleanas otimizadas para LinkedIn. Isso leva apenas alguns segundos.</p>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Rate Limit (aviso temporário — não é erro da aplicação) ── */}
-            {searchState.fase === 'rate_limit' && (
-                <div className="bg-amber-50 border border-amber-300 rounded-xl p-5">
-                    <div className="flex items-start gap-3">
-                        <span className="text-2xl">⏳</span>
-                        <div className="flex-1">
-                            <p className="font-semibold text-amber-800">Serviço temporariamente sobrecarregado</p>
-                            <p className="text-sm text-amber-700 mt-1">
-                                O serviço de IA recebeu muitas requisições ao mesmo tempo. Isso é temporário — aguarde alguns segundos e tente novamente.
-                            </p>
-                            <button
-                                onClick={handleGerar}
-                                className="mt-3 flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 transition-colors font-medium">
-                                <span>🔄</span> Tentar novamente
-                            </button>
                         </div>
                     </div>
                 </div>
