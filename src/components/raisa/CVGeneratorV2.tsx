@@ -1017,7 +1017,7 @@ Brasileiro, XX anos, estado civil. Reside em Cidade, UF.
 Recomendamos o(a) [NOME]..."
               />
 
-              {/* Parecer da Entrevista Técnica — sempre visível, prioritário para T-Systems */}
+              {/* Parecer da Entrevista Técnica — sempre visível */}
               <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-2">
                 <div className="flex items-center gap-2">
                   <span className="text-base">🎯</span>
