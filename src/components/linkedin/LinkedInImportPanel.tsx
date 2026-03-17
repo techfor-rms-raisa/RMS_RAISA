@@ -25,6 +25,7 @@ import { useLinkedInPessoas, PessoaLinkedIn } from '@/hooks/supabase/useLinkedIn
 import { useAuth } from '../../contexts/AuthContext';
 import { podeUsarLinkedIn } from '../../utils/permissions';
 import TalentFinderTab from './TalentFinderTab';
+import TalentFinderStatsTab from './TalentFinderStatsTab';
 
 interface LinkedInImportPanelProps {
   userId?: number;
@@ -48,7 +49,7 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
     atualizarPerfil
   } = useLinkedInPessoas();
 
-  const [tab, setTab] = useState<'linkedin' | 'todas' | 'instrucoes' | 'pesquisar'>('linkedin');
+  const [tab, setTab] = useState<'linkedin' | 'todas' | 'instrucoes' | 'pesquisar' | 'estatisticas'>('linkedin');
   const [filtroTermo, setFiltroTermo] = useState('');
   const [filtroSenioridade, setFiltroSenioridade] = useState('');
   const [filtroOrigem, setFiltroOrigem] = useState('');
@@ -103,7 +104,7 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
   };
 
   // Mudar tab
-  const handleTabChange = async (novaTab: 'linkedin' | 'todas' | 'instrucoes' | 'pesquisar') => {
+  const handleTabChange = async (novaTab: 'linkedin' | 'todas' | 'instrucoes' | 'pesquisar' | 'estatisticas') => {
     setTab(novaTab);
     setFiltroTermo('');
     setFiltroSenioridade('');
@@ -404,8 +405,9 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
         {[
           { id: 'linkedin', label: '🔗 Do LinkedIn', count: statsLinkedIn.totalImportados },
           { id: 'todas', label: '👥 Todas Origens', count: statsGeral.reduce((a, b) => a + b.total, 0) },
-          { id: 'pesquisar', label: '🔍 Pesquisar Candidatos', count: null },
-          { id: 'instrucoes', label: '📖 Como Usar', count: null }
+          { id: 'pesquisar',    label: '🔍 Pesquisar Candidatos', count: null },
+          { id: 'estatisticas', label: '📊 Estatísticas',          count: null },
+          { id: 'instrucoes',   label: '📖 Como Usar',             count: null }
         ].map(t => (
           <button
             key={t.id}
@@ -554,6 +556,11 @@ const LinkedInImportPanel: React.FC<LinkedInImportPanelProps> = ({ userId }) => 
       {/* Tab Talent Finder — Pesquisar Candidatos */}
       {tab === 'pesquisar' && (
         <TalentFinderTab />
+      )}
+
+      {/* Tab Estatísticas do Talent Finder */}
+      {tab === 'estatisticas' && (
+        <TalentFinderStatsTab />
       )}
 
       {/* Tab Instruções */}

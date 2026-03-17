@@ -12,6 +12,7 @@
  */
 
 import React, { useState, useCallback, useEffect } from 'react';
+import { useAuth } from '../../contexts/AuthContext';
 
 const TALENT_FINDER_VERSION = '2.0';
 
@@ -45,10 +46,38 @@ const TIPO_CONFIG: Record<string, { icon: string; color: string; badge: string }
 
 const TalentFinderTab: React.FC = () => {
 
+    const { user: currentUser } = useAuth();
+
     const [requisitos, setRequisitos] = useState('');
     const [queries, setQueries]       = useState<QueryGerada[]>([]);
     const [searchState, setSearch]    = useState<SearchState>({ loading: false, fase: 'idle', error: null });
     const [copiado, setCopiado]       = useState<string | null>(null);
+
+    // ID do log atual — gerado ao gerar queries, usado para rastrear ações
+    const [logId, setLogId]           = useState<number | null>(null);
+
+    // ── Helper: registrar evento (fire-and-forget — não bloqueia a UI) ────
+    const registrarLog = useCallback((
+        acao: 'gerar' | 'abrir' | 'copiar' | 'captura',
+        extra?: { queries?: QueryGerada[]; leads_count?: number; novoLogId?: number }
+    ) => {
+        const idParaUsar = extra?.novoLogId ?? logId;
+        if (acao !== 'gerar' && !idParaUsar) return; // sem log_id não faz nada
+
+        fetch('/api/talent-finder-log', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                acao,
+                log_id:       idParaUsar,
+                usuario_id:   currentUser?.id   || null,
+                nome_usuario: currentUser?.nome_usuario || currentUser?.nome_completo || null,
+                requisitos:   requisitos.trim(),
+                queries:      extra?.queries,
+                leads_count:  extra?.leads_count,
+            }),
+        }).catch(e => console.warn('[TalentFinderLog] Erro ao registrar:', e.message));
+    }, [logId, currentUser, requisitos]);
 
     // ── Leads capturados pela Prospect Extension ──────────────────────
     const [leadsExtensao, setLeadsExtensao] = useState<any[]>([]);
@@ -74,6 +103,15 @@ const TalentFinderTab: React.FC = () => {
             // Toast informativo
             setToastExtensao(`✅ ${leads.length} perfil${leads.length > 1 ? 'is' : ''} capturado${leads.length > 1 ? 's' : ''} pelo Prospect Engine!`);
             setTimeout(() => setToastExtensao(null), 5000);
+
+            // Registrar evento de captura no log
+            if (logId) {
+                fetch('/api/talent-finder-log', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ acao: 'captura', log_id: logId, leads_count: leads.length }),
+                }).catch(e => console.warn('[TalentFinderLog] captura:', e.message));
+            }
         };
 
         window.addEventListener('message', handleExtensionMessage);
@@ -87,14 +125,16 @@ const TalentFinderTab: React.FC = () => {
         setCopiado(null);
         setLeadsExtensao([]);
         setToastExtensao(null);
+        setLogId(null);
     }, []);
 
     const handleCopiar = useCallback((id: string, query: string) => {
         navigator.clipboard.writeText(query).then(() => {
             setCopiado(id);
             setTimeout(() => setCopiado(null), 2000);
+            registrarLog('copiar');
         });
-    }, []);
+    }, [registrarLog]);
 
     const handleGerar = useCallback(async () => {
         if (!requisitos.trim() || requisitos.trim().length < 10) return;
@@ -115,11 +155,34 @@ const TalentFinderTab: React.FC = () => {
             const data = await resp.json();
             console.log(`📦 [TalentFinderTab] Resposta:`, data);
 
+            // Rate limit — tratamento visual específico
+            if (resp.status === 429) {
+                setSearch({ loading: false, fase: 'rate_limit', error: null });
+                return;
+            }
+
             if (!resp.ok || !data.success) throw new Error(data.error || 'Erro ao gerar queries.');
 
-            setQueries(data.queries || []);
+            const queriesGeradas: QueryGerada[] = data.queries || [];
+            setQueries(queriesGeradas);
             setSearch({ loading: false, fase: 'concluido', error: null });
-            console.log(`✅ [TalentFinderTab] ${data.queries?.length} queries recebidas`);
+            console.log(`✅ [TalentFinderTab] ${queriesGeradas.length} queries recebidas`);
+
+            // ── Registrar log de geração (fire-and-forget) ────────────────
+            fetch('/api/talent-finder-log', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    acao:         'gerar',
+                    usuario_id:   currentUser?.id || null,
+                    nome_usuario: (currentUser as any)?.nome_usuario || (currentUser as any)?.nome_completo || null,
+                    requisitos:   requisitos.trim(),
+                    queries:      queriesGeradas.map(q => ({ tipo: q.tipo, titulo: q.titulo, query: q.query })),
+                }),
+            })
+            .then(r => r.json())
+            .then(r => { if (r.log_id) setLogId(r.log_id); })
+            .catch(e => console.warn('[TalentFinderLog] gerar:', e.message));
 
         } catch (err: any) {
             console.error(`❌ [TalentFinderTab] Erro:`, err);
@@ -285,6 +348,7 @@ const TalentFinderTab: React.FC = () => {
                                             href={q.url_google}
                                             target="_blank"
                                             rel="noopener noreferrer"
+                                            onClick={() => registrarLog('abrir')}
                                             className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 text-white text-xs rounded-lg hover:bg-indigo-700 transition-colors font-medium">
                                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
