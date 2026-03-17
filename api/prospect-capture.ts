@@ -1,212 +1,306 @@
 /**
  * api/prospect-capture.ts
- * Endpoint receptor de leads capturados pela extensão Chrome "Prospect Engine"
  *
- * Fluxo:
- *   Chrome Extension (content.js) → background.js → POST /api/prospect-capture
- *   → salva no Supabase (motor='extension') → retorna resultados normalizados
- *   → background.js → chrome.tabs.sendMessage → content-rms.js → window.postMessage → React
+ * Recebe leads capturados pela Prospect Extension (Chrome)
+ * a partir de páginas de resultados do Google Search.
  *
- * Versão: 1.0
- * Data: 17/03/2026
+ * Os leads chegam com: nome, cargo, empresa, linkedin_url, localização.
+ * Este endpoint normaliza, valida, salva no Supabase (prospect_leads)
+ * e devolve para o frontend do Prospect Engine exibir na lista.
+ * user_id vem da Extension via localStorage rms_user.
+ *
+ * Versão: 2.0
+ * Data: 15/03/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-// ── Supabase ────────────────────────────────────────────────────────────────
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// ── Tipos ───────────────────────────────────────────────────────────────────
+// ─── Timeout: operação leve, sem IA ───────────────────────────────────
+export const config = {
+  maxDuration: 10,
+};
 
-interface LeadExtensao {
+// ─── Tipo de lead recebido pela Extension ─────────────────────────────
+interface LeadCapturado {
   nome_completo:  string;
   primeiro_nome:  string;
   ultimo_nome:    string;
   cargo:          string;
   empresa_nome:   string;
   linkedin_url:   string;
-  localizacao?:   string | null;
+  localizacao:    string | null;
   fonte:          string;
   capturado_em:   string;
 }
 
-interface PayloadCaptura {
-  leads:       LeadExtensao[];
-  query:       string;
-  pagina_url:  string;
-  user_id:     string | null;
-  capturado_em: string;
+// ─── Tipo normalizado para o Prospect Engine ──────────────────────────
+interface ProspectNormalizado {
+  gemini_id:        string;
+  nome_completo:    string;
+  primeiro_nome:    string;
+  ultimo_nome:      string;
+  cargo:            string;
+  nivel:            string;
+  departamento:     string;
+  linkedin_url:     string | null;
+  email:            null;
+  email_status:     null;
+  foto_url:         null;
+  empresa_nome:     string;
+  empresa_dominio:  string;
+  empresa_setor:    null;
+  empresa_porte:    null;
+  empresa_linkedin: null;
+  empresa_website:  null;
+  cidade:           string | null;
+  estado:           string | null;
+  pais:             string | null;
+  senioridade:      string | null;
+  departamentos:    string[];
+  fonte:            'extension';
+  enriquecido:      false;
 }
 
-interface LeadNormalizado {
-  id?:             number;
-  nome_completo:   string;
-  primeiro_nome:   string;
-  ultimo_nome:     string;
-  cargo:           string;
-  empresa_nome:    string;
-  linkedin_url:    string;
-  localizacao:     string | null;
-  email:           string | null;
-  motor:           string;
-  query_utilizada: string;
-  buscado_por:     string | null;
-  status:          string;
-  criado_em?:      string;
+// ─── Inferência de nível a partir do cargo ────────────────────────────
+function inferirNivel(cargo: string): string {
+  if (!cargo) return 'não informado';
+  const c = cargo.toLowerCase();
+
+  if (/\b(ceo|cto|cio|coo|cfo|ciso|cpo|chro|cmo|chief|presidente)\b/.test(c)) return 'C-Level';
+  if (/\b(vice.presidente|vp|vice president)\b/.test(c)) return 'VP';
+  if (/\b(diretor|diretora|director|managing director)\b/.test(c)) return 'Diretor';
+  if (/\b(head of|head de|head)\b/.test(c)) return 'Superintendente';
+  if (/\b(superintendente)\b/.test(c)) return 'Superintendente';
+  if (/\b(gerente.geral|gerente.executivo|gerente.s[eê]nior|gerente|manager|general manager)\b/.test(c)) return 'Gerente';
+  if (/\b(coordenador|coordenadora|coordinator)\b/.test(c)) return 'Coordenador';
+  if (/\b(analista|analyst|especialista|specialist|consultor|consultant)\b/.test(c)) return 'Especialista';
+
+  return 'não informado';
 }
 
-// ── Handler principal ───────────────────────────────────────────────────────
+// ─── Inferência de departamento a partir do cargo ─────────────────────
+function inferirDepartamento(cargo: string): string {
+  if (!cargo) return '';
+  const c = cargo.toLowerCase();
 
+  if (/\b(ti|tecnologia|technology|it\b|cto|cio|sistemas|digital|dados|data|software|infraestrutura|cloud|devops|segurança|cybersecurity)\b/.test(c)) return 'TI / Tecnologia';
+  if (/\b(rh|recursos humanos|people|talent|gente|chro|hrbp)\b/.test(c)) return 'RH';
+  if (/\b(financeiro|finance|cfo|controladoria|tesouraria|contábil)\b/.test(c)) return 'Financeiro';
+  if (/\b(comercial|vendas|sales|revenue|business development|cso)\b/.test(c)) return 'Comercial';
+  if (/\b(compras|procurement|suprimentos|aquisições|cpo)\b/.test(c)) return 'Compras';
+  if (/\b(marketing|comunicação|brand)\b/.test(c)) return 'Marketing';
+  if (/\b(operações|operations|coo|supply chain|logística)\b/.test(c)) return 'Operações';
+  if (/\b(jurídico|legal|compliance|governança)\b/.test(c)) return 'Jurídico / Compliance';
+
+  return '';
+}
+
+// ─── Extrair cidade/estado da localização ────────────────────────────
+function parsearLocalizacao(localizacao: string | null): { cidade: string | null; estado: string | null; pais: string | null } {
+  if (!localizacao) return { cidade: null, estado: null, pais: null };
+
+  // Formato: "São Paulo, SP, Brasil" ou "São Paulo, SP" ou "Brasil"
+  const partes = localizacao.split(',').map(p => p.trim());
+
+  let cidade: string | null = null;
+  let estado: string | null = null;
+  let pais: string | null = null;
+
+  // Detectar país
+  const ultimaParte = partes[partes.length - 1];
+  if (/\b(brasil|brazil|estados unidos|united states|portugal|argentina|chile|mexico)\b/i.test(ultimaParte)) {
+    pais = ultimaParte;
+    partes.pop();
+  } else {
+    pais = 'Brasil'; // assumir Brasil por padrão para este produto
+  }
+
+  // Detectar estado (sigla de 2 letras BR ou nome)
+  const estadosBR = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+  if (partes.length > 0) {
+    const possibleEstado = partes[partes.length - 1];
+    if (estadosBR.includes(possibleEstado.toUpperCase())) {
+      estado = possibleEstado.toUpperCase();
+      partes.pop();
+    }
+  }
+
+  if (partes.length > 0) {
+    cidade = partes[0];
+  }
+
+  return { cidade, estado, pais };
+}
+
+// ─── Normalizar um lead capturado para o formato do Prospect Engine ───
+function normalizarLead(lead: LeadCapturado, index: number): ProspectNormalizado | null {
+  // Validações mínimas
+  if (!lead.nome_completo || lead.nome_completo.trim().length < 4) return null;
+  if (!lead.linkedin_url || !lead.linkedin_url.includes('linkedin.com/in/')) return null;
+
+  const nome = lead.nome_completo.trim();
+  const cargo = (lead.cargo || '').trim();
+  const empresa = (lead.empresa_nome || '').trim();
+  const { cidade, estado, pais } = parsearLocalizacao(lead.localizacao);
+
+  // Gerar ID único baseado no URL do LinkedIn (mais estável que nome)
+  const linkedinSlug = lead.linkedin_url.split('/in/')[1]?.replace(/\/$/, '') || '';
+  const geminiId = `ext_${linkedinSlug || index}`;
+
+  return {
+    gemini_id:        geminiId,
+    nome_completo:    nome,
+    primeiro_nome:    lead.primeiro_nome || nome.split(' ')[0] || '',
+    ultimo_nome:      lead.ultimo_nome   || nome.split(' ').slice(1).join(' ') || '',
+    cargo:            cargo,
+    nivel:            inferirNivel(cargo),
+    departamento:     inferirDepartamento(cargo),
+    linkedin_url:     lead.linkedin_url,
+    email:            null,
+    email_status:     null,
+    foto_url:         null,
+    empresa_nome:     empresa,
+    empresa_dominio:  '',      // analista preenche ou vem do contexto da busca
+    empresa_setor:    null,
+    empresa_porte:    null,
+    empresa_linkedin: null,
+    empresa_website:  null,
+    cidade,
+    estado,
+    pais,
+    senioridade:      inferirNivel(cargo),
+    departamentos:    inferirDepartamento(cargo) ? [inferirDepartamento(cargo)] : [],
+    fonte:            'extension',
+    enriquecido:      false,
+  };
+}
+
+// ─── HANDLER ──────────────────────────────────────────────────────────
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS — extensão Chrome faz requisição de origem diferente
+  // CORS — permitir requisições da Extension Chrome
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    return res.status(204).end();
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Método não permitido' });
+    return res.status(405).json({ error: 'Use POST.' });
+  }
+
+  const { leads, query, pagina_url, user_id } = req.body as {
+    leads:       LeadCapturado[];
+    query:       string;
+    pagina_url:  string;
+    user_id?:    number | null;
+  };
+
+  if (!Array.isArray(leads) || leads.length === 0) {
+    return res.status(400).json({ error: 'Nenhum lead recebido.' });
+  }
+
+  if (leads.length > 50) {
+    return res.status(400).json({ error: 'Máximo de 50 leads por captura.' });
   }
 
   try {
-    const body: PayloadCaptura = req.body;
+    console.log(`📥 [prospect-capture] Recebendo ${leads.length} leads — query: "${query}"`);
 
-    // ── Validação básica ──────────────────────────────────────────────────
-    if (!body?.leads || !Array.isArray(body.leads) || body.leads.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Payload inválido: campo "leads" ausente ou vazio',
-      });
-    }
+    // Normalizar e filtrar leads inválidos
+    const normalizados: ProspectNormalizado[] = [];
+    const descartados: string[] = [];
 
-    console.log(`📥 [prospect-capture] Recebendo ${body.leads.length} leads da extensão`);
-    console.log(`📥 [prospect-capture] Query: ${body.query}`);
-    console.log(`📥 [prospect-capture] user_id: ${body.user_id}`);
-
-    // ── Normalizar leads para o schema do Supabase ────────────────────────
-    const leadsParaSalvar: LeadNormalizado[] = body.leads
-      .filter(lead => lead.nome_completo && lead.nome_completo.length >= 4)
-      .map(lead => {
-        // Extrair cidade/estado da localização quando disponível
-        let cidade: string | null  = null;
-        let estado: string | null  = null;
-
-        if (lead.localizacao) {
-          const partes = lead.localizacao.split(',').map(p => p.trim());
-          if (partes.length >= 2) {
-            cidade = partes[0] || null;
-            estado = partes[1] || null;
-          } else {
-            cidade = lead.localizacao || null;
-          }
-        }
-
-        return {
-          nome_completo:    lead.nome_completo,
-          primeiro_nome:    lead.primeiro_nome || lead.nome_completo.split(' ')[0],
-          ultimo_nome:      lead.ultimo_nome   || lead.nome_completo.split(' ').slice(1).join(' '),
-          cargo:            lead.cargo         || '',
-          empresa_nome:     lead.empresa_nome  || '',
-          linkedin_url:     lead.linkedin_url,
-          localizacao:      lead.localizacao   || null,
-          cidade:           cidade,
-          estado:           estado,
-          pais:             lead.localizacao?.toLowerCase().includes('brasil') ? 'Brasil' : null,
-          email:            null,
-          motor:            'extension',
-          query_utilizada:  body.query || '',
-          buscado_por:      body.user_id || null,
-          status:           'novo',
-          enriquecido:      false,
-          filtros_busca:    {
-            fonte:       'prospect_extension',
-            pagina_url:  body.pagina_url || null,
-            capturado_em: body.capturado_em || new Date().toISOString(),
-          },
-        };
-      });
-
-    if (leadsParaSalvar.length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Nenhum lead válido após validação (nome_completo obrigatório)',
-      });
-    }
-
-    // ── Deduplicação: verificar linkedin_url já existentes ─────────────────
-    const linkedinUrls = leadsParaSalvar
-      .map(l => l.linkedin_url)
-      .filter(Boolean);
-
-    const { data: existentes } = await supabase
-      .from('prospect_leads')
-      .select('linkedin_url')
-      .in('linkedin_url', linkedinUrls);
-
-    const urlsExistentes = new Set((existentes || []).map(e => e.linkedin_url));
-
-    const leadsNovos     = leadsParaSalvar.filter(l => !urlsExistentes.has(l.linkedin_url));
-    const leadsDuplicados = leadsParaSalvar.filter(l => urlsExistentes.has(l.linkedin_url));
-
-    console.log(`📥 [prospect-capture] Novos: ${leadsNovos.length} | Duplicados (ignorados): ${leadsDuplicados.length}`);
-
-    // ── Inserir novos leads no Supabase ────────────────────────────────────
-    let leadsInseridos: LeadNormalizado[] = [];
-
-    if (leadsNovos.length > 0) {
-      const { data: inseridos, error: erroInsert } = await supabase
-        .from('prospect_leads')
-        .insert(leadsNovos)
-        .select();
-
-      if (erroInsert) {
-        console.error('❌ [prospect-capture] Erro ao inserir:', erroInsert);
-        return res.status(500).json({
-          success: false,
-          error: `Erro ao salvar no banco: ${erroInsert.message}`,
-          detalhes: erroInsert,
-        });
+    leads.forEach((lead, i) => {
+      const normalizado = normalizarLead(lead, i);
+      if (normalizado) {
+        normalizados.push(normalizado);
+      } else {
+        descartados.push(lead.nome_completo || `lead_${i}`);
       }
-
-      leadsInseridos = inseridos || [];
-      console.log(`✅ [prospect-capture] ${leadsInseridos.length} leads inseridos com sucesso`);
-    }
-
-    // ── Montar resultados para retornar ao background.js ──────────────────
-    // Retorna TODOS (novos + duplicados) para exibição no React
-    // Os duplicados já têm dados no banco — buscá-los para retornar completos
-    let resultados: LeadNormalizado[] = [...leadsInseridos];
-
-    if (leadsDuplicados.length > 0) {
-      const { data: existentesCompletos } = await supabase
-        .from('prospect_leads')
-        .select('*')
-        .in('linkedin_url', leadsDuplicados.map(l => l.linkedin_url));
-
-      if (existentesCompletos) {
-        resultados = [...resultados, ...existentesCompletos];
-      }
-    }
-
-    // ── Resposta final ─────────────────────────────────────────────────────
-    return res.status(200).json({
-      success:      true,
-      total:        body.leads.length,
-      inseridos:    leadsInseridos.length,
-      duplicados:   leadsDuplicados.length,
-      resultados:   resultados,   // ← background.js usa este campo para enviar ao React
     });
 
-  } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Erro interno desconhecido';
-    console.error('❌ [prospect-capture] Erro inesperado:', msg);
-    return res.status(500).json({ success: false, error: msg });
+    // Deduplicar por linkedin_url
+    const vistos = new Set<string>();
+    const deduplicados = normalizados.filter(l => {
+      const key = l.linkedin_url || l.nome_completo;
+      if (vistos.has(key)) return false;
+      vistos.add(key);
+      return true;
+    });
+
+    console.log(`✅ [prospect-capture] ${deduplicados.length} válidos, ${descartados.length} descartados`);
+
+    // ── Salvar no Supabase se user_id disponível ───────────────────────
+    let savedIds: number[] = [];
+    if (user_id && deduplicados.length > 0) {
+      const rows = deduplicados.map(p => ({
+        buscado_por:      user_id,
+        motor:            'extension',
+        fonte_id_gemini:  p.gemini_id,
+        nome_completo:    p.nome_completo,
+        primeiro_nome:    p.primeiro_nome,
+        ultimo_nome:      p.ultimo_nome,
+        cargo:            p.cargo            || null,
+        email:            null,
+        email_status:     null,
+        linkedin_url:     p.linkedin_url     || null,
+        foto_url:         null,
+        empresa_nome:     p.empresa_nome     || null,
+        empresa_dominio:  p.empresa_dominio  || null,
+        empresa_setor:    null,
+        empresa_porte:    null,
+        empresa_linkedin: null,
+        empresa_website:  null,
+        cidade:           p.cidade           || null,
+        estado:           p.estado           || null,
+        pais:             p.pais             || null,
+        senioridade:      p.senioridade      || null,
+        departamentos:    p.departamentos    || [],
+        filtros_busca:    { query, pagina_url, motor: 'extension' },
+        enriquecido:      false,
+        status:           'novo',
+      }));
+
+      const { data: saved, error: saveError } = await supabase
+        .from('prospect_leads')
+        .insert(rows)
+        .select('id');
+
+      if (saveError) {
+        console.error('⚠️ [prospect-capture] Erro ao salvar no Supabase:', saveError.message);
+        // Não falha — retorna os leads mesmo sem salvar
+      } else {
+        savedIds = (saved || []).map((r: any) => r.id);
+        console.log(`💾 [prospect-capture] ${savedIds.length} leads salvos no Supabase`);
+      }
+    } else {
+      console.log(`ℹ️ [prospect-capture] user_id não enviado — leads não salvos no Supabase`);
+    }
+
+    return res.status(200).json({
+      success:     true,
+      resultados:  deduplicados,
+      total:       deduplicados.length,
+      descartados: descartados.length,
+      salvos:      savedIds.length,
+      query:       query,
+      motor:       'extension',
+      creditos_consumidos: 0,
+    });
+
+  } catch (error: any) {
+    console.error('❌ [prospect-capture] Erro:', error.message);
+    return res.status(500).json({
+      success: false,
+      error:   error.message || 'Erro interno ao processar leads',
+    });
   }
 }
