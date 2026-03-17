@@ -323,7 +323,14 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     supabase_id:   (prospect as any).supabase_id || null,
                 }),
             });
-            const data = await res.json();
+
+            // Parse seguro — 504/502 retornam HTML, não JSON
+            let data: any = {};
+            try {
+                data = await res.json();
+            } catch {
+                throw new Error(res.status === 504 ? 'Timeout ao buscar email. Tente novamente.' : `Erro ${res.status} ao buscar email.`);
+            }
 
             setResultados(prev => {
                 const u = [...prev];
@@ -502,7 +509,19 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                         prospects: alvo,
                     }),
                 });
-                const data = await resp.json();
+
+                // Parse seguro — 504/502 retornam HTML, não JSON
+                let data: any = {};
+                try {
+                    data = await resp.json();
+                } catch {
+                    const statusMsg = resp.status === 504
+                        ? 'Timeout no enriquecimento de email (muitos prospects). Tente com menos selecionados.'
+                        : `Erro ${resp.status} no enriquecimento de email.`;
+                    console.warn('⚠️ Hunter erro:', statusMsg);
+                    setSearchState({ loading: false, fase: 'concluido', error: null });
+                    return;
+                }
                 if (data.success) {
                     const enriquecidos: ProspectResult[] = data.resultados || [];
 
