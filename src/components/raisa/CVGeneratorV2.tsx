@@ -138,8 +138,7 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
     formacao_academica: [],
     formacao_complementar: [],
     hard_skills_tabela: [],
-    idiomas: [],
-    parecer_entrevista_tecnica: ''
+    idiomas: []
   });
   
   // 🆕 v57.2: Atualizar nome quando tipo muda
@@ -1022,8 +1021,8 @@ Recomendamos o(a) [NOME]..."
                     Inserido entre a tabela de Hard Skills e a Recomendação. Cole aqui o resultado da entrevista técnica realizada com o candidato.
                   </p>
                   <textarea
-                    value={dados.parecer_entrevista_tecnica || ''}
-                    onChange={e => updateDados('parecer_entrevista_tecnica', e.target.value)}
+                    value={(dados as any).parecer_entrevista_tecnica || ''}
+                    onChange={e => updateDados('parecer_entrevista_tecnica' as any, e.target.value)}
                     className="w-full border border-green-300 rounded p-3 h-32 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
                     placeholder="Ex: Durante a entrevista técnica o candidato demonstrou sólido conhecimento em SAP SD/MM/FI, com capacidade de resolução de problemas complexos...
 
@@ -1063,11 +1062,27 @@ Score: 8,5/10"
                   >
                     {loading ? '⏳ Gerando...' : '📥 Baixar DOCX'}
                   </button>
+                  <button
+                    onClick={handleGerarPreview}
+                    disabled={loading}
+                    className="text-orange-600 hover:underline text-sm disabled:opacity-50"
+                    title="Regera o preview com todos os dados atuais"
+                  >
+                    {loading ? '⏳ Gerando...' : '🔄 Atualizar Preview'}
+                  </button>
                   <button onClick={() => setEtapa('parecer')} className="text-blue-600 hover:underline text-sm">
                     ← Voltar e editar
                   </button>
                 </div>
               </div>
+
+              {/* Aviso de desatualização — aparece se parecer foi preenchido após gerar o preview */}
+              {templateSelecionado === 'tsystems' && dados.parecer_entrevista_tecnica && !htmlPreview.includes('Parecer da Entrevista Técnica') && (
+                <div className="bg-amber-50 border border-amber-300 rounded-lg px-4 py-2 flex items-center gap-2 text-sm text-amber-800">
+                  <span>⚠️</span>
+                  <span>O Parecer da Entrevista Técnica foi preenchido após o preview ser gerado. Clique em <strong>🔄 Atualizar Preview</strong> para incluí-lo no CV.</span>
+                </div>
+              )}
 
               <div className="border rounded-lg shadow-lg overflow-hidden bg-white">
                 <iframe

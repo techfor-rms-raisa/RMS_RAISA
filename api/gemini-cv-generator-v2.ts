@@ -647,10 +647,10 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       ${dados.experiencias.map((exp: any) => `
       <div class="experiencia-item">
         <div class="exp-header">
-          <span class="exp-empresa">${exp.empresa}${exp.cliente ? ` (${exp.cliente})` : ''}</span>
+          <span class="exp-empresa">${[exp.empresa, exp.cliente].filter(Boolean).join(' / ')}</span>
           <span class="exp-periodo">${exp.data_inicio} a ${exp.atual ? 'Atual' : exp.data_fim || ''}</span>
         </div>
-        <div class="exp-cargo">${exp.cargo}</div>
+        ${(exp.cargo && exp.cargo !== 'null') ? `<div class="exp-cargo">${exp.cargo}</div>` : ''}
         ${exp.descricao ? `<div class="exp-atividades"><strong>Principais atividades:</strong> ${exp.descricao}</div>` : ''}
         ${exp.tecnologias && exp.tecnologias.length > 0 ? `<div class="exp-atividades"><strong>Tecnologias utilizadas:</strong> ${exp.tecnologias.join(', ')}</div>` : ''}
         ${exp.motivo_saida ? `<div class="exp-motivo"><strong>Motivo de saída:</strong> ${exp.motivo_saida}</div>` : ''}
@@ -737,7 +737,7 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     </div>
     <div style="flex: 1;"></div>
     <div class="info-candidato">
-      <div class="nome-candidato">${(dados.nome || '').toUpperCase()}</div>
+      <div class="nome-candidato">${dados.nome.toUpperCase()}</div>
       <div class="titulo-candidato">${dados.titulo_profissional || dados.titulo_vaga || ''}</div>
       ${dados.codigo_vaga ? `<div class="protocolo">Protocolo: ${dados.codigo_vaga}</div>` : ''}
       <div class="cliente">${dados.cliente_destino || 'T-Systems do Brasil'}</div>
@@ -896,10 +896,10 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     ${dados.experiencias && dados.experiencias.length > 0 ? dados.experiencias.map((exp: any) => `
     <div class="exp-item">
       <div>
-        <span class="exp-empresa">CONSULTORIA/CLIENTE: ${(exp.empresa || '').toUpperCase()}${exp.cliente ? ` / ${(exp.cliente || '').toUpperCase()}` : ''}</span>
+        <span class="exp-empresa">CONSULTORIA/CLIENTE: ${[exp.empresa, exp.cliente].filter(Boolean).map((s: string) => s.toUpperCase()).join(' / ')}</span>
         <span class="exp-periodo">${exp.data_inicio} - ${exp.atual ? 'atual' : exp.data_fim || ''}</span>
       </div>
-      <div><span class="exp-cargo">Função:</span> ${exp.cargo}</div>
+      ${(exp.cargo && exp.cargo !== 'null') ? `<div><span class="exp-cargo">Função:</span> ${exp.cargo}</div>` : ''}
       <div style="margin-top: 5px;"><strong>DESCRIÇÃO DAS ATIVIDADES:</strong></div>
       <div>${exp.descricao || ''}</div>
       ${exp.tecnologias && exp.tecnologias.length > 0 ? `<div><strong>Tecnologias utilizadas:</strong> ${exp.tecnologias.join(', ')}</div>` : ''}
