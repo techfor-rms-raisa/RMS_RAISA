@@ -755,6 +755,10 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
   <title>CV - ${dados.nome}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    @page { margin: 10mm; size: A4; }
+    @media print {
+      html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
     body {
       font-family: Arial, sans-serif;
       font-size: 10pt;
@@ -877,7 +881,7 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     <!-- Parecer da Entrevista Técnica -->
     ${dados.parecer_entrevista_tecnica ? `
     <div class="secao-titulo">Parecer da Entrevista Técnica</div>
-    <div class="recomendacao" style="background:#F0FFF4; border-left-color:#2E7D32;">
+    <div class="recomendacao" style="background:#FCE8F3; border-left-color:#E20074;">
       ${dados.parecer_entrevista_tecnica.split('\n').filter((p: string) => p.trim()).map((p: string) => `<p style="margin:0 0 6px 0;">${p}</p>`).join('')}
     </div>
     ` : ''}
