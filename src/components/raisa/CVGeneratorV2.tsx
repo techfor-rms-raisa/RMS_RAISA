@@ -165,7 +165,12 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
       const cvExistente = await loadCVByCandidatura(candidaturaId);
       if (cvExistente) {
         setDados(cvExistente.dados_processados);
-        console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ')');
+        // Restaurar template usado anteriormente
+        const templateSalvo = cvExistente.metadados?.template_tipo as TemplateType;
+        if (templateSalvo === 'tsystems' || templateSalvo === 'techfor') {
+          setTemplateSelecionado(templateSalvo);
+        }
+        console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ', template: ' + (templateSalvo || 'techfor') + ')');
       }
     };
     init();
