@@ -138,7 +138,8 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
     formacao_academica: [],
     formacao_complementar: [],
     hard_skills_tabela: [],
-    idiomas: []
+    idiomas: [],
+    parecer_entrevista_tecnica: ''
   });
   
   // 🆕 v57.2: Atualizar nome quando tipo muda
@@ -1021,8 +1022,8 @@ Recomendamos o(a) [NOME]..."
                     Inserido entre a tabela de Hard Skills e a Recomendação. Cole aqui o resultado da entrevista técnica realizada com o candidato.
                   </p>
                   <textarea
-                    value={(dados as any).parecer_entrevista_tecnica || ''}
-                    onChange={e => updateDados('parecer_entrevista_tecnica' as any, e.target.value)}
+                    value={dados.parecer_entrevista_tecnica || ''}
+                    onChange={e => updateDados('parecer_entrevista_tecnica', e.target.value)}
                     className="w-full border border-green-300 rounded p-3 h-32 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
                     placeholder="Ex: Durante a entrevista técnica o candidato demonstrou sólido conhecimento em SAP SD/MM/FI, com capacidade de resolução de problemas complexos...
 
