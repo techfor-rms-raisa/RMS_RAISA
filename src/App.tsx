@@ -51,6 +51,7 @@ import DashboardRaisaMetrics from './components/raisa/DashboardRaisaMetrics';
 import { ConfiguracaoPriorizacaoDistribuicao } from './components/ConfiguracaoPriorizacaoDistribuicao';
 import DistribuicaoIAPage from './components/raisa/DistribuicaoIAPage';
 import ProspectSearchPage from './components/prospect/ProspectSearchPage';
+import CreditosTab from './components/prospect/CreditosTab';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -446,7 +447,7 @@ const App: React.FC = () => {
       case 'prospect_list':
           return <ProspectSearchPage initialTab="salvos" />;
       case 'prospect_credits':
-          return <div className="p-8 text-center text-gray-400"><i className="fa-solid fa-chart-column text-5xl mb-4 block"></i><p className="text-lg">Consumo de Créditos — Fase 3</p></div>;
+          return <CreditosTab />;
 
       case 'dashboard':
       default:
