@@ -149,8 +149,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
     formacao_academica: [],
     formacao_complementar: [],
     hard_skills_tabela: [],
-    idiomas: [],
-    parecer_entrevista_tecnica: ''
+    idiomas: []
   });
 
   // Atualizar campo genérico
@@ -604,31 +603,35 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
   const handleBaixarPDF = () => {
     if (!htmlPreview) return;
 
-    const htmlCompleto = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>CV - ${dados.nome || candidatoNome}</title>
-          <style>
-            @media print {
-              body { margin: 0; padding: 0; }
-              @page { size: A4; margin: 10mm; }
-            }
-          </style>
-        </head>
-        <body>
-          ${htmlCapa ? htmlCapa + '<div style="page-break-after: always;"></div>' : ''}
-          ${htmlPreview}
-        </body>
-      </html>
-    `;
+    const htmlCompleto = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>CV - ${dados.nome || candidatoNome}</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      @page { size: A4; margin: 10mm; }
+      @media print {
+        html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      }
+    </style>
+  </head>
+  <body>
+    ${htmlCapa ? htmlCapa + '<div style="page-break-after: always;"></div>' : ''}
+    ${htmlPreview}
+  </body>
+</html>`;
 
-    const printWindow = window.open('', '_blank');
+    // Usar Blob URL para evitar "about:blank" no rodapé ao imprimir
+    const blob = new Blob([htmlCompleto], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const printWindow = window.open(url, '_blank');
     if (printWindow) {
-      printWindow.document.write(htmlCompleto);
-      printWindow.document.close();
-      setTimeout(() => printWindow.print(), 500);
+      printWindow.onload = () => {
+        printWindow.print();
+        // Limpar o Blob URL após a impressão
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      };
     }
   };
 
@@ -1559,27 +1562,6 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             className="w-full border rounded-lg p-4 h-64 text-sm"
             placeholder="Profissional com X anos de experiência na área de TI..."
           />
-
-          {/* Parecer da Entrevista Técnica — sempre visível */}
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-2">
-            <div className="flex items-center gap-2">
-              <span className="text-base">🎯</span>
-              <h4 className="font-bold text-green-800 text-sm">Parecer da Entrevista Técnica</h4>
-              <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full font-medium">T-Systems</span>
-            </div>
-            <p className="text-xs text-green-700">
-              Inserido entre a tabela de Hard Skills e a Recomendação. Cole aqui o resultado da entrevista técnica realizada com o candidato.
-            </p>
-            <textarea
-              value={dados.parecer_entrevista_tecnica || ''}
-              onChange={e => updateDados('parecer_entrevista_tecnica', e.target.value)}
-              className="w-full border border-green-300 rounded p-3 h-32 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
-              placeholder="Ex: Durante a entrevista técnica o candidato demonstrou sólido conhecimento em SAP SD/MM/FI...
-
-Avaliação técnica: Aprovado
-Score: 8,5/10"
-            />
-          </div>
 
           <div className="bg-gray-50 rounded-lg p-4">
             <h4 className="font-bold text-gray-700 mb-2 text-sm">Recomendação Final</h4>
