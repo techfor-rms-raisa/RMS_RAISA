@@ -187,7 +187,7 @@ Responda SOMENTE JSON sem markdown:
         config: {
             tools: [{ googleSearch: {} }],
             temperature: 0.3,
-            maxOutputTokens: 8192,
+            maxOutputTokens: 16000,
             // 4096: suficiente para planejar e executar 5-6 buscas Google sem loop infinito
             thinkingConfig: { thinkingBudget: 4096 },
         } as any
@@ -225,20 +225,68 @@ Responda SOMENTE JSON sem markdown:
         parsed = JSON.parse(sanitized);
     } catch (e) {
         console.error('❌ [GeminiSearch] Falha ao parsear JSON:', e);
-        // Tentativa de recuperação
+        // Tentativa de recuperação 1: extrair array de pessoas mesmo com JSON truncado
         try {
-            const pessoasMatch = jsonMatch[0].match(/"pessoas"\s*:\s*(\[[\s\S]*?\])\s*[,}]/);
-            if (pessoasMatch) {
-                const sanitizedPessoas = pessoasMatch[1]
-                    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-                    .replace(/[\u201C\u201D]/g, '"');
-                parsed = { pessoas: JSON.parse(sanitizedPessoas) };
-                console.log('⚠️ [GeminiSearch] Parse recuperado via extração de array');
-            } else {
-                throw new Error('Sem array de pessoas');
+            // Estratégia: encontrar o array "pessoas" e fechar todos os colchetes/chaves abertos
+            const pessoasStart = jsonMatch[0].indexOf('"pessoas"');
+            if (pessoasStart === -1) throw new Error('Campo pessoas não encontrado');
+
+            const arrayStart = jsonMatch[0].indexOf('[', pessoasStart);
+            if (arrayStart === -1) throw new Error('Array não encontrado');
+
+            // Percorrer o array contando colchetes/chaves para extrair objetos completos
+            let depth = 0;
+            let lastCompleteObj = arrayStart + 1; // posição após o '['
+            let inString = false;
+            let escape = false;
+            const src = jsonMatch[0];
+            const objPositions: number[] = [arrayStart + 1];
+
+            for (let i = arrayStart; i < src.length; i++) {
+                const ch = src[i];
+                if (escape) { escape = false; continue; }
+                if (ch === '\\' && inString) { escape = true; continue; }
+                if (ch === '"') { inString = !inString; continue; }
+                if (inString) continue;
+                if (ch === '{') depth++;
+                if (ch === '}') {
+                    depth--;
+                    if (depth === 0) lastCompleteObj = i + 1; // marca fim do último objeto completo
+                }
             }
-        } catch {
-            throw new Error('Erro ao interpretar resposta do Gemini.');
+
+            // Montar JSON válido com os objetos completos encontrados
+            const arrayCompleto = src.substring(arrayStart, lastCompleteObj) + ']';
+            const sanitizedArray = arrayCompleto
+                .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+                .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+                .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+                .replace(/\u0000/g, '');
+
+            parsed = { pessoas: JSON.parse(sanitizedArray) };
+            console.log(`⚠️ [GeminiSearch] JSON truncado — recuperados ${parsed.pessoas.length} objetos completos`);
+
+        } catch (e2) {
+            // Tentativa de recuperação 2: regex simples como fallback final
+            try {
+                const pessoasMatch = jsonMatch[0].match(/"pessoas"\s*:\s*(\[[\s\S]*)/);
+                if (!pessoasMatch) throw new Error('Sem array de pessoas');
+
+                // Fechar o array no último '}' encontrado
+                const partial = pessoasMatch[1];
+                const lastBrace = partial.lastIndexOf('}');
+                if (lastBrace === -1) throw new Error('Sem objetos completos');
+
+                const fixedArray = partial.substring(0, lastBrace + 1) + ']';
+                const sanitized2 = fixedArray
+                    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+                    .replace(/[\u201C\u201D\u201E\u201F]/g, '"');
+
+                parsed = { pessoas: JSON.parse(sanitized2) };
+                console.log(`⚠️ [GeminiSearch] Parse recuperado via fallback regex`);
+            } catch {
+                throw new Error('Erro ao interpretar resposta do Gemini.');
+            }
         }
     }
 
