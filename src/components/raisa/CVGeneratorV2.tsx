@@ -221,7 +221,7 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
         codigo_vaga: vagaInfo?.codigo,
         cliente_destino: vagaInfo?.cliente,
         gestor_destino: vagaInfo?.gestor,
-        // Preservar campos preenchidos manualmente que não vêm da extração IA
+        // Preservar campo preenchido manualmente — não vem da extração IA
         parecer_entrevista_tecnica: prev.parecer_entrevista_tecnica || dadosExtraidos.parecer_entrevista_tecnica || ''
       }));
       setEtapa('dados');
