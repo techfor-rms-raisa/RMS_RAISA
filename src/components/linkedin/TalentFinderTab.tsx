@@ -26,7 +26,7 @@ interface QueryGerada {
 
 interface SearchState {
     loading: boolean;
-    fase:    'idle' | 'gerando' | 'concluido' | 'erro';
+    fase:    'idle' | 'gerando' | 'concluido' | 'erro' | 'rate_limit';
     error:   string | null;
 }
 
@@ -83,6 +83,12 @@ const TalentFinderTab: React.FC = () => {
             const data = await resp.json();
             console.log(`📦 [TalentFinderTab] Resposta:`, data);
 
+            // Rate limit — tratamento visual específico (não é erro da aplicação)
+            if (resp.status === 429) {
+                setSearch({ loading: false, fase: 'rate_limit', error: null });
+                return;
+            }
+
             if (!resp.ok || !data.success) throw new Error(data.error || 'Erro ao gerar queries.');
 
             setQueries(data.queries || []);
@@ -91,7 +97,17 @@ const TalentFinderTab: React.FC = () => {
 
         } catch (err: any) {
             console.error(`❌ [TalentFinderTab] Erro:`, err);
-            setSearch({ loading: false, fase: 'erro', error: err.message || 'Erro desconhecido.' });
+
+            // Detectar rate limit — backend retorna 429 com mensagem_usuario
+            const isRateLimit = err.message?.includes('rate_limit') ||
+                                err.message?.includes('429') ||
+                                err.message?.includes('Resource exhausted');
+
+            if (isRateLimit) {
+                setSearch({ loading: false, fase: 'rate_limit', error: null });
+            } else {
+                setSearch({ loading: false, fase: 'erro', error: err.message || 'Erro desconhecido.' });
+            }
         }
     }, [requisitos]);
 
@@ -182,6 +198,26 @@ const TalentFinderTab: React.FC = () => {
                         <div>
                             <p className="font-semibold text-gray-700">Gemini analisando os requisitos...</p>
                             <p className="text-sm text-gray-500 mt-1">Gerando queries booleanas otimizadas para LinkedIn. Isso leva apenas alguns segundos.</p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Rate Limit (aviso temporário — não é erro da aplicação) ── */}
+            {searchState.fase === 'rate_limit' && (
+                <div className="bg-amber-50 border border-amber-300 rounded-xl p-5">
+                    <div className="flex items-start gap-3">
+                        <span className="text-2xl">⏳</span>
+                        <div className="flex-1">
+                            <p className="font-semibold text-amber-800">Serviço temporariamente sobrecarregado</p>
+                            <p className="text-sm text-amber-700 mt-1">
+                                O serviço de IA recebeu muitas requisições ao mesmo tempo. Isso é temporário — aguarde alguns segundos e tente novamente.
+                            </p>
+                            <button
+                                onClick={handleGerar}
+                                className="mt-3 flex items-center gap-2 px-4 py-2 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-700 transition-colors font-medium">
+                                <span>🔄</span> Tentar novamente
+                            </button>
                         </div>
                     </div>
                 </div>

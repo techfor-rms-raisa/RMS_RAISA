@@ -182,6 +182,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     } catch (error: any) {
         console.error('❌ [TalentFinder v4.0] Erro:', error.message);
+
+        // ── Detectar rate limit do Gemini (429) ───────────────────────
+        const is429 = error.message?.includes('429') ||
+                      error.message?.includes('Resource exhausted') ||
+                      error.message?.includes('RESOURCE_EXHAUSTED') ||
+                      error.status === 429;
+
+        if (is429) {
+            console.warn('⚠️ [TalentFinder v4.0] Rate limit Gemini — retornando 429 amigável');
+            return res.status(429).json({
+                success:        false,
+                error:          'rate_limit',
+                mensagem_usuario: '⏳ O serviço de IA está sobrecarregado no momento. Aguarde alguns segundos e tente novamente.',
+            });
+        }
+
         return res.status(500).json({
             success: false,
             error:   error.message || 'Erro ao gerar queries',
