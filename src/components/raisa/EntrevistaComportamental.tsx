@@ -603,35 +603,69 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
   const handleBaixarPDF = () => {
     if (!htmlPreview) return;
 
-    const htmlCompleto = `<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8">
-    <title>CV - ${dados.nome || candidatoNome}</title>
-    <style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      @page { size: A4; margin: 10mm; }
-      @media print {
-        html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      }
-    </style>
-  </head>
-  <body>
-    ${htmlCapa ? htmlCapa + '<div style="page-break-after: always;"></div>' : ''}
-    ${htmlPreview}
-  </body>
-</html>`;
+    const htmlCompleto = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>CV - ${dados.nome || candidatoNome}</title>
+          <style>
+            @media print {
+              body { margin: 0; padding: 0; }
+              @page { size: A4; margin: 10mm; }
+            }
+          </style>
+        </head>
+        <body>
+          ${htmlCapa ? htmlCapa + '<div style="page-break-after: always;"></div>' : ''}
+          ${htmlPreview}
+        </body>
+      </html>
+    `;
 
-    // Usar Blob URL para evitar "about:blank" no rodapé ao imprimir
-    const blob = new Blob([htmlCompleto], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const printWindow = window.open(url, '_blank');
+    const printWindow = window.open('', '_blank');
     if (printWindow) {
-      printWindow.onload = () => {
-        printWindow.print();
-        // Limpar o Blob URL após a impressão
-        setTimeout(() => URL.revokeObjectURL(url), 10000);
-      };
+      printWindow.document.write(htmlCompleto);
+      printWindow.document.close();
+      setTimeout(() => printWindow.print(), 500);
+    }
+  };
+
+  // Baixar DOCX T-Systems
+  const handleBaixarDocx = async () => {
+    if (!dados) return;
+    setLoading(true);
+    try {
+      const response = await fetch('/api/cv-generator-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dados, template: 'tsystems' })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Erro ao gerar DOCX');
+      }
+      const result = await response.json();
+      const byteCharacters = atob(result.docx_base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.filename || `CV_${(dados.nome || 'Candidato').replace(/\s+/g, '_')}_TSystems.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('❌ Erro ao gerar DOCX:', err);
+      setError(err.message || 'Erro ao gerar DOCX');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1582,9 +1616,18 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
         <div className="space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-bold">Preview do CV Parcial</h3>
-            <button onClick={handleBaixarPDF} className="text-green-600 hover:underline text-sm">
-              🖨️ Imprimir/PDF
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={handleBaixarDocx}
+                disabled={loading}
+                className="text-blue-600 hover:underline text-sm disabled:opacity-50"
+              >
+                {loading ? '⏳ Gerando...' : '📥 Baixar DOCX (Word)'}
+              </button>
+              <button onClick={handleBaixarPDF} className="text-green-600 hover:underline text-sm">
+                🖨️ Imprimir/PDF
+              </button>
+            </div>
           </div>
 
           <div className="border rounded-lg shadow-lg overflow-hidden bg-white">
@@ -1621,10 +1664,17 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 
           <div className="flex justify-center gap-4">
             <button 
+              onClick={handleBaixarDocx}
+              disabled={loading}
+              className="px-6 py-3 bg-blue-700 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50"
+            >
+              {loading ? '⏳ Gerando...' : '📥 Baixar DOCX (Word)'}
+            </button>
+            <button 
               onClick={handleBaixarPDF}
               className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
-              📥 Baixar PDF
+              🖨️ Imprimir/PDF
             </button>
             <button 
               onClick={() => setEtapa('preview')}

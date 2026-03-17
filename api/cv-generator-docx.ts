@@ -72,6 +72,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    if (templateType === 'tsystems') {
+      const result = await gerarDocxTSystems(dados);
+      const realBuffer = Buffer.isBuffer(result) ? result : Buffer.from(result);
+      const base64 = realBuffer.toString('base64');
+      const filename = `CV_${(dados.nome || 'Candidato').replace(/[^a-zA-Z0-9_\-\s]/g, '').replace(/\s+/g, '_')}_TSystems.docx`;
+      return res.status(200).json({ docx_base64: base64, filename, size: realBuffer.length });
+    }
+
     return res.status(400).json({ error: `Template '${templateType}' não suportado para DOCX ainda` });
 
   } catch (error: any) {
@@ -535,6 +543,369 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
   });
 
   // Gerar buffer - garantir compatibilidade com diferentes ambientes
+  const packerResult = await Packer.toBuffer(doc);
+  return Buffer.isBuffer(packerResult) ? packerResult : Buffer.from(packerResult);
+}
+
+
+// ============================================
+// GERADOR DOCX T-SYSTEMS
+// ============================================
+async function gerarDocxTSystems(dados: any): Promise<Buffer> {
+  const MAGENTA = 'E20074';
+  const MAGENTA_LIGHT = 'FCE8F3'; // rosado claro para bloco parecer
+  const children: any[] = [];
+
+  // --- CABEÇALHO: Nome + Título + Cliente ---
+  children.push(new Paragraph({
+    alignment: AlignmentType.LEFT,
+    spacing: { before: 0, after: 60 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: MAGENTA, space: 1 } },
+    children: [
+      new TextRun({ text: 'T Systems', bold: true, size: 28, font: FONT, color: MAGENTA })
+    ]
+  }));
+
+  children.push(new Paragraph({ spacing: { before: 160, after: 40 }, children: [
+    new TextRun({ text: (dados.nome || '').toUpperCase(), bold: true, size: 36, font: FONT })
+  ]}));
+
+  children.push(new Paragraph({ spacing: { before: 0, after: 40 }, children: [
+    new TextRun({ text: dados.titulo_vaga || dados.titulo_profissional || '', size: 24, font: FONT })
+  ]}));
+
+  if (dados.codigo_vaga) {
+    children.push(new Paragraph({ spacing: { before: 0, after: 40 }, children: [
+      new TextRun({ text: `Protocolo: ${dados.codigo_vaga}`, size: 20, font: FONT })
+    ]}));
+  }
+
+  children.push(new Paragraph({ spacing: { before: 0, after: 160 }, children: [
+    new TextRun({ text: dados.cliente_destino || 'T-Systems do Brasil', size: 20, font: FONT })
+  ]}));
+
+  // --- PERFIL ---
+  if (dados.resumo) {
+    children.push(new Paragraph({
+      spacing: { before: 200, after: 80 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: MAGENTA, space: 1 } },
+      children: [new TextRun({ text: 'PERFIL:', bold: true, size: 22, font: FONT, color: MAGENTA })]
+    }));
+    const perfilParas = dados.resumo.split('\n').filter((p: string) => p.trim());
+    perfilParas.forEach((p: string) => {
+      children.push(new Paragraph({
+        spacing: { after: 60 },
+        alignment: AlignmentType.JUSTIFIED,
+        children: [new TextRun({ text: p.trim(), size: 20, font: FONT })]
+      }));
+    });
+  }
+
+  // --- HARD SKILLS ---
+  const hardSkills = dados.hard_skills_tabela || [];
+  if (hardSkills.length > 0) {
+    children.push(new Paragraph({
+      spacing: { before: 200, after: 80 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: MAGENTA, space: 1 } },
+      children: [new TextRun({ text: 'Hard Skills', bold: true, size: 22, font: FONT, color: MAGENTA })]
+    }));
+
+    const colHS = [6500, 2526];
+    children.push(new Table({
+      width: { size: CONTENT_WIDTH, type: WidthType.DXA },
+      columnWidths: colHS,
+      rows: [
+        new TableRow({ children: [
+          new TableCell({
+            borders, width: { size: colHS[0], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: MAGENTA, type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Tecnologia', bold: true, size: 20, font: FONT, color: 'FFFFFF' })] })]
+          }),
+          new TableCell({
+            borders, width: { size: colHS[1], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: MAGENTA, type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Tempo de Experiência', bold: true, size: 20, font: FONT, color: 'FFFFFF' })] })]
+          })
+        ]}),
+        ...hardSkills.map((s: any, idx: number) => new TableRow({ children: [
+          new TableCell({
+            borders, width: { size: colHS[0], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: idx % 2 === 0 ? 'FFFFFF' : 'FDEEF8', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: s.tecnologia || '-', size: 20, font: FONT })] })]
+          }),
+          new TableCell({
+            borders, width: { size: colHS[1], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: idx % 2 === 0 ? 'FFFFFF' : 'FDEEF8', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: s.tempo_experiencia || '-', size: 20, font: FONT })] })]
+          })
+        ]}))
+      ]
+    }));
+  }
+
+  // --- PARECER DA ENTREVISTA TÉCNICA ---
+  if (dados.parecer_entrevista_tecnica) {
+    children.push(new Paragraph({
+      spacing: { before: 200, after: 80 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: MAGENTA, space: 1 } },
+      children: [new TextRun({ text: 'Parecer da Entrevista Técnica', bold: true, size: 22, font: FONT, color: MAGENTA })]
+    }));
+    const parecerParas = dados.parecer_entrevista_tecnica.split('\n').filter((p: string) => p.trim());
+    parecerParas.forEach((p: string) => {
+      children.push(new Paragraph({
+        spacing: { after: 60 },
+        alignment: AlignmentType.JUSTIFIED,
+        shading: { fill: MAGENTA_LIGHT, type: ShadingType.CLEAR },
+        indent: { left: 120, right: 120 },
+        children: [new TextRun({ text: p.trim(), size: 20, font: FONT })]
+      }));
+    });
+    children.push(new Paragraph({ spacing: { after: 40 } }));
+  }
+
+  // --- BLOCO RECOMENDAÇÃO ---
+  children.push(new Paragraph({
+    spacing: { before: 160, after: 40 },
+    shading: { fill: MAGENTA_LIGHT, type: ShadingType.CLEAR },
+    indent: { left: 120, right: 120 },
+    children: [
+      new TextRun({ text: `Recomendamos o(a) ${(dados.nome || '').split(' ')[0]}`, bold: true, size: 20, font: FONT }),
+      new TextRun({ text: ', pois demonstrou ser um(a) profissional com experiência considerável nas principais tecnologias solicitadas para a posição supracitada.', size: 20, font: FONT })
+    ]
+  }));
+  children.push(new Paragraph({
+    spacing: { after: 40 },
+    shading: { fill: MAGENTA_LIGHT, type: ShadingType.CLEAR },
+    indent: { left: 120, right: 120 },
+    children: [
+      new TextRun({ text: 'Disponibilidade: ', bold: true, size: 20, font: FONT }),
+      new TextRun({ text: dados.disponibilidade || 'Imediata', size: 20, font: FONT })
+    ]
+  }));
+  children.push(new Paragraph({
+    spacing: { after: 40 },
+    shading: { fill: MAGENTA_LIGHT, type: ShadingType.CLEAR },
+    indent: { left: 120, right: 120 },
+    children: [new TextRun({ text: 'Está participando de processos seletivos no mercado:', italics: true, size: 20, font: FONT })]
+  }));
+  children.push(new Paragraph({
+    spacing: { after: 160 },
+    shading: { fill: MAGENTA_LIGHT, type: ShadingType.CLEAR },
+    indent: { left: 120, right: 120 },
+    children: [new TextRun({ text: `Não está participando de processo na empresa ${dados.cliente_destino || 'T-Systems'}, através de seu R&S ou de outra consultoria.`, italics: true, size: 20, font: FONT })]
+  }));
+
+  // --- EXPERIÊNCIA PROFISSIONAL ---
+  const experiencias = dados.experiencias || [];
+  if (experiencias.length > 0) {
+    children.push(new Paragraph({
+      spacing: { before: 200, after: 80 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: MAGENTA, space: 1 } },
+      children: [new TextRun({ text: 'EXPERIÊNCIA PROFISSIONAL:', bold: true, size: 22, font: FONT, color: MAGENTA })]
+    }));
+
+    experiencias.forEach((exp: any) => {
+      const empresaLabel = [exp.empresa, exp.cliente].filter(Boolean).map((s: string) => s.toUpperCase()).join(' / ');
+      const periodo = `${exp.data_inicio || ''} - ${exp.atual ? 'atual' : exp.data_fim || ''}`;
+
+      // CONSULTORIA/CLIENTE + período na mesma linha com tab
+      children.push(new Paragraph({
+        spacing: { before: 160, after: 20 },
+        tabStops: [{ type: 'right' as any, position: CONTENT_WIDTH }],
+        children: [
+          new TextRun({ text: `CONSULTORIA/CLIENTE: ${empresaLabel}`, bold: true, size: 20, font: FONT, color: MAGENTA }),
+          new TextRun({ text: '\t', size: 20, font: FONT }),
+          new TextRun({ text: periodo, bold: true, size: 20, font: FONT })
+        ]
+      }));
+
+      // Função
+      if (exp.cargo && exp.cargo !== 'null') {
+        children.push(new Paragraph({
+          spacing: { after: 20 },
+          children: [
+            new TextRun({ text: 'Função: ', bold: true, size: 20, font: FONT, color: MAGENTA }),
+            new TextRun({ text: exp.cargo, size: 20, font: FONT })
+          ]
+        }));
+      }
+
+      // Descrição das atividades
+      children.push(new Paragraph({
+        spacing: { before: 40, after: 20 },
+        children: [new TextRun({ text: 'DESCRIÇÃO DAS ATIVIDADES:', bold: true, size: 20, font: FONT })]
+      }));
+
+      if (exp.descricao && exp.descricao.trim()) {
+        const paragrafos = exp.descricao.split('\n').filter((p: string) => p.trim());
+        paragrafos.forEach((paragrafo: string) => {
+          children.push(new Paragraph({
+            spacing: { after: 40 },
+            alignment: AlignmentType.JUSTIFIED,
+            children: [new TextRun({ text: paragrafo.trim(), size: 18, font: FONT })]
+          }));
+        });
+      }
+
+      // Tecnologias utilizadas
+      if (exp.tecnologias && exp.tecnologias.length > 0) {
+        children.push(new Paragraph({
+          spacing: { before: 40, after: 40 },
+          children: [
+            new TextRun({ text: 'Tecnologias utilizadas: ', bold: true, size: 18, font: FONT }),
+            new TextRun({ text: exp.tecnologias.join(', '), size: 18, font: FONT })
+          ]
+        }));
+      }
+
+      // Motivo da saída
+      const motivo = (exp.motivo_saida || '').toString().trim();
+      if (motivo) {
+        children.push(new Paragraph({
+          spacing: { before: 20, after: 40 },
+          children: [
+            new TextRun({ text: 'Motivo da Saída: ', bold: true, italics: true, size: 18, font: FONT }),
+            new TextRun({ text: motivo, italics: true, size: 18, font: FONT })
+          ]
+        }));
+      }
+    });
+  }
+
+  // --- IDIOMAS ---
+  const idiomas = dados.idiomas || [];
+  if (idiomas.length > 0) {
+    children.push(new Paragraph({
+      spacing: { before: 200, after: 80 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: MAGENTA, space: 1 } },
+      children: [new TextRun({ text: 'IDIOMAS:', bold: true, size: 22, font: FONT, color: MAGENTA })]
+    }));
+    const colIdioma = [2000, 2000, 2000, 3026];
+    children.push(new Table({
+      width: { size: CONTENT_WIDTH, type: WidthType.DXA },
+      columnWidths: colIdioma,
+      rows: [
+        new TableRow({ children: [
+          new TableCell({ borders, width: { size: colIdioma[0], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: 'F0F0F0', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Descrição', bold: true, size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colIdioma[1], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: 'F0F0F0', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Nível', bold: true, size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colIdioma[2], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: 'F0F0F0', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Possui certificação? S/N', bold: true, size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colIdioma[3], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: 'F0F0F0', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Instituição', bold: true, size: 18, font: FONT })] })] })
+        ]}),
+        ...idiomas.map((i: any) => new TableRow({ children: [
+          new TableCell({ borders, width: { size: colIdioma[0], type: WidthType.DXA }, margins: CELL_MARGINS,
+            children: [new Paragraph({ children: [new TextRun({ text: i.idioma || '-', size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colIdioma[1], type: WidthType.DXA }, margins: CELL_MARGINS,
+            children: [new Paragraph({ children: [new TextRun({ text: fmtIdioma(i.nivel), size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colIdioma[2], type: WidthType.DXA }, margins: CELL_MARGINS,
+            children: [new Paragraph({ children: [new TextRun({ text: i.certificacao ? 'S' : 'N', size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colIdioma[3], type: WidthType.DXA }, margins: CELL_MARGINS,
+            children: [new Paragraph({ children: [new TextRun({ text: i.instituicao || 'N', size: 18, font: FONT })] })] })
+        ]}))
+      ]
+    }));
+  }
+
+  // --- FORMAÇÃO ---
+  const formacoes = dados.formacao_academica || [];
+  if (formacoes.length > 0) {
+    children.push(new Paragraph({
+      spacing: { before: 200, after: 80 },
+      border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: MAGENTA, space: 1 } },
+      children: [new TextRun({ text: 'FORMAÇÃO:', bold: true, size: 22, font: FONT, color: MAGENTA })]
+    }));
+    const colForm = [1400, 2600, 2400, 1200, 1426];
+    children.push(new Table({
+      width: { size: CONTENT_WIDTH, type: WidthType.DXA },
+      columnWidths: colForm,
+      rows: [
+        new TableRow({ children: [
+          new TableCell({ borders, width: { size: colForm[0], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: 'F0F0F0', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Tipo', bold: true, size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colForm[1], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: 'F0F0F0', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Curso', bold: true, size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colForm[2], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: 'F0F0F0', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Instituição', bold: true, size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colForm[3], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: 'F0F0F0', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Concluído? S/N', bold: true, size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colForm[4], type: WidthType.DXA }, margins: CELL_MARGINS,
+            shading: { fill: 'F0F0F0', type: ShadingType.CLEAR },
+            children: [new Paragraph({ children: [new TextRun({ text: 'Ano', bold: true, size: 18, font: FONT })] })] })
+        ]}),
+        ...formacoes.map((f: any) => new TableRow({ children: [
+          new TableCell({ borders, width: { size: colForm[0], type: WidthType.DXA }, margins: CELL_MARGINS,
+            children: [new Paragraph({ children: [new TextRun({ text: fmtFormacao(f.tipo), size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colForm[1], type: WidthType.DXA }, margins: CELL_MARGINS,
+            children: [new Paragraph({ children: [new TextRun({ text: f.curso || '-', size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colForm[2], type: WidthType.DXA }, margins: CELL_MARGINS,
+            children: [new Paragraph({ children: [new TextRun({ text: f.instituicao || '-', size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colForm[3], type: WidthType.DXA }, margins: CELL_MARGINS,
+            children: [new Paragraph({ children: [new TextRun({ text: f.em_andamento ? 'N' : 'S', size: 18, font: FONT })] })] }),
+          new TableCell({ borders, width: { size: colForm[4], type: WidthType.DXA }, margins: CELL_MARGINS,
+            children: [new Paragraph({ children: [new TextRun({ text: f.data_conclusao || '-', size: 18, font: FONT })] })] })
+        ]}))
+      ]
+    }));
+  }
+
+  // --- INFORMAÇÕES ADICIONAIS ---
+  children.push(new Paragraph({
+    spacing: { before: 200, after: 80 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: MAGENTA, space: 1 } },
+    children: [new TextRun({ text: 'INFORMAÇÕES ADICIONAIS:', bold: true, size: 22, font: FONT, color: MAGENTA })]
+  }));
+  children.push(new Paragraph({ spacing: { after: 40 }, children: [
+    new TextRun({ text: 'DISPONIBILIDADE: ', bold: true, size: 20, font: FONT }),
+    new TextRun({ text: (dados.disponibilidade || 'A combinar').toUpperCase(), size: 20, font: FONT })
+  ]}));
+  if (dados.modalidade_trabalho) {
+    children.push(new Paragraph({ spacing: { after: 40 }, children: [
+      new TextRun({ text: 'ATUAÇÃO: ', bold: true, size: 20, font: FONT }),
+      new TextRun({ text: dados.modalidade_trabalho.toUpperCase().replace('HIBRIDO', 'REMOTO / HÍBRIDO'), size: 20, font: FONT })
+    ]}));
+  }
+  if (dados.cidade || dados.estado) {
+    children.push(new Paragraph({ spacing: { after: 40 }, children: [
+      new TextRun({ text: 'CIDADE/ESTADO: ', bold: true, size: 20, font: FONT }),
+      new TextRun({ text: [dados.cidade, dados.estado].filter(Boolean).join(' – ').toUpperCase(), size: 20, font: FONT })
+    ]}));
+  }
+  if (dados.nivel_hierarquico) {
+    children.push(new Paragraph({ spacing: { after: 40 }, children: [
+      new TextRun({ text: 'NÍVEL HIERÁRQUICO: ', bold: true, size: 20, font: FONT }),
+      new TextRun({ text: (dados.nivel_hierarquico || '').toUpperCase(), size: 20, font: FONT })
+    ]}));
+  }
+
+  // Criar documento
+  const doc = new Document({
+    styles: {
+      default: {
+        document: { run: { font: FONT, size: 20, color: '333333' } }
+      }
+    },
+    sections: [{
+      properties: {
+        page: {
+          size: { width: A4_WIDTH, height: A4_HEIGHT },
+          margin: { top: 1134, right: 850, bottom: 1134, left: 850 }
+        }
+      },
+      children
+    }]
+  });
+
   const packerResult = await Packer.toBuffer(doc);
   return Buffer.isBuffer(packerResult) ? packerResult : Buffer.from(packerResult);
 }
