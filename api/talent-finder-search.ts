@@ -68,6 +68,9 @@ REGRAS DE CONSTRUÇÃO:
 - Use aspas para termos compostos: "React Native", "Front End", "IS-Oil"
 - Inclua localização quando mencionada nos requisitos
 - NÃO use AND entre grupos OR — coloque cada grupo em parênteses
+- HÍFEN EM TECNOLOGIAS: sempre gere as duas formas — com hífen E sem hífen usando OR.
+  Exemplos: ("IS-Oil" OR "IS Oil"), ("Front-End" OR "Front End"), ("e-commerce" OR "ecommerce")
+  Isso é OBRIGATÓRIO para tecnologias como SAP IS-Oil, que têm uso variado no LinkedIn.
 
 EXEMPLOS DO PADRÃO CORRETO:
 Para "Dev React Native, Android/Kotlin, São Paulo":
@@ -182,22 +185,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     } catch (error: any) {
         console.error('❌ [TalentFinder v4.0] Erro:', error.message);
-
-        // ── Detectar rate limit do Gemini (429) ───────────────────────
-        const is429 = error.message?.includes('429') ||
-                      error.message?.includes('Resource exhausted') ||
-                      error.message?.includes('RESOURCE_EXHAUSTED') ||
-                      error.status === 429;
-
-        if (is429) {
-            console.warn('⚠️ [TalentFinder v4.0] Rate limit Gemini — retornando 429 amigável');
-            return res.status(429).json({
-                success:        false,
-                error:          'rate_limit',
-                mensagem_usuario: '⏳ O serviço de IA está sobrecarregado no momento. Aguarde alguns segundos e tente novamente.',
-            });
-        }
-
         return res.status(500).json({
             success: false,
             error:   error.message || 'Erro ao gerar queries',
