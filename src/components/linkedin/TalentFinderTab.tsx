@@ -130,64 +130,6 @@ const TalentFinderTab: React.FC = () => {
     return (
         <div className="space-y-5">
 
-            {/* ── Toast: leads recebidos da Extension ───────────────── */}
-            {toastExtensao && (
-                <div className="bg-green-50 border border-green-300 rounded-xl px-4 py-3 flex items-center gap-3">
-                    <span className="text-lg">✅</span>
-                    <p className="text-sm font-medium text-green-800">{toastExtensao}</p>
-                </div>
-            )}
-
-            {/* ── Leads capturados pela Extension ───────────────────── */}
-            {leadsExtensao.length > 0 && (
-                <div className="bg-white border border-indigo-200 rounded-xl shadow-sm overflow-hidden">
-                    <div className="px-4 py-3 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <span className="text-base">🔗</span>
-                            <span className="font-semibold text-indigo-800 text-sm">
-                                {leadsExtensao.length} perfil{leadsExtensao.length > 1 ? 'is' : ''} capturado{leadsExtensao.length > 1 ? 's' : ''} pelo Prospect Engine
-                            </span>
-                        </div>
-                        <button
-                            onClick={() => setLeadsExtensao([])}
-                            className="text-xs text-indigo-500 hover:text-indigo-700 underline">
-                            Limpar
-                        </button>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="bg-gray-50 text-left">
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">NOME</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">CARGO</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">EMPRESA</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">LOCALIZAÇÃO</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">LINKEDIN</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {leadsExtensao.map((lead: any, idx: number) => (
-                                    <tr key={lead.linkedin_url || idx} className="border-t border-gray-100 hover:bg-gray-50">
-                                        <td className="px-3 py-2 font-medium text-gray-800 text-xs">{lead.nome_completo || '—'}</td>
-                                        <td className="px-3 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={lead.cargo || ''}>{lead.cargo || '—'}</td>
-                                        <td className="px-3 py-2 text-gray-600 text-xs">{lead.empresa_nome || '—'}</td>
-                                        <td className="px-3 py-2 text-gray-500 text-xs">{lead.localizacao || lead.cidade || '—'}</td>
-                                        <td className="px-3 py-2 text-center">
-                                            {lead.linkedin_url ? (
-                                                <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer"
-                                                    className="text-blue-600 hover:text-blue-800 text-xs">
-                                                    <i className="fa-brands fa-linkedin"></i>
-                                                </a>
-                                            ) : '—'}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
-
             {/* ── Header ────────────────────────────────────────────── */}
             <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-100 rounded-xl p-5">
                 <div className="flex items-start gap-3">
@@ -392,6 +334,64 @@ const TalentFinderTab: React.FC = () => {
                     <p className="text-xs text-gray-400 mt-1">
                         O Gemini criará 3 queries booleanas otimizadas para encontrar candidatos no LinkedIn via Google
                     </p>
+                </div>
+            )}
+
+            {/* ── Toast: leads recebidos da Extension ───────────────── */}
+            {toastExtensao && (
+                <div className="bg-green-50 border border-green-300 rounded-xl px-4 py-3 flex items-center gap-3">
+                    <span className="text-lg">✅</span>
+                    <p className="text-sm font-medium text-green-800">{toastExtensao}</p>
+                </div>
+            )}
+
+            {/* ── Leads capturados pela Extension ───────────────────── */}
+            {leadsExtensao.length > 0 && (
+                <div className="bg-white border border-indigo-200 rounded-xl shadow-sm overflow-hidden">
+                    <div className="px-4 py-3 bg-indigo-50 border-b border-indigo-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <span className="text-base">🔗</span>
+                            <span className="font-semibold text-indigo-800 text-sm">
+                                {leadsExtensao.length} perfil{leadsExtensao.length > 1 ? 'is' : ''} capturado{leadsExtensao.length > 1 ? 's' : ''} pelo Prospect Engine
+                            </span>
+                        </div>
+                        <button
+                            onClick={() => setLeadsExtensao([])}
+                            className="text-xs text-indigo-500 hover:text-indigo-700 underline">
+                            Limpar
+                        </button>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="bg-gray-50 text-left">
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">NOME</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">CARGO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">EMPRESA</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500">LOCALIZAÇÃO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-500 text-center">LINKEDIN</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {leadsExtensao.map((lead: any, idx: number) => (
+                                    <tr key={lead.linkedin_url || idx} className="border-t border-gray-100 hover:bg-gray-50">
+                                        <td className="px-3 py-2 font-medium text-gray-800 text-xs">{lead.nome_completo || '—'}</td>
+                                        <td className="px-3 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={lead.cargo || ''}>{lead.cargo || '—'}</td>
+                                        <td className="px-3 py-2 text-gray-600 text-xs">{lead.empresa_nome || '—'}</td>
+                                        <td className="px-3 py-2 text-gray-500 text-xs">{lead.localizacao || lead.cidade || '—'}</td>
+                                        <td className="px-3 py-2 text-center">
+                                            {lead.linkedin_url ? (
+                                                <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer"
+                                                    className="text-blue-600 hover:text-blue-800 text-xs">
+                                                    <i className="fa-brands fa-linkedin"></i>
+                                                </a>
+                                            ) : '—'}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             )}
         </div>
