@@ -31,7 +31,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 linkedin_url, empresa_nome, empresa_dominio,
                 empresa_setor, empresa_porte, motor,
                 senioridade, departamentos, status,
-                criado_em, atualizado_em
+                criado_em, atualizado_em,
+                buscado_por,
+                app_users!prospect_leads_buscado_por_fkey (
+                    nome_usuario
+                )
             `)
             .order('criado_em', { ascending: false })
             .limit(500);
@@ -49,7 +53,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         console.log(`✅ [prospect-leads] ${data?.length} leads retornados`);
-        return res.status(200).json({ success: true, leads: data || [], total: data?.length ?? 0 });
+
+        // Normalizar: achatar o join app_users → campo gravado_por_nome
+        const leads = (data || []).map((row: any) => ({
+            ...row,
+            gravado_por_nome: row.app_users?.nome_usuario || null,
+            app_users: undefined, // remover objeto aninhado da resposta
+        }));
+
+        return res.status(200).json({ success: true, leads, total: leads.length });
 
     } catch (err: any) {
         console.error('❌ [prospect-leads] Erro:', err);

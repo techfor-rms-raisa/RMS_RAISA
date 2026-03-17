@@ -79,6 +79,7 @@ interface ProspectLead {
     criado_em:      string;
     senioridade:    string | null;
     departamentos:  string[];
+    gravado_por_nome: string | null;
 }
 
 // ============================================
@@ -1088,6 +1089,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">LINKEDIN</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">MOTOR</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">GRAVADO POR</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
                                 </tr>
@@ -1110,6 +1112,15 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                             <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
                                                 {lead.motor || 'gemini'}
                                             </span>
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            {lead.gravado_por_nome ? (
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium whitespace-nowrap">
+                                                    {lead.gravado_por_nome.split(' ').slice(0, 2).join(' ')}
+                                                </span>
+                                            ) : (
+                                                <span className="text-gray-300 text-xs">—</span>
+                                            )}
                                         </td>
                                         <td className="px-3 py-2 text-center">
                                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
