@@ -737,7 +737,7 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     </div>
     <div style="flex: 1;"></div>
     <div class="info-candidato">
-      <div class="nome-candidato">${dados.nome.toUpperCase()}</div>
+      <div class="nome-candidato">${(dados.nome || '').toUpperCase()}</div>
       <div class="titulo-candidato">${dados.titulo_profissional || dados.titulo_vaga || ''}</div>
       ${dados.codigo_vaga ? `<div class="protocolo">Protocolo: ${dados.codigo_vaga}</div>` : ''}
       <div class="cliente">${dados.cliente_destino || 'T-Systems do Brasil'}</div>
@@ -896,7 +896,7 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     ${dados.experiencias && dados.experiencias.length > 0 ? dados.experiencias.map((exp: any) => `
     <div class="exp-item">
       <div>
-        <span class="exp-empresa">CONSULTORIA/CLIENTE: ${exp.empresa.toUpperCase()}${exp.cliente ? ` / ${exp.cliente.toUpperCase()}` : ''}</span>
+        <span class="exp-empresa">CONSULTORIA/CLIENTE: ${(exp.empresa || '').toUpperCase()}${exp.cliente ? ` / ${(exp.cliente || '').toUpperCase()}` : ''}</span>
         <span class="exp-periodo">${exp.data_inicio} - ${exp.atual ? 'atual' : exp.data_fim || ''}</span>
       </div>
       <div><span class="exp-cargo">Função:</span> ${exp.cargo}</div>
