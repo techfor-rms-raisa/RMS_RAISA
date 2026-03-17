@@ -873,6 +873,14 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
       </tbody>
     </table>
     ` : ''}
+
+    <!-- Parecer da Entrevista Técnica -->
+    ${dados.parecer_entrevista_tecnica ? `
+    <div class="secao-titulo">Parecer da Entrevista Técnica</div>
+    <div class="recomendacao" style="background:#F0FFF4; border-left-color:#2E7D32;">
+      ${dados.parecer_entrevista_tecnica.split('\n').filter((p: string) => p.trim()).map((p: string) => `<p style="margin:0 0 6px 0;">${p}</p>`).join('')}
+    </div>
+    ` : ''}
     
     <!-- Recomendação -->
     <div class="recomendacao">

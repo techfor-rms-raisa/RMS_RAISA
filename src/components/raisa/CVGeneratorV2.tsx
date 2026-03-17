@@ -1009,6 +1009,29 @@ Brasileiro, XX anos, estado civil. Reside em Cidade, UF.
 Recomendamos o(a) [NOME]..."
               />
 
+              {/* Parecer da Entrevista Técnica — exclusivo T-Systems */}
+              {templateSelecionado === 'tsystems' && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🎯</span>
+                    <h4 className="font-bold text-green-800 text-sm">Parecer da Entrevista Técnica</h4>
+                    <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full font-medium">T-Systems</span>
+                  </div>
+                  <p className="text-xs text-green-700">
+                    Inserido entre a tabela de Hard Skills e a Recomendação. Cole aqui o resultado da entrevista técnica realizada com o candidato.
+                  </p>
+                  <textarea
+                    value={(dados as any).parecer_entrevista_tecnica || ''}
+                    onChange={e => updateDados('parecer_entrevista_tecnica' as any, e.target.value)}
+                    className="w-full border border-green-300 rounded p-3 h-32 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                    placeholder="Ex: Durante a entrevista técnica o candidato demonstrou sólido conhecimento em SAP SD/MM/FI, com capacidade de resolução de problemas complexos...
+
+Avaliação técnica: Aprovado
+Score: 8,5/10"
+                  />
+                </div>
+              )}
+
               <div className="bg-gray-50 rounded-lg p-4">
                 <h4 className="font-bold text-gray-700 mb-3">Recomendação Final</h4>
                 <textarea
