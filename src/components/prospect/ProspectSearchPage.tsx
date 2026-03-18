@@ -448,24 +448,65 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     }, [abaAtiva, carregarLeadsSalvos]);
 
     // ============================================
-    // EXPORTAR XLS
+    // EXPORTAR XLS — padrão Leads2B (48 colunas)
     // ============================================
     const exportarXLS = useCallback((dados: any[], nomeArquivo: string) => {
         if (!dados.length) return;
-        const headers = ['Nome', 'Cargo', 'Nível', 'Email', 'Score Email', 'Empresa', 'Setor', 'LinkedIn', 'Fonte Email', 'Status', 'Data'];
-        const rows = dados.map(p => [
-            p.nome_completo   || '',
-            p.cargo           || '',
-            p.nivel || p.senioridade || '',
-            p.email           || '',
-            p.email_score     || '',
-            p.empresa_nome    || '',
-            p.empresa_setor   || '',
-            p.linkedin_url    || '',
-            p.motor_email || p.motor || 'gemini+hunter',
-            p.status          || 'novo',
-            p.criado_em ? new Date(p.criado_em).toLocaleDateString('pt-BR') : '',
-        ]);
+
+        // 48 colunas exatas do padrão de importação Leads2B
+        const headers = [
+            'cnpj','razão social','nome fantasia','título do negócio','telefone da empresa',
+            'e-mail da empresa','logradouro','número','complemento','bairro','cidade','estado',
+            'país','cep','notas da negociação','valor','id externo','funil','etapa','origem',
+            'tag 1','tag 2','tag 3','grupo','responsável (e-mail)',
+            'status (ativo, perdido, ganho)','motivo de perda','temperatura',
+            'nome contato 1','departamento contato 1',
+            'nome contato 2','departamento contato 2','telefone contato 2','e-mail contato 2',
+            'nome contato 3','departamento contato 3','telefone contato 3','e-mail contato 3',
+            'campo customizado 1','campo customizado 2','campo customizado 3','campo customizado 4',
+            'campo customizado 5','campo customizado 6','campo customizado 7','campo customizado 8',
+            'campo customizado 9','campo customizado 10'
+        ];
+
+        const rows = dados.map(p => {
+            const depto = Array.isArray(p.departamentos) && p.departamentos.length > 0
+                ? p.departamentos[0]
+                : (p.departamento || '');
+
+            return [
+                '',                          //  0: cnpj              (sem dado — requer enriquecimento)
+                p.empresa_nome    || '',     //  1: razão social
+                '',                          //  2: nome fantasia
+                '',                          //  3: título do negócio
+                '',                          //  4: telefone da empresa
+                '',                          //  5: e-mail da empresa
+                '',                          //  6: logradouro
+                '',                          //  7: número
+                '',                          //  8: complemento
+                '',                          //  9: bairro
+                p.cidade          || '',     // 10: cidade
+                p.estado          || '',     // 11: estado
+                'Brasil',                    // 12: país
+                '',                          // 13: cep
+                '',                          // 14: notas da negociação
+                '',                          // 15: valor
+                '',                          // 16: id externo
+                '',                          // 17: funil             (definido na etapa Preparar Campanha)
+                'Novos Leads',               // 18: etapa             (FIXO)
+                'Campanha',                  // 19: origem            (FIXO)
+                '', '', '', '',              // 20-23: tags + grupo
+                p.email           || '',     // 24: responsável (e-mail) = email do lead
+                'ativo',                     // 25: status            (FIXO)
+                '',                          // 26: motivo de perda
+                'Frio',                      // 27: temperatura       (FIXO)
+                p.nome_completo   || '',     // 28: nome contato 1
+                depto,                       // 29: departamento contato 1
+                '', '', '', '',              // 30-33: contato 2
+                '', '', '', '',              // 34-37: contato 3
+                '', '', '', '', '', '', '', '', '', '', // 38-47: campos customizados
+            ];
+        });
+
         const csvContent = [headers, ...rows]
             .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(';'))
             .join('\n');
@@ -477,7 +518,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         a.download = `${nomeArquivo}_${new Date().toISOString().slice(0,10)}.csv`;
         a.click();
         URL.revokeObjectURL(url);
-        setToastMsg({ tipo: 'ok', msg: `${dados.length} leads exportados!` });
+        setToastMsg({ tipo: 'ok', msg: `${dados.length} leads exportados no padrão Leads2B!` });
         setTimeout(() => setToastMsg(null), 3000);
     }, []);
 
