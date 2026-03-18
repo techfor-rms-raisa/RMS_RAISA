@@ -184,6 +184,13 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
 
   // Extrair dados do CV
   const handleExtrairDados = async () => {
+    // ✅ Se CV já foi carregado do banco (Entrevista já preencheu), pular extração IA
+    if (cvAtual && cvAtual.dados_processados) {
+      console.log('📋 CV já carregado do banco, pulando extração IA');
+      setEtapa('dados');
+      return;
+    }
+
     if (!cvOriginalTexto) {
       setEtapa('dados');
       return;
@@ -329,51 +336,55 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
     }
   };
 
-  // 🆕 Função para baixar/imprimir PDF
+  // 🆕 v3.0: Função para baixar CV em DOCX (Word) com papel timbrado real
   const handleBaixarDocx = async () => {
-    if (!htmlPreview) {
-      alert('Nenhum CV gerado para baixar.');
-      return;
-    }
+    setLoading(true);
+    setError(null);
 
-    // Criar HTML completo com estilos de impressão
-    const htmlCompleto = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
-          <title>CV - ${dados.nome || candidatoNome}</title>
-          <style>
-            * { box-sizing: border-box; }
-            body { margin: 0; padding: 0; }
-            @page { size: A4; margin: 8mm; }
-            @media print {
-              body { margin: 0; padding: 0; }
-              .capa-ts-wrapper { page-break-after: always; }
-            }
-          </style>
-        </head>
-        <body>
-          ${htmlCapa ? htmlCapa : ''}
-          ${htmlPreview}
-        </body>
-      </html>
-    `;
+    try {
+      const response = await fetch('/api/cv-generator-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dados: dados,
+          template: templateSelecionado === 'tsystems' ? 'tsystems' : 'techfor'
+        })
+      });
 
-    // Abrir em nova janela e imprimir
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(htmlCompleto);
-      printWindow.document.close();
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Erro ao gerar DOCX');
+      }
+
+      const result = await response.json();
       
-      // Aguardar carregamento e abrir diálogo de impressão
-      printWindow.onload = () => {
-        setTimeout(() => {
-          printWindow.print();
-        }, 500);
-      };
-    } else {
-      alert('Popup bloqueado. Por favor, permita popups para este site.');
+      // Converter base64 para blob e iniciar download
+      const byteCharacters = atob(result.docx_base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { 
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+      });
+
+      // Criar link de download
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.filename || `CV_${(dados.nome || 'Candidato').replace(/\s+/g, '_')}_Techfor.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      console.log('✅ DOCX baixado: ' + result.size + ' bytes');
+    } catch (err: any) {
+      console.error('❌ Erro ao gerar DOCX:', err);
+      setError(err.message || 'Erro ao gerar documento Word');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1023,9 +1034,10 @@ Recomendamos o(a) [NOME]..."
                   )}
                   <button 
                     onClick={handleBaixarDocx}
-                    className="text-green-600 hover:underline text-sm"
+                    disabled={loading}
+                    className="text-green-600 hover:underline text-sm disabled:opacity-50"
                   >
-                    🖨️ Baixar DOCX
+                    {loading ? '⏳ Gerando...' : '📥 Baixar DOCX'}
                   </button>
                   <button onClick={() => setEtapa('parecer')} className="text-blue-600 hover:underline text-sm">
                     ← Voltar e editar
@@ -1067,9 +1079,10 @@ Recomendamos o(a) [NOME]..."
               <div className="flex justify-center gap-4 flex-wrap">
                 <button 
                   onClick={handleBaixarDocx}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  disabled={loading}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
                 >
-                  📥 Baixar DOCX (Word)
+                  {loading ? '⏳ Gerando DOCX...' : '📥 Baixar DOCX (Word)'}
                 </button>
                 <button 
                   onClick={() => setEtapa('preview')}
