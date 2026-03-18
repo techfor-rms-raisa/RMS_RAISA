@@ -677,6 +677,10 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
 async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
   const { dados, config } = req.body;
 
+  // Monta o texto de objetivo: "7606 - SV-505 Consultor IS Oil (Inbound) - Especialista"
+  const objetivoTexto = [dados.codigo_vaga, dados.titulo_vaga || dados.titulo_profissional]
+    .filter(Boolean).join(' - ');
+
   // Página de Capa
   const htmlCapa = `
 <!DOCTYPE html>
@@ -686,60 +690,83 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
   <title>Capa - ${dados.nome}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; }
-    .capa {
-      height: 100vh;
+    html, body {
+      width: 210mm;
+      height: 297mm;
+      font-family: Arial, sans-serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    /* Faixa rosa clara no topo (aprox. 15% da página) */
+    .faixa-topo {
+      background: #F48FB1;
+      height: 44mm;
+      width: 100%;
+    }
+    /* Área branca no meio — logo fica aqui */
+    .area-meio {
+      background: #ffffff;
+      flex: 1;
       display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: 40px;
-    }
-    .logo-tsystems {
-      text-align: right;
-    }
-    .logo-tsystems img {
-      height: 50px;
+      align-items: flex-end;
+      justify-content: flex-end;
+      padding: 20px 40px 10px 40px;
     }
     .logo-text {
       color: #E20074;
       font-size: 28pt;
       font-weight: bold;
+      font-style: italic;
+      letter-spacing: -1px;
     }
+    /* Bloco magenta inferior — ocupa o restante */
     .info-candidato {
       background: #E20074;
       color: white;
-      padding: 40px;
-      margin: 0 -40px;
+      padding: 40px 40px 50px 40px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
     }
     .nome-candidato {
       font-size: 24pt;
       font-weight: bold;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
+      letter-spacing: 0.5px;
     }
     .titulo-candidato {
-      font-size: 16pt;
-      margin-bottom: 5px;
-    }
-    .protocolo {
       font-size: 14pt;
-      margin-bottom: 20px;
+      margin-bottom: 25px;
+      font-weight: normal;
     }
     .cliente {
       font-size: 12pt;
-      margin-top: 20px;
+      margin-top: 10px;
+      font-weight: normal;
+    }
+    /* Layout geral: coluna, ocupa 100% da altura */
+    .capa {
+      display: flex;
+      flex-direction: column;
+      height: 297mm;
+      width: 210mm;
+    }
+    @page { margin: 0; size: A4; }
+    @media print {
+      html, body { margin: 0; padding: 0; }
     }
   </style>
 </head>
 <body>
   <div class="capa">
-    <div class="logo-tsystems">
+    <div class="faixa-topo"></div>
+    <div class="area-meio">
       <span class="logo-text">T Systems</span>
     </div>
-    <div style="flex: 1;"></div>
     <div class="info-candidato">
       <div class="nome-candidato">${dados.nome.toUpperCase()}</div>
-      <div class="titulo-candidato">${dados.titulo_profissional || dados.titulo_vaga || ''}</div>
-      ${dados.codigo_vaga ? `<div class="protocolo">Protocolo: ${dados.codigo_vaga}</div>` : ''}
+      ${objetivoTexto ? `<div class="titulo-candidato">${objetivoTexto}</div>` : ''}
       <div class="cliente">${dados.cliente_destino || 'T-Systems do Brasil'}</div>
     </div>
   </div>
@@ -849,6 +876,12 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
 <body>
   <div class="page">
     <div class="header-logo">T Systems</div>
+
+    <!-- Nome e Objetivo — padrão T-Systems -->
+    <div style="margin-bottom: 18px;">
+      <div style="color: #E20074; font-size: 20pt; font-weight: bold; margin-bottom: 4px;">${dados.nome}</div>
+      ${objetivoTexto ? `<div style="color: #E20074; font-size: 11pt; font-weight: normal; margin-bottom: 2px;"><strong>OBJETIVO:</strong> ${objetivoTexto}</div>` : ''}
+    </div>
     
     <div class="secao-titulo">PERFIL:</div>
     <div class="perfil">
