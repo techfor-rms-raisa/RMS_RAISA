@@ -340,6 +340,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
             roles: ['Administrador', 'Gestão Comercial', 'Gestão de R&S', 'SDR'] 
         },
         { 
+            view: 'prospect_campaign', 
+            label: 'Preparar Campanha', 
+            icon: 'fa-solid fa-paper-plane', 
+            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
+        },
+        { 
             view: 'prospect_credits', 
             label: 'Consumo Créditos', 
             icon: 'fa-solid fa-chart-column', 

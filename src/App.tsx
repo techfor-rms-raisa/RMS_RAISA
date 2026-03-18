@@ -52,6 +52,7 @@ import { ConfiguracaoPriorizacaoDistribuicao } from './components/ConfiguracaoPr
 import DistribuicaoIAPage from './components/raisa/DistribuicaoIAPage';
 import ProspectSearchPage from './components/prospect/ProspectSearchPage';
 import CreditosTab from './components/prospect/CreditosTab';
+import CampanhaPrep from './components/prospect/CampanhaPrep';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -446,6 +447,8 @@ const App: React.FC = () => {
           return <ProspectSearchPage />;
       case 'prospect_list':
           return <ProspectSearchPage initialTab="salvos" />;
+      case 'prospect_campaign':
+          return <CampanhaPrep currentUser={currentUser!} />;
       case 'prospect_credits':
           return <CreditosTab />;
 
