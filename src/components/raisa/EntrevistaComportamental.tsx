@@ -631,7 +631,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
     }
   };
 
-  // Baixar DOCX T-Systems
+  // Baixar DOCX (respeitando template selecionado)
   const handleBaixarDocx = async () => {
     if (!dados) return;
     setLoading(true);
@@ -639,7 +639,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       const response = await fetch('/api/cv-generator-docx', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dados, template: 'tsystems' })
+        body: JSON.stringify({ dados, template: templateSelecionado === 'tsystems' ? 'tsystems' : 'techfor' })
       });
       if (!response.ok) {
         const errData = await response.json();
@@ -656,7 +656,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = result.filename || `CV_${(dados.nome || 'Candidato').replace(/\s+/g, '_')}_TSystems.docx`;
+      link.download = result.filename || `CV_${(dados.nome || 'Candidato').replace(/\s+/g, '_')}.docx`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
