@@ -281,13 +281,13 @@ npx vercel switch   # selecionar Techfor (techfor)
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 40 arquivos | 451.6 KB | 17/03/2026 |
-| `src/components/` | 107 arquivos | 807.7 KB | 17/03/2026 |
+| `api/` | 43 arquivos | 472.6 KB | 18/03/2026 |
+| `src/components/` | 109 arquivos | 807.8 KB | 18/03/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 17/03/2026 |
-| `src/types/` | 6 arquivos | 29.8 KB | 17/03/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 17/03/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 17/03/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 18/03/2026 |
+| `src/types/` | 6 arquivos | 29.8 KB | 18/03/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 18/03/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 18/03/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -311,10 +311,13 @@ npx vercel switch   # selecionar Techfor (techfor)
 - `api/prospect-leads.ts`
 - `api/prospect-save.ts`
 - `api/prospect-snovio-search.ts`
+- `api/prospect-stats.ts`
 - `api/questoes-inteligentes.ts`
 - `api/recomendacao-analista.ts`
 - `api/send-email.ts`
+- `api/talent-finder-log.ts`
 - `api/talent-finder-search.ts`
+- `api/talent-finder-stats.ts`
 - `api/upload-audio.ts`
 - `api/vaga-analistas-recomendados.ts`
 - `api/vaga-prioridade.ts`
