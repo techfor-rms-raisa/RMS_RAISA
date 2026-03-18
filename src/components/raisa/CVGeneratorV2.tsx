@@ -1047,7 +1047,7 @@ Recomendamos o(a) [NOME]..."
 
               <div className="border rounded-lg shadow-lg overflow-hidden bg-white">
                 <iframe
-                  srcDoc={htmlPreview}
+                  srcDoc={htmlCapa ? htmlCapa + htmlPreview : htmlPreview}
                   className="w-full h-[700px]"
                   title="Preview CV"
                 />

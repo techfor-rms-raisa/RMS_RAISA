@@ -631,6 +631,44 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
     }
   };
 
+  // Baixar DOCX (respeitando template selecionado)
+  const handleBaixarDocx = async () => {
+    if (!dados) return;
+    setLoading(true);
+    try {
+      const response = await fetch('/api/cv-generator-docx', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dados, template: templateSelecionado === 'tsystems' ? 'tsystems' : 'techfor' })
+      });
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || 'Erro ao gerar DOCX');
+      }
+      const result = await response.json();
+      const byteCharacters = atob(result.docx_base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = result.filename || `CV_${(dados.nome || 'Candidato').replace(/\s+/g, '_')}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      console.error('❌ Erro ao gerar DOCX:', err);
+      setError(err.message || 'Erro ao gerar DOCX');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // ============================================
   // ETAPAS DO WIZARD
   // ============================================
@@ -1578,9 +1616,18 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
         <div className="space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-bold">Preview do CV Parcial</h3>
-            <button onClick={handleBaixarPDF} className="text-green-600 hover:underline text-sm">
-              🖨️ Imprimir/PDF
-            </button>
+            <div className="flex gap-3">
+              <button
+                onClick={handleBaixarDocx}
+                disabled={loading}
+                className="text-blue-600 hover:underline text-sm disabled:opacity-50"
+              >
+                {loading ? '⏳ Gerando...' : '📥 Baixar DOCX (Word)'}
+              </button>
+              <button onClick={handleBaixarPDF} className="text-green-600 hover:underline text-sm">
+                🖨️ Imprimir/PDF
+              </button>
+            </div>
           </div>
 
           <div className="border rounded-lg shadow-lg overflow-hidden bg-white">
@@ -1617,10 +1664,17 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 
           <div className="flex justify-center gap-4">
             <button 
+              onClick={handleBaixarDocx}
+              disabled={loading}
+              className="px-6 py-3 bg-blue-700 text-white rounded-lg hover:bg-blue-800 disabled:opacity-50"
+            >
+              {loading ? '⏳ Gerando...' : '📥 Baixar DOCX (Word)'}
+            </button>
+            <button 
               onClick={handleBaixarPDF}
               className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
-              📥 Baixar PDF
+              🖨️ Imprimir/PDF
             </button>
             <button 
               onClick={() => setEtapa('preview')}
@@ -1732,3 +1786,4 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 };
 
 export default EntrevistaComportamental;
+

@@ -647,10 +647,10 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       ${dados.experiencias.map((exp: any) => `
       <div class="experiencia-item">
         <div class="exp-header">
-          <span class="exp-empresa">${exp.empresa}${exp.cliente ? ` (${exp.cliente})` : ''}</span>
+          <span class="exp-empresa">${[exp.empresa, exp.cliente].filter(Boolean).join(' / ')}</span>
           <span class="exp-periodo">${exp.data_inicio} a ${exp.atual ? 'Atual' : exp.data_fim || ''}</span>
         </div>
-        <div class="exp-cargo">${exp.cargo}</div>
+        ${(exp.cargo && exp.cargo !== 'null') ? `<div class="exp-cargo">${exp.cargo}</div>` : ''}
         ${exp.descricao ? `<div class="exp-atividades"><strong>Principais atividades:</strong> ${exp.descricao}</div>` : ''}
         ${exp.tecnologias && exp.tecnologias.length > 0 ? `<div class="exp-atividades"><strong>Tecnologias utilizadas:</strong> ${exp.tecnologias.join(', ')}</div>` : ''}
         ${exp.motivo_saida ? `<div class="exp-motivo"><strong>Motivo de saída:</strong> ${exp.motivo_saida}</div>` : ''}
@@ -677,74 +677,91 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
 async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
   const { dados, config } = req.body;
 
-  // Página de Capa
+  // Monta o texto de objetivo: "7606 - SV-505 Consultor IS Oil (Inbound) - Especialista"
+  const objetivoTexto = [dados.codigo_vaga, dados.titulo_vaga || dados.titulo_profissional]
+    .filter(Boolean).join(' - ');
+
+  // Página de Capa (fragmento HTML — será inserido dentro do body pelo frontend)
   const htmlCapa = `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <title>Capa - ${dados.nome}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; }
-    .capa {
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      padding: 40px;
-    }
-    .logo-tsystems {
-      text-align: right;
-    }
-    .logo-tsystems img {
-      height: 50px;
-    }
-    .logo-text {
-      color: #E20074;
-      font-size: 28pt;
-      font-weight: bold;
-    }
-    .info-candidato {
-      background: #E20074;
-      color: white;
-      padding: 40px;
-      margin: 0 -40px;
-    }
-    .nome-candidato {
-      font-size: 24pt;
-      font-weight: bold;
-      margin-bottom: 10px;
-    }
-    .titulo-candidato {
-      font-size: 16pt;
-      margin-bottom: 5px;
-    }
-    .protocolo {
-      font-size: 14pt;
-      margin-bottom: 20px;
-    }
-    .cliente {
-      font-size: 12pt;
-      margin-top: 20px;
-    }
-  </style>
-</head>
-<body>
+<style>
+  .capa-ts-wrapper {
+    margin: 0; padding: 0; box-sizing: border-box;
+    font-family: Arial, sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    page-break-after: always;
+    overflow: hidden;
+  }
+  /* Faixa rosa clara no topo (aprox. 15% da página) */
+  .capa-ts-wrapper .faixa-topo {
+    background: #F48FB1;
+    height: 38mm;
+    width: 100%;
+  }
+  /* Área branca no meio — logo fica aqui */
+  .capa-ts-wrapper .area-meio {
+    background: #ffffff;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding: 15px 40px 10px 40px;
+    height: 50mm;
+  }
+  .capa-ts-wrapper .logo-text {
+    color: #E20074;
+    font-size: 28pt;
+    font-weight: bold;
+    font-style: italic;
+    letter-spacing: -1px;
+  }
+  /* Bloco magenta inferior — ocupa o restante */
+  .capa-ts-wrapper .info-candidato {
+    background: #E20074;
+    color: white;
+    padding: 25px 40px 30px 40px;
+    height: 160mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+  .capa-ts-wrapper .nome-candidato {
+    font-size: 24pt;
+    font-weight: bold;
+    margin-bottom: 8px;
+    letter-spacing: 0.5px;
+  }
+  .capa-ts-wrapper .titulo-candidato {
+    font-size: 14pt;
+    margin-bottom: 20px;
+    font-weight: normal;
+  }
+  .capa-ts-wrapper .cliente {
+    font-size: 12pt;
+    margin-top: 8px;
+    font-weight: normal;
+  }
+  /* Layout: coluna fixa que cabe em A4 com margens de impressão (10mm cada lado = 277mm útil) */
+  .capa-ts-wrapper .capa {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 248mm;
+    overflow: hidden;
+  }
+</style>
+<div class="capa-ts-wrapper">
   <div class="capa">
-    <div class="logo-tsystems">
+    <div class="faixa-topo"></div>
+    <div class="area-meio">
       <span class="logo-text">T Systems</span>
     </div>
-    <div style="flex: 1;"></div>
     <div class="info-candidato">
       <div class="nome-candidato">${dados.nome.toUpperCase()}</div>
-      <div class="titulo-candidato">${dados.titulo_profissional || dados.titulo_vaga || ''}</div>
-      ${dados.codigo_vaga ? `<div class="protocolo">Protocolo: ${dados.codigo_vaga}</div>` : ''}
+      ${objetivoTexto ? `<div class="titulo-candidato">${objetivoTexto}</div>` : ''}
       <div class="cliente">${dados.cliente_destino || 'T-Systems do Brasil'}</div>
     </div>
   </div>
-</body>
-</html>`;
+</div>`;
 
   // Conteúdo Principal
   const htmlConteudo = `
@@ -839,14 +856,22 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     .tabela-info th {
       background: #f0f0f0;
     }
+    @page { margin: 0; size: A4; }
     @media print {
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; margin: 0; padding: 0; }
+      body { padding: 10mm; }
     }
   </style>
 </head>
 <body>
   <div class="page">
     <div class="header-logo">T Systems</div>
+
+    <!-- Nome e Objetivo — padrão T-Systems -->
+    <div style="margin-bottom: 18px;">
+      <div style="color: #E20074; font-size: 20pt; font-weight: bold; margin-bottom: 4px;">${dados.nome}</div>
+      ${objetivoTexto ? `<div style="color: #E20074; font-size: 11pt; font-weight: normal; margin-bottom: 2px;"><strong>OBJETIVO:</strong> ${objetivoTexto}</div>` : ''}
+    </div>
     
     <div class="secao-titulo">PERFIL:</div>
     <div class="perfil">
@@ -873,6 +898,14 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
       </tbody>
     </table>
     ` : ''}
+
+    <!-- Parecer da Entrevista Técnica -->
+    ${dados.parecer_entrevista_tecnica ? `
+    <div class="secao-titulo">Parecer da Entrevista Técnica</div>
+    <div class="recomendacao" style="background:#F0FFF4; border-left-color:#2E7D32;">
+      ${dados.parecer_entrevista_tecnica.split('\n').filter((p: string) => p.trim()).map((p: string) => `<p style="margin:0 0 6px 0;">${p}</p>`).join('')}
+    </div>
+    ` : ''}
     
     <!-- Recomendação -->
     <div class="recomendacao">
@@ -888,10 +921,10 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     ${dados.experiencias && dados.experiencias.length > 0 ? dados.experiencias.map((exp: any) => `
     <div class="exp-item">
       <div>
-        <span class="exp-empresa">CONSULTORIA/CLIENTE: ${exp.empresa.toUpperCase()}${exp.cliente ? ` / ${exp.cliente.toUpperCase()}` : ''}</span>
+        <span class="exp-empresa">CONSULTORIA/CLIENTE: ${[exp.empresa, exp.cliente].filter(Boolean).map((s: string) => s.toUpperCase()).join(' / ')}</span>
         <span class="exp-periodo">${exp.data_inicio} - ${exp.atual ? 'atual' : exp.data_fim || ''}</span>
       </div>
-      <div><span class="exp-cargo">Função:</span> ${exp.cargo}</div>
+      ${(exp.cargo && exp.cargo !== 'null') ? `<div><span class="exp-cargo">Função:</span> ${exp.cargo}</div>` : ''}
       <div style="margin-top: 5px;"><strong>DESCRIÇÃO DAS ATIVIDADES:</strong></div>
       <div>${exp.descricao || ''}</div>
       ${exp.tecnologias && exp.tecnologias.length > 0 ? `<div><strong>Tecnologias utilizadas:</strong> ${exp.tecnologias.join(', ')}</div>` : ''}
@@ -1014,3 +1047,4 @@ function formatarModalidade(modalidade: string | undefined): string {
   };
   return map[modalidade || ''] || 'REMOTO / HÍBRIDO';
 }
+

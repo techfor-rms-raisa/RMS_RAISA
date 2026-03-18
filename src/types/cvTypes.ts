@@ -128,6 +128,9 @@ export interface DadosCandidatoTechfor {
   // === Parecer de Seleção ===
   parecer_selecao?: string;
   
+  // === Parecer da Entrevista Técnica (exclusivo T-Systems) ===
+  parecer_entrevista_tecnica?: string;
+  
   // === Recomendação Final ===
   recomendacao_final?: string;
   participando_outros_processos?: boolean;
