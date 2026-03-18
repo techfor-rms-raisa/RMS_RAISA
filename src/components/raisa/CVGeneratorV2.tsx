@@ -138,8 +138,7 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
     formacao_academica: [],
     formacao_complementar: [],
     hard_skills_tabela: [],
-    idiomas: [],
-    parecer_entrevista_tecnica: ''
+    idiomas: []
   });
   
   // 🆕 v57.2: Atualizar nome quando tipo muda
@@ -165,12 +164,7 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
       const cvExistente = await loadCVByCandidatura(candidaturaId);
       if (cvExistente) {
         setDados(cvExistente.dados_processados);
-        // Restaurar template usado anteriormente
-        const templateSalvo = cvExistente.metadados?.template_tipo as TemplateType;
-        if (templateSalvo === 'tsystems' || templateSalvo === 'techfor') {
-          setTemplateSelecionado(templateSalvo);
-        }
-        console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ', template: ' + (templateSalvo || 'techfor') + ')');
+        console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ')');
       }
     };
     init();
@@ -190,13 +184,6 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
 
   // Extrair dados do CV
   const handleExtrairDados = async () => {
-    // ✅ Se CV já foi carregado do banco (Entrevista já preencheu), pular extração IA
-    if (cvAtual && cvAtual.dados_processados) {
-      console.log('📋 CV já carregado do banco, pulando extração IA');
-      setEtapa('dados');
-      return;
-    }
-
     if (!cvOriginalTexto) {
       setEtapa('dados');
       return;
@@ -225,9 +212,7 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
         titulo_vaga: vagaInfo?.titulo || dadosExtraidos.titulo_profissional,
         codigo_vaga: vagaInfo?.codigo,
         cliente_destino: vagaInfo?.cliente,
-        gestor_destino: vagaInfo?.gestor,
-        // Preservar campo preenchido manualmente — não vem da extração IA
-        parecer_entrevista_tecnica: prev.parecer_entrevista_tecnica || dadosExtraidos.parecer_entrevista_tecnica || ''
+        gestor_destino: vagaInfo?.gestor
       }));
       setEtapa('dados');
     } catch (err: any) {
@@ -344,55 +329,48 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
     }
   };
 
-  // 🆕 v3.0: Função para baixar CV em DOCX (Word) com papel timbrado real
+  // 🆕 Função para baixar/imprimir PDF
   const handleBaixarDocx = async () => {
-    setLoading(true);
-    setError(null);
+    if (!htmlPreview) {
+      alert('Nenhum CV gerado para baixar.');
+      return;
+    }
 
-    try {
-      const response = await fetch('/api/cv-generator-docx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dados: dados,
-          template: templateSelecionado === 'tsystems' ? 'tsystems' : 'techfor'
-        })
-      });
+    // Criar HTML completo com estilos de impressão
+    const htmlCompleto = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="UTF-8">
+          <title>CV - ${dados.nome || candidatoNome}</title>
+          <style>
+            @media print {
+              body { margin: 0; padding: 0; }
+              @page { size: A4; margin: 10mm; }
+            }
+          </style>
+        </head>
+        <body>
+          ${htmlCapa ? htmlCapa : ''}
+          ${htmlPreview}
+        </body>
+      </html>
+    `;
 
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Erro ao gerar DOCX');
-      }
-
-      const result = await response.json();
+    // Abrir em nova janela e imprimir
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(htmlCompleto);
+      printWindow.document.close();
       
-      // Converter base64 para blob e iniciar download
-      const byteCharacters = atob(result.docx_base64);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { 
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
-      });
-
-      // Criar link de download
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = result.filename || `CV_${(dados.nome || 'Candidato').replace(/\s+/g, '_')}_Techfor.docx`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-
-      console.log('✅ DOCX baixado: ' + result.size + ' bytes');
-    } catch (err: any) {
-      console.error('❌ Erro ao gerar DOCX:', err);
-      setError(err.message || 'Erro ao gerar documento Word');
-    } finally {
-      setLoading(false);
+      // Aguardar carregamento e abrir diálogo de impressão
+      printWindow.onload = () => {
+        setTimeout(() => {
+          printWindow.print();
+        }, 500);
+      };
+    } else {
+      alert('Popup bloqueado. Por favor, permita popups para este site.');
     }
   };
 
@@ -1017,29 +995,6 @@ Brasileiro, XX anos, estado civil. Reside em Cidade, UF.
 Recomendamos o(a) [NOME]..."
               />
 
-              {/* Parecer da Entrevista Técnica — exclusivo T-Systems */}
-              {templateSelecionado === 'tsystems' && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-base">🎯</span>
-                    <h4 className="font-bold text-green-800 text-sm">Parecer da Entrevista Técnica</h4>
-                    <span className="text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full font-medium">T-Systems</span>
-                  </div>
-                  <p className="text-xs text-green-700">
-                    Inserido entre a tabela de Hard Skills e a Recomendação. Cole aqui o resultado da entrevista técnica realizada com o candidato.
-                  </p>
-                  <textarea
-                    value={dados.parecer_entrevista_tecnica || ''}
-                    onChange={e => updateDados('parecer_entrevista_tecnica', e.target.value)}
-                    className="w-full border border-green-300 rounded p-3 h-32 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
-                    placeholder="Ex: Durante a entrevista técnica o candidato demonstrou sólido conhecimento em SAP SD/MM/FI, com capacidade de resolução de problemas complexos...
-
-Avaliação técnica: Aprovado
-Score: 8,5/10"
-                  />
-                </div>
-              )}
-
               <div className="bg-gray-50 rounded-lg p-4">
                 <h4 className="font-bold text-gray-700 mb-3">Recomendação Final</h4>
                 <textarea
@@ -1065,18 +1020,9 @@ Score: 8,5/10"
                   )}
                   <button 
                     onClick={handleBaixarDocx}
-                    disabled={loading}
-                    className="text-green-600 hover:underline text-sm disabled:opacity-50"
+                    className="text-green-600 hover:underline text-sm"
                   >
-                    {loading ? '⏳ Gerando...' : '📥 Baixar DOCX'}
-                  </button>
-                  <button
-                    onClick={handleGerarPreview}
-                    disabled={loading}
-                    className="text-orange-600 hover:underline text-sm disabled:opacity-50"
-                    title="Regera o preview com todos os dados atuais"
-                  >
-                    {loading ? '⏳ Gerando...' : '🔄 Atualizar Preview'}
+                    🖨️ Baixar DOCX
                   </button>
                   <button onClick={() => setEtapa('parecer')} className="text-blue-600 hover:underline text-sm">
                     ← Voltar e editar
@@ -1084,17 +1030,9 @@ Score: 8,5/10"
                 </div>
               </div>
 
-              {/* Aviso de desatualização — aparece se parecer foi preenchido após gerar o preview */}
-              {templateSelecionado === 'tsystems' && dados.parecer_entrevista_tecnica && !htmlPreview.includes('Parecer da Entrevista Técnica') && (
-                <div className="bg-amber-50 border border-amber-300 rounded-lg px-4 py-2 flex items-center gap-2 text-sm text-amber-800">
-                  <span>⚠️</span>
-                  <span>O Parecer da Entrevista Técnica foi preenchido após o preview ser gerado. Clique em <strong>🔄 Atualizar Preview</strong> para incluí-lo no CV.</span>
-                </div>
-              )}
-
               <div className="border rounded-lg shadow-lg overflow-hidden bg-white">
                 <iframe
-                  srcDoc={htmlPreview}
+                  srcDoc={htmlCapa ? htmlCapa + htmlPreview : htmlPreview}
                   className="w-full h-[700px]"
                   title="Preview CV"
                 />
@@ -1126,10 +1064,9 @@ Score: 8,5/10"
               <div className="flex justify-center gap-4 flex-wrap">
                 <button 
                   onClick={handleBaixarDocx}
-                  disabled={loading}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 >
-                  {loading ? '⏳ Gerando DOCX...' : '📥 Baixar DOCX (Word)'}
+                  📥 Baixar DOCX (Word)
                 </button>
                 <button 
                   onClick={() => setEtapa('preview')}

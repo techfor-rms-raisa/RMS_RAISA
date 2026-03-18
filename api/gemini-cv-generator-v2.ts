@@ -681,84 +681,75 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
   const objetivoTexto = [dados.codigo_vaga, dados.titulo_vaga || dados.titulo_profissional]
     .filter(Boolean).join(' - ');
 
-  // Página de Capa
+  // Página de Capa (fragmento HTML — será inserido dentro do body pelo frontend)
   const htmlCapa = `
-<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <title>Capa - ${dados.nome}</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body {
-      width: 210mm;
-      height: 297mm;
-      font-family: Arial, sans-serif;
-      -webkit-print-color-adjust: exact;
-      print-color-adjust: exact;
-    }
-    /* Faixa rosa clara no topo (aprox. 15% da página) */
-    .faixa-topo {
-      background: #F48FB1;
-      height: 44mm;
-      width: 100%;
-    }
-    /* Área branca no meio — logo fica aqui */
-    .area-meio {
-      background: #ffffff;
-      flex: 1;
-      display: flex;
-      align-items: flex-end;
-      justify-content: flex-end;
-      padding: 20px 40px 10px 40px;
-    }
-    .logo-text {
-      color: #E20074;
-      font-size: 28pt;
-      font-weight: bold;
-      font-style: italic;
-      letter-spacing: -1px;
-    }
-    /* Bloco magenta inferior — ocupa o restante */
-    .info-candidato {
-      background: #E20074;
-      color: white;
-      padding: 40px 40px 50px 40px;
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
-    }
-    .nome-candidato {
-      font-size: 24pt;
-      font-weight: bold;
-      margin-bottom: 8px;
-      letter-spacing: 0.5px;
-    }
-    .titulo-candidato {
-      font-size: 14pt;
-      margin-bottom: 25px;
-      font-weight: normal;
-    }
-    .cliente {
-      font-size: 12pt;
-      margin-top: 10px;
-      font-weight: normal;
-    }
-    /* Layout geral: coluna, ocupa 100% da altura */
-    .capa {
-      display: flex;
-      flex-direction: column;
-      height: 297mm;
-      width: 210mm;
-    }
-    @page { margin: 0; size: A4; }
-    @media print {
-      html, body { margin: 0; padding: 0; }
-    }
-  </style>
-</head>
-<body>
+<style>
+  .capa-ts-wrapper {
+    margin: 0; padding: 0; box-sizing: border-box;
+    font-family: Arial, sans-serif;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    page-break-after: always;
+  }
+  /* Faixa rosa clara no topo (aprox. 15% da página) */
+  .capa-ts-wrapper .faixa-topo {
+    background: #F48FB1;
+    height: 44mm;
+    width: 100%;
+  }
+  /* Área branca no meio — logo fica aqui */
+  .capa-ts-wrapper .area-meio {
+    background: #ffffff;
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding: 20px 40px 10px 40px;
+    min-height: 60mm;
+  }
+  .capa-ts-wrapper .logo-text {
+    color: #E20074;
+    font-size: 28pt;
+    font-weight: bold;
+    font-style: italic;
+    letter-spacing: -1px;
+  }
+  /* Bloco magenta inferior — ocupa o restante */
+  .capa-ts-wrapper .info-candidato {
+    background: #E20074;
+    color: white;
+    padding: 30px 40px 40px 40px;
+    min-height: 120mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+  }
+  .capa-ts-wrapper .nome-candidato {
+    font-size: 24pt;
+    font-weight: bold;
+    margin-bottom: 8px;
+    letter-spacing: 0.5px;
+  }
+  .capa-ts-wrapper .titulo-candidato {
+    font-size: 14pt;
+    margin-bottom: 25px;
+    font-weight: normal;
+  }
+  .capa-ts-wrapper .cliente {
+    font-size: 12pt;
+    margin-top: 10px;
+    font-weight: normal;
+  }
+  /* Layout geral: coluna, cabe em 1 página A4 com margens de impressão */
+  .capa-ts-wrapper .capa {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 270mm;
+    max-height: 275mm;
+    overflow: hidden;
+  }
+</style>
+<div class="capa-ts-wrapper">
   <div class="capa">
     <div class="faixa-topo"></div>
     <div class="area-meio">
@@ -770,8 +761,7 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
       <div class="cliente">${dados.cliente_destino || 'T-Systems do Brasil'}</div>
     </div>
   </div>
-</body>
-</html>`;
+</div>`;
 
   // Conteúdo Principal
   const htmlConteudo = `
