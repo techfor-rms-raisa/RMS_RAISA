@@ -17,7 +17,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import {
   Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
-  ImageRun, Header, Footer, AlignmentType, BorderStyle, WidthType, ShadingType, PageBreak
+  ImageRun, Header, Footer, AlignmentType, BorderStyle, WidthType, ShadingType, PageBreak,
+  HeightRule, TableLayoutType
 } from 'docx';
 import { TECHFOR_BG_BASE64 } from './cv-generator-docx-bg.js';
 
@@ -643,55 +644,75 @@ async function gerarDocxTSystems(dados: any): Promise<Buffer> {
   const clienteDestino = dados.cliente_destino || 'T-Systems do Brasil';
   const codigoVaga = dados.codigo_vaga || '';
 
+  // Monta texto de objetivo: "7606 - SV-505 Consultor IS Oil (Inbound) - Especialista"
+  const objetivoTexto = [codigoVaga, tituloCandidato].filter(Boolean).join(' - ');
+
+  // Helper — cria tabela de célula única com cor de fundo sólida (único método confiável no docx-lib)
+  function makeColorBlock(bgColor: string, children: Paragraph[], heightTwips: number): Table {
+    return new Table({
+      width: { size: 10800, type: WidthType.DXA },
+      layout: TableLayoutType.FIXED,
+      borders: {
+        top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+        bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+        left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+        right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+        insideH: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+        insideV: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+      },
+      rows: [new TableRow({
+        tableHeader: false,
+        height: { value: heightTwips, rule: HeightRule.EXACT },
+        children: [new TableCell({
+          width: { size: 10800, type: WidthType.DXA },
+          shading: { fill: bgColor, type: ShadingType.CLEAR },
+          margins: { top: 200, bottom: 200, left: 360, right: 360 },
+          borders: {
+            top: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+            bottom: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+            left: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+            right: { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+          },
+          children,
+        })]
+      })]
+    });
+  }
+
   const capaChildren: any[] = [
-    // Espaço em branco para descer o conteúdo (simula a faixa magenta de topo ocupando ~40% da página)
-    ...Array(14).fill(null).map(() => new Paragraph({
-      spacing: { line: 600, lineRule: 'exact' as any },
-      children: [new TextRun({ text: '', size: 40, font: FONT_TS })]
-    })),
+    // ── FAIXA ROSA CLARA (topo) ──────────────────────────────────
+    makeColorBlock('F48FB1', [
+      new Paragraph({ children: [new TextRun({ text: '', size: 72, font: FONT_TS })] }),
+    ], 2200),
 
-    // Linha separadora magenta
+    // ── ÁREA BRANCA (meio) — logo alinhada à direita ─────────────
     new Paragraph({
-      spacing: { before: 0, after: 120 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 48, color: MAGENTA, space: 0 } },
-      children: []
+      alignment: AlignmentType.RIGHT,
+      spacing: { before: 1200, after: 600 },
+      children: [new TextRun({ text: 'T Systems', bold: true, size: 48, font: FONT_TS, color: MAGENTA, italics: true })]
     }),
 
-    // NOME em branco grande (sobre fundo branco — destaque visual)
-    new Paragraph({
-      spacing: { before: 160, after: 40, line: 600, lineRule: 'exact' as any },
-      children: [new TextRun({ text: nomeCandidato, bold: true, size: 20, font: FONT_TS, color: MAGENTA })]
-    }),
-
-    // Módulo/Título
-    new Paragraph({
-      spacing: { before: 0, after: 40, line: 600, lineRule: 'exact' as any },
-      children: [new TextRun({ text: tituloCandidato, size: 20, font: FONT_TS, color: MAGENTA })]
-    }),
-
-    // Código da vaga (se houver)
-    ...(codigoVaga ? [new Paragraph({
-      spacing: { before: 0, after: 40, line: 480, lineRule: 'exact' as any },
-      children: [new TextRun({ text: codigoVaga, size: 20, font: FONT_TS, color: MAGENTA })]
-    })] : []),
-
-    // Cliente / empresa destino
-    new Paragraph({
-      spacing: { before: 0, after: 40, line: 480, lineRule: 'exact' as any },
-      children: [new TextRun({ text: clienteDestino, size: 20, font: FONT_TS, color: CINZA })]
-    }),
-
-    // Linha separadora cinza no fundo
-    new Paragraph({
-      spacing: { before: 200, after: 0 },
-      border: { bottom: { style: BorderStyle.SINGLE, size: 24, color: CINZA_CLARO, space: 0 } },
-      children: []
-    }),
+    // ── BLOCO MAGENTA (inferior) — nome, objetivo, cliente ───────
+    makeColorBlock(MAGENTA, [
+      // Nome em branco, bold, 32pt
+      new Paragraph({
+        spacing: { before: 320, after: 120 },
+        children: [new TextRun({ text: nomeCandidato, bold: true, size: 44, font: FONT_TS, color: 'FFFFFF' })]
+      }),
+      // Objetivo (codigo_vaga + titulo_vaga) em branco, 24pt
+      ...(objetivoTexto ? [new Paragraph({
+        spacing: { before: 0, after: 120 },
+        children: [new TextRun({ text: objetivoTexto, size: 28, font: FONT_TS, color: 'FFFFFF' })]
+      })] : []),
+      // Cliente em branco, 20pt
+      new Paragraph({
+        spacing: { before: 160, after: 240 },
+        children: [new TextRun({ text: clienteDestino, size: 22, font: FONT_TS, color: 'FFFFFF' })]
+      }),
+    ], 4000),
 
     // Quebra de página para iniciar o conteúdo
-    new Paragraph({
-      children: [new PageBreak()]
-    })
+    new Paragraph({ children: [new PageBreak()] })
   ];
 
   // Header da capa: logo à direita
@@ -701,6 +722,21 @@ async function gerarDocxTSystems(dados: any): Promise<Buffer> {
   // SEÇÃO 2: CONTEÚDO DO CV
   // ============================================================
   const contentChildren: any[] = [];
+
+  // ─── NOME + OBJETIVO (padrão T-Systems — segunda página) ───
+  contentChildren.push(new Paragraph({
+    spacing: { before: 0, after: 60 },
+    children: [new TextRun({ text: dados.nome || '', bold: true, size: 40, font: FONT_TS, color: MAGENTA })]
+  }));
+  if (objetivoTexto) {
+    contentChildren.push(new Paragraph({
+      spacing: { before: 0, after: 200 },
+      children: [
+        new TextRun({ text: 'OBJETIVO: ', bold: true, size: 22, font: FONT_TS, color: MAGENTA }),
+        new TextRun({ text: objetivoTexto, size: 22, font: FONT_TS, color: MAGENTA })
+      ]
+    }));
+  }
 
   // ─── PERFIL ───
   if (dados.resumo) {
