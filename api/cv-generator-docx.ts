@@ -651,7 +651,8 @@ async function gerarDocxTSystems(dados: any): Promise<Buffer> {
 
   const capaChildren: any[] = [
     // ── ESPAÇO BRANCO (topo) — logo T-Systems fica no header, espaço empurra bloco magenta para baixo ──
-    ...Array(16).fill(null).map(() => new Paragraph({
+    // 10 linhas × 600 DXA = 6000 DXA ≈ 106mm — cabe na área útil de 239mm com a tabela magenta
+    ...Array(10).fill(null).map(() => new Paragraph({
       spacing: { line: 600, lineRule: 'exact' as any },
       children: [new TextRun({ text: '', size: 40, font: FONT_TS })]
     })),
@@ -700,9 +701,6 @@ async function gerarDocxTSystems(dados: any): Promise<Buffer> {
         })]
       })]
     }),
-
-    // Quebra de página para iniciar o conteúdo
-    new Paragraph({ children: [new PageBreak()] })
   ];
 
   // Header da capa: logo à direita
