@@ -1057,3 +1057,4 @@ function formatarModalidade(modalidade: string | undefined): string {
   };
   return map[modalidade || ''] || 'REMOTO / HÍBRIDO';
 }
+
