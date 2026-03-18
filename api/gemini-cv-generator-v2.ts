@@ -690,11 +690,12 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
     page-break-after: always;
+    overflow: hidden;
   }
   /* Faixa rosa clara no topo (aprox. 15% da página) */
   .capa-ts-wrapper .faixa-topo {
     background: #F48FB1;
-    height: 44mm;
+    height: 38mm;
     width: 100%;
   }
   /* Área branca no meio — logo fica aqui */
@@ -703,8 +704,8 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     display: flex;
     align-items: flex-end;
     justify-content: flex-end;
-    padding: 20px 40px 10px 40px;
-    min-height: 60mm;
+    padding: 15px 40px 10px 40px;
+    height: 50mm;
   }
   .capa-ts-wrapper .logo-text {
     color: #E20074;
@@ -717,8 +718,8 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
   .capa-ts-wrapper .info-candidato {
     background: #E20074;
     color: white;
-    padding: 30px 40px 40px 40px;
-    min-height: 120mm;
+    padding: 25px 40px 30px 40px;
+    height: 160mm;
     display: flex;
     flex-direction: column;
     justify-content: flex-end;
@@ -731,21 +732,20 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
   }
   .capa-ts-wrapper .titulo-candidato {
     font-size: 14pt;
-    margin-bottom: 25px;
+    margin-bottom: 20px;
     font-weight: normal;
   }
   .capa-ts-wrapper .cliente {
     font-size: 12pt;
-    margin-top: 10px;
+    margin-top: 8px;
     font-weight: normal;
   }
-  /* Layout geral: coluna, cabe em 1 página A4 com margens de impressão */
+  /* Layout: coluna fixa que cabe em A4 com margens de impressão (10mm cada lado = 277mm útil) */
   .capa-ts-wrapper .capa {
     display: flex;
     flex-direction: column;
     width: 100%;
-    min-height: 270mm;
-    max-height: 275mm;
+    height: 248mm;
     overflow: hidden;
   }
 </style>

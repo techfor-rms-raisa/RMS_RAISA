@@ -344,9 +344,12 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
           <meta charset="UTF-8">
           <title>CV - ${dados.nome || candidatoNome}</title>
           <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; padding: 0; }
+            @page { size: A4; margin: 8mm; }
             @media print {
               body { margin: 0; padding: 0; }
-              @page { size: A4; margin: 10mm; }
+              .capa-ts-wrapper { page-break-after: always; }
             }
           </style>
         </head>
