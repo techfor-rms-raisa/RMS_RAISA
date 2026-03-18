@@ -8,8 +8,11 @@
  * 4. Revisar + Exportar CSV
  * 
  * Caminho: src/components/prospect/CampanhaPrep.tsx
- * Versão: 1.0
+ * Versão: 1.1
  * Data: 18/03/2026
+ * v1.1:
+ * - Administrador e Gestão Comercial veem prospects de todos os usuários
+ * - SDR vê apenas seus próprios prospects
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -120,15 +123,24 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
   // ============================================
   // ETAPA 1: Carregar prospects do banco
   // ============================================
+  // Admin e Gestão Comercial veem prospects de toda a equipe; SDR só vê os seus
+  const podeVerTodos = ['Administrador', 'Gestão Comercial'].includes(currentUser.tipo_usuario);
+
   const carregarProspects = useCallback(async () => {
     setLoadingProspects(true);
     try {
-      const { data, error: qErr } = await supabase
+      let query = supabase
         .from('prospect_leads')
         .select('id, nome_completo, cargo, email, email_status, empresa_nome, empresa_dominio, departamentos, cidade, estado')
-        .eq('buscado_por', currentUser.id)
         .order('criado_em', { ascending: false })
         .limit(200);
+
+      // SDR: apenas os próprios leads
+      if (!podeVerTodos) {
+        query = query.eq('buscado_por', currentUser.id);
+      }
+
+      const { data, error: qErr } = await query;
 
       if (qErr) throw qErr;
       setProspectsBanco(data || []);
@@ -137,7 +149,7 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
     } finally {
       setLoadingProspects(false);
     }
-  }, [currentUser.id]);
+  }, [currentUser.id, podeVerTodos]);
 
   useEffect(() => {
     carregarProspects();
