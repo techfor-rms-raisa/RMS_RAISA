@@ -281,13 +281,13 @@ npx vercel switch   # selecionar Techfor (techfor)
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 43 arquivos | 472.6 KB | 18/03/2026 |
-| `src/components/` | 109 arquivos | 807.8 KB | 18/03/2026 |
+| `api/` | 43 arquivos | 515.2 KB | 19/03/2026 |
+| `src/components/` | 109 arquivos | 807.8 KB | 19/03/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 18/03/2026 |
-| `src/types/` | 6 arquivos | 29.8 KB | 18/03/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 18/03/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 18/03/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 19/03/2026 |
+| `src/types/` | 6 arquivos | 29.9 KB | 19/03/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 19/03/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 19/03/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
