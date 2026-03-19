@@ -79,13 +79,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             icon: 'fa-regular fa-lightbulb', 
             roles: ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Gestão de Pessoas', 'Cliente'] 
         },
-        // Agenda de Acompanhamento - Gestão de Pessoas, Admin, Gestão R&S
-        { 
-            view: 'agenda_acompanhamento', 
-            label: 'Agenda Acomp.', 
-            icon: 'fa-regular fa-calendar-check', 
-            roles: ['Administrador', 'Gestão de R&S', 'Gestão de Pessoas'] 
-        },
+        // 🔒 TEMPORARIAMENTE OCULTO — reativar no Domingo (remover o bloco de comentário)
+        // { 
+        //     view: 'agenda_acompanhamento', 
+        //     label: 'Agenda Acomp.', 
+        //     icon: 'fa-regular fa-calendar-check', 
+        //     roles: ['Administrador', 'Gestão de R&S', 'Gestão de Pessoas'] 
+        // },
         // Consultores - RMS Total + Analista (read-only) + Consulta (read-only)
         { 
             view: 'consultants', 
