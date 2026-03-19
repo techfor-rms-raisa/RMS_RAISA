@@ -14,6 +14,7 @@ import ComplianceCampaigns from './components/ComplianceCampaigns';
 import ComplianceDashboard from './components/ComplianceDashboard';
 import FeedbackPortal from './components/FeedbackPortal';
 import Quarentena from './components/Quarentena';
+import AgendaAcompanhamento from './components/AgendaAcompanhamento';
 import Sidebar from './components/layout/Sidebar'; 
 
 // ✅ NOVO: Import do componente Movimentações
@@ -309,6 +310,17 @@ const App: React.FC = () => {
         return <Quarentena consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} currentUser={currentUser!} users={users} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} onNavigateToRecommendations={(consultant) => { setContextualConsultant(consultant.nome_consultores); setCurrentView('recommendations'); }} />;
       case 'recommendations':
         return <RecommendationModule consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} coordenadoresCliente={coordenadoresCliente} users={users} loadConsultantReports={loadConsultantReports} onNavigateToAtividades={handleNavigateToAtividades} />;
+      case 'agenda_acompanhamento':
+        return <AgendaAcompanhamento
+          consultants={consultants}
+          clients={clients}
+          users={users}
+          usuariosCliente={usuariosCliente}
+          coordenadoresCliente={coordenadoresCliente}
+          currentUser={currentUser!}
+          loadConsultantReports={loadConsultantReports}
+          onNavigateToAtividades={handleNavigateToAtividades}
+        />;
       case 'analytics':
         return <Analytics consultants={consultants} clients={clients} usuariosCliente={usuariosCliente} users={users} />;
       
