@@ -22,6 +22,7 @@ interface SidebarProps {
     currentUser: User;
     currentView: View;
     onNavigate: (view: View) => void;
+    isMobileDrawer?: boolean; // 🆕 v1.1: quando true, remove hidden md:flex (usado no drawer mobile)
 }
 
 // ============================================
@@ -43,7 +44,7 @@ const CONFIG_PRIORIZACAO = ['Administrador'];
 // Perfis que podem gerenciar usuários
 const GERENCIAR_USUARIOS = ['Administrador', 'Gestão de R&S'];
 
-const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate, isMobileDrawer = false }) => {
     const [isCollapsed, setIsCollapsed] = useState(() => {
         return localStorage.getItem('orbit_sidebar_collapsed') === 'true';
     });
@@ -382,9 +383,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate 
             className={`
                 bg-[#2D2D2D] text-gray-300 flex flex-col transition-all duration-300
                 ${isCollapsed ? 'w-[60px]' : 'w-[240px]'}
-                hidden md:flex
+                ${isMobileDrawer ? 'flex w-full' : 'hidden md:flex'}
             `}
-            style={{ height: 'calc(100vh - 64px)' }} 
+            style={{ height: isMobileDrawer ? '100%' : 'calc(100vh - 64px)' }} 
         >
             <div className={`p-4 flex items-center justify-center border-b border-gray-700 ${isCollapsed ? 'h-16' : 'h-16'}`}>
                  {isCollapsed ? (
