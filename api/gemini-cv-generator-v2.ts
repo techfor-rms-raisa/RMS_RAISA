@@ -499,7 +499,7 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       <div class="item"><span class="label">Gestor/Cliente:</span> ${[dados.gestor_destino, dados.cliente_destino].filter(Boolean).join(' / ') || '-'}</div>
     </div>
     
-    <!-- Parecer de Seleção (ANTES dos Requisitos — conforme modelo DOCX) -->
+    <!-- Parecer de Seleção -->
     ${dados.parecer_selecao ? `
     <div class="secao">
       <div class="secao-titulo">Parecer Seleção</div>
@@ -508,6 +508,20 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       </div>
     </div>
     ` : ''}
+
+    <!-- Recomendação (logo após Parecer, antes dos Requisitos) -->
+    ${dados.recomendacao_final ? `
+    <div class="recomendacao">
+      ${dados.recomendacao_final}
+    </div>
+    ` : `
+    <div class="recomendacao">
+      Recomendamos o(a) <strong>${dados.nome.split(' ')[0]}</strong>, pois demonstrou ser um(a) profissional com experiência considerável nas principais tecnologias solicitadas para a posição supracitada.
+    </div>
+    `}
+
+    <p style="font-size: 9pt; margin-bottom: 5px;"><strong>Disponibilidade:</strong> ${dados.disponibilidade || 'A combinar'}</p>
+    <p style="font-size: 9pt; margin-bottom: 15px;">Não está participando de processo na empresa ${dados.cliente_destino || 'cliente'} e/ou através de seu R&S ou de outra consultoria.</p>
 
     <!-- Requisitos Mandatórios -->
     ${dados.requisitos_match && dados.requisitos_match.filter((r: any) => r.tipo === 'mandatorio' || !r.tipo).length > 0 ? `
@@ -579,20 +593,6 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       </table>
     </div>
     ` : ''}
-
-    <!-- Recomendação (após Hard Skills, antes de Formação — conforme modelo DOCX) -->
-    ${dados.recomendacao_final ? `
-    <div class="recomendacao">
-      ${dados.recomendacao_final}
-    </div>
-    ` : `
-    <div class="recomendacao">
-      Recomendamos o(a) <strong>${dados.nome.split(' ')[0]}</strong>, pois demonstrou ser um(a) profissional com experiência considerável nas principais tecnologias solicitadas para a posição supracitada.
-    </div>
-    `}
-    
-    <p style="font-size: 9pt; margin-bottom: 5px;"><strong>Disponibilidade:</strong> ${dados.disponibilidade || 'A combinar'}</p>
-    <p style="font-size: 9pt; margin-bottom: 15px;">Não está participando de processo na empresa ${dados.cliente_destino || 'cliente'} e/ou através de seu R&S ou de outra consultoria.</p>
 
     <!-- Formação Acadêmica -->
     ${dados.formacao_academica && dados.formacao_academica.length > 0 ? `

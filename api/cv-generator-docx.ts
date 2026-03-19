@@ -261,6 +261,23 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
     });
   }
 
+  // --- RECOMENDAÇÃO (logo após Parecer, antes dos Requisitos) ---
+  if (dados.recomendacao_final) {
+    children.push(new Paragraph({ spacing: { before: 200 } }));
+    children.push(new Paragraph({
+      spacing: { after: 40 },
+      children: [
+        new TextRun({ text: 'Disponibilidade: ', bold: true, size: 20, font: FONT, color: 'E31837' }),
+        new TextRun({ text: dados.disponibilidade || 'A combinar', bold: true, size: 20, font: FONT, color: 'E31837' })
+      ]
+    }));
+    children.push(new Paragraph({ spacing: { before: 100 } }));
+    children.push(new Paragraph({
+      spacing: { after: 80 },
+      children: [new TextRun({ text: dados.recomendacao_final, bold: true, size: 20, font: FONT })]
+    }));
+  }
+
   // --- REQUISITOS MANDATÓRIOS ---
   const reqsMandatorios = (dados.requisitos_match || []).filter((r: any) => r.tipo === 'mandatorio' || !r.tipo);
   if (reqsMandatorios.length > 0) {
@@ -326,23 +343,6 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
           makeDataCell(s.tempo_experiencia, colWidths[1], 18)
         ]}))
       ]
-    }));
-  }
-
-  // --- RECOMENDAÇÃO ---
-  if (dados.recomendacao_final) {
-    children.push(new Paragraph({ spacing: { before: 200 } }));
-    children.push(new Paragraph({
-      spacing: { after: 40 },
-      children: [
-        new TextRun({ text: 'Disponibilidade: ', bold: true, size: 20, font: FONT, color: 'E31837' }),
-        new TextRun({ text: dados.disponibilidade || 'A combinar', bold: true, size: 20, font: FONT, color: 'E31837' })
-      ]
-    }));
-    children.push(new Paragraph({ spacing: { before: 100 } }));
-    children.push(new Paragraph({
-      spacing: { after: 80 },
-      children: [new TextRun({ text: dados.recomendacao_final, bold: true, size: 20, font: FONT })]
     }));
   }
 
