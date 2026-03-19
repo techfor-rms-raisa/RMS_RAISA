@@ -509,6 +509,16 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
     </div>
     ` : ''}
 
+    <!-- Resumo Profissional (logo após Parecer Seleção) -->
+    ${dados.resumo ? `
+    <div class="secao">
+      <div class="secao-titulo">Resumo Profissional</div>
+      <div class="parecer">
+        ${dados.resumo.split('\\n').filter((p: string) => p.trim()).map((p: string) => `<p>${p}</p>`).join('')}
+      </div>
+    </div>
+    ` : ''}
+
     <!-- Recomendação (logo após Parecer, antes dos Requisitos) -->
     ${dados.recomendacao_final ? `
     <div class="recomendacao">

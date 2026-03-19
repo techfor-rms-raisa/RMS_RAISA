@@ -21,7 +21,7 @@ export type TerminationReason =
 
 export type View = 
   // RMS Views
-  | 'dashboard' | 'quarantine' | 'recommendations' | 'users' | 'clients' 
+  | 'dashboard' | 'quarantine' | 'recommendations' | 'agenda_acompanhamento' | 'users' | 'clients' 
   | 'consultants' | 'analytics' | 'import' | 'export' | 'templates' | 'campaigns' 
   | 'compliance_dashboard' | 'feedback_portal'
   // ATIVIDADES Views

@@ -261,6 +261,19 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
     });
   }
 
+  // --- RESUMO PROFISSIONAL (logo após Parecer Seleção) ---
+  if (dados.resumo) {
+    children.push(sectionTitle('Resumo Profissional'));
+    const resumoParas = dados.resumo.split('\n').filter((p: string) => p.trim());
+    resumoParas.forEach((p: string) => {
+      children.push(new Paragraph({
+        spacing: { after: 80 },
+        alignment: AlignmentType.JUSTIFIED,
+        children: [new TextRun({ text: p.trim(), size: 20, font: FONT })]
+      }));
+    });
+  }
+
   // --- RECOMENDAÇÃO (logo após Parecer, antes dos Requisitos) ---
   if (dados.recomendacao_final) {
     children.push(new Paragraph({ spacing: { before: 200 } }));
