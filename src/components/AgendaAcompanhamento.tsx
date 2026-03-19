@@ -143,6 +143,9 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
   const [mobileTab, setMobileTab] = useState<'hoje' | 'agenda' | 'lista'>('hoje');
   const [mobileFilter, setMobileFilter] = useState<'todos' | 'semanal' | 'atrasado'>('todos');
 
+  // ── Aba desktop: Calendário ou Lista de Consultores
+  const [desktopTab, setDesktopTab] = useState<'calendario' | 'consultores'>('calendario');
+
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
@@ -770,12 +773,38 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
             <p className="text-sm text-gray-500">Distribuição mensal de contatos — Gestão de Pessoas</p>
           </div>
         </div>
-        <button
-          onClick={goToToday}
-          className="px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
-        >
-          Hoje
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Abas desktop */}
+          <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+            <button
+              onClick={() => setDesktopTab('calendario')}
+              className={`px-4 py-1.5 text-sm font-medium rounded-lg transition
+                ${desktopTab === 'calendario'
+                  ? 'bg-white text-indigo-700 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              📅 Calendário
+            </button>
+            <button
+              onClick={() => setDesktopTab('consultores')}
+              className={`px-4 py-1.5 text-sm font-medium rounded-lg transition
+                ${desktopTab === 'consultores'
+                  ? 'bg-white text-indigo-700 shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              👥 Consultores
+              <span className="ml-1.5 text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full font-semibold">
+                {activeConsultants.length}
+              </span>
+            </button>
+          </div>
+          <button
+            onClick={goToToday}
+            className="px-4 py-2 text-sm font-medium bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+          >
+            Hoje
+          </button>
+        </div>
       </div>
 
       {/* ── FILTROS */}
@@ -854,7 +883,8 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
         </span>
       </div>
 
-      {/* ── LAYOUT PRINCIPAL: Calendário + Painel lateral */}
+      {/* ── ABA: CALENDÁRIO */}
+      {desktopTab === 'calendario' && (
       <div className="flex gap-6 items-start">
 
         {/* ── CALENDÁRIO */}
@@ -1127,8 +1157,10 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
           )}
         </div>
       </div>
+      )} {/* fim aba calendário */}
 
-      {/* ── VISÃO GERAL DOS CONSULTORES (lista completa do mês) */}
+      {/* ── ABA: CONSULTORES */}
+      {desktopTab === 'consultores' && (
       <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
         <div className="flex items-center justify-between p-4 border-b border-gray-100">
           <h3 className="font-bold text-gray-800">
@@ -1190,12 +1222,12 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
                     )}
                   </div>
 
-                  {/* Dias agendados */}
+                  {/* Dias agendados — clicável: vai para o calendário no dia */}
                   <div className="hidden lg:flex gap-1 flex-wrap max-w-[140px]">
                     {scheduledDaysForConsultant.slice(0, 5).map(d => (
                       <button
                         key={d}
-                        onClick={() => setSelectedDay(d)}
+                        onClick={() => { setSelectedDay(d); setDesktopTab('calendario'); }}
                         className={`text-xs px-1.5 py-0.5 rounded font-medium transition hover:opacity-80
                           ${d === todayDay && isCurrentMonth
                             ? 'bg-indigo-600 text-white'
@@ -1240,6 +1272,7 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
           </div>
         )}
       </div>
+      )} {/* fim aba consultores */}
 
     </div>
   );

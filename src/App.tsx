@@ -528,7 +528,7 @@ const App: React.FC = () => {
                 </svg>
               </button>
               <span className="text-white font-bold text-sm tracking-wider">
-                <span className="text-orange-500 mr-1">⭕</span> ORBIT.ai
+                <span className="text-orange-500 mr-1">⭕</span> RMS-RAISA.ai
               </span>
             </div>
             <Header currentUser={currentUser!} onLogout={handleLogout} />
@@ -547,7 +547,7 @@ const App: React.FC = () => {
                 {/* Cabeçalho do drawer */}
                 <div className="flex items-center justify-between px-4 py-4 border-b border-gray-700">
                   <span className="text-white font-bold tracking-widest text-sm">
-                    <span className="text-orange-500 mr-1">⭕</span> ORBIT.ai
+                    <span className="text-orange-500 mr-1">⭕</span> RMS-RAISA.ai
                   </span>
                   <button
                     onClick={() => setMobileMenuOpen(false)}
