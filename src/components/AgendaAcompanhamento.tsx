@@ -1,8 +1,10 @@
 // src/components/AgendaAcompanhamento.tsx
-// 🆕 v1.0 - Agenda de Acompanhamento Mensal de Consultores
+// 🆕 v1.1 - Agenda de Acompanhamento Mensal de Consultores
 // Distribui consultores nos dias úteis do mês para Gestão de Pessoas
 // Consultores em Quarentena / Risco Alto / Altíssimo → acompanhamento semanal
 // Botão +Atividade: Azul=pendente | Verde=feito hoje | Vermelho=atrasado
+// v1.1: Layout mobile responsivo com 3 abas (Hoje / Agenda / Consultores)
+//       Detecção automática via window.innerWidth < 768 + listener resize
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { Consultant, Client, User, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '@/types';
@@ -135,6 +137,17 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
 
   const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth() + 1;
   const todayDay = today.getDate();
+
+  // ── Detecção de tela mobile
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768);
+  const [mobileTab, setMobileTab] = useState<'hoje' | 'agenda' | 'lista'>('hoje');
+  const [mobileFilter, setMobileFilter] = useState<'todos' | 'semanal' | 'atrasado'>('todos');
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // ── Gestores de Pessoas disponíveis para filtro
   const gpManagers = useMemo(() => 
@@ -380,7 +393,367 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
   };
 
   // ─────────────────────────────────────────────────────────────────────────
-  // RENDER
+  // RENDER MOBILE — 3 abas: Hoje / Agenda / Consultores
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const renderConsultantCardMobile = (sc: ScheduledConsultant) => {
+    const score = getValidFinalScore(sc.consultant);
+    const isNew = isNewConsultant(sc.consultant);
+    const status = getActivityStatus(sc.consultant.id);
+    const loading = loadingIds.has(sc.consultant.id);
+    const lastDate = getLastActivityDate(sc.consultant.id);
+    const isExpanded = expandedConsultant === sc.consultant.id;
+
+    return (
+      <div
+        key={sc.consultant.id}
+        className={`rounded-xl border transition ${sc.isWeekly ? 'border-orange-200 bg-orange-50' : 'border-gray-200 bg-white'}`}
+      >
+        <div className="p-3">
+          {/* Linha superior: badges + botão */}
+          <div className="flex items-start justify-between gap-2 mb-1.5">
+            <div className="flex flex-wrap gap-1">
+              {sc.isWeekly && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-orange-100 text-orange-700 text-xs rounded-full font-medium">
+                  <AlertTriangle size={9} /> Semanal
+                </span>
+              )}
+              {isNew && (
+                <span className="inline-flex px-1.5 py-0.5 bg-purple-100 text-purple-700 text-xs rounded-full font-medium">Novo</span>
+              )}
+              {score !== null && (
+                <span className="inline-flex px-1.5 py-0.5 text-white text-xs rounded-full font-medium"
+                  style={{ backgroundColor: SCORE_COLOR[score] }}>
+                  {SCORE_LABEL[score]}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => onNavigateToAtividades(sc.client?.razao_social_cliente, sc.consultant.nome_consultores)}
+              disabled={loading}
+              className={`
+                flex items-center gap-1 px-2.5 py-1.5 rounded-lg border-2 text-xs font-bold
+                transition-all flex-shrink-0
+                ${loading ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-wait' : ''}
+                ${!loading && status === 'done' ? 'bg-green-50 border-green-500 text-green-700' : ''}
+                ${!loading && status === 'overdue' ? 'bg-red-50 border-red-500 text-red-700 animate-pulse' : ''}
+                ${!loading && status === 'pending' ? 'bg-blue-50 border-blue-500 text-blue-700' : ''}
+              `}
+            >
+              {loading ? <Clock size={12} className="animate-spin" /> : getStatusIcon(status)}
+              <span>+Atividade</span>
+            </button>
+          </div>
+
+          {/* Nome e cliente */}
+          <p className="text-sm font-semibold text-gray-800 truncate">{sc.consultant.nome_consultores}</p>
+          {sc.client && <p className="text-xs text-gray-500 truncate">{sc.client.razao_social_cliente}</p>}
+          {lastDate && <p className="text-xs text-gray-400 mt-0.5">Último: {lastDate}</p>}
+
+          {/* Toggle detalhes */}
+          <button
+            onClick={() => setExpandedConsultant(isExpanded ? null : sc.consultant.id)}
+            className="text-xs text-indigo-500 hover:text-indigo-700 mt-1 transition"
+          >
+            {isExpanded ? '▲ Ocultar' : '▼ Detalhes'}
+          </button>
+        </div>
+
+        {/* Detalhes expandidos */}
+        {isExpanded && (
+          <div className="border-t border-gray-100 px-3 pb-3 pt-2 space-y-1.5 bg-gray-50 rounded-b-xl">
+            {sc.consultant.cargo_consultores && (
+              <p className="text-xs text-gray-600"><span className="font-medium">Cargo:</span> {sc.consultant.cargo_consultores}</p>
+            )}
+            {sc.consultant.email_consultor && (
+              <p className="text-xs text-gray-600">
+                <span className="font-medium">E-mail:</span>{' '}
+                <a href={`mailto:${sc.consultant.email_consultor}`} className="text-indigo-600">{sc.consultant.email_consultor}</a>
+              </p>
+            )}
+            {sc.consultant.celular && (
+              <p className="text-xs text-gray-600">
+                <span className="font-medium">Celular:</span>{' '}
+                <a href={`tel:${sc.consultant.celular}`} className="text-indigo-600">{sc.consultant.celular}</a>
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  if (isMobile) {
+    // Consultores do dia selecionado
+    const todaySchedule = schedule.find(d => d.day === selectedDay);
+    const todayConsultants = todaySchedule?.consultants ?? [];
+
+    // Lista completa com filtro mobile
+    const filteredListConsultants = activeConsultants.filter(c => {
+      if (mobileFilter === 'semanal') return needsWeeklyTracking(c);
+      if (mobileFilter === 'atrasado') return getActivityStatus(c.id) === 'overdue';
+      return true;
+    });
+
+    // Estrutura de ScheduledConsultant para a aba lista
+    const toScheduledConsultant = (c: Consultant): ScheduledConsultant => {
+      const clientInfo = clients.find(cl => {
+        const gestor = usuariosCliente.find(uc => uc.id === c.gestor_imediato_id);
+        return gestor && cl.id === gestor.id_cliente;
+      });
+      return {
+        consultant: c,
+        client: clientInfo,
+        scheduledDays: [],
+        isWeekly: needsWeeklyTracking(c),
+        lastActivityDate: getLastActivityDate(c.id),
+        todayStatus: getActivityStatus(c.id),
+      };
+    };
+
+    return (
+      <div className="flex flex-col h-screen bg-gray-50">
+
+        {/* ── TOP BAR MOBILE */}
+        <div className="bg-indigo-600 text-white px-4 pt-4 pb-0 flex-shrink-0">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h1 className="text-base font-semibold leading-tight">Agenda de Acompanhamento</h1>
+              <p className="text-xs text-indigo-200 mt-0.5">
+                {stats.doneToday} feito(s) hoje · {stats.totalConsultants} consultores
+              </p>
+            </div>
+            <button
+              onClick={goToToday}
+              className="text-xs bg-white text-indigo-600 font-semibold px-3 py-1.5 rounded-lg"
+            >
+              Hoje
+            </button>
+          </div>
+
+          {/* ── ABAS */}
+          <div className="flex gap-1">
+            {(['hoje', 'agenda', 'lista'] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={() => setMobileTab(tab)}
+                className={`flex-1 py-2 text-xs font-semibold rounded-t-lg transition
+                  ${mobileTab === tab ? 'bg-white text-indigo-600' : 'text-indigo-200 hover:text-white'}`}
+              >
+                {tab === 'hoje' && '📋 Hoje'}
+                {tab === 'agenda' && '📅 Agenda'}
+                {tab === 'lista' && '👥 Consultores'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── ABA: HOJE */}
+        {mobileTab === 'hoje' && (
+          <div className="flex flex-col flex-1 overflow-hidden">
+            {/* Sub-header do dia */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-gray-100 flex-shrink-0">
+              <span className="text-sm font-semibold text-gray-800">
+                {todaySchedule
+                  ? todaySchedule.date.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
+                  : 'Selecione um dia na aba Agenda'}
+              </span>
+              <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
+                {todayConsultants.length} agendado(s)
+              </span>
+            </div>
+            {/* Cards do dia */}
+            <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+              {todayConsultants.length === 0 ? (
+                <div className="text-center py-12 text-gray-400">
+                  <Calendar size={36} className="mx-auto mb-2 opacity-30" />
+                  <p className="text-sm">Nenhum consultor agendado</p>
+                  <p className="text-xs mt-1 text-gray-400">Toque em "Agenda" para selecionar um dia</p>
+                </div>
+              ) : (
+                todayConsultants.map(sc => renderConsultantCardMobile(sc))
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ── ABA: AGENDA (Calendário Mensal) */}
+        {mobileTab === 'agenda' && (
+          <div className="flex-1 overflow-y-auto px-3 py-3">
+            {/* Navegação de mês */}
+            <div className="flex items-center justify-between mb-3">
+              <button onClick={prevMonth} className="p-2 rounded-lg bg-white border border-gray-200 text-gray-600">
+                <ChevronLeft size={18} />
+              </button>
+              <h2 className="text-sm font-semibold text-gray-800">
+                {monthNames[viewMonth - 1]} {viewYear}
+              </h2>
+              <button onClick={nextMonth} className="p-2 rounded-lg bg-white border border-gray-200 text-gray-600">
+                <ChevronRight size={18} />
+              </button>
+            </div>
+
+            {/* Grade semanal */}
+            <div className="grid grid-cols-7 gap-1 mb-1">
+              {['D','S','T','Q','Q','S','S'].map((d, i) => (
+                <div key={i} className="text-center text-xs font-semibold text-gray-400 py-1">{d}</div>
+              ))}
+            </div>
+
+            {/* Dias */}
+            {(() => {
+              const firstDayOfWeek = new Date(viewYear, viewMonth - 1, 1).getDay();
+              const cells: React.ReactNode[] = [];
+              for (let i = 0; i < firstDayOfWeek; i++) cells.push(<div key={`e-${i}`} />);
+
+              schedule.forEach(dayInfo => {
+                const isToday = isCurrentMonth && dayInfo.day === todayDay;
+                const isSelected = dayInfo.day === selectedDay;
+                const isOff = dayInfo.isWeekend || dayInfo.isHoliday;
+                const weeklyCount = dayInfo.consultants.filter(sc => sc.isWeekly).length;
+                const monthlyCount = dayInfo.consultants.length - weeklyCount;
+
+                cells.push(
+                  <button
+                    key={dayInfo.day}
+                    onClick={() => {
+                      if (!isOff) {
+                        setSelectedDay(dayInfo.day);
+                        setMobileTab('hoje'); // navega para aba Hoje ao tocar no dia
+                      }
+                    }}
+                    disabled={isOff}
+                    className={`
+                      relative rounded-xl border p-1 text-center transition min-h-[52px] flex flex-col items-center justify-start
+                      ${isOff ? 'bg-gray-50 cursor-not-allowed border-transparent' : 'cursor-pointer hover:border-indigo-300'}
+                      ${isSelected ? 'bg-indigo-600 border-indigo-600' : 'border-gray-200 bg-white'}
+                      ${isToday && !isSelected ? 'border-indigo-400 ring-2 ring-indigo-200' : ''}
+                    `}
+                  >
+                    <span className={`text-xs font-semibold mt-0.5
+                      ${isOff ? 'text-gray-300' : isSelected ? 'text-white' : isToday ? 'text-indigo-600' : 'text-gray-800'}`}>
+                      {dayInfo.day}
+                    </span>
+                    {!isOff && dayInfo.consultants.length > 0 && (
+                      <div className="flex gap-0.5 mt-1 flex-wrap justify-center">
+                        {weeklyCount > 0 && (
+                          <span className={`text-xs rounded-full px-1 font-bold leading-tight
+                            ${isSelected ? 'bg-orange-300 text-orange-900' : 'bg-orange-100 text-orange-700'}`}>
+                            {weeklyCount}⚡
+                          </span>
+                        )}
+                        {monthlyCount > 0 && (
+                          <span className={`text-xs rounded-full px-1 font-bold leading-tight
+                            ${isSelected ? 'bg-white/20 text-white' : 'bg-indigo-100 text-indigo-700'}`}>
+                            {monthlyCount}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </button>
+                );
+              });
+
+              const remainder = cells.length % 7;
+              if (remainder !== 0) {
+                for (let i = 0; i < 7 - remainder; i++) cells.push(<div key={`t-${i}`} />);
+              }
+              return <div className="grid grid-cols-7 gap-1">{cells}</div>;
+            })()}
+
+            {/* Legenda */}
+            <div className="flex flex-wrap gap-3 mt-4 text-xs text-gray-500">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-orange-400 inline-block"></span> Semanal</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-full bg-indigo-400 inline-block"></span> Mensal</span>
+              <span className="flex items-center gap-1"><AlertTriangle size={11} className="text-orange-500" /> Toque para ver o dia</span>
+            </div>
+          </div>
+        )}
+
+        {/* ── ABA: CONSULTORES (Lista completa) */}
+        {mobileTab === 'lista' && (
+          <div className="flex flex-col flex-1 overflow-hidden">
+            {/* Filtros rápidos */}
+            <div className="flex gap-2 px-3 py-2 bg-white border-b border-gray-100 flex-shrink-0 overflow-x-auto">
+              {([
+                ['todos', 'Todos'],
+                ['semanal', '⚡ Semanal'],
+                ['atrasado', '⚠ Atrasados'],
+              ] as const).map(([val, label]) => (
+                <button
+                  key={val}
+                  onClick={() => setMobileFilter(val)}
+                  className={`text-xs px-3 py-1.5 rounded-full font-medium whitespace-nowrap transition flex-shrink-0
+                    ${mobileFilter === val
+                      ? 'bg-indigo-600 text-white'
+                      : 'bg-gray-100 text-gray-600 border border-gray-200'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Lista */}
+            <div className="flex-1 overflow-y-auto">
+              {/* Seção Semanal */}
+              {(mobileFilter === 'todos' || mobileFilter === 'semanal') && (() => {
+                const weekly = filteredListConsultants.filter(c => needsWeeklyTracking(c));
+                if (weekly.length === 0) return null;
+                return (
+                  <>
+                    <div className="px-4 pt-3 pb-1">
+                      <span className="text-xs font-semibold text-orange-700 uppercase tracking-wide">
+                        ⚡ Acompanhamento Semanal ({weekly.length})
+                      </span>
+                    </div>
+                    <div className="px-3 space-y-2 pb-2">
+                      {weekly.map(c => renderConsultantCardMobile(toScheduledConsultant(c)))}
+                    </div>
+                  </>
+                );
+              })()}
+
+              {/* Seção Mensal */}
+              {(mobileFilter === 'todos') && (() => {
+                const monthly = filteredListConsultants.filter(c => !needsWeeklyTracking(c));
+                if (monthly.length === 0) return null;
+                return (
+                  <>
+                    <div className="px-4 pt-3 pb-1">
+                      <span className="text-xs font-semibold text-indigo-700 uppercase tracking-wide">
+                        Acompanhamento Mensal ({monthly.length})
+                      </span>
+                    </div>
+                    <div className="px-3 space-y-2 pb-4">
+                      {monthly.map(c => renderConsultantCardMobile(toScheduledConsultant(c)))}
+                    </div>
+                  </>
+                );
+              })()}
+
+              {/* Filtro Atrasados */}
+              {mobileFilter === 'atrasado' && (
+                <div className="px-3 space-y-2 pt-3 pb-4">
+                  {filteredListConsultants.length === 0 ? (
+                    <div className="text-center py-10 text-gray-400">
+                      <CheckCircle2 size={36} className="mx-auto mb-2 opacity-30 text-green-500" />
+                      <p className="text-sm">Nenhum consultor atrasado!</p>
+                    </div>
+                  ) : (
+                    filteredListConsultants.map(c => renderConsultantCardMobile(toScheduledConsultant(c)))
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+      </div>
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // RENDER DESKTOP (original — sem alterações)
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
