@@ -1045,11 +1045,13 @@ Recomendamos o(a) [NOME]..."
                 </div>
               </div>
 
-              <div className="border rounded-lg shadow-lg overflow-hidden bg-white">
+              <div className="border rounded-lg shadow-lg bg-white">
                 <iframe
                   srcDoc={htmlCapa ? htmlCapa + htmlPreview : htmlPreview}
-                  className="w-full h-[700px]"
+                  className="w-full"
+                  style={{ height: '80vh', minHeight: '700px' }}
                   title="Preview CV"
+                  scrolling="yes"
                 />
               </div>
             </div>

@@ -1,6 +1,7 @@
 /**
  * permissions.ts - Sistema Centralizado de Permissões
  * 
+ * 🆕 v58.5: Adicionada podePrepararCampanha() para módulo Leads2B
  * 🆕 v58.4: Adicionado perfil SDR — acesso exclusivo ao módulo Prospect
  *            + podeUsarProspect() para controle centralizado
  * 🆕 v58.3: Adicionada função podeEditarVagas() para Gestão Comercial
@@ -123,6 +124,14 @@ export function podeUsarLinkedIn(perfilLogado: UserRole): boolean {
  * Perfis: Administrador, Gestão Comercial, SDR
  */
 export function podeUsarProspect(perfilLogado: UserRole): boolean {
+  return ['Administrador', 'Gestão Comercial', 'SDR'].includes(perfilLogado);
+}
+
+/**
+ * Verifica se pode acessar o módulo Preparar Campanha (Leads2B)
+ * Perfis: Administrador, Gestão Comercial, SDR
+ */
+export function podePrepararCampanha(perfilLogado: UserRole): boolean {
   return ['Administrador', 'Gestão Comercial', 'SDR'].includes(perfilLogado);
 }
 

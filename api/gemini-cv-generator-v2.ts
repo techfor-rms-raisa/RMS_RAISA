@@ -5,8 +5,8 @@
  * - Techfor Padrão (vermelho)
  * - T-Systems (magenta com capa)
  * 
- * Versão: 2.0
- * Data: 26/12/2024
+ * Versão: 2.1 — Fix: ordem de seções no template Techfor (Formação/Idiomas/Histórico antes da Recomendação)
+ * Data: 19/03/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -240,9 +240,13 @@ Retorne APENAS o texto do parecer, sem formatação JSON.`;
 
 /**
  * Gera HTML no template Techfor
+ * CORREÇÃO v2.1: Ordem das seções alinhada com o DOCX:
+ *   Dados Pessoais → Parecer → Requisitos → Hard Skills →
+ *   Formação Acadêmica → Formação Complementar → Idiomas →
+ *   Histórico Profissional → Recomendação → Rodapé
  */
 async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
-  const { dados, config } = req.body;
+  const { dados } = req.body;
 
   const html = `
 <!DOCTYPE html>
@@ -504,11 +508,25 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       </div>
     </div>
     ` : ''}
-    
-    <!-- Requisitos Match -->
-    ${dados.requisitos_match && dados.requisitos_match.length > 0 ? `
+
+    <!-- Recomendação (logo após Parecer, antes dos Requisitos) -->
+    ${dados.recomendacao_final ? `
+    <div class="recomendacao">
+      ${dados.recomendacao_final}
+    </div>
+    ` : `
+    <div class="recomendacao">
+      Recomendamos o(a) <strong>${dados.nome.split(' ')[0]}</strong>, pois demonstrou ser um(a) profissional com experiência considerável nas principais tecnologias solicitadas para a posição supracitada.
+    </div>
+    `}
+
+    <p style="font-size: 9pt; margin-bottom: 5px;"><strong>Disponibilidade:</strong> ${dados.disponibilidade || 'A combinar'}</p>
+    <p style="font-size: 9pt; margin-bottom: 15px;">Não está participando de processo na empresa ${dados.cliente_destino || 'cliente'} e/ou através de seu R&S ou de outra consultoria.</p>
+
+    <!-- Requisitos Mandatórios -->
+    ${dados.requisitos_match && dados.requisitos_match.filter((r: any) => r.tipo === 'mandatorio' || !r.tipo).length > 0 ? `
     <div class="secao">
-      <div class="secao-titulo">REQUISITOS:</div>
+      <div class="secao-titulo">Requisitos Mandatórios</div>
       <table class="tabela-requisitos">
         <thead>
           <tr>
@@ -518,11 +536,34 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
           </tr>
         </thead>
         <tbody>
-          ${dados.requisitos_match.map((r: any) => `
+          ${dados.requisitos_match.filter((r: any) => r.tipo === 'mandatorio' || !r.tipo).map((r: any) => `
           <tr>
             <td>${r.tecnologia}</td>
             <td>${r.tempo_experiencia}</td>
-            <td>${r.observacao}</td>
+            <td>${r.observacao || ''}</td>
+          </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+
+    <!-- Requisitos Diferenciais -->
+    ${dados.requisitos_match && dados.requisitos_match.filter((r: any) => r.tipo === 'diferencial' || r.tipo === 'desejavel').length > 0 ? `
+    <div class="secao">
+      <div class="secao-titulo">Requisitos Diferenciais</div>
+      <table class="tabela-requisitos">
+        <thead>
+          <tr>
+            <th style="width: 55%">Tecnologia</th>
+            <th style="width: 45%">Tempo de Experiência/Anos</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dados.requisitos_match.filter((r: any) => r.tipo === 'diferencial' || r.tipo === 'desejavel').map((r: any) => `
+          <tr>
+            <td>${r.tecnologia}</td>
+            <td>${r.tempo_experiencia}</td>
           </tr>
           `).join('')}
         </tbody>
@@ -552,33 +593,29 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       </table>
     </div>
     ` : ''}
-    
-    <!-- Recomendação -->
-    ${dados.recomendacao_final ? `
-    <div class="recomendacao">
-      ${dados.recomendacao_final}
-    </div>
-    ` : `
-    <div class="recomendacao">
-      Recomendamos o(a) <strong>${dados.nome.split(' ')[0]}</strong>, pois demonstrou ser um(a) profissional com experiência considerável nas principais tecnologias solicitadas para a posição supracitada.
-    </div>
-    `}
-    
-    <p style="font-size: 9pt; margin-bottom: 5px;"><strong>Disponibilidade:</strong> ${dados.disponibilidade || 'A combinar'}</p>
-    <p style="font-size: 9pt; margin-bottom: 15px;">Não está participando de processo na empresa ${dados.cliente_destino || 'cliente'} e/ou através de seu R&S ou de outra consultoria.</p>
-    
+
     <!-- Formação Acadêmica -->
     ${dados.formacao_academica && dados.formacao_academica.length > 0 ? `
     <div class="secao">
       <div class="secao-titulo">Formação Acadêmica</div>
       <table class="tabela-formacao">
+        <thead>
+          <tr>
+            <th>Tipo</th>
+            <th>Curso</th>
+            <th>Instituição</th>
+            <th>Concluído? S/N</th>
+            <th>Ano de conclusão</th>
+          </tr>
+        </thead>
         <tbody>
           ${dados.formacao_academica.map((f: any) => `
           <tr>
-            <td><strong>${f.instituicao}</strong> – ${f.data_inicio || ''} a ${f.data_conclusao || (f.em_andamento ? 'Em andamento' : '')}</td>
-          </tr>
-          <tr>
-            <td>${f.curso}${f.tipo ? ` (${formatarTipoFormacao(f.tipo)})` : ''}</td>
+            <td>${formatarTipoFormacao(f.tipo)}</td>
+            <td>${f.curso}</td>
+            <td>${f.instituicao}</td>
+            <td>${f.em_andamento ? 'N' : 'S'}</td>
+            <td>${f.data_conclusao || '-'}</td>
           </tr>
           `).join('')}
         </tbody>
@@ -718,85 +755,90 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
   .capa-ts-wrapper .info-candidato {
     background: #E20074;
     color: white;
-    padding: 25px 40px 30px 40px;
-    height: 160mm;
+    padding: 30px 40px;
+    min-height: 120mm;
     display: flex;
     flex-direction: column;
-    justify-content: flex-end;
+    justify-content: center;
   }
-  .capa-ts-wrapper .nome-candidato {
-    font-size: 24pt;
+  .capa-ts-wrapper .info-candidato .nome {
+    font-size: 22pt;
     font-weight: bold;
     margin-bottom: 8px;
-    letter-spacing: 0.5px;
   }
-  .capa-ts-wrapper .titulo-candidato {
-    font-size: 14pt;
-    margin-bottom: 20px;
-    font-weight: normal;
-  }
-  .capa-ts-wrapper .cliente {
+  .capa-ts-wrapper .info-candidato .objetivo {
     font-size: 12pt;
-    margin-top: 8px;
-    font-weight: normal;
+    margin-bottom: 6px;
   }
-  /* Layout: coluna fixa que cabe em A4 com margens de impressão (10mm cada lado = 277mm útil) */
-  .capa-ts-wrapper .capa {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    height: 248mm;
-    overflow: hidden;
+  .capa-ts-wrapper .info-candidato .detalhe {
+    font-size: 10pt;
+    opacity: 0.85;
   }
 </style>
 <div class="capa-ts-wrapper">
-  <div class="capa">
-    <div class="faixa-topo"></div>
-    <div class="area-meio">
-      <span class="logo-text">T Systems</span>
-    </div>
-    <div class="info-candidato">
-      <div class="nome-candidato">${dados.nome.toUpperCase()}</div>
-      ${objetivoTexto ? `<div class="titulo-candidato">${objetivoTexto}</div>` : ''}
-      <div class="cliente">${dados.cliente_destino || 'T-Systems do Brasil'}</div>
-    </div>
+  <div class="faixa-topo"></div>
+  <div class="area-meio">
+    <div class="logo-text">T Systems</div>
   </div>
-</div>`;
+  <div class="info-candidato">
+    <div class="nome">${dados.nome}</div>
+    ${objetivoTexto ? `<div class="objetivo">OBJETIVO: ${objetivoTexto}</div>` : ''}
+    <div class="detalhe">${[dados.cidade, dados.estado].filter(Boolean).join(' – ') || ''}</div>
+  </div>
+</div>
+<div style="page-break-after: always;"></div>
+`;
 
-  // Conteúdo Principal
+  const CINZA = '#444444';
+  const MAGENTA = '#E20074';
+  const MAGENTA_CLARO = '#FDF2F8';
+
+  const nivelMap: Record<string, string> = {
+    junior: 'Júnior', pleno: 'Pleno', senior: 'Sênior',
+    especialista: 'Especialista', coordenador: 'Coordenador', gerente: 'Gerente'
+  };
+  const modalMap: Record<string, string> = {
+    presencial: 'Presencial', remoto: 'Remoto', hibrido: 'Remoto / Híbrido'
+  };
+
+  // Conteúdo principal (pág. 2+)
   const htmlConteudo = `
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>CV - ${dados.nome}</title>
+  <title>CV T-Systems - ${dados.nome}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: Arial, sans-serif;
-      font-size: 10pt;
-      line-height: 1.4;
-      color: #333;
+      font-size: 9pt;
+      color: ${CINZA};
+      background: #fff;
     }
     .page {
       max-width: 210mm;
       margin: 0 auto;
-      padding: 15mm 20mm;
+      padding: 15mm 20mm 20mm 20mm;
     }
     .header-logo {
-      text-align: right;
-      margin-bottom: 20px;
-      color: #E20074;
-      font-size: 20pt;
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 12px;
+    }
+    .header-logo .logo-text {
+      color: ${MAGENTA};
+      font-size: 18pt;
       font-weight: bold;
+      font-style: italic;
     }
     .secao-titulo {
-      color: #E20074;
-      font-size: 12pt;
+      font-size: 10pt;
       font-weight: bold;
-      margin: 20px 0 10px 0;
-      padding-bottom: 5px;
-      border-bottom: 2px solid #E20074;
+      color: ${MAGENTA};
+      border-bottom: 2px solid ${MAGENTA};
+      padding-bottom: 3px;
+      margin: 14px 0 8px 0;
     }
     .perfil {
       text-align: justify;
@@ -809,27 +851,27 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
       font-size: 9pt;
     }
     .tabela-skills th {
-      background: #E20074;
+      background: ${MAGENTA};
       color: white;
       padding: 8px;
       text-align: left;
-      border: 1px solid #E20074;
+      border: 1px solid ${MAGENTA};
     }
     .tabela-skills td {
       padding: 6px 8px;
       border: 1px solid #ddd;
     }
     .tabela-skills tr:nth-child(even) td {
-      background: #FDF2F8;
+      background: ${MAGENTA_CLARO};
     }
     .recomendacao {
       margin: 20px 0;
       padding: 15px;
-      background: #FDF2F8;
-      border-left: 4px solid #E20074;
+      background: ${MAGENTA_CLARO};
+      border-left: 4px solid ${MAGENTA};
     }
     .exp-empresa {
-      color: #E20074;
+      color: ${MAGENTA};
       font-weight: bold;
     }
     .exp-periodo {
@@ -837,7 +879,7 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
       font-weight: bold;
     }
     .exp-cargo {
-      color: #E20074;
+      color: ${MAGENTA};
     }
     .exp-item {
       margin-bottom: 15px;
@@ -865,12 +907,12 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
 </head>
 <body>
   <div class="page">
-    <div class="header-logo">T Systems</div>
+    <div class="header-logo"><div class="logo-text">T Systems</div></div>
 
-    <!-- Nome e Objetivo — padrão T-Systems -->
+    <!-- Nome e Objetivo -->
     <div style="margin-bottom: 18px;">
-      <div style="color: #E20074; font-size: 20pt; font-weight: bold; margin-bottom: 4px;">${dados.nome}</div>
-      ${objetivoTexto ? `<div style="color: #E20074; font-size: 11pt; font-weight: normal; margin-bottom: 2px;"><strong>OBJETIVO:</strong> ${objetivoTexto}</div>` : ''}
+      <div style="color: ${MAGENTA}; font-size: 20pt; font-weight: bold; margin-bottom: 4px;">${dados.nome}</div>
+      ${objetivoTexto ? `<div style="color: ${MAGENTA}; font-size: 11pt; font-weight: normal; margin-bottom: 2px;"><strong>OBJETIVO:</strong> ${objetivoTexto}</div>` : ''}
     </div>
     
     <div class="secao-titulo">PERFIL:</div>
@@ -988,9 +1030,9 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     <div class="secao-titulo">INFORMAÇÕES ADICIONAIS:</div>
     <ul style="margin-left: 20px; font-size: 9pt;">
       <li><strong>DISPONIBILIDADE:</strong> ${dados.disponibilidade || 'INÍCIO IMEDIATO'}</li>
-      <li><strong>ATUAÇÃO:</strong> ${formatarModalidade(dados.modalidade_trabalho)}</li>
+      <li><strong>ATUAÇÃO:</strong> ${modalMap[dados.modalidade_trabalho || ''] || 'REMOTO / HÍBRIDO'}</li>
       <li><strong>CIDADE/ESTADO:</strong> ${[dados.cidade, dados.estado].filter(Boolean).join(' – ').toUpperCase() || '-'}</li>
-      <li><strong>NÍVEL HIERÁRQUICO:</strong> ${(dados.nivel_hierarquico || 'senior').toUpperCase()}</li>
+      <li><strong>NÍVEL HIERÁRQUICO:</strong> ${(nivelMap[dados.nivel_hierarquico || ''] || dados.nivel_hierarquico || 'SÊNIOR').toUpperCase()}</li>
     </ul>
   </div>
 </body>
@@ -1047,4 +1089,3 @@ function formatarModalidade(modalidade: string | undefined): string {
   };
   return map[modalidade || ''] || 'REMOTO / HÍBRIDO';
 }
-
