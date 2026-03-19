@@ -82,6 +82,15 @@ const App: React.FC = () => {
   const [contextualClient, setContextualClient] = useState<string>('');
   const [contextualConsultant, setContextualConsultant] = useState<string>('');
 
+  // 🆕 v1.1: Menu mobile (drawer)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // Fechar drawer ao navegar
+  const handleMobileNavigate = (view: View) => {
+    setCurrentView(view);
+    setMobileMenuOpen(false);
+  };
+
   // ✅ NOVO: Estado para modal de sugestões IA
   const [vagaParaSugestao, setVagaParaSugestao] = useState<Vaga | null>(null);
 
@@ -502,7 +511,72 @@ const App: React.FC = () => {
     <AuthProvider initialUser={currentUser}>
       <PermissionsProvider>
         <div className="min-h-screen bg-gray-100 flex flex-col overflow-hidden">
-          <Header currentUser={currentUser!} onLogout={handleLogout} />
+          
+          {/* ── HEADER com botão hamburguer mobile */}
+          <div className="flex-shrink-0">
+            {/* Botão hamburguer — visível apenas em mobile (md:hidden) */}
+            <div className="md:hidden flex items-center bg-[#2D2D2D] px-3 py-2 gap-3">
+              <button
+                onClick={() => setMobileMenuOpen(true)}
+                className="text-white p-2 rounded-lg hover:bg-gray-700 transition"
+                aria-label="Abrir menu"
+              >
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                  <rect y="3" width="22" height="2.5" rx="1.25" fill="white"/>
+                  <rect y="9.75" width="22" height="2.5" rx="1.25" fill="white"/>
+                  <rect y="16.5" width="22" height="2.5" rx="1.25" fill="white"/>
+                </svg>
+              </button>
+              <span className="text-white font-bold text-sm tracking-wider">
+                <span className="text-orange-500 mr-1">⭕</span> ORBIT.ai
+              </span>
+            </div>
+            <Header currentUser={currentUser!} onLogout={handleLogout} />
+          </div>
+
+          {/* ── DRAWER MOBILE — overlay + sidebar deslizante */}
+          {mobileMenuOpen && (
+            <div className="fixed inset-0 z-50 md:hidden flex">
+              {/* Overlay escuro */}
+              <div
+                className="fixed inset-0 bg-black/60"
+                onClick={() => setMobileMenuOpen(false)}
+              />
+              {/* Painel do menu */}
+              <div className="relative z-10 w-[260px] h-full bg-[#2D2D2D] flex flex-col overflow-y-auto shadow-2xl">
+                {/* Cabeçalho do drawer */}
+                <div className="flex items-center justify-between px-4 py-4 border-b border-gray-700">
+                  <span className="text-white font-bold tracking-widest text-sm">
+                    <span className="text-orange-500 mr-1">⭕</span> ORBIT.ai
+                  </span>
+                  <button
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="text-gray-400 hover:text-white transition p-1"
+                    aria-label="Fechar menu"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                      <path d="M1 1L17 17M17 1L1 17" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+                    </svg>
+                  </button>
+                </div>
+                {/* Sidebar reutilizada — modo drawer, passa handleMobileNavigate */}
+                <div className="flex-1">
+                  <Sidebar
+                    currentUser={currentUser!}
+                    currentView={currentView}
+                    onNavigate={handleMobileNavigate}
+                    isMobileDrawer={true}
+                  />
+                </div>
+                {/* Info do usuário no rodapé */}
+                <div className="px-4 py-3 border-t border-gray-700 text-xs text-gray-400">
+                  <p className="font-medium text-gray-300 truncate">{currentUser!.nome_usuario}</p>
+                  <p className="truncate">{currentUser!.tipo_usuario}</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="flex flex-1 overflow-hidden">
             <Sidebar 
                 currentUser={currentUser!}
