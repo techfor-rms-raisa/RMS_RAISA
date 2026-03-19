@@ -499,7 +499,7 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       <div class="item"><span class="label">Gestor/Cliente:</span> ${[dados.gestor_destino, dados.cliente_destino].filter(Boolean).join(' / ') || '-'}</div>
     </div>
     
-    <!-- Parecer de Seleção -->
+    <!-- Parecer de Seleção (ANTES dos Requisitos — conforme modelo DOCX) -->
     ${dados.parecer_selecao ? `
     <div class="secao">
       <div class="secao-titulo">Parecer Seleção</div>
@@ -508,11 +508,11 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       </div>
     </div>
     ` : ''}
-    
-    <!-- Requisitos Match -->
-    ${dados.requisitos_match && dados.requisitos_match.length > 0 ? `
+
+    <!-- Requisitos Mandatórios -->
+    ${dados.requisitos_match && dados.requisitos_match.filter((r: any) => r.tipo === 'mandatorio' || !r.tipo).length > 0 ? `
     <div class="secao">
-      <div class="secao-titulo">REQUISITOS:</div>
+      <div class="secao-titulo">Requisitos Mandatórios</div>
       <table class="tabela-requisitos">
         <thead>
           <tr>
@@ -522,11 +522,34 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
           </tr>
         </thead>
         <tbody>
-          ${dados.requisitos_match.map((r: any) => `
+          ${dados.requisitos_match.filter((r: any) => r.tipo === 'mandatorio' || !r.tipo).map((r: any) => `
           <tr>
             <td>${r.tecnologia}</td>
             <td>${r.tempo_experiencia}</td>
-            <td>${r.observacao}</td>
+            <td>${r.observacao || ''}</td>
+          </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+
+    <!-- Requisitos Diferenciais -->
+    ${dados.requisitos_match && dados.requisitos_match.filter((r: any) => r.tipo === 'diferencial' || r.tipo === 'desejavel').length > 0 ? `
+    <div class="secao">
+      <div class="secao-titulo">Requisitos Diferenciais</div>
+      <table class="tabela-requisitos">
+        <thead>
+          <tr>
+            <th style="width: 55%">Tecnologia</th>
+            <th style="width: 45%">Tempo de Experiência/Anos</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dados.requisitos_match.filter((r: any) => r.tipo === 'diferencial' || r.tipo === 'desejavel').map((r: any) => `
+          <tr>
+            <td>${r.tecnologia}</td>
+            <td>${r.tempo_experiencia}</td>
           </tr>
           `).join('')}
         </tbody>
@@ -557,18 +580,42 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
     </div>
     ` : ''}
 
+    <!-- Recomendação (após Hard Skills, antes de Formação — conforme modelo DOCX) -->
+    ${dados.recomendacao_final ? `
+    <div class="recomendacao">
+      ${dados.recomendacao_final}
+    </div>
+    ` : `
+    <div class="recomendacao">
+      Recomendamos o(a) <strong>${dados.nome.split(' ')[0]}</strong>, pois demonstrou ser um(a) profissional com experiência considerável nas principais tecnologias solicitadas para a posição supracitada.
+    </div>
+    `}
+    
+    <p style="font-size: 9pt; margin-bottom: 5px;"><strong>Disponibilidade:</strong> ${dados.disponibilidade || 'A combinar'}</p>
+    <p style="font-size: 9pt; margin-bottom: 15px;">Não está participando de processo na empresa ${dados.cliente_destino || 'cliente'} e/ou através de seu R&S ou de outra consultoria.</p>
+
     <!-- Formação Acadêmica -->
     ${dados.formacao_academica && dados.formacao_academica.length > 0 ? `
     <div class="secao">
       <div class="secao-titulo">Formação Acadêmica</div>
       <table class="tabela-formacao">
+        <thead>
+          <tr>
+            <th>Tipo</th>
+            <th>Curso</th>
+            <th>Instituição</th>
+            <th>Concluído? S/N</th>
+            <th>Ano de conclusão</th>
+          </tr>
+        </thead>
         <tbody>
           ${dados.formacao_academica.map((f: any) => `
           <tr>
-            <td><strong>${f.instituicao}</strong> – ${f.data_inicio || ''} a ${f.data_conclusao || (f.em_andamento ? 'Em andamento' : '')}</td>
-          </tr>
-          <tr>
-            <td>${f.curso}${f.tipo ? ` (${formatarTipoFormacao(f.tipo)})` : ''}</td>
+            <td>${formatarTipoFormacao(f.tipo)}</td>
+            <td>${f.curso}</td>
+            <td>${f.instituicao}</td>
+            <td>${f.em_andamento ? 'N' : 'S'}</td>
+            <td>${f.data_conclusao || '-'}</td>
           </tr>
           `).join('')}
         </tbody>
@@ -648,20 +695,6 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
       `).join('')}
     </div>
     ` : ''}
-    
-    <!-- Recomendação -->
-    ${dados.recomendacao_final ? `
-    <div class="recomendacao">
-      ${dados.recomendacao_final}
-    </div>
-    ` : `
-    <div class="recomendacao">
-      Recomendamos o(a) <strong>${dados.nome.split(' ')[0]}</strong>, pois demonstrou ser um(a) profissional com experiência considerável nas principais tecnologias solicitadas para a posição supracitada.
-    </div>
-    `}
-    
-    <p style="font-size: 9pt; margin-bottom: 5px;"><strong>Disponibilidade:</strong> ${dados.disponibilidade || 'A combinar'}</p>
-    <p style="font-size: 9pt; margin-bottom: 15px;">Não está participando de processo na empresa ${dados.cliente_destino || 'cliente'} e/ou através de seu R&S ou de outra consultoria.</p>
     
     <!-- Rodapé -->
     <div class="rodape">
