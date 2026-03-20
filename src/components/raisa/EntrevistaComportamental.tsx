@@ -416,8 +416,33 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       // 3. Carregar CV existente (se houver)
       const cvExistente = await loadCVByCandidatura(candidaturaId);
       if (cvExistente) {
-        setDados(cvExistente.dados_processados);
-        console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ')');
+        // 🔧 Fix: mesclar CV salvo com dados frescos do banco
+        // O CV salvo tem prioridade para campos editados manualmente (nome, email, etc.)
+        // Mas dados relacionados do banco (experiências, formação, idiomas, skills)
+        // prevalecem quando o CV salvo os tem vazios — evita perda de dados após reimportação
+        setDados(prev => {
+          const cvDados = cvExistente.dados_processados;
+          return {
+            ...cvDados,
+            // Dados relacionados: usar banco se CV salvo estiver vazio
+            experiencias: (cvDados.experiencias?.length > 0)
+              ? cvDados.experiencias
+              : prev.experiencias,
+            formacao_academica: (cvDados.formacao_academica?.length > 0)
+              ? cvDados.formacao_academica
+              : prev.formacao_academica,
+            formacao_complementar: (cvDados.formacao_complementar?.length > 0)
+              ? cvDados.formacao_complementar
+              : prev.formacao_complementar,
+            idiomas: (cvDados.idiomas?.length > 0)
+              ? cvDados.idiomas
+              : prev.idiomas,
+            hard_skills_tabela: (cvDados.hard_skills_tabela?.length > 0)
+              ? cvDados.hard_skills_tabela
+              : prev.hard_skills_tabela,
+          };
+        });
+        console.log('📋 CV existente carregado (versão ' + cvExistente.versao + ') — mesclado com dados do banco');
       } else {
         // ✅ CV NÃO existe: Pré-preencher requisitos a partir da vaga
         console.log('🔧 CV não encontrado, pré-preenchendo requisitos da vaga...');
