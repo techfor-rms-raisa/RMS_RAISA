@@ -556,7 +556,8 @@ export const useRaisaCVSearch = () => {
         anos_experiencia_total: r.anos_experiencia_total
       }));
 
-      // Aplicar filtro inteligente
+      // 🔧 v4.1: Retornar TODOS os candidatos — score 0% aparece com badge no modal
+      // O analista decide; não bloqueamos candidatos sem compatibilidade
       const resultadosFiltrados = filtrarERankearCandidatos(
         candidatosParaAnalise,
         {
@@ -565,9 +566,9 @@ export const useRaisaCVSearch = () => {
           senioridade: vaga.senioridade
         },
         {
-          scoreMinimo: 25, // Mínimo 25% para aparecer
-          incluirIncompativeis: false,
-          limite
+          scoreMinimo: 0,
+          incluirIncompativeis: true,
+          limite: limite * 3 // Buscar amplo para o modal paginar
         }
       );
 
@@ -636,16 +637,15 @@ export const useRaisaCVSearch = () => {
         };
       });
 
-      // Ordenar por score total
+      // Ordenar: maior score primeiro; score 0 vai para o final
       resultadosCompletos.sort((a, b) => b.score_total - a.score_total);
 
       setMatches(resultadosCompletos);
-      console.log(`✅ ${resultadosCompletos.length} candidatos finais para a vaga`);
+      console.log(`✅ ${resultadosCompletos.length} candidatos retornados (incluindo score 0%)`);
       
-      // Log dos candidatos EXCLUÍDOS para análise
-      const excluidos = candidatosParaAnalise.length - resultadosFiltrados.length;
-      if (excluidos > 0) {
-        console.log(`🚫 ${excluidos} candidatos excluídos por incompatibilidade de função/área`);
+      const semCompatibilidade = resultadosCompletos.filter(r => r.score_total === 0).length;
+      if (semCompatibilidade > 0) {
+        console.log(`ℹ️ ${semCompatibilidade} candidatos com score 0% — aparecerão com badge no modal`);
       }
       
       return resultadosCompletos;
