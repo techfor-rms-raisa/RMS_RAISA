@@ -951,4 +951,3 @@ export const useRaisaCVSearch = () => {
     setError
   };
 };
-
