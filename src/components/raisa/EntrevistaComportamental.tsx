@@ -416,28 +416,43 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       // 3. Carregar CV existente (se houver)
       const cvExistente = await loadCVByCandidatura(candidaturaId);
       if (cvExistente) {
-        // 🔧 Fix: mesclar CV salvo com dados frescos do banco
-        // O CV salvo tem prioridade para campos editados manualmente (nome, email, etc.)
-        // Mas dados relacionados do banco (experiências, formação, idiomas, skills)
-        // prevalecem quando o CV salvo os tem vazios — evita perda de dados após reimportação
+        // 🔧 Fix v2: mesclar CV salvo com dados frescos do banco
+        // Verifica se os dados do CV salvo têm conteúdo REAL (não apenas placeholders vazios)
+        // Experiências vazias = array com entradas sem empresa/cargo preenchidos
         setDados(prev => {
           const cvDados = cvExistente.dados_processados;
+
+          const expCvTemConteudo = (cvDados.experiencias || [])
+            .some((e: any) => e.empresa?.trim() || e.cargo?.trim());
+
+          const formCvTemConteudo = (cvDados.formacao_academica || [])
+            .some((f: any) => f.curso?.trim() || f.instituicao?.trim());
+
+          const formCompCvTemConteudo = (cvDados.formacao_complementar || [])
+            .some((f: any) => f.nome?.trim() || f.instituicao?.trim());
+
+          const idiomasCvTemConteudo = (cvDados.idiomas || [])
+            .some((i: any) => i.idioma?.trim());
+
+          const skillsCvTemConteudo = (cvDados.hard_skills_tabela || [])
+            .some((s: any) => s.tecnologia?.trim());
+
           return {
             ...cvDados,
-            // Dados relacionados: usar banco se CV salvo estiver vazio
-            experiencias: (cvDados.experiencias?.length > 0)
+            // Banco prevalece quando CV salvo tem dados vazios/placeholder
+            experiencias: expCvTemConteudo
               ? cvDados.experiencias
               : prev.experiencias,
-            formacao_academica: (cvDados.formacao_academica?.length > 0)
+            formacao_academica: formCvTemConteudo
               ? cvDados.formacao_academica
               : prev.formacao_academica,
-            formacao_complementar: (cvDados.formacao_complementar?.length > 0)
+            formacao_complementar: formCompCvTemConteudo
               ? cvDados.formacao_complementar
               : prev.formacao_complementar,
-            idiomas: (cvDados.idiomas?.length > 0)
+            idiomas: idiomasCvTemConteudo
               ? cvDados.idiomas
               : prev.idiomas,
-            hard_skills_tabela: (cvDados.hard_skills_tabela?.length > 0)
+            hard_skills_tabela: skillsCvTemConteudo
               ? cvDados.hard_skills_tabela
               : prev.hard_skills_tabela,
           };
