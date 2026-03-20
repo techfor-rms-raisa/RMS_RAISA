@@ -390,44 +390,41 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     return vagasAbertas;
   }, [vagas, filtroVagaEscopo, minhasVagasIds]);
 
-  // 🆕 v57.7: Candidatos filtrados - lógica SEPARADA para "Meus" vs "Todos"
+  // 🔧 v57.9: Candidatos filtrados — lógica SEPARADA para "Meus" vs "Todos"
   const candidatosFiltrados = useMemo(() => {
     // =============================================
-    // MODO "MEUS": Busca direta do banco
+    // MODO "MEUS": vinculados ao analista OU busca por nome no banco
     // =============================================
     if (filtroPessoaEscopo === 'minhas') {
-      let filtered = meusCandidatos;
-      
-      // Filtro por texto de busca (nome, email, título)
-      if (buscaTexto.trim()) {
-        const termo = buscaTexto.toLowerCase();
-        filtered = filtered.filter(c => 
-          c.nome?.toLowerCase().includes(termo) ||
-          c.email?.toLowerCase().includes(termo) ||
-          c.titulo_profissional?.toLowerCase().includes(termo)
-        );
+      const termo = buscaTexto.trim();
+
+      // Com texto ≥2 chars → usar resultado da busca ilike no banco
+      // (captura candidatos sem id_analista_rs, ex: importados via plugin LinkedIn)
+      if (termo.length >= 2) {
+        return candidatosBuscaNome;
       }
-      
-      return filtered;
+
+      // Sem texto → mostrar apenas os vinculados ao analista
+      return meusCandidatos;
     }
-    
+
     // =============================================
-    // MODO "TODOS": Busca por match de skills
+    // MODO "TODOS": resultado do match de skills
     // =============================================
     let filtered = matches;
-    
-    // Filtro por texto de busca
+
+    // Filtro por texto de busca sobre o resultado já carregado
     if (buscaTexto.trim()) {
       const termo = buscaTexto.toLowerCase();
-      filtered = filtered.filter(m => 
+      filtered = filtered.filter(m =>
         m.nome.toLowerCase().includes(termo) ||
         m.titulo_profissional?.toLowerCase().includes(termo) ||
         m.email?.toLowerCase().includes(termo)
       );
     }
-    
+
     return filtered;
-  }, [filtroPessoaEscopo, meusCandidatos, matches, buscaTexto]);
+  }, [filtroPessoaEscopo, meusCandidatos, candidatosBuscaNome, matches, buscaTexto]);
 
   // Paginação
   const totalPaginas = Math.ceil(candidatosFiltrados.length / ITEMS_PER_PAGE);
