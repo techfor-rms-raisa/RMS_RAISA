@@ -281,13 +281,13 @@ npx vercel switch   # selecionar Techfor (techfor)
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 43 arquivos | 515.2 KB | 19/03/2026 |
-| `src/components/` | 109 arquivos | 807.8 KB | 19/03/2026 |
+| `api/` | 46 arquivos | 535.3 KB | 20/03/2026 |
+| `src/components/` | 111 arquivos | 866.3 KB | 20/03/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 19/03/2026 |
-| `src/types/` | 6 arquivos | 29.9 KB | 19/03/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 19/03/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 19/03/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 20/03/2026 |
+| `src/types/` | 6 arquivos | 29.9 KB | 20/03/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 20/03/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 20/03/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -306,12 +306,15 @@ npx vercel switch   # selecionar Techfor (techfor)
 - `api/prospect-apollo-search.ts`
 - `api/prospect-capture.ts`
 - `api/prospect-email-finder.ts`
+- `api/prospect-enrich-company.ts`
 - `api/prospect-gemini-search.ts`
 - `api/prospect-hunter-enrich.ts`
+- `api/prospect-infer-emails.ts`
 - `api/prospect-leads.ts`
 - `api/prospect-save.ts`
 - `api/prospect-snovio-search.ts`
 - `api/prospect-stats.ts`
+- `api/prospect-validate-emails.ts`
 - `api/questoes-inteligentes.ts`
 - `api/recomendacao-analista.ts`
 - `api/send-email.ts`
