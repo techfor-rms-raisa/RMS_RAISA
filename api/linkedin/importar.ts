@@ -4,6 +4,17 @@
  * Endpoint para receber dados do LinkedIn (via extensão Chrome)
  * e salvar diretamente na tabela PESSOAS (Banco de Talentos)
  * 
+ * 🔧 v57.16: Busca dedup robusta por username do LinkedIn
+ * - ilike('%/in/username%') cobre TODAS as variações de URL
+ * - Fallbacks em cascata: username → email → nome
+ * - Elimina definitivamente qualquer duplicação por variação de URL
+ * 
+ * 🔧 v57.15: Normalização de URL do LinkedIn
+ * - normalizarLinkedInUrl(): converte qualquer variação para https://www.linkedin.com/in/username
+ * - Busca dedup usa URL normalizada + fallback para URL original (registros antigos)
+ * - .single() substituído por .maybeSingle() para evitar erros em queries opcionais
+ * - Elimina duplicação por variações: com/sem https, com/sem www, com/sem barra final
+ * 
  * 🆕 v57.14: GARANTIA estado VARCHAR(2)
  * - Adicionado .substring(0, 2) no momento do insert
  * - Garante que NUNCA exceda 2 caracteres
@@ -169,6 +180,33 @@ function normalizarEstado(estado: string): string {
   // Último recurso: pegar primeiras 2 letras
   console.warn(`⚠️ Estado não reconhecido: "${estado}" - truncando para 2 chars`);
   return estado.substring(0, 2).toUpperCase();
+}
+
+// ============================================
+// 🔧 v57.15: NORMALIZAÇÃO DE URL DO LINKEDIN
+// Garante formato canônico: https://www.linkedin.com/in/username
+// Evita duplicação por variações de URL (com/sem https, com/sem www, com/sem barra final)
+// ============================================
+
+function normalizarLinkedInUrl(url: string | undefined): string {
+  if (!url) return '';
+
+  let u = url.trim().toLowerCase();
+
+  // Remover protocolo existente
+  u = u.replace(/^https?:\/\//i, '');
+
+  // Remover www. se existir
+  u = u.replace(/^www\./i, '');
+
+  // Remover barra final
+  u = u.replace(/\/$/, '');
+
+  // Remover parâmetros de query
+  u = u.split('?')[0];
+
+  // Montar URL canônica
+  return `https://www.linkedin.com/in/${u.split('/in/')[1] || u}`;
 }
 
 // ============================================
@@ -464,28 +502,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ============================================
     // VERIFICAR SE JÁ EXISTE
+    // 🔧 v57.16: Busca robusta por username do LinkedIn
+    // Cobre TODAS as variações: com/sem https, com/sem www, com/sem barra final
     // ============================================
     
+    // Normalizar URL recebida da extensão
+    const linkedinUrlNormalizada = normalizarLinkedInUrl(data.linkedin_url);
+
     let pessoaExistente = null;
-    
-    if (data.linkedin_url) {
-      const { data: byLinkedIn } = await supabase
-        .from('pessoas')
-        .select('id')
-        .eq('linkedin_url', data.linkedin_url)
-        .single();
-      
-      pessoaExistente = byLinkedIn;
+
+    if (linkedinUrlNormalizada) {
+      // Extrair username canônico (ex: "thiagomonteiro03")
+      const usernameMatch = linkedinUrlNormalizada.match(/linkedin\.com\/in\/([^\/\?#]+)/i);
+      const username = usernameMatch ? usernameMatch[1] : null;
+
+      if (username) {
+        // Busca por ILIKE cobrindo todas as variações de URL com esse username
+        const { data: byLinkedIn } = await supabase
+          .from('pessoas')
+          .select('id')
+          .ilike('linkedin_url', `%/in/${username}%`)
+          .maybeSingle();
+
+        pessoaExistente = byLinkedIn;
+        if (pessoaExistente) {
+          console.log(`✅ Pessoa encontrada via username LinkedIn: ${username} → ID ${pessoaExistente.id}`);
+        }
+      }
     }
     
+    // Fallback por email
     if (!pessoaExistente && data.email) {
       const { data: byEmail } = await supabase
         .from('pessoas')
         .select('id')
         .eq('email', data.email)
-        .single();
+        .maybeSingle();
       
       pessoaExistente = byEmail;
+      if (pessoaExistente) {
+        console.log(`✅ Pessoa encontrada via email → ID ${pessoaExistente.id}`);
+      }
+    }
+
+    // Fallback por nome exato (último recurso)
+    if (!pessoaExistente && data.nome) {
+      const { data: byNome } = await supabase
+        .from('pessoas')
+        .select('id')
+        .ilike('nome', data.nome.trim())
+        .maybeSingle();
+      
+      pessoaExistente = byNome;
+      if (pessoaExistente) {
+        console.log(`✅ Pessoa encontrada via nome → ID ${pessoaExistente.id}`);
+      }
     }
 
     // ============================================
@@ -493,7 +564,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ============================================
     
     const tituloProfissional = (data.headline || ultimoCargo || 'Profissional de TI').substring(0, 200);
-    const linkedinUrl = (data.linkedin_url || '').substring(0, 500);
+    const linkedinUrl = linkedinUrlNormalizada.substring(0, 500); // 🔧 v57.15: sempre normalizada
     const nomeCompleto = (data.nome || '').substring(0, 255);
     const resumoProfissional = data.resumo || null;
     
