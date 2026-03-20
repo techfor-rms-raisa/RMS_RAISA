@@ -272,11 +272,39 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       
       // 2. Carregar dados da pessoa
       if (pessoaId) {
-        const { data: pessoa } = await supabase
-          .from('pessoas')
-          .select('nome, email, telefone, cidade, estado, bairro, cep, cpf, rg, data_nascimento, estado_civil, pretensao_salarial, valor_hora_atual, pretensao_valor_hora, disponibilidade, modalidade_preferida, ja_trabalhou_pj, aceita_pj, possui_empresa, aceita_abrir_empresa, nome_anoni_parcial, nome_anoni_total, cv_texto_original')
-          .eq('id', pessoaId)
-          .single();
+        // 2a. Buscar pessoa + dados relacionados em paralelo
+        const [
+          { data: pessoa },
+          { data: experienciasDB },
+          { data: formacaoDB },
+          { data: idiomasDB },
+          { data: skillsDB }
+        ] = await Promise.all([
+          supabase
+            .from('pessoas')
+            .select('nome, email, telefone, cidade, estado, bairro, cep, cpf, rg, data_nascimento, estado_civil, pretensao_salarial, valor_hora_atual, pretensao_valor_hora, disponibilidade, modalidade_preferida, ja_trabalhou_pj, aceita_pj, possui_empresa, aceita_abrir_empresa, nome_anoni_parcial, nome_anoni_total, cv_texto_original')
+            .eq('id', pessoaId)
+            .single(),
+          supabase
+            .from('pessoa_experiencias')
+            .select('empresa, cargo, data_inicio, data_fim, atual, descricao, motivo_saida')
+            .eq('pessoa_id', pessoaId)
+            .order('data_inicio', { ascending: false }),
+          supabase
+            .from('pessoa_formacao')
+            .select('tipo, curso, instituicao, ano_conclusao, em_andamento')
+            .eq('pessoa_id', pessoaId)
+            .order('ano_conclusao', { ascending: false }),
+          supabase
+            .from('pessoa_idiomas')
+            .select('idioma, nivel')
+            .eq('pessoa_id', pessoaId),
+          supabase
+            .from('pessoa_skills')
+            .select('skill_nome, anos_experiencia')
+            .eq('pessoa_id', pessoaId)
+            .order('anos_experiencia', { ascending: false })
+        ]);
 
         if (pessoa) {
           setPessoaDados({
@@ -300,8 +328,59 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
               idadeCalculada--;
             }
           }
-          
-          // Atualizar dados iniciais com info da pessoa
+
+          // 2b. Mapear experiências do banco para o tipo ExperienciaCV
+          const experienciasMapeadas: ExperienciaCV[] = (experienciasDB || []).map(e => ({
+            empresa: e.empresa || '',
+            cargo: e.cargo || '',
+            data_inicio: e.data_inicio
+              ? new Date(e.data_inicio).toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' })
+              : '',
+            data_fim: e.atual
+              ? 'Atual'
+              : e.data_fim
+                ? new Date(e.data_fim).toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' })
+                : '',
+            descricao: e.descricao || '',
+            motivo_saida: e.motivo_saida || ''
+          }));
+
+          // 2c. Separar formação acadêmica (graduacao/tecnico/mba/mestrado/doutorado) de complementar
+          const TIPOS_ACADEMICOS = ['graduacao', 'tecnico', 'mba', 'mestrado', 'doutorado'];
+          const formacaoAcademicaMapeada: FormacaoCV[] = (formacaoDB || [])
+            .filter(f => TIPOS_ACADEMICOS.includes(f.tipo))
+            .map(f => ({
+              tipo: f.tipo || '',
+              curso: f.curso || '',
+              instituicao: f.instituicao || '',
+              data_conclusao: f.em_andamento ? 'Em andamento' : f.ano_conclusao ? String(f.ano_conclusao) : ''
+            }));
+          const formacaoComplementarMapeada = (formacaoDB || [])
+            .filter(f => !TIPOS_ACADEMICOS.includes(f.tipo))
+            .map(f => ({
+              nome: f.curso || '',
+              instituicao: f.instituicao || '',
+              ano_conclusao: f.em_andamento ? 'Em andamento' : f.ano_conclusao ? String(f.ano_conclusao) : ''
+            }));
+
+          // 2d. Mapear idiomas
+          const idiomasMapeados: IdiomaCV[] = (idiomasDB || []).map(i => ({
+            idioma: i.idioma || '',
+            nivel: i.nivel || 'intermediario'
+          }));
+
+          // 2e. Mapear skills para hard_skills_tabela
+          const hardSkillsMapeadas = (skillsDB || []).map(s => ({
+            tecnologia: s.skill_nome || '',
+            tempo_experiencia: s.anos_experiencia
+              ? `${Number(s.anos_experiencia).toFixed(0)} anos`
+              : '',
+            observacao: ''
+          }));
+
+          console.log(`✅ Dados do banco carregados: ${experienciasMapeadas.length} experiências, ${formacaoAcademicaMapeada.length} formações, ${idiomasMapeados.length} idiomas, ${hardSkillsMapeadas.length} skills`);
+
+          // Atualizar dados iniciais com info da pessoa + dados relacionados
           setDados(prev => ({
             ...prev,
             nome: pessoa.nome || candidatoNome,
@@ -324,7 +403,12 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             ja_trabalhou_pj: pessoa.ja_trabalhou_pj || false,
             aceita_pj: pessoa.aceita_pj || false,
             possui_empresa: pessoa.possui_empresa || false,
-            aceita_abrir_empresa: pessoa.aceita_abrir_empresa || false
+            aceita_abrir_empresa: pessoa.aceita_abrir_empresa || false,
+            experiencias: experienciasMapeadas.length > 0 ? experienciasMapeadas : prev.experiencias,
+            formacao_academica: formacaoAcademicaMapeada.length > 0 ? formacaoAcademicaMapeada : prev.formacao_academica,
+            formacao_complementar: formacaoComplementarMapeada.length > 0 ? formacaoComplementarMapeada : prev.formacao_complementar,
+            idiomas: idiomasMapeados.length > 0 ? idiomasMapeados : prev.idiomas,
+            hard_skills_tabela: hardSkillsMapeadas.length > 0 ? hardSkillsMapeadas : prev.hard_skills_tabela
           }));
         }
       }
@@ -347,7 +431,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             ...prev,
             requisitos_match: requisitosMandatorios.length > 0 ? requisitosMandatorios : prev.requisitos_match,
             requisitos_desejaveis: requisitosDesejaveis.length > 0 ? requisitosDesejaveis : prev.requisitos_desejaveis,
-            hard_skills_tabela: hardSkills.length > 0 ? hardSkills : prev.hard_skills_tabela
+            // ✅ Skills da vaga só preenchem se o candidato não tem skills próprias carregadas do banco
+            hard_skills_tabela: hardSkills.length > 0 && prev.hard_skills_tabela.length === 0 ? hardSkills : prev.hard_skills_tabela
           }));
           console.log(`✅ Pré-preenchido: ${requisitosMandatorios.length} mandatórios, ${requisitosDesejaveis.length} desejáveis, ${hardSkills.length} hard skills`);
         }

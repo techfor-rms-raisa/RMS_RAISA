@@ -1,24 +1,26 @@
 /**
  * NovaCandidaturaModal.tsx - Modal de Nova Candidatura
  * 
+ * 🔧 v57.9 (20/03/2026):
+ * - "Meus Candidatos": busca por nome no banco (ilike) com debounce 400ms
+ *   → Captura candidatos sem id_analista_rs (importados pelo plugin LinkedIn)
+ *   → Sem texto: exibe apenas os vinculados ao analista (id_analista_rs)
+ *   → Com texto ≥2 chars: busca todo o banco por nome
+ * - "Buscar Todos": retorna TODOS os candidatos do banco de talentos
+ *   → Candidatos com score 0% aparecem com badge "Sem compatibilidade"
+ *   → Cards exibem tags verdes (skills atendidas) e vermelhas (faltantes)
+ *   → Analista decide se aloca mesmo com baixo score
+ * 
  * 🔧 v57.8 (28/01/2026) - CORREÇÃO STATUS:
  * - Status padrão corrigido: Aquisição → 'triagem' (antes era 'enviado_cliente')
  * - Status indicação: 'indicacao_aprovada' (fluxo especial)
- * - Candidatos agora aparecem no filtro de entrevista técnica
  * 
  * 🆕 v57.7 - SIMPLIFICADO:
  * - "Meus Candidatos" busca DIRETO do banco (pessoas.id_analista_rs = analista_logado)
  * - NÃO depende de match de skills para exibir candidatos
  * - Campo de busca filtra por nome em tempo real
- * - Mais simples e intuitivo para o analista
  * 
- * HISTÓRICO:
- * - v57.8 (28/01/2026): CORREÇÃO - Status padrão 'triagem' em vez de 'enviado_cliente'
- * - v57.7 (15/01/2026): Meus Candidatos busca direto do banco, sem match
- * - v57.5: Minhas Vagas inclui vaga_analista_distribuicao
- * - v57.4: Corrigido filtro para usar id_analista_rs
- * 
- * Data: 28/01/2026
+ * Data: 20/03/2026
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -181,7 +183,11 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   // Estados gerais
   const [buscaBancoRealizada, setBuscaBancoRealizada] = useState(false);
   const [criandoCandidatura, setCriandoCandidatura] = useState<number | null>(null);
-  
+
+  // 🔧 v57.9: Resultado de busca por nome no banco (modo "Meus Candidatos" com texto)
+  const [candidatosBuscaNome, setCandidatosBuscaNome] = useState<MeuCandidato[]>([]);
+  const [loadingBuscaNome, setLoadingBuscaNome] = useState(false);
+
   // Paginação e busca
   const [paginaAtual, setPaginaAtual] = useState(1);
   const [buscaTexto, setBuscaTexto] = useState('');
@@ -190,8 +196,8 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
   const vagaSelecionada = vagas.find(v => String(v.id) === String(vagaSelecionadaId));
 
   // ============================================
-  // 🆕 v57.7: CARREGAR MEUS CANDIDATOS DO BANCO
-  // Busca: pessoas.id_analista_rs = currentUserId
+  // 🔧 v57.9: CARREGAR MEUS CANDIDATOS DO BANCO
+  // Busca: pessoas.id_analista_rs = currentUserId (vinculados)
   // ============================================
   
   useEffect(() => {
@@ -202,7 +208,7 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
       try {
         console.log('🔍 [Modal] Buscando candidatos do analista:', currentUserId);
         
-        // Buscar pessoas do analista
+        // Buscar pessoas vinculadas ao analista
         const { data, error } = await supabase
           .from('pessoas')
           .select(`
@@ -251,6 +257,69 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     
     carregarMeusCandidatos();
   }, [isOpen, currentUserId]);
+
+  // ============================================
+  // 🔧 v57.9: BUSCA POR NOME NO BANCO (debounce 400ms)
+  // Ativada quando buscaTexto >= 2 chars no modo "Meus Candidatos"
+  // Captura candidatos sem id_analista_rs (importados via plugin LinkedIn)
+  // ============================================
+
+  useEffect(() => {
+    if (filtroPessoaEscopo !== 'minhas') return;
+    
+    const termo = buscaTexto.trim();
+    if (termo.length < 2) {
+      setCandidatosBuscaNome([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setLoadingBuscaNome(true);
+      try {
+        const { data, error } = await supabase
+          .from('pessoas')
+          .select(`
+            id,
+            nome,
+            email,
+            telefone,
+            titulo_profissional,
+            senioridade,
+            disponibilidade,
+            cidade,
+            estado
+          `)
+          .ilike('nome', `%${termo}%`)
+          .eq('ativo', true)
+          .order('nome')
+          .limit(50);
+
+        if (error) {
+          console.error('❌ Erro na busca por nome:', error);
+          return;
+        }
+
+        const comSkills: MeuCandidato[] = await Promise.all(
+          (data || []).map(async (p) => {
+            const { count } = await supabase
+              .from('pessoa_skills')
+              .select('*', { count: 'exact', head: true })
+              .eq('pessoa_id', p.id);
+            return { ...p, total_skills: count || 0 };
+          })
+        );
+
+        console.log(`✅ [Modal] Busca nome "${termo}":`, comSkills.length, 'resultados');
+        setCandidatosBuscaNome(comSkills);
+      } catch (err) {
+        console.error('❌ Erro na busca por nome:', err);
+      } finally {
+        setLoadingBuscaNome(false);
+      }
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [buscaTexto, filtroPessoaEscopo]);
 
   // ============================================
   // CARREGAR MINHAS VAGAS
@@ -321,44 +390,41 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
     return vagasAbertas;
   }, [vagas, filtroVagaEscopo, minhasVagasIds]);
 
-  // 🆕 v57.7: Candidatos filtrados - lógica SEPARADA para "Meus" vs "Todos"
+  // 🔧 v57.9: Candidatos filtrados — lógica SEPARADA para "Meus" vs "Todos"
   const candidatosFiltrados = useMemo(() => {
     // =============================================
-    // MODO "MEUS": Busca direta do banco
+    // MODO "MEUS": vinculados ao analista OU busca por nome no banco
     // =============================================
     if (filtroPessoaEscopo === 'minhas') {
-      let filtered = meusCandidatos;
-      
-      // Filtro por texto de busca (nome, email, título)
-      if (buscaTexto.trim()) {
-        const termo = buscaTexto.toLowerCase();
-        filtered = filtered.filter(c => 
-          c.nome?.toLowerCase().includes(termo) ||
-          c.email?.toLowerCase().includes(termo) ||
-          c.titulo_profissional?.toLowerCase().includes(termo)
-        );
+      const termo = buscaTexto.trim();
+
+      // Com texto ≥2 chars → usar resultado da busca ilike no banco
+      // (captura candidatos sem id_analista_rs, ex: importados via plugin LinkedIn)
+      if (termo.length >= 2) {
+        return candidatosBuscaNome;
       }
-      
-      return filtered;
+
+      // Sem texto → mostrar apenas os vinculados ao analista
+      return meusCandidatos;
     }
-    
+
     // =============================================
-    // MODO "TODOS": Busca por match de skills
+    // MODO "TODOS": resultado do match de skills
     // =============================================
     let filtered = matches;
-    
-    // Filtro por texto de busca
+
+    // Filtro por texto de busca sobre o resultado já carregado
     if (buscaTexto.trim()) {
       const termo = buscaTexto.toLowerCase();
-      filtered = filtered.filter(m => 
+      filtered = filtered.filter(m =>
         m.nome.toLowerCase().includes(termo) ||
         m.titulo_profissional?.toLowerCase().includes(termo) ||
         m.email?.toLowerCase().includes(termo)
       );
     }
-    
+
     return filtered;
-  }, [filtroPessoaEscopo, meusCandidatos, matches, buscaTexto]);
+  }, [filtroPessoaEscopo, meusCandidatos, candidatosBuscaNome, matches, buscaTexto]);
 
   // Paginação
   const totalPaginas = Math.ceil(candidatosFiltrados.length / ITEMS_PER_PAGE);
@@ -767,17 +833,19 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
               )}
 
               {/* Loading */}
-              {(loadingMeusCandidatos || loadingMatches) && (
+              {(loadingMeusCandidatos || loadingMatches || loadingBuscaNome) && (
                 <div className="text-center py-8">
                   <Loader2 className="w-8 h-8 animate-spin text-blue-500 mx-auto" />
-                  <p className="text-gray-500 mt-2">Carregando candidatos...</p>
+                  <p className="text-gray-500 mt-2">
+                    {loadingBuscaNome ? 'Buscando candidatos...' : 'Carregando candidatos...'}
+                  </p>
                 </div>
               )}
 
               {/* ============================================ */}
               {/* LISTA DE CANDIDATOS */}
               {/* ============================================ */}
-              {!loadingMeusCandidatos && !loadingMatches && (
+              {!loadingMeusCandidatos && !loadingMatches && !loadingBuscaNome && (
                 <>
                   {/* Mensagem quando não há candidatos */}
                   {candidatosFiltrados.length === 0 && (
@@ -787,15 +855,17 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                         <>
                           <p className="text-gray-500 font-medium">Nenhum candidato encontrado</p>
                           <p className="text-sm text-gray-400 mt-1">
-                            {buscaTexto 
+                            {buscaTexto.trim().length >= 2
                               ? `Nenhum candidato com "${buscaTexto}" no nome`
-                              : 'Você não tem candidatos associados ainda'}
+                              : buscaTexto.trim().length > 0
+                              ? 'Digite ao menos 2 letras para buscar'
+                              : 'Você não tem candidatos vinculados ainda'}
                           </p>
                         </>
                       ) : (
                         <>
                           <p className="text-gray-500 font-medium">
-                            {buscaBancoRealizada ? 'Nenhum candidato compatível' : 'Clique em "Buscar" para encontrar candidatos'}
+                            {buscaBancoRealizada ? 'Nenhum candidato encontrado no banco de talentos' : 'Clique em "Buscar" para encontrar candidatos'}
                           </p>
                         </>
                       )}
@@ -808,7 +878,12 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                       {/* Info de resultados */}
                       <div className="flex items-center justify-between text-sm text-gray-500 mb-3">
                         <span>
-                          {candidatosFiltrados.length} candidato(s) {filtroPessoaEscopo === 'minhas' ? 'sob sua responsabilidade' : 'encontrado(s)'}
+                          {candidatosFiltrados.length} candidato(s){' '}
+                          {filtroPessoaEscopo === 'minhas'
+                            ? buscaTexto.trim().length >= 2
+                              ? 'encontrado(s) no banco'
+                              : 'sob sua responsabilidade'
+                            : 'encontrado(s) no banco de talentos'}
                         </span>
                         {totalPaginas > 1 && (
                           <span>Página {paginaAtual} de {totalPaginas}</span>
@@ -824,29 +899,48 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                           const disponibilidade = candidato.disponibilidade || 'N/I';
                           const cidade = candidato.cidade;
                           const estado = candidato.estado;
-                          const skills = candidato.total_skills || candidato.skills_match?.length || 0;
-                          const score = candidato.score_total;
-                          
+                          const totalSkills = candidato.total_skills || candidato.skills_match?.length || 0;
+                          const score = candidato.score_total ?? null;
+                          const skillsMatch: string[] = candidato.skills_match || [];
+                          const skillsFaltantes: string[] = candidato.skills_faltantes || [];
+                          const semCompatibilidade = filtroPessoaEscopo === 'todas' && score === 0;
+
                           return (
                             <div
                               key={id}
                               onClick={() => handleSelecionarCandidato(candidato)}
-                              className="bg-white border-2 border-gray-100 rounded-xl p-4 hover:border-blue-400 hover:shadow-md cursor-pointer transition-all"
+                              className={`bg-white border-2 rounded-xl p-4 hover:shadow-md cursor-pointer transition-all ${
+                                semCompatibilidade
+                                  ? 'border-gray-200 opacity-75 hover:border-orange-300'
+                                  : 'border-gray-100 hover:border-blue-400'
+                              }`}
                             >
-                              <div className="flex items-center gap-4">
+                              <div className="flex items-start gap-4">
                                 {/* Avatar */}
-                                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+                                <div className={`w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0 ${
+                                  semCompatibilidade
+                                    ? 'bg-gray-300'
+                                    : 'bg-gradient-to-br from-blue-400 to-indigo-500'
+                                }`}>
                                   {nome.charAt(0).toUpperCase()}
                                 </div>
-                                
+
                                 {/* Info */}
                                 <div className="flex-1 min-w-0">
-                                  <h4 className="font-semibold text-gray-800 truncate">
-                                    {nome}
-                                  </h4>
-                                  <p className="text-sm text-gray-500 truncate">
-                                    {titulo}
-                                  </p>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <h4 className="font-semibold text-gray-800 truncate">
+                                      {nome}
+                                    </h4>
+                                    {/* Badge "Sem compatibilidade" */}
+                                    {semCompatibilidade && (
+                                      <span className="px-2 py-0.5 text-xs font-medium bg-orange-100 text-orange-700 rounded-full border border-orange-200 whitespace-nowrap">
+                                        ⚠️ Sem compatibilidade com a vaga
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <p className="text-sm text-gray-500 truncate">{titulo}</p>
+
                                   <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
                                     <span className="flex items-center gap-1">
                                       <Star className="w-3 h-3" />
@@ -863,18 +957,49 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
                                       </span>
                                     )}
                                   </div>
+
+                                  {/* Skills match — só exibe no modo "Buscar Todos" */}
+                                  {filtroPessoaEscopo === 'todas' && (
+                                    <div className="mt-2 space-y-1">
+                                      {skillsMatch.length > 0 && (
+                                        <div className="flex flex-wrap gap-1">
+                                          {skillsMatch.slice(0, 5).map((sk, i) => (
+                                            <span key={i} className="px-1.5 py-0.5 text-xs bg-green-50 text-green-700 border border-green-200 rounded">
+                                              ✓ {sk}
+                                            </span>
+                                          ))}
+                                          {skillsMatch.length > 5 && (
+                                            <span className="text-xs text-gray-400">+{skillsMatch.length - 5}</span>
+                                          )}
+                                        </div>
+                                      )}
+                                      {skillsFaltantes.length > 0 && (
+                                        <div className="flex flex-wrap gap-1">
+                                          {skillsFaltantes.slice(0, 3).map((sk, i) => (
+                                            <span key={i} className="px-1.5 py-0.5 text-xs bg-red-50 text-red-600 border border-red-200 rounded">
+                                              ✗ {sk}
+                                            </span>
+                                          ))}
+                                          {skillsFaltantes.length > 3 && (
+                                            <span className="text-xs text-gray-400">+{skillsFaltantes.length - 3} faltantes</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
-                                
-                                {/* Info adicional */}
+
+                                {/* Score / Skills à direita */}
                                 <div className="text-right flex-shrink-0">
                                   {filtroPessoaEscopo === 'minhas' ? (
                                     <div className="text-xs text-gray-500">
-                                      {skills} skill(s)
+                                      {totalSkills} skill(s)
                                     </div>
                                   ) : (
                                     <div className={`text-lg font-bold ${
                                       score >= 70 ? 'text-green-600' :
-                                      score >= 40 ? 'text-yellow-600' : 'text-gray-400'
+                                      score >= 40 ? 'text-yellow-600' :
+                                      score > 0  ? 'text-orange-500' : 'text-gray-400'
                                     }`}>
                                       {score}%
                                     </div>
@@ -950,3 +1075,4 @@ const NovaCandidaturaModal: React.FC<NovaCandidaturaModalProps> = ({
 };
 
 export default NovaCandidaturaModal;
+
