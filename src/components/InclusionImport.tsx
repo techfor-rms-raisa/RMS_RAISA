@@ -1,9 +1,10 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v1.5 - 22/03/2026
+ * VERSÃO: Fix v1.6 - 22/03/2026
  * 
  * CORREÇÕES:
+ * - ✅ v1.6: EMPRESA normalize sem acento + fallback texto; duplicata CPF/email verificada localmente
  * - ✅ v1.5: EMPRESA regex espaço + fallback FAVORECIDO PJ; erro duplicata CPF com mensagem clara
  * - ✅ v1.4: EMAIL pessoal nunca excluído; FATURÁVEL ignora label não-marcado; VALOR prioriza /hr;
  *           OBSERVAÇÕES extrai bloco HORÁRIO→RH; RH captura linha direta; FATURAMENTO fallback
@@ -50,10 +51,11 @@ interface InclusionImportProps {
     managers: UsuarioCliente[];
     coordinators: CoordenadorCliente[];
     users: User[];
+    consultants?: any[]; // ✅ FIX v1.6: para verificar duplicata de CPF antes de inserir
     onImport: (consultantData: any) => Promise<any> | void;
 }
 
-const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, coordinators, users, onImport }) => {
+const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, coordinators, users, consultants = [], onImport }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [message, setMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
 
@@ -383,8 +385,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== EMPRESA =====
-                // ✅ FIX v1.5: Aceita "EMPRESA:" e "EMPRESA :" (com espaço)
-                // Fallback: "FAVORECIDO PESSOA JURÍDICA:" sempre tem o nome correto
+                // ✅ FIX v1.6: Aceita "EMPRESA:" e "EMPRESA :" (com espaço)
                 if (cleanLine.match(/^EMPRESA\s*:/i) && !cleanLine.includes('ENDEREÇO') && !empresaStr) {
                     const inlineVal = cleanLine.replace(/^EMPRESA\s*:/i, '').trim();
                     if (inlineVal && inlineVal !== 'XXX' && inlineVal !== 'xxx') {
@@ -396,12 +397,16 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                         else console.log(`✅ Empresa extraída (próxima linha): ${empresaStr}`);
                     }
                 }
-                // Fallback adicional: "FAVORECIDO PESSOA JURÍDICA:" tem sempre o nome correto da PJ
-                if (cleanLine.match(/FAVORECIDO PESSOA JURI[DÍ]ICA\s*:/i) && !empresaStr) {
-                    const favVal = cleanLine.replace(/FAVORECIDO PESSOA JURI[DÍ]ICA\s*:/i, '').trim();
-                    if (favVal && favVal !== 'XXX' && favVal !== 'xxx') {
-                        empresaStr = favVal;
-                        console.log(`✅ Empresa extraída (FAVORECIDO PJ): ${empresaStr}`);
+                // Fallback: "FAVORECIDO PESSOA JURIDICA:" — normalizado sem acento para garantir match
+                if (!empresaStr) {
+                    const normalizedLine = normalize(cleanLine);
+                    if (normalizedLine.startsWith('favorecido pessoa juridica')) {
+                        // Extrair valor após os dois pontos na linha original
+                        const favVal = cleanLine.replace(/^[^:]+:/i, '').trim();
+                        if (favVal && favVal !== 'XXX' && favVal !== 'xxx' && favVal.length > 2) {
+                            empresaStr = favVal;
+                            console.log(`✅ Empresa extraída (FAVORECIDO PJ normalizado): ${empresaStr}`);
+                        }
                     }
                 }
                 
@@ -515,6 +520,30 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             }
 
             // ===== 🔧 FIX v1.1: FALLBACKS MELHORADOS =====
+            
+            // ✅ FIX v1.6: Fallback EMPRESA — busca no texto completo se loop não capturou
+            if (!empresaStr) {
+                // Tentar "EMPRESA: valor" no texto completo (normalizado)
+                const empresaMatch = text.match(/^EMPRESA\s*:\s*(.+)$/im);
+                if (empresaMatch && empresaMatch[1]) {
+                    const val = empresaMatch[1].trim();
+                    if (val !== 'XXX' && val !== 'xxx' && !val.match(/ENDEREÇO/i) && val.length > 2) {
+                        empresaStr = val;
+                        console.log(`✅ Empresa extraída (fallback texto): ${empresaStr}`);
+                    }
+                }
+                // Tentar "FAVORECIDO PESSOA JURIDICA: valor" (sem acento)
+                if (!empresaStr) {
+                    const favMatch = text.match(/FAVORECIDO PESSOA JURI[DÍ]?[I]?CA\s*:\s*(.+)/i);
+                    if (favMatch && favMatch[1]) {
+                        const val = favMatch[1].trim();
+                        if (val !== 'XXX' && val !== 'xxx' && val.length > 2) {
+                            empresaStr = val;
+                            console.log(`✅ Empresa extraída (fallback FAVORECIDO texto): ${empresaStr}`);
+                        }
+                    }
+                }
+            }
             
             // Fallback para NOME DO CONSULTOR
             if (!consultantName) {
@@ -955,23 +984,48 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             
             console.log('💾 Dados para inserção:', newConsultantData);
 
-            // ✅ FIX v1.5: Aguardar resultado do onImport para detectar erros do Supabase
-            const importResult = await Promise.resolve(onImport(newConsultantData));
-            
-            // Verificar se o resultado contém erro do Supabase
-            if (importResult && importResult.error) {
-                const sbError = importResult.error;
-                // Código 23505 = unique_violation (CPF + ano_vigencia duplicado)
-                if (sbError.code === '23505' || sbError.message?.includes('unique') || sbError.message?.includes('duplicate')) {
-                    const cpfFormatado = cpfStr || 'CPF não informado';
+            // ✅ FIX v1.6: Verificar duplicata LOCALMENTE antes de chamar onImport
+            // Evita que o alert() do ManageConsultants sobreponha a mensagem
+            const anoAtual = new Date().getFullYear();
+            if (cpfStr) {
+                const cpfLimpo = cpfStr.replace(/[^\d]/g, '');
+                const duplicataCPF = consultants.find((c: any) => {
+                    const cCpf = (c.cpf || '').replace(/[^\d]/g, '');
+                    return cCpf === cpfLimpo && (c.ano_vigencia === anoAtual || !c.ano_vigencia);
+                });
+                if (duplicataCPF) {
                     throw new Error(
-                        `Consultor já cadastrado!\n\nCPF "${cpfFormatado}" já existe no sistema para o ano ${new Date().getFullYear()}.\n\nSe for uma atualização, edite o consultor existente na lista.`
+                        `CPF já cadastrado!\n\nO CPF "${cpfStr}" já pertence ao consultor "${duplicataCPF.nome_consultores}" no sistema (ano ${anoAtual}).\n\nSe precisar atualizar os dados, edite o consultor existente na lista.`
                     );
                 }
-                throw new Error(`Erro ao salvar consultor: ${sbError.message || 'Erro desconhecido do banco de dados'}`);
+            }
+            if (newConsultantData.email_consultor) {
+                const emailLimpo = newConsultantData.email_consultor.toLowerCase().trim();
+                const duplicataEmail = consultants.find((c: any) =>
+                    (c.email_consultor || '').toLowerCase().trim() === emailLimpo
+                );
+                if (duplicataEmail) {
+                    throw new Error(
+                        `E-mail já cadastrado!\n\nO e-mail "${newConsultantData.email_consultor}" já pertence ao consultor "${duplicataEmail.nome_consultores}" no sistema.\n\nSe precisar atualizar os dados, edite o consultor existente na lista.`
+                    );
+                }
+            }
+
+            // Chamar onImport e aguardar resultado
+            const importResult = await Promise.resolve(onImport(newConsultantData));
+            
+            // Tratar erros retornados pelo Supabase (caso passe da verificação local)
+            if (importResult && importResult.error) {
+                const sbError = importResult.error;
+                if (sbError.code === '23505' || sbError.message?.includes('unique') || sbError.message?.includes('duplicate')) {
+                    throw new Error(
+                        `CPF já cadastrado!\n\nO CPF "${cpfStr || 'informado'}" já existe no sistema para o ano ${anoAtual}.\n\nEdite o consultor existente na lista.`
+                    );
+                }
+                throw new Error(`Erro ao salvar: ${sbError.message || 'Erro desconhecido'}`);
             }
             
-            setMessage({ text: `✅ Ficha de Inclusão de "${consultantName}" importada com sucesso!`, type: 'success' });
+            setMessage({ text: `✅ "${consultantName}" importado com sucesso!`, type: 'success' });
 
         } catch (error) {
             console.error(error);
