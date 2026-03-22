@@ -470,17 +470,25 @@ const Dashboard: React.FC<DashboardProps> = ({
             className="w-full p-2 border border-gray-300 rounded-lg"
           >
             <option value="all">Todos os Consultores</option>
-            {selectedManager !== 'all' && (
-              consultants
-                .filter(c => {
-                  if (c.gestor_imediato_id !== parseInt(selectedManager)) return false;
-                  // Aplicar filtro de status também aqui
-                  if (selectedStatus === 'ativo') return c.status === 'Ativo';
-                  if (selectedStatus === 'inativo') return c.status === 'Perdido' || c.status === 'Encerrado';
-                  return true;
-                })
-                .map(c => <option key={c.id} value={c.nome_consultores}>{c.nome_consultores}</option>)
-            )}
+            {consultants
+              .filter(c => {
+                // Filtro por gestor (se selecionado)
+                if (selectedManager !== 'all' && c.gestor_imediato_id !== parseInt(selectedManager)) return false;
+                // Filtro por cliente (via gestor_imediato_id → usuariosCliente → cliente)
+                if (selectedClient !== 'all') {
+                  const gestor = usuariosCliente.find(uc => uc.id === c.gestor_imediato_id);
+                  if (!gestor) return false;
+                  const clienteDoConsultor = clients.find(cl => cl.id === gestor.id_cliente);
+                  if (!clienteDoConsultor || clienteDoConsultor.razao_social_cliente !== selectedClient) return false;
+                }
+                // Filtro por status
+                if (selectedStatus === 'ativo') return c.status === 'Ativo';
+                if (selectedStatus === 'inativo') return c.status === 'Perdido' || c.status === 'Encerrado';
+                return true;
+              })
+              .sort((a, b) => a.nome_consultores.localeCompare(b.nome_consultores))
+              .map(c => <option key={c.id} value={c.nome_consultores}>{c.nome_consultores}</option>)
+            }
           </select>
         </div>
       </div>
