@@ -1,9 +1,10 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v1.6 - 22/03/2026
+ * VERSÃO: Fix v1.7 - 22/03/2026
  * 
  * CORREÇÕES:
+ * - ✅ v1.7: Intercepta window.alert() do ManageConsultants para tratar erro duplicata
  * - ✅ v1.6: EMPRESA normalize sem acento + fallback texto; duplicata CPF/email verificada localmente
  * - ✅ v1.5: EMPRESA regex espaço + fallback FAVORECIDO PJ; erro duplicata CPF com mensagem clara
  * - ✅ v1.4: EMAIL pessoal nunca excluído; FATURÁVEL ignora label não-marcado; VALOR prioriza /hr;
@@ -1011,10 +1012,37 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
 
-            // Chamar onImport e aguardar resultado
-            const importResult = await Promise.resolve(onImport(newConsultantData));
-            
-            // Tratar erros retornados pelo Supabase (caso passe da verificação local)
+            // ✅ FIX v1.7: Interceptar window.alert() durante onImport
+            // ManageConsultants usa alert() para erros do Supabase — capturamos antes de exibir
+            let alertCapturado: string | null = null;
+            const alertOriginal = window.alert;
+            window.alert = (msg: any) => {
+                alertCapturado = String(msg || '');
+                console.log(`🔇 Alert interceptado: ${alertCapturado}`);
+                // NÃO chama alertOriginal — suprimimos o alert nativo
+            };
+
+            let importResult: any;
+            try {
+                importResult = await Promise.resolve(onImport(newConsultantData));
+            } finally {
+                // Sempre restaurar window.alert após a chamada
+                window.alert = alertOriginal;
+            }
+
+            // Verificar se alert foi disparado com mensagem de erro
+            if (alertCapturado) {
+                const msgLower = alertCapturado.toLowerCase();
+                if (msgLower.includes('duplicate') || msgLower.includes('unique') || msgLower.includes('duplicat')) {
+                    throw new Error(
+                        `CPF já cadastrado!\n\nO CPF "${cpfStr || 'informado'}" já existe no sistema para o ano ${anoAtual}.\n\nSe precisar atualizar os dados, edite o consultor existente na lista.`
+                    );
+                }
+                // Outro erro do alert — converter em erro amigável
+                throw new Error(`Erro ao salvar consultor: ${alertCapturado}`);
+            }
+
+            // Verificar erro no retorno (caso ManageConsultants retorne objeto de erro)
             if (importResult && importResult.error) {
                 const sbError = importResult.error;
                 if (sbError.code === '23505' || sbError.message?.includes('unique') || sbError.message?.includes('duplicate')) {
