@@ -154,7 +154,8 @@ const ManageClients: React.FC<ManageClientsProps> = ({
     const [isCoordModalOpen, setIsCoordModalOpen] = useState(false);
 
     // ✅ NOVO: Estado para filtro de clientes
-    const [clientStatusFilter, setClientStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+    const [clientStatusFilter, setClientStatusFilter] = useState<'all' | 'active' | 'inactive'>('active');
+    const [clientNameFilter, setClientNameFilter] = useState<string>('all');
 
     // States for Editing
     const [editingClient, setEditingClient] = useState<Client | null>(null);
@@ -305,12 +306,31 @@ const ManageClients: React.FC<ManageClientsProps> = ({
                 <h2 className="text-2xl font-bold text-[#4D5253]">Gestão de Clientes</h2>
                 
                 {/* ✅ NOVO: Filtro e botão lado a lado */}
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3 flex-wrap">
+                    {/* Filtro por Cliente */}
                     <div className="flex items-center gap-2">
-                        <label className="text-sm font-medium text-gray-600">Filtrar:</label>
+                        <label className="text-sm font-medium text-gray-600">Cliente:</label>
+                        <select
+                            value={clientNameFilter}
+                            onChange={(e) => setClientNameFilter(e.target.value)}
+                            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[180px]"
+                        >
+                            <option value="all">Todos os Clientes</option>
+                            {clients
+                                .filter(c => clientStatusFilter === 'all' ? true : clientStatusFilter === 'active' ? c.ativo_cliente : !c.ativo_cliente)
+                                .sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente))
+                                .map(c => (
+                                    <option key={c.id} value={c.razao_social_cliente}>{c.razao_social_cliente}</option>
+                                ))
+                            }
+                        </select>
+                    </div>
+                    {/* Filtro por Status */}
+                    <div className="flex items-center gap-2">
+                        <label className="text-sm font-medium text-gray-600">Status:</label>
                         <select 
                             value={clientStatusFilter}
-                            onChange={(e) => setClientStatusFilter(e.target.value as 'all' | 'active' | 'inactive')}
+                            onChange={(e) => { setClientStatusFilter(e.target.value as 'all' | 'active' | 'inactive'); setClientNameFilter('all'); }}
                             className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         >
                             <option value="all">Todos</option>
@@ -326,10 +346,12 @@ const ManageClients: React.FC<ManageClientsProps> = ({
             <div className="space-y-6">
                 {clients
                     .filter(client => {
-                        if (clientStatusFilter === 'active') return client.ativo_cliente === true;
-                        if (clientStatusFilter === 'inactive') return client.ativo_cliente === false;
-                        return true; // 'all'
+                        if (clientStatusFilter === 'active' && client.ativo_cliente !== true) return false;
+                        if (clientStatusFilter === 'inactive' && client.ativo_cliente !== false) return false;
+                        if (clientNameFilter !== 'all' && client.razao_social_cliente !== clientNameFilter) return false;
+                        return true;
                     })
+                    .sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente))
                     .map(client => {
                     const commercialManager = users.find(u => u.id === client.id_gestao_comercial);
                     const peopleManager = users.find(u => u.id === client.id_gestao_de_pessoas);
