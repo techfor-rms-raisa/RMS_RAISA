@@ -1,9 +1,12 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v1.1 - 22/01/2026
+ * VERSÃO: Fix v1.2 - 22/03/2026
  * 
  * CORREÇÕES:
+ * - ✅ v1.2: Email fixado — ancoragem na seção DADOS DO PROFISSIONAL + exclusão de emails do gestor
+ * - ✅ v1.2: Lista hardcoded de analistas RH substituída por busca dinâmica nos users do sistema
+ * - ✅ v1.2: Filtro hardcoded de nomes ("Elaine", "Fernando") substituído por detecção de seção
  * - ✅ v1.1: ano_vigencia agora usa ANO ATUAL (new Date().getFullYear()) em vez do ano da data do PDF
  *   → Resolve erro 409 "duplicate key violates unique constraint consultants_cpf_ano_unique"
  *   → Permite reinserir consultores que existiam em anos anteriores
@@ -146,6 +149,16 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let faturavel = true;
             let observacoesStr = '';
             let recursosHumanosStr = '';
+            
+            // ✅ FIX v1.2: Coletar emails do SOLICITANTE/GESTOR para excluir na busca do consultor
+            // Captura todos os emails que aparecem ANTES de "DADOS DO PROFISSIONAL"
+            const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
+            const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : '';
+            const emailsGestor = new Set(
+                (textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [])
+                    .map((e: string) => e.toLowerCase())
+            );
+            console.log(`🔍 Emails do gestor/solicitante (a ignorar): ${[...emailsGestor].join(', ')}`);
 
             // Flags de seção
             let inDadosProfissional = false;
@@ -184,9 +197,13 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     !cleanLine.includes('SUBSTITUÍDO')) {
                     const nomePotencial = cleanLine.replace('NOME:', '').trim();
                     // Ignorar nomes que parecem ser de outras seções
+                    // ✅ FIX v1.2: Remover filtros hardcoded de nomes ("Elaine", "Fernando")
+                    // Usar detecção dinâmica: ignorar se for nome de contato de emergência
+                    // (seção INFORMAÇÕES DE EMERGÊNCIA) ou sigla
+                    const isNomeEmergencia = inInformacoesEmergencia;
                     if (nomePotencial && 
                         nomePotencial.length > 3 && 
-                        !nomePotencial.includes('Elaine') && // Nome de emergência
+                        !isNomeEmergencia &&
                         !nomePotencial.match(/^[A-Z]{2,}$/)) { // Não é sigla
                         consultantName = nomePotencial;
                         console.log(`✅ Nome do consultor extraído: ${consultantName}`);
@@ -269,27 +286,34 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== EMAIL =====
-                // IMPORTANTE: Pegar email do PROFISSIONAL, não do solicitante
-                if (cleanLine.match(/E-MAIL\s*:/i) && !emailStr) {
+                // ✅ FIX v1.2: Buscar email SOMENTE dentro da seção DADOS DO PROFISSIONAL
+                // e excluir emails do gestor/solicitante coletados antes da seção
+                if (cleanLine.match(/E-MAIL\s*:/i) && !emailStr && inDadosProfissional) {
                     const emailMatch = cleanLine.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
                     if (emailMatch) {
                         const emailEncontrado = emailMatch[1].toLowerCase();
-                        // Ignorar email do solicitante (geralmente @icesp, @cliente, etc.)
-                        // O email do profissional geralmente é @gmail, @hotmail, @outlook
-                        if (emailEncontrado.includes('@gmail') || 
-                            emailEncontrado.includes('@hotmail') || 
-                            emailEncontrado.includes('@outlook') ||
-                            emailEncontrado.includes('@yahoo') ||
-                            emailEncontrado.includes('@live') ||
-                            emailEncontrado.includes('@icloud')) {
+                        // Ignorar se for um dos emails do gestor/solicitante
+                        if (!emailsGestor.has(emailEncontrado)) {
                             emailStr = emailEncontrado;
-                            console.log(`✅ Email do profissional extraído: ${emailStr}`);
-                        } else if (!cleanLine.includes('SOLICITANTE') && 
-                                   !cleanLine.includes('RESPONSÁVEL') &&
-                                   !cleanLine.includes('APROVADOR')) {
-                            // Se não é email pessoal, verificar se não é do solicitante
-                            emailStr = emailEncontrado;
-                            console.log(`✅ Email extraído (corporativo): ${emailStr}`);
+                            console.log(`✅ Email do profissional extraído (seção DADOS): ${emailStr}`);
+                        } else {
+                            console.log(`⚠️ Email ignorado (pertence ao gestor): ${emailEncontrado}`);
+                        }
+                    }
+                }
+                // Buscar email em linha E-MAIL fora da seção (fallback menos prioritário)
+                if (cleanLine.match(/E-MAIL\s*:/i) && !emailStr && !inDadosProfissional && !inInformacoesEmergencia) {
+                    const emailMatch = cleanLine.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
+                    if (emailMatch) {
+                        const emailFallback = emailMatch[1].toLowerCase();
+                        // Só captura se for claramente pessoal e não for do gestor
+                        if (!emailsGestor.has(emailFallback) && (
+                            emailFallback.includes('@gmail') || emailFallback.includes('@hotmail') ||
+                            emailFallback.includes('@outlook') || emailFallback.includes('@yahoo') ||
+                            emailFallback.includes('@live') || emailFallback.includes('@icloud')
+                        )) {
+                            emailStr = emailFallback;
+                            console.log(`✅ Email pessoal extraído (fora seção): ${emailStr}`);
                         }
                     }
                 }
@@ -426,11 +450,9 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 const nomeMatch = text.match(/NOME:\s*([A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+)+)/);
                 if (nomeMatch) {
                     const nomePotencial = nomeMatch[1].trim();
-                    // Validar que não é outro tipo de NOME
+                    // ✅ FIX v1.2: Validar sem nomes hardcoded
                     if (nomePotencial.length > 5 && 
-                        !nomePotencial.includes('Banco') &&
-                        !nomePotencial.includes('Fernando') && // Nome do solicitante
-                        !nomePotencial.includes('Elaine')) { // Nome de emergência
+                        !nomePotencial.includes('Banco')) {
                         consultantName = nomePotencial;
                         console.log(`✅ Nome do consultor extraído (fallback): ${consultantName}`);
                     }
@@ -446,29 +468,33 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // Fallback para EMAIL (priorizar email pessoal do profissional)
+            // ✅ FIX v1.2: Fallback email — buscar na seção DADOS DO PROFISSIONAL,
+            // excluindo emails do gestor/solicitante coletados anteriormente
             if (!emailStr) {
-                const emailMatches = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi);
+                const textoDadosProf = dadosProfissionalIdx > 0
+                    ? text.substring(dadosProfissionalIdx)
+                    : text;
+                const emailMatches = textoDadosProf.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi);
                 if (emailMatches && emailMatches.length > 0) {
-                    // Priorizar emails pessoais (@gmail, @hotmail, etc.)
-                    const emailPessoal = emailMatches.find(e => 
-                        e.toLowerCase().includes('@gmail') ||
-                        e.toLowerCase().includes('@hotmail') ||
-                        e.toLowerCase().includes('@outlook') ||
-                        e.toLowerCase().includes('@yahoo')
-                    );
-                    
+                    // 1º: email pessoal que não seja do gestor
+                    const emailPessoal = emailMatches.find(e => {
+                        const el = e.toLowerCase();
+                        return !emailsGestor.has(el) && (
+                            el.includes('@gmail') || el.includes('@hotmail') ||
+                            el.includes('@outlook') || el.includes('@yahoo') ||
+                            el.includes('@live') || el.includes('@icloud')
+                        );
+                    });
                     if (emailPessoal) {
                         emailStr = emailPessoal.toLowerCase();
-                        console.log(`✅ Email pessoal extraído (fallback): ${emailStr}`);
+                        console.log(`✅ Email pessoal extraído (fallback seção): ${emailStr}`);
                     } else {
-                        // Se não tem email pessoal, pegar o que não é do cliente/solicitante
-                        const emailNaoCorp = emailMatches.find(e => 
-                            !e.toLowerCase().includes('@icesp') &&
-                            !e.toLowerCase().includes('@cliente')
-                        );
-                        emailStr = (emailNaoCorp || emailMatches[0]).toLowerCase();
-                        console.log(`✅ Email extraído (fallback): ${emailStr}`);
+                        // 2º: qualquer email que não seja do gestor
+                        const emailNaoGestor = emailMatches.find(e => !emailsGestor.has(e.toLowerCase()));
+                        if (emailNaoGestor) {
+                            emailStr = emailNaoGestor.toLowerCase();
+                            console.log(`✅ Email extraído (fallback não-gestor): ${emailStr}`);
+                        }
                     }
                 }
             }
@@ -593,17 +619,25 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // Método 2: Buscar nomes conhecidos de analistas após "RECURSOS HUMANOS"
+                // ✅ FIX v1.2: Método 2 — buscar pelos primeiros nomes dos usuários do sistema
+                // Remove dependência de lista hardcoded — usa os users reais cadastrados
                 if (!recursosHumanosStr) {
-                    const nomesAnalistas = ['LARISSA', 'MACIELMA', 'PRISCILA', 'TATIANA', 'RENATA'];
-                    for (const nome of nomesAnalistas) {
-                        if (text.includes(nome)) {
-                            // Extrair nome completo
-                            const nomeCompleto = text.match(new RegExp(`(${nome}[A-Za-zÀ-ÿ\\s]+?)(?:\\n|MARCOS|GERENTE|ROSENI)`, 'i'));
+                    const primeiroNomesUsers = users
+                        .filter(u => u.nome_usuario && u.nome_usuario.length > 2)
+                        .map(u => u.nome_usuario.split(' ')[0].toUpperCase());
+                    
+                    for (const primeiroNome of primeiroNomesUsers) {
+                        if (text.toUpperCase().includes(primeiroNome)) {
+                            const nomeCompleto = text.match(new RegExp(`(${primeiroNome}[A-Za-zÀ-ÿ\\s]+?)(?:\\n|MARCOS|GERENTE|ROSENI|MESSIAS|DIRETORIA)`, 'i'));
                             if (nomeCompleto && nomeCompleto[1]) {
-                                recursosHumanosStr = nomeCompleto[1].trim();
-                                console.log(`✅ Recursos Humanos extraído (fallback 2): ${recursosHumanosStr}`);
-                                break;
+                                const nomeTrimmed = nomeCompleto[1].trim();
+                                // Verificar se o nome existe em users (confirmar que é analista)
+                                const userConfirmado = findUserByName(nomeTrimmed);
+                                if (userConfirmado) {
+                                    recursosHumanosStr = nomeTrimmed;
+                                    console.log(`✅ Recursos Humanos extraído (fallback dinâmico): ${recursosHumanosStr}`);
+                                    break;
+                                }
                             }
                         }
                     }
