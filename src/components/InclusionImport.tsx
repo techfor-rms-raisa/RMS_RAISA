@@ -1,9 +1,18 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v1.1 - 22/01/2026
+ * VERSÃO: Fix v1.7 - 22/03/2026
  * 
  * CORREÇÕES:
+ * - ✅ v1.7: Intercepta window.alert() do ManageConsultants para tratar erro duplicata
+ * - ✅ v1.6: EMPRESA normalize sem acento + fallback texto; duplicata CPF/email verificada localmente
+ * - ✅ v1.5: EMPRESA regex espaço + fallback FAVORECIDO PJ; erro duplicata CPF com mensagem clara
+ * - ✅ v1.4: EMAIL pessoal nunca excluído; FATURÁVEL ignora label não-marcado; VALOR prioriza /hr;
+ *           OBSERVAÇÕES extrai bloco HORÁRIO→RH; RH captura linha direta; FATURAMENTO fallback
+ * - ✅ v1.3: EMPRESA/CPF/FATURAMENTO/VALOR/FATURÁVEL/OBSERVAÇÕES corrigidos (7 campos)
+ * - ✅ v1.2: Email fixado — ancoragem na seção DADOS DO PROFISSIONAL + exclusão de emails do gestor
+ * - ✅ v1.2: Lista hardcoded de analistas RH substituída por busca dinâmica nos users do sistema
+ * - ✅ v1.2: Filtro hardcoded de nomes ("Elaine", "Fernando") substituído por detecção de seção
  * - ✅ v1.1: ano_vigencia agora usa ANO ATUAL (new Date().getFullYear()) em vez do ano da data do PDF
  *   → Resolve erro 409 "duplicate key violates unique constraint consultants_cpf_ano_unique"
  *   → Permite reinserir consultores que existiam em anos anteriores
@@ -43,10 +52,11 @@ interface InclusionImportProps {
     managers: UsuarioCliente[];
     coordinators: CoordenadorCliente[];
     users: User[];
-    onImport: (consultantData: any) => void;
+    consultants?: any[]; // ✅ FIX v1.6: para verificar duplicata de CPF antes de inserir
+    onImport: (consultantData: any) => Promise<any> | void;
 }
 
-const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, coordinators, users, onImport }) => {
+const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, coordinators, users, consultants = [], onImport }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [message, setMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
 
@@ -144,8 +154,23 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let nomeSubstituidoStr = '';
             let modalidadeContratoStr = '';
             let faturavel = true;
+            let faturavelConfirmado = false;
             let observacoesStr = '';
             let recursosHumanosStr = '';
+            
+            // ✅ FIX v1.4: Coletar apenas emails CORPORATIVOS do gestor/cliente para excluir
+            // Emails pessoais (@gmail, @hotmail etc) NUNCA são excluídos — podem ser do consultor
+            // Somente emails corporativos do gestor (mesmo domínio que o email do gestor/solicitante)
+            const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
+            const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : '';
+            const dominiosPersonais = ['gmail', 'hotmail', 'outlook', 'yahoo', 'live', 'icloud', 'uol', 'bol', 'terra'];
+            const emailsGestor = new Set(
+                (textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [])
+                    .map((e: string) => e.toLowerCase())
+                    // Só excluir emails corporativos (não pessoais) — email pessoal pode ser do consultor
+                    .filter((e: string) => !dominiosPersonais.some(d => e.includes('@' + d)))
+            );
+            console.log(`🔍 Emails corporativos do gestor (a ignorar): ${[...emailsGestor].join(', ')}`);
 
             // Flags de seção
             let inDadosProfissional = false;
@@ -184,9 +209,13 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     !cleanLine.includes('SUBSTITUÍDO')) {
                     const nomePotencial = cleanLine.replace('NOME:', '').trim();
                     // Ignorar nomes que parecem ser de outras seções
+                    // ✅ FIX v1.2: Remover filtros hardcoded de nomes ("Elaine", "Fernando")
+                    // Usar detecção dinâmica: ignorar se for nome de contato de emergência
+                    // (seção INFORMAÇÕES DE EMERGÊNCIA) ou sigla
+                    const isNomeEmergencia = inInformacoesEmergencia;
                     if (nomePotencial && 
                         nomePotencial.length > 3 && 
-                        !nomePotencial.includes('Elaine') && // Nome de emergência
+                        !isNomeEmergencia &&
                         !nomePotencial.match(/^[A-Z]{2,}$/)) { // Não é sigla
                         consultantName = nomePotencial;
                         console.log(`✅ Nome do consultor extraído: ${consultantName}`);
@@ -221,31 +250,50 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // ===== 🔧 FIX v1.0: VALOR (valor_pagamento) =====
+                // ===== 🔧 FIX v1.4: VALOR PAGAMENTO =====
+                // Captura "R$ 80/hr" isolado na linha (aparece antes de FATURAMENTO MENSAL no PDF)
+                if (cleanLine.match(/^R\$\s*\d+(?:[.,]\d+)?\s*\/h(?:r|ora)?$/i) && !valorPagamentoStr) {
+                    const matchHr = cleanLine.match(/R\$\s*([\d.,]+)/i);
+                    if (matchHr) {
+                        valorPagamentoStr = matchHr[1];
+                        console.log(`✅ Valor Pagamento extraído (R$/hr linha isolada): ${valorPagamentoStr}`);
+                    }
+                }
+                
+                // Capturar dentro da seção DADOS PAGAMENTO
                 if (cleanLine === 'VALOR' && inDadosPagamento) {
                     console.log(`🔍 Encontrado label VALOR na seção DADOS PAGAMENTO (linha ${i})`);
-                    // Procurar o valor nas próximas linhas
                     for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
                         const testLine = lines[j].trim();
-                        // 🔧 FIX: Regex melhorado para formato brasileiro (R$ X.XXX,XX)
-                        if (testLine.match(/^R?\$?\s*[\d.]+,\d{2}$/) || 
-                            testLine.match(/^[\d.]+,\d{2}$/) ||
-                            testLine.match(/^R\$\s*[\d.,]+$/)) {
-                            valorPagamentoStr = testLine.replace(/R\$\s*/, '').trim();
-                            console.log(`✅ Valor Pagamento extraído: ${valorPagamentoStr}`);
+                        const valorMatch = testLine.match(/R\$\s*([\d.,]+)/i) ||
+                                          testLine.match(/^([\d.]+,[\d]{2})$/) ||
+                                          testLine.match(/^([\d]+(?:[.,]\d+)?)(?:\/hr|\/h|\/hora)?$/i);
+                        if (valorMatch && valorMatch[1]) {
+                            valorPagamentoStr = valorMatch[1].replace(/R\$\s*/i, '').trim();
+                            console.log(`✅ Valor Pagamento extraído (seção DADOS PAG): ${valorPagamentoStr}`);
                             break;
                         }
                     }
                 }
                 
                 // ===== FATURAMENTO MENSAL =====
-                if (cleanLine.match(/FATURAMENTO MENSAL/i)) {
-                    for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
-                        const testLine = lines[j].trim();
-                        if (testLine.match(/^R?\$?\s*[\d.,]+$/) || testLine.match(/^[\d.]+,\d{2}$/)) {
-                            hourlyRateStr = testLine.replace(/R\$\s*/, '');
-                            console.log(`✅ Faturamento Mensal extraído: ${hourlyRateStr}`);
-                            break;
+                // ✅ FIX v1.4: O label "FATURAMENTO MENSAL" e o valor "R$ 114,65" estão em 
+                // seções diferentes no texto extraído. Buscar inline ou próximas linhas.
+                if (cleanLine.match(/FATURAMENTO MENSAL/i) && !hourlyRateStr) {
+                    const inlineValFat = cleanLine.match(/R\$\s*([\d.,]+)/i);
+                    if (inlineValFat) {
+                        hourlyRateStr = inlineValFat[1];
+                        console.log(`✅ Faturamento Mensal extraído (inline): ${hourlyRateStr}`);
+                    } else {
+                        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+                            const testLine = lines[j].trim();
+                            if (testLine.match(/^R\$\s*[\d.,]+$/i) || 
+                                testLine.match(/^[\d.]+,[\d]{2}$/) ||
+                                testLine.match(/^[\d]+,[\d]{2}$/)) {
+                                hourlyRateStr = testLine.replace(/R\$\s*/i, '').trim();
+                                console.log(`✅ Faturamento Mensal extraído (linha ${j}): ${hourlyRateStr}`);
+                                break;
+                            }
                         }
                     }
                 }
@@ -261,35 +309,54 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== CPF =====
-                if (cleanLine.match(/^CPF:/i) || cleanLine.match(/CPF:\s*[\d.-]+/i)) {
-                    const cpfMatch = cleanLine.match(/(\d{3}[.\s]?\d{3}[.\s]?\d{3}[-\s]?\d{2})/);
+                // ✅ FIX v1.3: Aceita formato com ponto no final (XXX.XXX.XXX.XX) além do hífen
+                if ((cleanLine.match(/^CPF:/i) || cleanLine.match(/CPF:\s*[\d.-]+/i)) && !cpfStr) {
+                    // Aceita: 436.337.638.48 (ponto) OU 436.337.638-48 (hífen)
+                    const cpfMatch = cleanLine.match(/(\d{3}[.\s]\d{3}[.\s]\d{3}[.-\s]\d{2})/);
                     if (cpfMatch) {
-                        cpfStr = cpfMatch[1];
+                        // Normalizar: trocar último ponto por hífen → XXX.XXX.XXX-XX
+                        cpfStr = cpfMatch[1].replace(/^(\d{3}\.\d{3}\.\d{3})\.( \d{2})$/, '$1-$2')
+                                            .replace(/^(\d{3}\.\d{3}\.\d{3})\.(\ d{2})$/, '$1-$2');
+                        // Regex mais simples: substituir o último separador por hífen
+                        const parts = cpfMatch[1].replace(/\s/g, '').split('.');
+                        if (parts.length === 4) {
+                            cpfStr = parts[0] + '.' + parts[1] + '.' + parts[2] + '-' + parts[3];
+                        } else {
+                            cpfStr = cpfMatch[1];
+                        }
+                        console.log(`✅ CPF extraído: ${cpfStr}`);
                     }
                 }
                 
                 // ===== EMAIL =====
-                // IMPORTANTE: Pegar email do PROFISSIONAL, não do solicitante
-                if (cleanLine.match(/E-MAIL\s*:/i) && !emailStr) {
+                // ✅ FIX v1.2: Buscar email SOMENTE dentro da seção DADOS DO PROFISSIONAL
+                // e excluir emails do gestor/solicitante coletados antes da seção
+                if (cleanLine.match(/E-MAIL\s*:/i) && !emailStr && inDadosProfissional) {
                     const emailMatch = cleanLine.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
                     if (emailMatch) {
                         const emailEncontrado = emailMatch[1].toLowerCase();
-                        // Ignorar email do solicitante (geralmente @icesp, @cliente, etc.)
-                        // O email do profissional geralmente é @gmail, @hotmail, @outlook
-                        if (emailEncontrado.includes('@gmail') || 
-                            emailEncontrado.includes('@hotmail') || 
-                            emailEncontrado.includes('@outlook') ||
-                            emailEncontrado.includes('@yahoo') ||
-                            emailEncontrado.includes('@live') ||
-                            emailEncontrado.includes('@icloud')) {
+                        // Ignorar se for um dos emails do gestor/solicitante
+                        if (!emailsGestor.has(emailEncontrado)) {
                             emailStr = emailEncontrado;
-                            console.log(`✅ Email do profissional extraído: ${emailStr}`);
-                        } else if (!cleanLine.includes('SOLICITANTE') && 
-                                   !cleanLine.includes('RESPONSÁVEL') &&
-                                   !cleanLine.includes('APROVADOR')) {
-                            // Se não é email pessoal, verificar se não é do solicitante
-                            emailStr = emailEncontrado;
-                            console.log(`✅ Email extraído (corporativo): ${emailStr}`);
+                            console.log(`✅ Email do profissional extraído (seção DADOS): ${emailStr}`);
+                        } else {
+                            console.log(`⚠️ Email ignorado (pertence ao gestor): ${emailEncontrado}`);
+                        }
+                    }
+                }
+                // Buscar email em linha E-MAIL fora da seção (fallback menos prioritário)
+                if (cleanLine.match(/E-MAIL\s*:/i) && !emailStr && !inDadosProfissional && !inInformacoesEmergencia) {
+                    const emailMatch = cleanLine.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
+                    if (emailMatch) {
+                        const emailFallback = emailMatch[1].toLowerCase();
+                        // Só captura se for claramente pessoal e não for do gestor
+                        if (!emailsGestor.has(emailFallback) && (
+                            emailFallback.includes('@gmail') || emailFallback.includes('@hotmail') ||
+                            emailFallback.includes('@outlook') || emailFallback.includes('@yahoo') ||
+                            emailFallback.includes('@live') || emailFallback.includes('@icloud')
+                        )) {
+                            emailStr = emailFallback;
+                            console.log(`✅ Email pessoal extraído (fora seção): ${emailStr}`);
                         }
                     }
                 }
@@ -319,9 +386,29 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== EMPRESA =====
-                if (cleanLine.match(/^EMPRESA:/i) && !cleanLine.includes('ENDEREÇO')) {
-                    empresaStr = cleanLine.replace(/EMPRESA:/i, '').trim();
-                    if (empresaStr === 'XXX' || empresaStr === 'xxx') empresaStr = '';
+                // ✅ FIX v1.6: Aceita "EMPRESA:" e "EMPRESA :" (com espaço)
+                if (cleanLine.match(/^EMPRESA\s*:/i) && !cleanLine.includes('ENDEREÇO') && !empresaStr) {
+                    const inlineVal = cleanLine.replace(/^EMPRESA\s*:/i, '').trim();
+                    if (inlineVal && inlineVal !== 'XXX' && inlineVal !== 'xxx') {
+                        empresaStr = inlineVal;
+                        console.log(`✅ Empresa extraída (inline): ${empresaStr}`);
+                    } else if (nextLine && nextLine.length > 2 && !nextLine.match(/^[A-Z\s]+:/)) {
+                        empresaStr = nextLine.replace(/\(.*\)/g, '').trim();
+                        if (empresaStr === 'XXX' || empresaStr === 'xxx') empresaStr = '';
+                        else console.log(`✅ Empresa extraída (próxima linha): ${empresaStr}`);
+                    }
+                }
+                // Fallback: "FAVORECIDO PESSOA JURIDICA:" — normalizado sem acento para garantir match
+                if (!empresaStr) {
+                    const normalizedLine = normalize(cleanLine);
+                    if (normalizedLine.startsWith('favorecido pessoa juridica')) {
+                        // Extrair valor após os dois pontos na linha original
+                        const favVal = cleanLine.replace(/^[^:]+:/i, '').trim();
+                        if (favVal && favVal !== 'XXX' && favVal !== 'xxx' && favVal.length > 2) {
+                            empresaStr = favVal;
+                            console.log(`✅ Empresa extraída (FAVORECIDO PJ normalizado): ${empresaStr}`);
+                        }
+                    }
                 }
                 
                 // ===== FORMA DE CONTRATAÇÃO =====
@@ -364,15 +451,25 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== FATURÁVEL =====
-                // No PDF: checkbox FATURÁVEL marcado = true, NÃO FATURÁVEL marcado = false
-                if (cleanLine.match(/FATURÁVEL/i)) {
-                    if (cleanLine.match(/NÃO\s*FATURÁVEL/i)) {
+                // ✅ FIX v1.4: A ficha SEMPRE tem 2 linhas: "FATURÁVEL" e "NÃO FATURÁVEL"
+                // O pdf.js extrai as duas mesmo quando só uma está marcada.
+                // Heurística: a linha FATURÁVEL vem ANTES de NÃO FATURÁVEL no PDF.
+                // Se já setamos faturavel=true e vem "NÃO FATURÁVEL" na linha seguinte,
+                // é apenas o label do checkbox não marcado — IGNORAR.
+                // Só setar false se "NÃO FATURÁVEL" for a ÚNICA menção (sem "FATURÁVEL" antes).
+                if (cleanLine.match(/N[AÃ]O\s*FATUR[AÁ]VEL/i)) {
+                    // Só muda para false se faturavel ainda não foi explicitamente confirmado
+                    if (!faturavelConfirmado) {
                         faturavel = false;
-                        console.log(`✅ Faturável: false (encontrado NÃO FATURÁVEL)`);
-                    } else if (cleanLine.match(/^FATURÁVEL$/i)) {
-                        faturavel = true;
-                        console.log(`✅ Faturável: true (encontrado FATURÁVEL)`);
+                        console.log(`✅ Faturável: false (NÃO FATURÁVEL sem FATURÁVEL antes)`);
+                    } else {
+                        console.log(`ℹ️ Faturável: ignorando NÃO FATURÁVEL (FATURÁVEL já confirmado)`);
                     }
+                } else if (cleanLine.match(/^FATUR[AÁ]VEL$/i)) {
+                    // Linha isolada "FATURÁVEL" = checkbox FATURÁVEL marcado
+                    faturavel = true;
+                    faturavelConfirmado = true;
+                    console.log(`✅ Faturável: true (checkbox FATURÁVEL marcado)`);
                 }
                 
                 // ===== 🔧 FIX v1.1: OBSERVAÇÕES =====
@@ -380,35 +477,42 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 // porque a estrutura do PDF mistura seções
                 
                 // ===== RECURSOS HUMANOS =====
+                // ✅ FIX v1.4: "PRISCILA DO ESPÍRITO SANTO" está na linha LOGO APÓS "RECURSOS HUMANOS"
+                // na estrutura do rodapé. Capturar diretamente a próxima linha válida.
                 if (cleanLine === 'RECURSOS HUMANOS' && !recursosHumanosStr) {
                     console.log(`🔍 Encontrado header RECURSOS HUMANOS na linha ${i}`);
                     
-                    // Estrutura do rodapé do PDF:
-                    // HEADERS: DATA EMISSÃO | RECURSOS HUMANOS | GERENTE COMERCIAL | DIRETORIA | GESTÃO DE PESSOAS
-                    // VALUES:  12/01/2026   | LARISSA CONCEIÇÃO | MARCOS ROSSI     | ...       | ...
-                    
-                    // Procurar data de emissão (DD/MM/YYYY) e depois o nome do RH
-                    for (let k = i + 1; k < Math.min(i + 20, lines.length); k++) {
+                    // Método direto: próxima linha não vazia e não é header/número/data
+                    for (let k = i + 1; k < Math.min(i + 5, lines.length); k++) {
                         const testLine = lines[k].trim();
-                        
-                        // Se encontrou uma data no formato DD/MM/YYYY
-                        if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
-                            console.log(`🔍 Data de emissão encontrada na linha ${k}: ${testLine}`);
-                            
-                            // O próximo valor após a data é o nome do RECURSOS HUMANOS
-                            if (k + 1 < lines.length) {
-                                const possibleRH = lines[k + 1].trim();
-                                console.log(`🔍 Possível RH na linha ${k + 1}: "${possibleRH}"`);
-                                
-                                // Validar: deve ser nome (não header, não XXX, não número)
-                                if (possibleRH && 
-                                    possibleRH.length > 3 &&
-                                    possibleRH !== 'XXX' &&
-                                    !possibleRH.match(/^\d/) &&
-                                    !possibleRH.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|DATA|RECURSOS)/i)) {
-                                    recursosHumanosStr = possibleRH;
-                                    console.log(`✅ Recursos Humanos extraído: ${recursosHumanosStr}`);
-                                    break;
+                        if (testLine && 
+                            testLine.length > 3 &&
+                            testLine !== 'XXX' &&
+                            !testLine.match(/^\d/) &&
+                            !testLine.match(/^\d{2}\/\d{2}\/\d{4}$/) &&
+                            !testLine.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|DATA|RECURSOS|BASE|HORA|VALOR|ITEM|NOVO|ANTERIOR)/i)) {
+                            recursosHumanosStr = testLine;
+                            console.log(`✅ Recursos Humanos extraído (linha direta): ${recursosHumanosStr}`);
+                            break;
+                        }
+                    }
+                    
+                    // Se não encontrou diretamente, buscar por data de emissão + próxima linha
+                    if (!recursosHumanosStr) {
+                        for (let k = i + 1; k < Math.min(i + 25, lines.length); k++) {
+                            const testLine = lines[k].trim();
+                            if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+                                if (k + 1 < lines.length) {
+                                    const possibleRH = lines[k + 1].trim();
+                                    if (possibleRH && 
+                                        possibleRH.length > 3 &&
+                                        possibleRH !== 'XXX' &&
+                                        !possibleRH.match(/^\d/) &&
+                                        !possibleRH.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|DATA|RECURSOS|BASE|HORA)/i)) {
+                                        recursosHumanosStr = possibleRH;
+                                        console.log(`✅ Recursos Humanos extraído (após data): ${recursosHumanosStr}`);
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -418,6 +522,30 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
 
             // ===== 🔧 FIX v1.1: FALLBACKS MELHORADOS =====
             
+            // ✅ FIX v1.6: Fallback EMPRESA — busca no texto completo se loop não capturou
+            if (!empresaStr) {
+                // Tentar "EMPRESA: valor" no texto completo (normalizado)
+                const empresaMatch = text.match(/^EMPRESA\s*:\s*(.+)$/im);
+                if (empresaMatch && empresaMatch[1]) {
+                    const val = empresaMatch[1].trim();
+                    if (val !== 'XXX' && val !== 'xxx' && !val.match(/ENDEREÇO/i) && val.length > 2) {
+                        empresaStr = val;
+                        console.log(`✅ Empresa extraída (fallback texto): ${empresaStr}`);
+                    }
+                }
+                // Tentar "FAVORECIDO PESSOA JURIDICA: valor" (sem acento)
+                if (!empresaStr) {
+                    const favMatch = text.match(/FAVORECIDO PESSOA JURI[DÍ]?[I]?CA\s*:\s*(.+)/i);
+                    if (favMatch && favMatch[1]) {
+                        const val = favMatch[1].trim();
+                        if (val !== 'XXX' && val !== 'xxx' && val.length > 2) {
+                            empresaStr = val;
+                            console.log(`✅ Empresa extraída (fallback FAVORECIDO texto): ${empresaStr}`);
+                        }
+                    }
+                }
+            }
+            
             // Fallback para NOME DO CONSULTOR
             if (!consultantName) {
                 console.log('🔄 Tentando fallback para nome do consultor...');
@@ -426,11 +554,9 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 const nomeMatch = text.match(/NOME:\s*([A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+)+)/);
                 if (nomeMatch) {
                     const nomePotencial = nomeMatch[1].trim();
-                    // Validar que não é outro tipo de NOME
+                    // ✅ FIX v1.2: Validar sem nomes hardcoded
                     if (nomePotencial.length > 5 && 
-                        !nomePotencial.includes('Banco') &&
-                        !nomePotencial.includes('Fernando') && // Nome do solicitante
-                        !nomePotencial.includes('Elaine')) { // Nome de emergência
+                        !nomePotencial.includes('Banco')) {
                         consultantName = nomePotencial;
                         console.log(`✅ Nome do consultor extraído (fallback): ${consultantName}`);
                     }
@@ -446,29 +572,33 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // Fallback para EMAIL (priorizar email pessoal do profissional)
+            // ✅ FIX v1.2: Fallback email — buscar na seção DADOS DO PROFISSIONAL,
+            // excluindo emails do gestor/solicitante coletados anteriormente
             if (!emailStr) {
-                const emailMatches = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi);
+                const textoDadosProf = dadosProfissionalIdx > 0
+                    ? text.substring(dadosProfissionalIdx)
+                    : text;
+                const emailMatches = textoDadosProf.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi);
                 if (emailMatches && emailMatches.length > 0) {
-                    // Priorizar emails pessoais (@gmail, @hotmail, etc.)
-                    const emailPessoal = emailMatches.find(e => 
-                        e.toLowerCase().includes('@gmail') ||
-                        e.toLowerCase().includes('@hotmail') ||
-                        e.toLowerCase().includes('@outlook') ||
-                        e.toLowerCase().includes('@yahoo')
-                    );
-                    
+                    // 1º: email pessoal que não seja do gestor
+                    const emailPessoal = emailMatches.find(e => {
+                        const el = e.toLowerCase();
+                        return !emailsGestor.has(el) && (
+                            el.includes('@gmail') || el.includes('@hotmail') ||
+                            el.includes('@outlook') || el.includes('@yahoo') ||
+                            el.includes('@live') || el.includes('@icloud')
+                        );
+                    });
                     if (emailPessoal) {
                         emailStr = emailPessoal.toLowerCase();
-                        console.log(`✅ Email pessoal extraído (fallback): ${emailStr}`);
+                        console.log(`✅ Email pessoal extraído (fallback seção): ${emailStr}`);
                     } else {
-                        // Se não tem email pessoal, pegar o que não é do cliente/solicitante
-                        const emailNaoCorp = emailMatches.find(e => 
-                            !e.toLowerCase().includes('@icesp') &&
-                            !e.toLowerCase().includes('@cliente')
-                        );
-                        emailStr = (emailNaoCorp || emailMatches[0]).toLowerCase();
-                        console.log(`✅ Email extraído (fallback): ${emailStr}`);
+                        // 2º: qualquer email que não seja do gestor
+                        const emailNaoGestor = emailMatches.find(e => !emailsGestor.has(e.toLowerCase()));
+                        if (emailNaoGestor) {
+                            emailStr = emailNaoGestor.toLowerCase();
+                            console.log(`✅ Email extraído (fallback não-gestor): ${emailStr}`);
+                        }
                     }
                 }
             }
@@ -511,71 +641,157 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // 🔧 FIX v1.0: Fallback MELHORADO para VALOR PAGAMENTO
+            // ✅ FIX v1.4: Fallback FATURAMENTO MENSAL — busca na seção DADOS FATURAMENTO
+            if (!hourlyRateStr) {
+                console.log('🔄 Tentando fallback para faturamento mensal...');
+                const fatMatch = text.match(/DADOS FATURAMENTO[\s\S]*?FATURAMENTO MENSAL[\s\S]*?R\$\s*([\d.,]+)/i);
+                if (fatMatch) {
+                    hourlyRateStr = fatMatch[1];
+                    console.log(`✅ Faturamento Mensal extraído (seção DADOS FATURAMENTO): ${hourlyRateStr}`);
+                }
+                // Fallback: maior R$ decimal no texto (faturamento > pagamento)
+                if (!hourlyRateStr) {
+                    const todosR = [...text.matchAll(/R\$\s*([\d.]+,[\d]{2})/gi)]
+                        .map(m => ({ raw: m[1], num: parseFloat(m[1].replace(/\./g,'').replace(',','.')) }))
+                        .filter(v => !isNaN(v.num) && v.num > 0)
+                        .sort((a, b) => b.num - a.num);
+                    const valorPagNum = parseFloat((valorPagamentoStr || '0').replace(/\./g,'').replace(',','.'));
+                    const candidatoFat = todosR.find(v => v.num !== valorPagNum);
+                    if (candidatoFat) {
+                        hourlyRateStr = candidatoFat.raw;
+                        console.log(`✅ Faturamento Mensal extraído (maior R$ diferente do pagamento): ${hourlyRateStr}`);
+                    }
+                }
+            }
+
+            // ✅ FIX v1.4: Fallback VALOR PAGAMENTO — prioriza /hr sobre decimal
             if (!valorPagamentoStr) {
                 console.log('🔄 Tentando fallback para valor_pagamento...');
                 
-                // Método 1: Buscar "R$" seguido de número no formato brasileiro
-                const valorMatchBR = text.match(/R\$\s*([\d.]+,\d{2})/);
-                if (valorMatchBR) {
-                    valorPagamentoStr = valorMatchBR[1];
-                    console.log(`✅ Valor Pagamento extraído (R$ format): ${valorPagamentoStr}`);
+                // Método 0: Linha isolada "R$ XX/hr" no texto (mais específico e confiável)
+                const linhaHr = text.match(/^R\$\s*(\d+(?:[.,]\d+)?)\s*\/h(?:r|ora)?\s*$/im);
+                if (linhaHr) {
+                    valorPagamentoStr = linhaHr[1];
+                    console.log(`✅ Valor Pagamento extraído (linha R$/hr): ${valorPagamentoStr}`);
                 }
                 
-                // Método 2: Buscar valor na seção DADOS PAGAMENTO
+                // Método 1: Qualquer padrão "R$ XX/hr" no texto
                 if (!valorPagamentoStr) {
-                    const pagamentoMatch = text.match(/DADOS PAGAMENTO[\s\S]*?VALOR[\s\n]*([\d.]+,\d{2})/i);
-                    if (pagamentoMatch) {
-                        valorPagamentoStr = pagamentoMatch[1];
-                        console.log(`✅ Valor Pagamento extraído (seção): ${valorPagamentoStr}`);
+                    const valorPorHora = text.match(/R\$\s*(\d+(?:[.,]\d+)?)\/h(?:r|ora)?/i);
+                    if (valorPorHora) {
+                        valorPagamentoStr = valorPorHora[1];
+                        console.log(`✅ Valor Pagamento extraído (R$/hr): ${valorPagamentoStr}`);
                     }
                 }
                 
-                // Método 3: Buscar qualquer valor monetário após "VALOR"
+                // Método 2: Buscar na seção DADOS PAGAMENTO linha com R$ após VALOR
                 if (!valorPagamentoStr) {
-                    const valorGenerico = text.match(/VALOR[\s\n]*(?:NOVO[\s\n]*)?([\d.]+,\d{2})/i);
-                    if (valorGenerico) {
-                        valorPagamentoStr = valorGenerico[1];
-                        console.log(`✅ Valor Pagamento extraído (genérico): ${valorPagamentoStr}`);
+                    const dadosPagMatch = text.match(/DADOS PAGAMENTO[\s\S]*?\bVALOR\b[\s\S]*?R\$\s*([\d.,]+)/i);
+                    if (dadosPagMatch) {
+                        valorPagamentoStr = dadosPagMatch[1];
+                        console.log(`✅ Valor Pagamento extraído (seção DADOS PAG): ${valorPagamentoStr}`);
+                    }
+                }
+                
+                // Método 3: R$ seguido de número decimal BR
+                if (!valorPagamentoStr) {
+                    const valorMatchBR = text.match(/R\$\s*([\d.]+,\d{2})/);
+                    if (valorMatchBR) {
+                        valorPagamentoStr = valorMatchBR[1];
+                        console.log(`✅ Valor Pagamento extraído (R$ decimal): ${valorPagamentoStr}`);
+                    }
+                }
+                
+                // Método 4: Menor valor monetário no texto (pagamento < faturamento)
+                if (!valorPagamentoStr) {
+                    const todosValores = [...text.matchAll(/R\$\s*([\d.]+[,.]\d{2})/gi)]
+                        .map(m => ({ raw: m[1], num: parseFloat(m[1].replace('.','').replace(',','.')) }))
+                        .filter(v => !isNaN(v.num) && v.num > 0)
+                        .sort((a, b) => a.num - b.num);
+                    if (todosValores.length > 0) {
+                        valorPagamentoStr = todosValores[0].raw;
+                        console.log(`✅ Valor Pagamento extraído (menor R$): ${valorPagamentoStr}`);
                     }
                 }
             }
             
-            // 🔧 FIX v1.1: Fallback MELHORADO para OBSERVAÇÕES
-            // Usar APENAS padrões específicos - não usar seção genérica
+            // ✅ FIX v1.3: OBSERVAÇÕES — captura bloco após label OBSERVAÇÕES:
+            // Método principal: extrair tudo após "OBSERVAÇÕES:" até a próxima seção
             if (!observacoesStr) {
-                console.log('🔄 Extraindo observações por padrões específicos...');
+                console.log('🔄 Extraindo observações...');
                 
-                // Padrões típicos de observações na Ficha de Inclusão
-                const obsPatterns = [
-                    /ATUARÁ[^.]+\./gi,
-                    /GESTÃO DE PESSOAS FAVOR[^.]+\./gi,
-                    /UTILIZARÁ[^.]+\./gi,
-                    /HORÁRIO DE TRABALHO[^.]+\./gi,
-                    /EM CASO DE[^.]+\./gi
-                ];
+                // ✅ FIX v1.4: O texto das obs fica entre "HORÁRIO DE TRABALHO" e "RECURSOS HUMANOS"
+                // — não após o label "OBSERVAÇÕES:" que fica no topo (só tem NOTEBOOK/SMARTPHONE abaixo)
                 
-                let obsTextos: string[] = [];
-                for (const pattern of obsPatterns) {
-                    const matches = text.match(pattern);
-                    if (matches) {
-                        for (const match of matches) {
-                            // Filtrar matches que não são observações reais
-                            if (!match.includes('NOTEBOOK') && 
-                                !match.includes('SMARTPHONE') &&
-                                !match.includes('CERTIFICAÇÃO') &&
-                                match.length > 20) {
-                                obsTextos.push(match.trim());
-                            }
+                // Método 1: Capturar bloco entre HORÁRIO DE TRABALHO e RECURSOS HUMANOS
+                const obsHorarioMatch = text.match(/HOR[AÁ]RIO DE TRABALHO[^\n]*\n([\s\S]+?)(?=RECURSOS HUMANOS|PRISCILA|DATA EMISS[AÃ]O|\nEQUIPAMENTOS)/i);
+                if (obsHorarioMatch && obsHorarioMatch[1]) {
+                    const rawObs = obsHorarioMatch[1]
+                        .split('\n')
+                        .map((l: string) => l.trim())
+                        .filter((l: string) => l.length > 5 
+                            && !l.match(/^(NOTEBOOK|SMARTPHONE|FATURAR|INCLUSO|EQUIPAMENTOS|DATA EMISSÃO|\d{2}\/\d{2}\/\d{4})$/i))
+                        .join(' ')
+                        .replace(/\s+/g, ' ')
+                        .trim();
+                    if (rawObs.length > 10) {
+                        observacoesStr = rawObs;
+                        console.log(`✅ Observações extraídas (bloco HORÁRIO→RH): ${observacoesStr.substring(0, 100)}...`);
+                    }
+                }
+                
+                // Método 2 (fallback): bloco após label "OBSERVAÇÕES:" no texto
+                if (!observacoesStr) {
+                    const obsBlockMatch = text.match(/OBSERVA[CÇ][OÕ]ES\s*:?\s*\n([\s\S]+?)(?=\nEQUIPAMENTOS|\nNOTEBOOK|\nSMARTPHONE|\nFORM0005)/i);
+                    if (obsBlockMatch && obsBlockMatch[1]) {
+                        const rawObs = obsBlockMatch[1]
+                            .split('\n')
+                            .map((l: string) => l.trim())
+                            .filter((l: string) => l.length > 5 && !l.match(/^(NOTEBOOK|SMARTPHONE|FATURAR|INCLUSO)$/i))
+                            .join(' ')
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                        if (rawObs.length > 10) {
+                            observacoesStr = rawObs;
+                            console.log(`✅ Observações extraídas (bloco label): ${observacoesStr.substring(0, 100)}...`);
                         }
                     }
                 }
                 
-                if (obsTextos.length > 0) {
-                    // Remover duplicatas e juntar
-                    const uniqueObs = [...new Set(obsTextos)];
-                    observacoesStr = uniqueObs.join(' ').replace(/\s+/g, ' ').trim();
-                    console.log(`✅ Observações extraídas (padrões): ${observacoesStr.substring(0, 100)}...`);
+                // Método 2: Padrões específicos de frases comuns nas observações
+                if (!observacoesStr) {
+                    const obsPatterns = [
+                        /CONSULTOR[^\n]{10,}/gi,
+                        /ATUARÁ[^.]+\./gi,
+                        /MODELO DE ATUA[CÇ][AÃ]O[^.]+\./gi,
+                        /COMERCIAL[^\n]{10,}/gi,
+                        /CAC[^\n]{10,}/gi,
+                        /GESTÃO DE PESSOAS[^.]+\./gi,
+                        /UTILIZARÁ[^.]+\./gi,
+                        /EM CASO DE[^.]+\./gi
+                    ];
+                    
+                    let obsTextos: string[] = [];
+                    for (const pattern of obsPatterns) {
+                        const matches = text.match(pattern);
+                        if (matches) {
+                            for (const match of matches) {
+                                if (!match.match(/^(CONSULTOR\s*[:|]|CONSULTOR\s+EM\s+QUARENTENA)/i) &&
+                                    !match.includes('NOTEBOOK') && 
+                                    !match.includes('SMARTPHONE') &&
+                                    !match.includes('CERTIFICAÇÃO') &&
+                                    match.length > 20) {
+                                    obsTextos.push(match.trim());
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (obsTextos.length > 0) {
+                        const uniqueObs = [...new Set(obsTextos)];
+                        observacoesStr = uniqueObs.join(' ').replace(/\s+/g, ' ').trim();
+                        console.log(`✅ Observações extraídas (padrões): ${observacoesStr.substring(0, 100)}...`);
+                    }
                 }
             }
             
@@ -593,17 +809,25 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // Método 2: Buscar nomes conhecidos de analistas após "RECURSOS HUMANOS"
+                // ✅ FIX v1.2: Método 2 — buscar pelos primeiros nomes dos usuários do sistema
+                // Remove dependência de lista hardcoded — usa os users reais cadastrados
                 if (!recursosHumanosStr) {
-                    const nomesAnalistas = ['LARISSA', 'MACIELMA', 'PRISCILA', 'TATIANA', 'RENATA'];
-                    for (const nome of nomesAnalistas) {
-                        if (text.includes(nome)) {
-                            // Extrair nome completo
-                            const nomeCompleto = text.match(new RegExp(`(${nome}[A-Za-zÀ-ÿ\\s]+?)(?:\\n|MARCOS|GERENTE|ROSENI)`, 'i'));
+                    const primeiroNomesUsers = users
+                        .filter(u => u.nome_usuario && u.nome_usuario.length > 2)
+                        .map(u => u.nome_usuario.split(' ')[0].toUpperCase());
+                    
+                    for (const primeiroNome of primeiroNomesUsers) {
+                        if (text.toUpperCase().includes(primeiroNome)) {
+                            const nomeCompleto = text.match(new RegExp(`(${primeiroNome}[A-Za-zÀ-ÿ\\s]+?)(?:\\n|MARCOS|GERENTE|ROSENI|MESSIAS|DIRETORIA)`, 'i'));
                             if (nomeCompleto && nomeCompleto[1]) {
-                                recursosHumanosStr = nomeCompleto[1].trim();
-                                console.log(`✅ Recursos Humanos extraído (fallback 2): ${recursosHumanosStr}`);
-                                break;
+                                const nomeTrimmed = nomeCompleto[1].trim();
+                                // Verificar se o nome existe em users (confirmar que é analista)
+                                const userConfirmado = findUserByName(nomeTrimmed);
+                                if (userConfirmado) {
+                                    recursosHumanosStr = nomeTrimmed;
+                                    console.log(`✅ Recursos Humanos extraído (fallback dinâmico): ${recursosHumanosStr}`);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -761,8 +985,75 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             
             console.log('💾 Dados para inserção:', newConsultantData);
 
-            onImport(newConsultantData);
-            setMessage({ text: `Ficha de Inclusão "${consultantName}" processada com sucesso!`, type: 'success' });
+            // ✅ FIX v1.6: Verificar duplicata LOCALMENTE antes de chamar onImport
+            // Evita que o alert() do ManageConsultants sobreponha a mensagem
+            const anoAtual = new Date().getFullYear();
+            if (cpfStr) {
+                const cpfLimpo = cpfStr.replace(/[^\d]/g, '');
+                const duplicataCPF = consultants.find((c: any) => {
+                    const cCpf = (c.cpf || '').replace(/[^\d]/g, '');
+                    return cCpf === cpfLimpo && (c.ano_vigencia === anoAtual || !c.ano_vigencia);
+                });
+                if (duplicataCPF) {
+                    throw new Error(
+                        `CPF já cadastrado!\n\nO CPF "${cpfStr}" já pertence ao consultor "${duplicataCPF.nome_consultores}" no sistema (ano ${anoAtual}).\n\nSe precisar atualizar os dados, edite o consultor existente na lista.`
+                    );
+                }
+            }
+            if (newConsultantData.email_consultor) {
+                const emailLimpo = newConsultantData.email_consultor.toLowerCase().trim();
+                const duplicataEmail = consultants.find((c: any) =>
+                    (c.email_consultor || '').toLowerCase().trim() === emailLimpo
+                );
+                if (duplicataEmail) {
+                    throw new Error(
+                        `E-mail já cadastrado!\n\nO e-mail "${newConsultantData.email_consultor}" já pertence ao consultor "${duplicataEmail.nome_consultores}" no sistema.\n\nSe precisar atualizar os dados, edite o consultor existente na lista.`
+                    );
+                }
+            }
+
+            // ✅ FIX v1.7: Interceptar window.alert() durante onImport
+            // ManageConsultants usa alert() para erros do Supabase — capturamos antes de exibir
+            let alertCapturado: string | null = null;
+            const alertOriginal = window.alert;
+            window.alert = (msg: any) => {
+                alertCapturado = String(msg || '');
+                console.log(`🔇 Alert interceptado: ${alertCapturado}`);
+                // NÃO chama alertOriginal — suprimimos o alert nativo
+            };
+
+            let importResult: any;
+            try {
+                importResult = await Promise.resolve(onImport(newConsultantData));
+            } finally {
+                // Sempre restaurar window.alert após a chamada
+                window.alert = alertOriginal;
+            }
+
+            // Verificar se alert foi disparado com mensagem de erro
+            if (alertCapturado) {
+                const msgLower = alertCapturado.toLowerCase();
+                if (msgLower.includes('duplicate') || msgLower.includes('unique') || msgLower.includes('duplicat')) {
+                    throw new Error(
+                        `CPF já cadastrado!\n\nO CPF "${cpfStr || 'informado'}" já existe no sistema para o ano ${anoAtual}.\n\nSe precisar atualizar os dados, edite o consultor existente na lista.`
+                    );
+                }
+                // Outro erro do alert — converter em erro amigável
+                throw new Error(`Erro ao salvar consultor: ${alertCapturado}`);
+            }
+
+            // Verificar erro no retorno (caso ManageConsultants retorne objeto de erro)
+            if (importResult && importResult.error) {
+                const sbError = importResult.error;
+                if (sbError.code === '23505' || sbError.message?.includes('unique') || sbError.message?.includes('duplicate')) {
+                    throw new Error(
+                        `CPF já cadastrado!\n\nO CPF "${cpfStr || 'informado'}" já existe no sistema para o ano ${anoAtual}.\n\nEdite o consultor existente na lista.`
+                    );
+                }
+                throw new Error(`Erro ao salvar: ${sbError.message || 'Erro desconhecido'}`);
+            }
+            
+            setMessage({ text: `✅ "${consultantName}" importado com sucesso!`, type: 'success' });
 
         } catch (error) {
             console.error(error);
