@@ -1,9 +1,11 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v1.3 - 22/03/2026
+ * VERSÃO: Fix v1.4 - 22/03/2026
  * 
  * CORREÇÕES:
+ * - ✅ v1.4: EMAIL pessoal nunca excluído; FATURÁVEL ignora label não-marcado; VALOR prioriza /hr;
+ *           OBSERVAÇÕES extrai bloco HORÁRIO→RH; RH captura linha direta; FATURAMENTO fallback
  * - ✅ v1.3: EMPRESA/CPF/FATURAMENTO/VALOR/FATURÁVEL/OBSERVAÇÕES corrigidos (7 campos)
  * - ✅ v1.2: Email fixado — ancoragem na seção DADOS DO PROFISSIONAL + exclusão de emails do gestor
  * - ✅ v1.2: Lista hardcoded de analistas RH substituída por busca dinâmica nos users do sistema
@@ -148,18 +150,23 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let nomeSubstituidoStr = '';
             let modalidadeContratoStr = '';
             let faturavel = true;
+            let faturavelConfirmado = false;
             let observacoesStr = '';
             let recursosHumanosStr = '';
             
-            // ✅ FIX v1.2: Coletar emails do SOLICITANTE/GESTOR para excluir na busca do consultor
-            // Captura todos os emails que aparecem ANTES de "DADOS DO PROFISSIONAL"
+            // ✅ FIX v1.4: Coletar apenas emails CORPORATIVOS do gestor/cliente para excluir
+            // Emails pessoais (@gmail, @hotmail etc) NUNCA são excluídos — podem ser do consultor
+            // Somente emails corporativos do gestor (mesmo domínio que o email do gestor/solicitante)
             const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
             const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : '';
+            const dominiosPersonais = ['gmail', 'hotmail', 'outlook', 'yahoo', 'live', 'icloud', 'uol', 'bol', 'terra'];
             const emailsGestor = new Set(
                 (textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [])
                     .map((e: string) => e.toLowerCase())
+                    // Só excluir emails corporativos (não pessoais) — email pessoal pode ser do consultor
+                    .filter((e: string) => !dominiosPersonais.some(d => e.includes('@' + d)))
             );
-            console.log(`🔍 Emails do gestor/solicitante (a ignorar): ${[...emailsGestor].join(', ')}`);
+            console.log(`🔍 Emails corporativos do gestor (a ignorar): ${[...emailsGestor].join(', ')}`);
 
             // Flags de seção
             let inDadosProfissional = false;
@@ -239,37 +246,43 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
                 
-                // ===== 🔧 FIX v1.3: VALOR (valor_pagamento) =====
-                // Aceita: "R$ 80/hr", "R$ 80", "80,00", "R$ 1.500,00"
+                // ===== 🔧 FIX v1.4: VALOR PAGAMENTO =====
+                // Captura "R$ 80/hr" isolado na linha (aparece antes de FATURAMENTO MENSAL no PDF)
+                if (cleanLine.match(/^R\$\s*\d+(?:[.,]\d+)?\s*\/h(?:r|ora)?$/i) && !valorPagamentoStr) {
+                    const matchHr = cleanLine.match(/R\$\s*([\d.,]+)/i);
+                    if (matchHr) {
+                        valorPagamentoStr = matchHr[1];
+                        console.log(`✅ Valor Pagamento extraído (R$/hr linha isolada): ${valorPagamentoStr}`);
+                    }
+                }
+                
+                // Capturar dentro da seção DADOS PAGAMENTO
                 if (cleanLine === 'VALOR' && inDadosPagamento) {
                     console.log(`🔍 Encontrado label VALOR na seção DADOS PAGAMENTO (linha ${i})`);
                     for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
                         const testLine = lines[j].trim();
-                        // Aceita qualquer linha com número após R$ (com ou sem /hr, /h, /hora)
                         const valorMatch = testLine.match(/R\$\s*([\d.,]+)/i) ||
                                           testLine.match(/^([\d.]+,[\d]{2})$/) ||
-                                          testLine.match(/^([\d]+)(?:\/hr|\/h|\/hora)?$/i);
+                                          testLine.match(/^([\d]+(?:[.,]\d+)?)(?:\/hr|\/h|\/hora)?$/i);
                         if (valorMatch && valorMatch[1]) {
                             valorPagamentoStr = valorMatch[1].replace(/R\$\s*/i, '').trim();
-                            console.log(`✅ Valor Pagamento extraído: ${valorPagamentoStr}`);
+                            console.log(`✅ Valor Pagamento extraído (seção DADOS PAG): ${valorPagamentoStr}`);
                             break;
                         }
                     }
                 }
                 
                 // ===== FATURAMENTO MENSAL =====
-                // ✅ FIX v1.3: Aceita R$ na mesma linha, próximas linhas, e formato R$ X.XXX,XX
+                // ✅ FIX v1.4: O label "FATURAMENTO MENSAL" e o valor "R$ 114,65" estão em 
+                // seções diferentes no texto extraído. Buscar inline ou próximas linhas.
                 if (cleanLine.match(/FATURAMENTO MENSAL/i) && !hourlyRateStr) {
-                    // Tentar capturar valor na mesma linha (ex: "FATURAMENTO MENSAL R$ 114,65")
                     const inlineValFat = cleanLine.match(/R\$\s*([\d.,]+)/i);
                     if (inlineValFat) {
                         hourlyRateStr = inlineValFat[1];
                         console.log(`✅ Faturamento Mensal extraído (inline): ${hourlyRateStr}`);
                     } else {
-                        // Procurar nas próximas linhas
-                        for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
+                        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
                             const testLine = lines[j].trim();
-                            // Aceita: "R$ 114,65" | "114,65" | "R$114,65"
                             if (testLine.match(/^R\$\s*[\d.,]+$/i) || 
                                 testLine.match(/^[\d.]+,[\d]{2}$/) ||
                                 testLine.match(/^[\d]+,[\d]{2}$/)) {
@@ -423,17 +436,25 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== FATURÁVEL =====
-                // ✅ FIX v1.3: Default sempre true. Só muda para false se explicitamente "NÃO FATURÁVEL"
-                // O pdf.js extrai checkboxes como texto — FATURÁVEL marcado = linha isolada "FATURÁVEL"
-                if (cleanLine.match(/FATUR[AÁ]VEL/i)) {
-                    if (cleanLine.match(/N[AÃ]O\s*FATUR[AÁ]VEL/i)) {
+                // ✅ FIX v1.4: A ficha SEMPRE tem 2 linhas: "FATURÁVEL" e "NÃO FATURÁVEL"
+                // O pdf.js extrai as duas mesmo quando só uma está marcada.
+                // Heurística: a linha FATURÁVEL vem ANTES de NÃO FATURÁVEL no PDF.
+                // Se já setamos faturavel=true e vem "NÃO FATURÁVEL" na linha seguinte,
+                // é apenas o label do checkbox não marcado — IGNORAR.
+                // Só setar false se "NÃO FATURÁVEL" for a ÚNICA menção (sem "FATURÁVEL" antes).
+                if (cleanLine.match(/N[AÃ]O\s*FATUR[AÁ]VEL/i)) {
+                    // Só muda para false se faturavel ainda não foi explicitamente confirmado
+                    if (!faturavelConfirmado) {
                         faturavel = false;
-                        console.log(`✅ Faturável: false (encontrado NÃO FATURÁVEL)`);
+                        console.log(`✅ Faturável: false (NÃO FATURÁVEL sem FATURÁVEL antes)`);
                     } else {
-                        // Qualquer linha com FATURÁVEL (sem NÃO) = true
-                        faturavel = true;
-                        console.log(`✅ Faturável: true (checkbox FATURÁVEL detectado)`);
+                        console.log(`ℹ️ Faturável: ignorando NÃO FATURÁVEL (FATURÁVEL já confirmado)`);
                     }
+                } else if (cleanLine.match(/^FATUR[AÁ]VEL$/i)) {
+                    // Linha isolada "FATURÁVEL" = checkbox FATURÁVEL marcado
+                    faturavel = true;
+                    faturavelConfirmado = true;
+                    console.log(`✅ Faturável: true (checkbox FATURÁVEL marcado)`);
                 }
                 
                 // ===== 🔧 FIX v1.1: OBSERVAÇÕES =====
@@ -441,35 +462,42 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 // porque a estrutura do PDF mistura seções
                 
                 // ===== RECURSOS HUMANOS =====
+                // ✅ FIX v1.4: "PRISCILA DO ESPÍRITO SANTO" está na linha LOGO APÓS "RECURSOS HUMANOS"
+                // na estrutura do rodapé. Capturar diretamente a próxima linha válida.
                 if (cleanLine === 'RECURSOS HUMANOS' && !recursosHumanosStr) {
                     console.log(`🔍 Encontrado header RECURSOS HUMANOS na linha ${i}`);
                     
-                    // Estrutura do rodapé do PDF:
-                    // HEADERS: DATA EMISSÃO | RECURSOS HUMANOS | GERENTE COMERCIAL | DIRETORIA | GESTÃO DE PESSOAS
-                    // VALUES:  12/01/2026   | LARISSA CONCEIÇÃO | MARCOS ROSSI     | ...       | ...
-                    
-                    // Procurar data de emissão (DD/MM/YYYY) e depois o nome do RH
-                    for (let k = i + 1; k < Math.min(i + 20, lines.length); k++) {
+                    // Método direto: próxima linha não vazia e não é header/número/data
+                    for (let k = i + 1; k < Math.min(i + 5, lines.length); k++) {
                         const testLine = lines[k].trim();
-                        
-                        // Se encontrou uma data no formato DD/MM/YYYY
-                        if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
-                            console.log(`🔍 Data de emissão encontrada na linha ${k}: ${testLine}`);
-                            
-                            // O próximo valor após a data é o nome do RECURSOS HUMANOS
-                            if (k + 1 < lines.length) {
-                                const possibleRH = lines[k + 1].trim();
-                                console.log(`🔍 Possível RH na linha ${k + 1}: "${possibleRH}"`);
-                                
-                                // Validar: deve ser nome (não header, não XXX, não número)
-                                if (possibleRH && 
-                                    possibleRH.length > 3 &&
-                                    possibleRH !== 'XXX' &&
-                                    !possibleRH.match(/^\d/) &&
-                                    !possibleRH.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|DATA|RECURSOS)/i)) {
-                                    recursosHumanosStr = possibleRH;
-                                    console.log(`✅ Recursos Humanos extraído: ${recursosHumanosStr}`);
-                                    break;
+                        if (testLine && 
+                            testLine.length > 3 &&
+                            testLine !== 'XXX' &&
+                            !testLine.match(/^\d/) &&
+                            !testLine.match(/^\d{2}\/\d{2}\/\d{4}$/) &&
+                            !testLine.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|DATA|RECURSOS|BASE|HORA|VALOR|ITEM|NOVO|ANTERIOR)/i)) {
+                            recursosHumanosStr = testLine;
+                            console.log(`✅ Recursos Humanos extraído (linha direta): ${recursosHumanosStr}`);
+                            break;
+                        }
+                    }
+                    
+                    // Se não encontrou diretamente, buscar por data de emissão + próxima linha
+                    if (!recursosHumanosStr) {
+                        for (let k = i + 1; k < Math.min(i + 25, lines.length); k++) {
+                            const testLine = lines[k].trim();
+                            if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+                                if (k + 1 < lines.length) {
+                                    const possibleRH = lines[k + 1].trim();
+                                    if (possibleRH && 
+                                        possibleRH.length > 3 &&
+                                        possibleRH !== 'XXX' &&
+                                        !possibleRH.match(/^\d/) &&
+                                        !possibleRH.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|DATA|RECURSOS|BASE|HORA)/i)) {
+                                        recursosHumanosStr = possibleRH;
+                                        console.log(`✅ Recursos Humanos extraído (após data): ${recursosHumanosStr}`);
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -574,15 +602,47 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ FIX v1.3: Fallback VALOR PAGAMENTO — aceita R$ XX/hr e formatos variados
+            // ✅ FIX v1.4: Fallback FATURAMENTO MENSAL — busca na seção DADOS FATURAMENTO
+            if (!hourlyRateStr) {
+                console.log('🔄 Tentando fallback para faturamento mensal...');
+                const fatMatch = text.match(/DADOS FATURAMENTO[\s\S]*?FATURAMENTO MENSAL[\s\S]*?R\$\s*([\d.,]+)/i);
+                if (fatMatch) {
+                    hourlyRateStr = fatMatch[1];
+                    console.log(`✅ Faturamento Mensal extraído (seção DADOS FATURAMENTO): ${hourlyRateStr}`);
+                }
+                // Fallback: maior R$ decimal no texto (faturamento > pagamento)
+                if (!hourlyRateStr) {
+                    const todosR = [...text.matchAll(/R\$\s*([\d.]+,[\d]{2})/gi)]
+                        .map(m => ({ raw: m[1], num: parseFloat(m[1].replace(/\./g,'').replace(',','.')) }))
+                        .filter(v => !isNaN(v.num) && v.num > 0)
+                        .sort((a, b) => b.num - a.num);
+                    const valorPagNum = parseFloat((valorPagamentoStr || '0').replace(/\./g,'').replace(',','.'));
+                    const candidatoFat = todosR.find(v => v.num !== valorPagNum);
+                    if (candidatoFat) {
+                        hourlyRateStr = candidatoFat.raw;
+                        console.log(`✅ Faturamento Mensal extraído (maior R$ diferente do pagamento): ${hourlyRateStr}`);
+                    }
+                }
+            }
+
+            // ✅ FIX v1.4: Fallback VALOR PAGAMENTO — prioriza /hr sobre decimal
             if (!valorPagamentoStr) {
                 console.log('🔄 Tentando fallback para valor_pagamento...');
                 
-                // Método 1: Buscar padrão "R$ XX/hr" ou "R$ XX/h" (formato por hora)
-                const valorPorHora = text.match(/R\$\s*(\d+(?:[.,]\d+)?)\/h(?:r|ora)?/i);
-                if (valorPorHora) {
-                    valorPagamentoStr = valorPorHora[1];
-                    console.log(`✅ Valor Pagamento extraído (R$/hr): ${valorPagamentoStr}`);
+                // Método 0: Linha isolada "R$ XX/hr" no texto (mais específico e confiável)
+                const linhaHr = text.match(/^R\$\s*(\d+(?:[.,]\d+)?)\s*\/h(?:r|ora)?\s*$/im);
+                if (linhaHr) {
+                    valorPagamentoStr = linhaHr[1];
+                    console.log(`✅ Valor Pagamento extraído (linha R$/hr): ${valorPagamentoStr}`);
+                }
+                
+                // Método 1: Qualquer padrão "R$ XX/hr" no texto
+                if (!valorPagamentoStr) {
+                    const valorPorHora = text.match(/R\$\s*(\d+(?:[.,]\d+)?)\/h(?:r|ora)?/i);
+                    if (valorPorHora) {
+                        valorPagamentoStr = valorPorHora[1];
+                        console.log(`✅ Valor Pagamento extraído (R$/hr): ${valorPagamentoStr}`);
+                    }
                 }
                 
                 // Método 2: Buscar na seção DADOS PAGAMENTO linha com R$ após VALOR
@@ -621,19 +681,41 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             if (!observacoesStr) {
                 console.log('🔄 Extraindo observações...');
                 
-                // Método 1: Capturar bloco após label "OBSERVAÇÕES:" no texto completo
-                const obsBlockMatch = text.match(/OBSERVA[CÇ][OÕ]ES\s*:?\s*\n([\s\S]+?)(?=\nEQUIPAMENTOS|\nDATA EMISS[AÃ]O|\nNOTEBOOK|\nSMARTPHONE|\nFORM0005|$)/i);
-                if (obsBlockMatch && obsBlockMatch[1]) {
-                    const rawObs = obsBlockMatch[1]
+                // ✅ FIX v1.4: O texto das obs fica entre "HORÁRIO DE TRABALHO" e "RECURSOS HUMANOS"
+                // — não após o label "OBSERVAÇÕES:" que fica no topo (só tem NOTEBOOK/SMARTPHONE abaixo)
+                
+                // Método 1: Capturar bloco entre HORÁRIO DE TRABALHO e RECURSOS HUMANOS
+                const obsHorarioMatch = text.match(/HOR[AÁ]RIO DE TRABALHO[^\n]*\n([\s\S]+?)(?=RECURSOS HUMANOS|PRISCILA|DATA EMISS[AÃ]O|\nEQUIPAMENTOS)/i);
+                if (obsHorarioMatch && obsHorarioMatch[1]) {
+                    const rawObs = obsHorarioMatch[1]
                         .split('\n')
                         .map((l: string) => l.trim())
-                        .filter((l: string) => l.length > 3 && !l.match(/^(NOTEBOOK|SMARTPHONE|FATURAR|INCLUSO|EQUIPAMENTOS)$/i))
+                        .filter((l: string) => l.length > 5 
+                            && !l.match(/^(NOTEBOOK|SMARTPHONE|FATURAR|INCLUSO|EQUIPAMENTOS|DATA EMISSÃO|\d{2}\/\d{2}\/\d{4})$/i))
                         .join(' ')
                         .replace(/\s+/g, ' ')
                         .trim();
                     if (rawObs.length > 10) {
                         observacoesStr = rawObs;
-                        console.log(`✅ Observações extraídas (bloco label): ${observacoesStr.substring(0, 100)}...`);
+                        console.log(`✅ Observações extraídas (bloco HORÁRIO→RH): ${observacoesStr.substring(0, 100)}...`);
+                    }
+                }
+                
+                // Método 2 (fallback): bloco após label "OBSERVAÇÕES:" no texto
+                if (!observacoesStr) {
+                    const obsBlockMatch = text.match(/OBSERVA[CÇ][OÕ]ES\s*:?\s*\n([\s\S]+?)(?=\nEQUIPAMENTOS|\nNOTEBOOK|\nSMARTPHONE|\nFORM0005)/i);
+                    if (obsBlockMatch && obsBlockMatch[1]) {
+                        const rawObs = obsBlockMatch[1]
+                            .split('\n')
+                            .map((l: string) => l.trim())
+                            .filter((l: string) => l.length > 5 && !l.match(/^(NOTEBOOK|SMARTPHONE|FATURAR|INCLUSO)$/i))
+                            .join(' ')
+                            .replace(/\s+/g, ' ')
+                            .trim();
+                        if (rawObs.length > 10) {
+                            observacoesStr = rawObs;
+                            console.log(`✅ Observações extraídas (bloco label): ${observacoesStr.substring(0, 100)}...`);
+                        }
                     }
                 }
                 
