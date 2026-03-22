@@ -1,5 +1,5 @@
 # RMS-RAISA — Contexto do Projeto
-> Atualizado manualmente em 16/03/2026
+> Atualizado manualmente em 22/03/2026
 
 ---
 
@@ -21,8 +21,8 @@
 | Tatiana | Gestão Comercial | Prospecção de leads B2B |
 | Marcos | Gestão Comercial | Prospecção de leads B2B |
 | Roseni | Gestão Comercial | Prospecção de leads B2B |
-| Larissa | Analista | Gestão de candidatos |
-| Macielma | Analista | Gestão de candidatos |
+| Larissa | Analista R&S | Gestão de candidatos |
+| Macielma | Analista R&S | Gestão de candidatos |
 
 ---
 
@@ -32,27 +32,47 @@
 RMS_RAISA/
 ├── api/                          # Serverless functions (Vercel)
 │   ├── gemini-analyze.ts         # Hub central de IA — todas as actions Gemini
+│   ├── gemini-cv-generator-v2.ts # Geração de CV HTML (preview + PDF)
+│   ├── cv-generator-docx.ts      # Geração de CV DOCX (TechFor + T-Systems)
 │   ├── prospect-gemini-search.ts # Motor de prospecção B2B via Gemini + Google Search
 │   ├── prospect-hunter-enrich.ts # Enriquecimento de email via Hunter.io + Snov.io fallback
 │   ├── prospect-save.ts          # Salvar leads no Supabase
 │   ├── prospect-leads.ts         # Listar leads salvos
-│   └── [outros endpoints...]
+│   ├── prospect-capture.ts       # Receber leads da Prospect Chrome Extension
+│   ├── prospect-validate-emails.ts  # Validação de emails (Campanha)
+│   ├── prospect-infer-emails.ts     # Inferência de emails por padrão (Campanha)
+│   ├── prospect-enrich-company.ts   # Enriquecimento CNPJ/endereço via cnpj.ws (Campanha)
+│   └── linkedin/
+│       └── importar.ts           # Importação de perfis LinkedIn (normalização de URL)
 ├── src/
 │   ├── components/
 │   │   ├── prospect/
-│   │   │   └── ProspectSearchPage.tsx  # UI do Prospect Engine v4.1
-│   │   ├── cv/                         # Geração de CV (DOCX)
-│   │   ├── candidates/                 # Gestão de candidatos
-│   │   ├── jobs/                       # Gestão de vagas
-│   │   └── interviews/                 # Entrevistas técnicas
+│   │   │   ├── ProspectSearchPage.tsx   # UI do Prospect Engine v4.1+
+│   │   │   └── CampanhaPrep.tsx         # Wizard "Preparar Campanha" v1.1
+│   │   ├── AgendaAcompanhamento.tsx     # Agenda de Acompanhamento de Consultores v1.0
+│   │   ├── raisa/
+│   │   │   ├── NovaCandidaturaModal.tsx  # Modal nova candidatura v57.9+
+│   │   │   ├── EntrevistaComportamental.tsx  # Entrevista + geração de CV
+│   │   │   ├── CVGeneratorV2.tsx         # Interface geração de CV
+│   │   │   └── DetalhesCandidaturaModal.tsx  # Detalhes + status "Sem Interesse"
+│   │   ├── linkedin/
+│   │   │   └── LinkedInImportPanel.tsx  # Painel principal LinkedIn (canonical)
+│   │   ├── cv/                          # Geração de CV (componentes auxiliares)
+│   │   ├── candidates/                  # Gestão de candidatos
+│   │   ├── jobs/                        # Gestão de vagas
+│   │   └── interviews/                  # Entrevistas técnicas
 │   ├── contexts/
-│   │   └── AuthContext.tsx             # Autenticação Supabase
+│   │   └── AuthContext.tsx              # Autenticação Supabase
+│   ├── hooks/
+│   │   └── supabase/
+│   │       └── useRaisaCVSearch.ts      # Hook busca de candidatos (busca banco ilike)
 │   ├── types/
-│   │   └── types_users.ts              # UserRole union type (inclui 'SDR')
+│   │   ├── types_users.ts               # UserRole union type (inclui 'SDR')
+│   │   └── types_models.ts              # View union type (inclui 'agenda_acompanhamento', 'prospect_campaign')
 │   ├── utils/
-│   │   └── permissions.ts              # Sistema centralizado de permissões v58.4
+│   │   └── permissions.ts              # Sistema centralizado de permissões v58.5
 │   └── components/layout/
-│       └── Sidebar.tsx                 # Menu lateral com controle de acesso v58.4
+│       └── Sidebar.tsx                 # Menu lateral com controle de acesso
 ├── database/                           # Scripts SQL e migrations
 ├── docs/                               # Documentação
 ├── scripts/
@@ -62,13 +82,15 @@ RMS_RAISA/
 └── .gitignore                          # node_modules, dist, .env, etc.
 ```
 
+> ⚠️ **Arquivo legado a remover:** `src/components/raisa/LinkedInImportPanel.tsx` — supersedido por `src/components/linkedin/LinkedInImportPanel.tsx`
+
 ---
 
 ## 4. Módulos Funcionais
 
 ### 4.1 Prospect Engine v2.1 ✅ PRODUÇÃO
 **Arquivo principal:** `api/prospect-gemini-search.ts` + `api/prospect-hunter-enrich.ts`
-**Status:** Operacional — última correção 16/03/2026
+**Status:** Operacional
 
 **Fluxo:**
 1. Usuário informa domínio + filtros (departamento, nível hierárquico, max resultados)
@@ -93,52 +115,210 @@ Sem email:   not_found
 - 🔵 Hunter Domain — amarelo
 - 🟣 Snov.io — roxo
 
+**Coluna "Gravado Por"** — JOIN com `app_users` exibe nome do usuário que salvou o lead.
+
 **Configurações validadas:**
 - `thinkingBudget: 4096` — sweet spot para 5-6 queries Google sem loop
 - `maxPorChamada: 10–50` — configurável via slider no frontend
 - Estratégia dual paralela: divide por departamento ou senioridade para maximizar cobertura
 
-**Bugs resolvidos (v2.1):**
-- ✅ Snov.io `taskHash` — estava em `startData.data.task_hash` (não `meta.task_hash`)
-- ✅ Timeout 504 — resolvido com processamento paralelo em lotes de 4
-- ✅ Hunter enriquece apenas prospects selecionados (não toda a lista)
-- ✅ Merge cirúrgico preserva seleção e dados ao retornar do Hunter
-- ✅ Variáveis env `\r\n` — usar prompt interativo do CLI, nunca `echo |`
+**DEPT_LABELS** (mapeamento de filtros → termos de busca):
+```
+ti_tecnologia → TI, Tecnologia, Tecnologia da Informação, Technology, IT, Sistemas, Inovação, Digital
+compras_procurement → Compras, Procurement, Suprimentos, Aquisições
+infraestrutura → Infraestrutura, Cloud, Data Center, Redes
+governanca_compliance → Governança, Compliance, Segurança da Informação, Cybersecurity
+rh_recursos_humanos → Recursos Humanos, RH, People, Gente e Gestão
+comercial_vendas → Comercial, Vendas, Revenue, Sales, Business Development
+financeiro → Financeiro, CFO, Controladoria, Finanças, Tesouraria
+diretoria_clevel → CEO, COO, Diretor Geral, Presidente, Vice-Presidente
+```
 
-**DEPT_LABELS** e **SENIOR_LABELS** — ver seção anterior (sem mudanças)
+**SENIOR_LABELS** (mapeamento de níveis → termos de busca):
+```
+c_level → CEO, CTO, CIO, COO, CFO, CISO, CPO, CHRO, CMO
+vp → Vice-Presidente, VP, Vice President
+diretor → Diretor, Diretor Executivo, Director, Managing Director
+gerente → Gerente, Manager, Gerente-Executivo, Gerente Executivo, Gerente Geral, Gerente Sênior
+coordenador → Coordenador, Coordinator
+superintendente → Superintendente, Head, Head of, Head de
+```
+
+### 4.1.1 Dashboard de Créditos (CreditosTab) ✅ PRODUÇÃO
+**Arquivo:** dentro de `ProspectSearchPage.tsx` (ou tab separado)
+**Exibe:** KPIs de consumo, top cargos prospectados, distribuição por motor (gemini/hunter/snov.io), performance por usuário, filtros por período (7d / 30d / 90d / todos).
+
+### 4.1.2 Prospect Chrome Extension v1.03 ✅ PRODUÇÃO
+**Fluxo:** Extensão captura resultados do Google Search (busca boolean LinkedIn) → envia para `/api/prospect-capture` → ProspectSearchPage exibe leads capturados.
+
+**Bugs resolvidos em v1.03:**
+- ✅ `user_id` chegava `null` no backend — `background.js` chamava API antes do `content-rms.js` ler `rms_user` do localStorage
+- ✅ Fix: `buscarUserIdDoRMS()` em `background.js` envia mensagem `GET_USER_ID` para o tab RMS-RAISA via `content-rms.js` antes de chamar a API
+- ✅ `manifest.json` atualizado: permissão `"tabs"` + `https://www.techfortirms.online/*` em `host_permissions` e `content_scripts`
+
+**Arquivos da extensão:** `background.js`, `content.js`, `content-rms.js`, `manifest.json`, `popup.html`, `popup.js`
+
+### 4.1.3 Preparar Campanha v1.1 ✅ PREVIEW/PRODUÇÃO
+**Arquivo:** `src/components/prospect/CampanhaPrep.tsx`
+**Posição no menu:** abaixo de "Meus Prospects"
+**Fluxo (4 etapas):**
+1. Selecionar leads (de Meus Prospects ou upload CSV externo)
+2. Configurar campanha (funil: ALOCAÇÃO / SERVICE CENTER / BPO)
+3. Enriquecer e validar (Gemini para dados empresa + inferência de email + validação cascata)
+4. Exportar CSV 48 colunas no formato Leads2B
+
+**Arquitetura de enriquecimento:**
+- Cache local → Hunter.io → Snov.io (valida apenas emails novos ou inferidos, preserva créditos)
+- `prospect-enrich-company.ts` — CNPJ/endereço via cnpj.ws
+- `prospect-infer-emails.ts` — padrão empresa (ex: nome.sobrenome@empresa.com)
+- `prospect-validate-emails.ts` — validação cascata
+
+**Formato de exportação:** CSV/XLS com 48 colunas (padrão Leads2B) — mesmo layout para importação manual ou via wizard.
+
+**Campos fixos no export:** etapa=`Novos Leads`, origem=`Campanha`, status=`ativo`, temperatura=`Frio`, país=`Brasil`. Campo `funil` preenchido apenas no wizard (não no export direto do Prospect Engine).
+
+**Permissões:** `podePrepararCampanha()` em `permissions.ts` v58.5 — Administrador, Gestão Comercial, SDR.
+
+**Visibilidade de leads:** Administrador e Gestão Comercial veem todos os prospects da equipe; SDR vê apenas os próprios.
 
 ### 4.2 CV Generator ✅ PRODUÇÃO
-**Biblioteca:** `docx-js`
+**Arquivos:** `api/gemini-cv-generator-v2.ts` (HTML/PDF) + `api/cv-generator-docx.ts` (DOCX)
 **Templates:** TechFor Simple | TechFor Detailed | T-Systems
 
-### 4.3 LinkedIn Chrome Extension v5.45+ ✅ PRODUÇÃO
-**Estratégia:** text-parsing (não CSS selectors)
-**Auto-refresh:** Supabase Realtime WebSocket + visibilitychange + evento `raisa-linkedin-import`
+**Ordem correta de seções — Template TechFor:**
+Dados Pessoais → Parecer Seleção → Resumo Profissional → Recomendação + Disponibilidade → Requisitos Mandatórios → Requisitos Diferenciais → Hard Skills → Formação Acadêmica → Formação Complementar → Idiomas → Histórico Profissional
+
+**Template T-Systems:**
+- Cover (Seção 1): logo TechFor, nome candidato (TeleGrotesk Headline Ultra 30pt branco), objetivo ({codigo_vaga} - {titulo_vaga}), blocos de cor (#F48FB1 rosa topo + #E20074 magenta fundo)
+- Corpo (Seção 2): Perfil, Hard Skills (tabela cabeçalho magenta), Parecer da Entrevista Técnica (bloco rosé #FCE8F3), Recomendação, Experiência, Idiomas, Formação, Informações Adicionais
+- Fontes: `TeleGrotesk Headline Ultra` (nome), `TeleGrotesk Headline` (objetivo), `Verdana` (corpo)
+- Background cover: tabelas com `ShadingType.CLEAR` + `fill` (docx não suporta background em paragráfo diretamente)
+
+**Bugs resolvidos:**
+- ✅ `EntrevistaComportamental.tsx` — useEffect init agora busca 5 tabelas em paralelo (`Promise.all`): `pessoas`, `pessoa_experiencias`, `pessoa_formacao`, `pessoa_idiomas`, `pessoa_skills`
+- ✅ `hard_skills_tabela` da vaga não sobrescreve skills do candidato
+- ✅ `motivo_saida` persistido em todos os 7 pontos de inserção
+- ✅ `templateSelecionado` lido corretamente no DOCX (não mais hardcoded como `'tsystems'`)
+- ✅ Resumo Profissional inserido após "Parecer Seleção" em ambos os geradores (HTML e DOCX)
+- ✅ iframe do preview com altura dinâmica (não mais `h-[700px] overflow-hidden`)
+- ✅ `cv_gerado` com lógica UPDATE/INSERT condicional (sem conflito 409)
+- ✅ Tabela `cv_template` em produção com registros `Techfor` e `T-Systems`
+- ✅ 10 colunas faltantes adicionadas à tabela `pessoas` em produção (bairro, cep, rg, data_nascimento, valor_hora_atual, pretensao_valor_hora, ja_trabalhou_pj, aceita_pj, possui_empresa, aceita_abrir_empresa)
+
+**Pendência de banco (PRODUÇÃO):**
+```sql
+-- ⚠️ AINDA NÃO EXECUTADO em produção:
+ALTER TABLE candidaturas ADD COLUMN motivo_sem_interesse TEXT;
+```
+
+### 4.3 LinkedIn Chrome Extension v5.47 ✅ PRODUÇÃO
+**Arquivo:** `content.js` da extensão LinkedIn
+**Estratégia:** text-parsing com H2-to-SECTION traversal (4 estratégias de fallback)
+**Auto-refresh:** Supabase Realtime WebSocket + `visibilitychange` + evento `raisa-linkedin-import`
+
+**Bug resolvido em v5.47:**
+- ✅ `normalizarLinkedInUrl()` reescrita com regex para extrair username canônico — previne duplicatas por variações de URL (com/sem `www`, trailing slash, parâmetros)
+- ✅ Normalização aplicada em `importar.ts` (backend) e na extensão (capture time)
+
+**SQL necessário:** `ALTER TABLE pessoas REPLICA IDENTITY FULL;`
 
 ### 4.4 Entrevistas Técnicas ✅ PRODUÇÃO
+**Fluxo:** Gemini gera perguntas personalizadas por vaga + CV → candidato responde → Gemini avalia + detecta uso de IA
+**Campo novo:** `parecer_entrevista_tecnica` — exibido exclusivamente no template T-Systems (entre Hard Skills e Recomendação)
 
 ### 4.5 Relatórios de Atividade (Consultores) ✅ PRODUÇÃO
+**Análise:** Gemini extrai behavioral flags, risco de saída (1–5), recomendações
 
 ### 4.6 Banco de Talentos v3.2 ✅ PRODUÇÃO
 **Auto-refresh triplo:**
 - Estratégia 1: Supabase Realtime WebSocket (INSERT/UPDATE/DELETE na tabela `pessoas`)
 - Estratégia 2: `visibilitychange` — refresh ao voltar para a aba
 - Estratégia 3: evento `raisa-linkedin-import` — extensão notifica explicitamente
+
 **SQL necessário:** `ALTER TABLE pessoas REPLICA IDENTITY FULL;`
 
-### 4.7 Perfil SDR ✅ PREVIEW / PRODUÇÃO
-**Status:** Deployado em 16/03/2026
-**Acesso:** exclusivo ao módulo Prospect (Buscar Leads, Meus Prospects, Consumo Créditos)
+### 4.7 Perfil SDR ✅ PRODUÇÃO
+**Status:** Deployado
+**Acesso:** exclusivo ao módulo Prospect (Buscar Leads, Meus Prospects, Consumo Créditos, Preparar Campanha)
 **Arquivos alterados:**
 - `src/types/types_users.ts` — `'SDR'` adicionado ao union type `UserRole`
-- `src/utils/permissions.ts` — SDR em `getPerfisPodeVer/Criar` + `podeUsarProspect()`
-- `src/components/layout/Sidebar.tsx` — SDR nos 3 itens Prospect + `temAcessoPROSPECT`
+- `src/utils/permissions.ts` — SDR em `getPerfisPodeVer/Criar` + `podeUsarProspect()` + `podePrepararCampanha()`
+- `src/components/layout/Sidebar.tsx` — SDR nos itens Prospect
 - `src/components/ManageUsers.tsx` — SDR em `allUserRoles` + badge teal
 - `src/App.tsx` — SDR redireciona para `prospect_search` ao logar (não vê Dashboard RMS)
 **Banco de dados:** nenhuma query necessária — `tipo_usuario` é `VARCHAR(50)` sem CHECK constraint
 
-### 4.8 Talent Finder 🔲 PENDENTE — PRÓXIMO MÓDULO
-**Status:** Decisões de design pendentes antes do desenvolvimento
+### 4.8 Agenda de Acompanhamento v1.0 ✅ PRODUÇÃO
+**Arquivo:** `src/components/AgendaAcompanhamento.tsx`
+**Posição no menu:** entre "Recomendações" e "Consultores"
+**Acesso:** Administrador, Gestão de R&S, Gestão de Pessoas
+**Ícone:** `fa-regular fa-calendar-check`
+
+**Funcionalidade:**
+- Distribui consultores ativos (`status === 'Ativo'`) nos dias úteis do mês
+- Consultores com score 4–5 (Alto/Crítico) ou novos (<45 dias) → **semanal** (1x por semana, 4 semanas)
+- Demais consultores → **mensal** (distribuídos uniformemente nos dias úteis)
+- Recalcula via `useMemo` ao mudar dados
+
+**Botão +Atividade:**
+- 🔵 Azul — pendente (padrão)
+- 🟢 Verde — atividade registrada hoje (detectado via `created_at` do relatório)
+- 🔴 Vermelho — atrasado (último relatório > 1 dia sem registro)
+- Clicar abre modal `AtividadesInserir`
+
+**Layout responsivo:**
+- Desktop: tabs "📅 Calendário / 👥 Consultores"
+- Mobile: 3 tabs (Hoje / Agenda / Consultores) com hamburger drawer em `App.tsx` + `isMobileDrawer` prop em `Sidebar.tsx`
+
+**Arquivos alterados:**
+- `src/components/AgendaAcompanhamento.tsx` — NOVO
+- `src/components/layout/Sidebar.tsx` — item de menu adicionado
+- `src/App.tsx` — import + case + hamburger drawer mobile
+- `src/types/types_models.ts` — `'agenda_acompanhamento'` adicionado ao union type `View`
+
+### 4.9 NovaCandidaturaModal v57.9+ ✅ PRODUÇÃO
+**Arquivo:** `src/components/raisa/NovaCandidaturaModal.tsx`
+**Hook:** `src/hooks/supabase/useRaisaCVSearch.ts`
+
+**Melhorias implementadas:**
+- **"Meus Candidatos":** busca via `ilike` no banco (debounce 400ms, ≥2 chars) — captura candidatos com `id_analista_rs=null` (importados via plugin LinkedIn)
+- **"Buscar Todos":** retorna todos os candidatos (`scoreMinimo:0`, `incluirIncompativeis:true`) com badge laranja "Sem compatibilidade" para score=0% e tags verdes/vermelhas de skills
+
+### 4.10 Candidaturas — Status "Sem Interesse" ✅ PREVIEW/PRODUÇÃO
+**Arquivos:** `src/components/raisa/DetalhesCandidaturaModal.tsx` + `src/components/raisa/Candidaturas.tsx`
+**Funcionalidade:** popup com 10 motivos de declínio, badge âmbar, 9º passo no progress bar
+**⚠️ Pendência de banco (PRODUÇÃO):**
+```sql
+ALTER TABLE candidaturas ADD COLUMN motivo_sem_interesse TEXT;
+```
+
+### 4.11 Talent Finder (Boolean Search Builder) ✅ PRODUÇÃO
+**Localização:** aba dentro de `src/components/linkedin/LinkedInImportPanel.tsx`
+**Funcionalidade:** Gemini 2.0 Flash gera 3 queries boolean otimizadas (`site:linkedin.com/in/` + `intitle:`) para busca manual no Google Search
+
+**Instrumentação de eventos (tabela `talent_finder_logs`):**
+- `gerar` — query gerada
+- `abrir` — link aberto no Google
+- `copiar` — query copiada
+- `captura` — leads capturados via extensão
+
+**TalentFinderStatsTab:** dashboard de estatísticas como aba entre "Pesquisar" e "Como Usar"
+
+**Decisão arquitetural:** Gemini Grounding abandonado para este módulo — retorna URLs de redirecionamento/agregadores, nunca URLs diretas do LinkedIn. Boolean Search + busca manual no Google é a arquitetura correta.
+
+### 4.12 Inteligência de Mercado (Módulo Conceitual) 🔲 ESTUDO PENDENTE
+**Status:** Proposta arquitetural definida, desenvolvimento não iniciado
+**Objetivo:** automatizar mapeamento de clientes de consultorias TI concorrentes
+
+**Arquitetura proposta (4 camadas):**
+1. Seed data de consultorias conhecidas
+2. Extração de nomes de clientes das páginas públicas via Gemini Search Grounding
+3. Inferência de domínios + scoring de confiança
+4. Matriz de cross-reference (Cliente × Consultoria e Consultoria × Cliente)
+
+**Modos operacionais:** quick scan (1 consultoria) | batch/overnight | visualização da matriz
+**Localização proposta:** nova aba "Inteligência" dentro do Prospect Finder
+**Build sugerido:** Fase 1 (single scan + matrix) → Fase 2 (batch + priority scoring)
 
 ---
 
@@ -147,7 +327,7 @@ Sem email:   not_found
 | Serviço | Uso | Variável de Ambiente |
 |---|---|---|
 | Gemini 2.5 Flash | Prospect Engine (Search Grounding) | `API_KEY` |
-| Gemini 2.0 Flash | CV, triagem, entrevistas, relatórios | `API_KEY` |
+| Gemini 2.0 Flash | CV, triagem, entrevistas, relatórios, Talent Finder | `API_KEY` |
 | Hunter.io | Email finder/enrichment (motor principal) | `HUNTER_API_KEY` |
 | Snov.io | Email finder (fallback quando Hunter falha) | `SNOVIO_USER_ID`, `SNOVIO_API_SECRET` |
 | Supabase | Banco de dados + Auth + Realtime | `SUPABASE_URL`, `SUPABASE_ANON_KEY` |
@@ -174,11 +354,38 @@ Sem email:   not_found
 | `prospect_leads` | Leads B2B salvos pelo Prospect Engine |
 | `relatorios_consultores` | Relatórios mensais de atividade |
 | `entrevistas` | Entrevistas técnicas geradas |
+| `cv_gerado` | CVs gerados por candidatura (UPDATE/INSERT condicional) |
+| `cv_template` | Templates de CV ativos (`Techfor`, `T-Systems`) |
+| `talent_finder_logs` | Logs de eventos do Talent Finder (gerar/abrir/copiar/captura) |
 
-### Constraints importantes — prospect_leads
+### Migrations executadas (produção)
 ```sql
--- motor CHECK constraint atual (inclui 'extension')
-CHECK (motor IN ('apollo', 'snovio', 'ambos', 'gemini', 'hunter', 'gemini+hunter', 'extension'));
+-- 05/03/2026 — Prospect Engine
+ALTER TABLE prospect_leads ADD COLUMN fonte_id_gemini TEXT;
+ALTER TABLE prospect_leads DROP CONSTRAINT prospect_leads_motor_check;
+ALTER TABLE prospect_leads ADD CONSTRAINT prospect_leads_motor_check
+  CHECK (motor IN ('apollo', 'snovio', 'ambos', 'gemini', 'hunter', 'gemini+hunter', 'extension'));
+
+-- 16/03/2026 — FK buscado_por corrigida
+-- prospect_leads.buscado_por referencia app_users(id) ON DELETE SET NULL
+
+-- 17/03/2026 — 10 colunas adicionadas à tabela pessoas
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS bairro TEXT;
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS cep TEXT;
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS rg TEXT;
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS data_nascimento DATE;
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS valor_hora_atual NUMERIC;
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS pretensao_valor_hora NUMERIC;
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS ja_trabalhou_pj BOOLEAN;
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS aceita_pj BOOLEAN;
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS possui_empresa BOOLEAN;
+ALTER TABLE pessoas ADD COLUMN IF NOT EXISTS aceita_abrir_empresa BOOLEAN;
+
+-- 17/03/2026 — Inseridos registros em cv_template
+INSERT INTO cv_template (nome, ...) VALUES ('Techfor', ...), ('T-Systems', ...);
+
+-- PENDENTES em produção:
+-- ALTER TABLE candidaturas ADD COLUMN motivo_sem_interesse TEXT;
 ```
 
 ### Regras importantes
@@ -186,6 +393,7 @@ CHECK (motor IN ('apollo', 'snovio', 'ambos', 'gemini', 'hunter', 'gemini+hunter
 - **`.single()`:** lança erro se não encontrar registro → usar `.maybeSingle()`
 - **Session Pooler:** usar connection string do Session Pooler quando direct connection falhar DNS
 - **REPLICA IDENTITY:** executar `ALTER TABLE pessoas REPLICA IDENTITY FULL` para Realtime funcionar
+- **Supabase ref ID produção:** 21 caracteres — CLI rejeita; usar Supabase Dashboard ou ticket de suporte para operações diretas
 
 ---
 
@@ -196,12 +404,13 @@ CHECK (motor IN ('apollo', 'snovio', 'ambos', 'gemini', 'hunter', 'gemini+hunter
 2. Citar o caminho hierárquico completo do arquivo
 3. Não agrupar em ZIP
 4. Conferir lista de arquivos antes de entregar
-5. Comandos Git sempre para ambiente PREVIEW (PowerShell Windows)
+5. Comandos Git sempre em bloco único copiável, ambiente PREVIEW (PowerShell Windows)
 6. Modificações cirúrgicas — não afetar código existente
 7. Nunca modificar layouts/designs sem aprovação prévia
 8. Sempre chamar backend (`/api/gemini-analyze`) em vez de API diretamente no frontend
 9. Soluções definitivas — não contornos temporários
 10. Investigar nomes de colunas/tabelas antes de criar queries
+11. Versionar arquivos com badges visíveis durante testes (ex: `🔧 v1.1-trace`) para confirmar deploy correto
 
 ### Git Workflow
 ```powershell
@@ -238,7 +447,7 @@ npx vercel ls   # pegar URL do deployment
 npx vercel redeploy https://rms-raisa-[id]-techfor.vercel.app
 
 # Trocar de team
-npx vercel switch   # selecionar Techfor (techfor)
+npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 ```
 
 ---
@@ -249,20 +458,40 @@ npx vercel switch   # selecionar Techfor (techfor)
 |---|---|
 | Apollo Free Tier não filtra domain+location para BR | Não revisitar Apollo |
 | Gemini thinkingBudget muito baixo (<1024) faz modelo desistir | Manter em 4096 |
-| LinkedIn DOM muda frequentemente | Usar text-parsing, nunca CSS selectors |
+| Gemini Grounding não retorna URLs diretas do LinkedIn | Usar Boolean Search Builder (Talent Finder) — busca manual no Google |
+| LinkedIn DOM muda frequentemente | Usar text-parsing/H2 traversal, nunca CSS selectors |
 | Supabase `.single()` estoura em query vazia | Usar `.maybeSingle()` |
 | RLS sem policies bloqueia silenciosamente | Verificar RLS em erros 403 |
 | Vercel dashboard para env vars é instável | Usar Vercel CLI |
 | `echo \|` no PowerShell adiciona `\r\n` às env vars | Usar prompt interativo do CLI |
-| `git push origin main` rejeitado após merge | Sempre `git pull origin main --no-rebase` antes do push (script update-context.js commita no main automaticamente) |
+| `git push origin main` rejeitado após merge | Sempre `git pull origin main --no-rebase` antes do push |
 | Timeout 504 no Hunter com muitos prospects | Processamento paralelo em lotes de 4 via Promise.all |
-| Snov.io `taskHash` não encontrado | `task_hash` está em `startData.data.task_hash` (objeto simples, não array) |
+| Snov.io `taskHash` não encontrado | `task_hash` está em `startData.data.task_hash` |
 | `node_modules` no Git quebra Knowledge Base | `.gitignore` + `.claudeignore` corretos |
-| Vercel CLI `switch` — "cannot set Personal Account as scope" | Usar `npx vercel switch` sem parâmetros e selecionar Techfor |
+| Vercel CLI `switch` erro "Personal Account" | Usar `npx vercel switch` sem parâmetros |
+| Supabase produção ref ID 21 chars — CLI rejeita | Usar Dashboard; abrir ticket de suporte |
+| Dois arquivos com mesmo nome em pastas diferentes | Verificar imports; Vite compila o importado, não o editado |
+| `cv_gerado` com registro stale bloqueia re-extração | Deletar registro para forçar nova extração pelo Gemini |
+| LinkedIn duplicatas por variação de URL | `normalizarLinkedInUrl()` com regex extrai username canônico |
+| `user_id` null na Prospect Extension | `buscarUserIdDoRMS()` busca ID antes da chamada API |
+| Extensão Chrome não capturava de `www.techfortirms.online` | Adicionar URL com `www.` em `host_permissions` e `content_scripts` |
 
 ---
 
-## 9. Especialidades Ativas (Claude)
+## 9. Backlog / Pendências
+
+| Item | Prioridade | Detalhes |
+|---|---|---|
+| `motivo_sem_interesse` — migration produção | 🔴 Alta | `ALTER TABLE candidaturas ADD COLUMN motivo_sem_interesse TEXT;` |
+| Remover `LinkedInImportPanel.tsx` legado | 🟡 Média | `src/components/raisa/LinkedInImportPanel.tsx` |
+| `podeUsarLinkedIn` para Gestão Comercial | 🟡 Média | Decisão pendente com Messias |
+| Inteligência de Mercado | 🟢 Baixa | Arquitetura definida, build não iniciado |
+| Talent Finder pós-busca | 🟢 Baixa | Definir ações após captura de leads |
+| Testar Snov.io fallback com Hunter zerado | 🟡 Média | Validação em ambiente real |
+
+---
+
+## 10. Especialidades Ativas (Claude)
 
 | Código | Especialidade | Quando usar |
 |---|---|---|

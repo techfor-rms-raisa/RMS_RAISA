@@ -36,16 +36,21 @@ const HistoricoAtividadesModal: React.FC<HistoricoAtividadesModalProps> = ({
     return reportsData
       .filter(report => {
         try {
-          const reportDate = new Date(report.createdAt);
+          // u2705 FIX: Supabase retorna created_at (snake_case), dados locais usam createdAt (camelCase)
+          const dateStr = (report as any).created_at || report.createdAt;
+          if (!dateStr) return true;
+          const reportDate = new Date(dateStr);
           return reportDate >= ninetyDaysAgo && reportDate <= today;
         } catch (error) {
-          console.warn('⚠️ Erro ao processar data do relatório:', error);
-          return false;
+          console.warn("⚠️ Erro ao processar data do relatório:", error);
+          return true;
         }
       })
       .sort((a, b) => {
         try {
-          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          const dateStrA = (a as any).created_at || a.createdAt || "";
+          const dateStrB = (b as any).created_at || b.createdAt || "";
+          return new Date(dateStrB).getTime() - new Date(dateStrA).getTime();
         } catch {
           return 0;
         }
@@ -166,8 +171,8 @@ const HistoricoAtividadesModal: React.FC<HistoricoAtividadesModalProps> = ({
             <div className="space-y-4">
               {reportsLast90Days.map((report, index) => {
                 // ✅ CORREÇÃO: Priorizar content (original) sobre summary (resumo)
-                const conteudoExibir = report.content || report.summary || 'Conteúdo não disponível';
-                const temResumoSeparado = report.summary && report.content && report.summary !== report.content;
+                const conteudoExibir = (report as any).relatorio || report.content || report.summary || 'Conteúdo não disponível';
+                const temResumoSeparado = report.summary && ((report as any).relatorio || report.content) && report.summary !== ((report as any).relatorio || report.content);
                 
                 return (
                   <div 
@@ -185,15 +190,15 @@ const HistoricoAtividadesModal: React.FC<HistoricoAtividadesModalProps> = ({
                             {monthNames[report.month - 1]} {report.year}
                           </span>
                           <p className="text-xs text-gray-500 mt-0.5">
-                            {formatDate(report.createdAt)}
+                            {formatDate((report as any).created_at || report.createdAt || '')}
                           </p>
                         </div>
                       </div>
                       <div 
                         className="px-4 py-1.5 rounded-full text-white text-xs font-bold shadow-md"
-                        style={{ backgroundColor: getScoreColor(report.riskScore) }}
+                        style={{ backgroundColor: getScoreColor((report as any).risk_score ?? report.riskScore) }}
                       >
-                        {getScoreLabel(report.riskScore)} • {report.riskScore}
+                        {getScoreLabel((report as any).risk_score ?? report.riskScore)} • {(report as any).risk_score ?? report.riskScore}
                       </div>
                     </div>
 
