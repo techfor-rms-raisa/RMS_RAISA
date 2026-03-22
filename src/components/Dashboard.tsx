@@ -472,6 +472,8 @@ const Dashboard: React.FC<DashboardProps> = ({
             <option value="all">Todos os Consultores</option>
             {consultants
               .filter(c => {
+                // Filtro por ano
+                if (c.ano_vigencia !== null && c.ano_vigencia !== undefined && c.ano_vigencia !== selectedYear) return false;
                 // Filtro por gestor (se selecionado)
                 if (selectedManager !== 'all' && c.gestor_imediato_id !== parseInt(selectedManager)) return false;
                 // Filtro por cliente (via gestor_imediato_id → usuariosCliente → cliente)
