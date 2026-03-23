@@ -82,6 +82,73 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
         return fullText;
     };
 
+    // ✅ v2.1: Extração com coordenadas X — identifica colunas do rodapé
+    // Retorna mapa de coluna → nome baseado na posição horizontal de cada item
+    const extractRodapeByPosition = async (file: File): Promise<Record<string, string>> => {
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjsLib.getDocument(arrayBuffer);
+            const pdf = await loadingTask.promise;
+            
+            // Pegar a última página (rodapé geralmente está na última)
+            const page = await pdf.getPage(pdf.numPages);
+            const textContent = await page.getTextContent();
+            const viewport = page.getViewport({ scale: 1.0 });
+            const pageWidth = viewport.width;
+            
+            // Mapear headers do rodapé para suas posições X relativas (0-100%)
+            // Baseado na ficha padrão TechFor:
+            // DATA EMISSÃO (≈0-20%) | RECURSOS HUMANOS (≈20-40%) | GERENTE COMERCIAL (≈40-60%) | DIRETORIA (≈60-80%) | GESTÃO DE PESSOAS (≈80-100%)
+            const RODAPE_HEADERS = [
+                { key: 'data_emissao',        label: 'DATA EMISSÃO',       xMin: 0,   xMax: 0.22 },
+                { key: 'recursos_humanos',     label: 'RECURSOS HUMANOS',   xMin: 0.20, xMax: 0.42 },
+                { key: 'gerente_comercial',    label: 'GERENTE COMERCIAL',  xMin: 0.40, xMax: 0.62 },
+                { key: 'diretoria',            label: 'DIRETORIA',          xMin: 0.60, xMax: 0.78 },
+                { key: 'gestao_de_pessoas',    label: 'GESTÃO DE PESSOAS',  xMin: 0.76, xMax: 1.00 },
+            ];
+            
+            // Coletar todos os itens de texto com posição X normalizada
+            const items: { str: string; xRel: number; y: number }[] = [];
+            for (const item of textContent.items as any[]) {
+                if (!item.str?.trim()) continue;
+                const xRel = item.transform[4] / pageWidth; // posição X relativa (0-1)
+                const y = item.transform[5]; // posição Y
+                items.push({ str: item.str.trim(), xRel, y });
+            }
+            
+            // Identificar a linha dos HEADERS do rodapé (linha que contém "RECURSOS HUMANOS")
+            const rhItem = items.find(it => it.str.toUpperCase().includes('RECURSOS HUMANOS'));
+            if (!rhItem) {
+                console.log('⚠️ Rodapé não encontrado por posição');
+                return {};
+            }
+            
+            // Pegar itens na mesma faixa Y (± 8px) que os headers → são os headers
+            // Pegar itens na linha de valores (Y menor que os headers, dentro de ±20px)
+            const headerY = rhItem.y;
+            const headerItems = items.filter(it => Math.abs(it.y - headerY) < 8);
+            const valueItems  = items.filter(it => Math.abs(it.y - (headerY - 18)) < 12);
+            
+            console.log('📍 Headers encontrados por posição:', headerItems.map(h => `${h.str}(x=${h.xRel.toFixed(2)})`).join(', '));
+            console.log('📍 Valores encontrados por posição:', valueItems.map(v => `${v.str}(x=${v.xRel.toFixed(2)})`).join(', '));
+            
+            // Mapear cada valor à sua coluna pelo X
+            const result: Record<string, string> = {};
+            for (const col of RODAPE_HEADERS) {
+                const val = valueItems.find(it => it.xRel >= col.xMin && it.xRel < col.xMax);
+                if (val) {
+                    result[col.key] = val.str;
+                    console.log(`✅ Coluna ${col.key}: "${val.str}" (x=${val.xRel.toFixed(2)})`);
+                }
+            }
+            
+            return result;
+        } catch (err) {
+            console.warn('⚠️ Extração por posição falhou, usando fallback texto:', err);
+            return {};
+        }
+    };
+
     // ✅ FIX v1.8: findUserByName com filtro opcional de tipo_usuario
     // Para Analista R&S, só busca em users com tipo correto — evita confundir com Gestão de Pessoas
     const findUserByName = (name: string, tiposPermitidos?: string[]): User | null => {
@@ -132,6 +199,12 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
 
             const text = await extractTextFromPDF(file);
             
+            // ✅ v2.1: Extração por coordenadas X (mais precisa para o rodapé)
+            const rodapePosicional = await extractRodapeByPosition(file);
+            if (rodapePosicional.recursos_humanos) {
+                console.log(`✅ RH por coordenada X: "${rodapePosicional.recursos_humanos}"`);
+            }
+            
             console.log('📄 Texto extraído do PDF (primeiras 2000 chars):', text.substring(0, 2000));
             
             // ===== PARSE FIELDS =====
@@ -165,7 +238,11 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let faturavel = true;
             let faturavelConfirmado = false;
             let observacoesStr = '';
-            let recursosHumanosStr = '';
+            // ✅ v2.1: Usar valor extraído por posição X se disponível (mais confiável)
+            let recursosHumanosStr = rodapePosicional.recursos_humanos || '';
+            if (recursosHumanosStr) {
+                console.log(`📍 RH inicializado por coordenada: "${recursosHumanosStr}"`);
+            }
             
             // ✅ FIX v1.4: Coletar apenas emails CORPORATIVOS do gestor/cliente para excluir
             // Emails pessoais (@gmail, @hotmail etc) NUNCA são excluídos — podem ser do consultor
