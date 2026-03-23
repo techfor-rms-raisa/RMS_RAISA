@@ -726,6 +726,19 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     };
 
     // ============================================
+    // PAGINAÇÃO — Leads Salvos
+    // ============================================
+    const totalPaginas = Math.ceil(leadsSalvos.length / ITENS_POR_PAGINA);
+    const inicioPagina = (paginaAtual - 1) * ITENS_POR_PAGINA;
+    const fimPagina    = inicioPagina + ITENS_POR_PAGINA;
+    const leadsPagina  = leadsSalvos.slice(inicioPagina, fimPagina);
+
+    const irParaPagina = (pagina: number) => {
+        setPaginaAtual(pagina);
+        document.getElementById('leads-salvos-topo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    // ============================================
     // RENDER
     // ============================================
     return (
@@ -1235,19 +1248,6 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         {/* ══════════════════════════════════════════ */}
         {abaAtiva === 'salvos' && (
         <>
-            {/* Ref para scroll topo */}
-            {(() => {
-                // Calcular paginação
-                const totalPaginas = Math.ceil(leadsSalvos.length / ITENS_POR_PAGINA);
-                const inicio = (paginaAtual - 1) * ITENS_POR_PAGINA;
-                const fim = inicio + ITENS_POR_PAGINA;
-                const leadsPagina = leadsSalvos.slice(inicio, fim);
-
-                const irParaPagina = (pagina: number) => {
-                    setPaginaAtual(pagina);
-                    // Scroll suave para o topo da seção
-                    document.getElementById('leads-salvos-topo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                };
             {/* Filtros */}
             <div id="leads-salvos-topo" className="flex flex-wrap gap-3 mb-4">
                 <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
@@ -1462,7 +1462,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                         <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
                             {/* Info */}
                             <span className="text-xs text-gray-500">
-                                {inicio + 1}–{Math.min(fim, leadsSalvos.length)} de <strong>{leadsSalvos.length}</strong> leads
+                                {inicioPagina + 1}–{Math.min(fimPagina, leadsSalvos.length)} de <strong>{leadsSalvos.length}</strong> leads
                             </span>
 
                             {/* Navegação */}
@@ -1535,9 +1535,6 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     )}
                 </div>
             )}
-            {/* Fechar bloco de paginação IIFE */}
-            </>);
-            })()}
         </>
         )}
     </div>
