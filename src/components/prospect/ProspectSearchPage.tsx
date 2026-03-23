@@ -80,6 +80,12 @@ interface ProspectLead {
     senioridade:    string | null;
     departamentos:  string[];
     gravado_por_nome: string | null;
+    // Campos CV Extract
+    pessoa_id:      number | null;
+    candidato_nome: string | null;
+    exportado_por:  number | null;
+    exportado_em:   string | null;
+    exportado_por_nome?: string | null;
 }
 
 // ============================================
@@ -144,6 +150,8 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [loadingSalvos, setLoadingSalvos]             = useState(false);
     const [filtroStatus, setFiltroStatus]               = useState('');
     const [filtroEmpresa, setFiltroEmpresa]             = useState('');
+    const [filtroOrigem, setFiltroOrigem]               = useState(''); // NOVO: filtro por origem CV
+    const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null); // NOVO: controle de loading
 
     // Seleção
     const [todosSelecionados, setTodosSelecionados]     = useState(false);
@@ -433,6 +441,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             const params = new URLSearchParams();
             if (filtroStatus)  params.set('status',  filtroStatus);
             if (filtroEmpresa) params.set('empresa', filtroEmpresa);
+            if (filtroOrigem)  params.set('motor',   filtroOrigem); // NOVO: filtro por motor/origem
             const res  = await fetch(`/api/prospect-leads?${params}`);
             const data = await res.json();
             if (data.success) setLeadsSalvos(data.leads || []);
@@ -441,7 +450,40 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         } finally {
             setLoadingSalvos(false);
         }
-    }, [filtroStatus, filtroEmpresa]);
+    }, [filtroStatus, filtroEmpresa, filtroOrigem]);
+
+    // ============================================
+    // MARCAR COMO EXPORTADO (leads de CV)
+    // ============================================
+    const marcarExportado = useCallback(async (leadId: number) => {
+        if (!currentUser?.id) return;
+        setMarcandoExportado(leadId);
+        try {
+            const res = await fetch('/api/prospect-cv-extract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    modo:    'marcar_exportado',
+                    lead_id: leadId,
+                    user_id: currentUser.id,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setLeadsSalvos(prev => prev.map(l =>
+                    l.id === leadId
+                        ? { ...l, exportado_por: currentUser.id, exportado_em: new Date().toISOString(), exportado_por_nome: currentUser.nome_usuario || 'Você' }
+                        : l
+                ));
+                setToastMsg({ tipo: 'ok', msg: 'Lead marcado como exportado!' });
+                setTimeout(() => setToastMsg(null), 3000);
+            }
+        } catch (e) {
+            console.error('Erro ao marcar exportado:', e);
+        } finally {
+            setMarcandoExportado(null);
+        }
+    }, [currentUser]);
 
     useEffect(() => {
         if (abaAtiva === 'salvos') carregarLeadsSalvos();
@@ -1166,6 +1208,19 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     <option value="qualificado">Qualificado</option>
                     <option value="descartado">Descartado</option>
                 </select>
+                {/* NOVO: filtro por origem */}
+                <select value={filtroOrigem} onChange={e => setFiltroOrigem(e.target.value)}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    <option value="">Todas as origens</option>
+                    <option value="gemini">🤖 Gemini AI</option>
+                    <option value="hunter">🎯 Hunter.io</option>
+                    <option value="gemini+hunter">🤖+🎯 Gemini+Hunter</option>
+                    <option value="extension">🔌 Extensão Chrome</option>
+                    <option value="cv_alocacao">👨‍💻 CV Origem Alocação</option>
+                    <option value="cv_infra">🖥️ CV Origem Infra</option>
+                    <option value="cv_ia_ml">🧠 CV Origem IA/ML</option>
+                    <option value="cv_sap">⚙️ CV Origem SAP</option>
+                </select>
                 <input
                     type="text"
                     value={filtroEmpresa}
@@ -1182,6 +1237,32 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-1">
                     <i className="fa-solid fa-file-excel"></i>
                     Exportar XLS ({leadsSalvos.length})
+                </button>
+                {/* NOVO: botão carga bulk CV */}
+                <button
+                    onClick={async () => {
+                        if (!currentUser?.id) return;
+                        if (!confirm('Iniciar carga de empresas dos CVs dos candidatos para a base de Prospects?\n\nEste processo pode levar alguns minutos.')) return;
+                        setToastMsg({ tipo: 'ok', msg: '⏳ Carga iniciada — aguarde...' });
+                        const res = await fetch('/api/prospect-cv-extract', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ modo: 'bulk', user_id: currentUser.id }),
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            setToastMsg({ tipo: 'ok', msg: `✅ Carga concluída: ${data.leads_inseridos} leads inseridos de ${data.processados} candidatos.` });
+                            setTimeout(() => { setToastMsg(null); carregarLeadsSalvos(); }, 5000);
+                        } else {
+                            setToastMsg({ tipo: 'erro', msg: `Erro na carga: ${data.error}` });
+                            setTimeout(() => setToastMsg(null), 4000);
+                        }
+                    }}
+                    className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1"
+                    title="Extrair empresas dos CVs dos candidatos para a base de Prospects"
+                >
+                    <i className="fa-solid fa-file-import"></i>
+                    Importar CVs
                 </button>
             </div>
 
@@ -1206,8 +1287,9 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">LINKEDIN</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">MOTOR</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">GRAVADO POR</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">EXPORTADO</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
                                 </tr>
@@ -1226,10 +1308,33 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                                 </a>
                                             ) : '—'}
                                         </td>
+                                        {/* ORIGEM — motor com badges distintos para CV */}
                                         <td className="px-3 py-2 text-center">
-                                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
-                                                {lead.motor || 'gemini'}
-                                            </span>
+                                            {(() => {
+                                                const m = lead.motor || 'gemini';
+                                                const badges: Record<string, { label: string; cls: string }> = {
+                                                    'gemini':        { label: '🤖 Gemini',       cls: 'bg-blue-100 text-blue-700' },
+                                                    'hunter':        { label: '🎯 Hunter',        cls: 'bg-orange-100 text-orange-700' },
+                                                    'gemini+hunter': { label: '🤖+🎯 G+H',        cls: 'bg-amber-100 text-amber-700' },
+                                                    'extension':     { label: '🔌 Extensão',      cls: 'bg-gray-100 text-gray-600' },
+                                                    'cv_alocacao':   { label: '👨‍💻 CV Alocação',   cls: 'bg-indigo-100 text-indigo-700' },
+                                                    'cv_infra':      { label: '🖥️ CV Infra',       cls: 'bg-teal-100 text-teal-700' },
+                                                    'cv_ia_ml':      { label: '🧠 CV IA/ML',       cls: 'bg-purple-100 text-purple-700' },
+                                                    'cv_sap':        { label: '⚙️ CV SAP',          cls: 'bg-yellow-100 text-yellow-700' },
+                                                };
+                                                const b = badges[m] || { label: m, cls: 'bg-gray-100 text-gray-500' };
+                                                return (
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${b.cls}`}>
+                                                        {b.label}
+                                                    </span>
+                                                );
+                                            })()}
+                                            {/* Candidato de origem (só para leads de CV) */}
+                                            {lead.candidato_nome && (
+                                                <div className="text-[9px] text-gray-400 mt-0.5 truncate max-w-[100px]" title={lead.candidato_nome}>
+                                                    {lead.candidato_nome.split(' ').slice(0, 2).join(' ')}
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="px-3 py-2 text-center">
                                             {lead.gravado_por_nome ? (
@@ -1238,6 +1343,33 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                                 </span>
                                             ) : (
                                                 <span className="text-gray-300 text-xs">—</span>
+                                            )}
+                                        </td>
+                                        {/* EXPORTADO — botão ou badge */}
+                                        <td className="px-3 py-2 text-center">
+                                            {lead.exportado_em ? (
+                                                <div className="flex flex-col items-center gap-0.5">
+                                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium whitespace-nowrap">
+                                                        ✅ Exportado
+                                                    </span>
+                                                    {lead.exportado_por_nome && (
+                                                        <span className="text-[9px] text-gray-400">
+                                                            {lead.exportado_por_nome.split(' ')[0]}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    onClick={() => marcarExportado(lead.id)}
+                                                    disabled={marcandoExportado === lead.id}
+                                                    className="text-[10px] px-2 py-0.5 rounded-full border border-dashed border-gray-300 text-gray-400 hover:border-green-400 hover:text-green-600 transition-colors disabled:opacity-50 whitespace-nowrap"
+                                                    title="Marcar como exportado para Leads2B"
+                                                >
+                                                    {marcandoExportado === lead.id
+                                                        ? <i className="fa-solid fa-spinner fa-spin"></i>
+                                                        : '↗ Marcar exportado'
+                                                    }
+                                                </button>
                                             )}
                                         </td>
                                         <td className="px-3 py-2 text-center">

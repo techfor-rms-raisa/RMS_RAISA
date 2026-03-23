@@ -21,7 +21,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Use GET.' });
     }
 
-    const { status, empresa } = req.query as Record<string, string>;
+    const { status, empresa, motor } = req.query as Record<string, string>;
 
     try {
         let query = supabase
@@ -33,6 +33,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 senioridade, departamentos, status,
                 criado_em, atualizado_em,
                 buscado_por,
+                pessoa_id,
+                candidato_nome,
+                exportado_por,
+                exportado_em,
                 app_users!prospect_leads_buscado_por_fkey (
                     nome_usuario
                 )
@@ -41,6 +45,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .limit(500);
 
         if (status)  query = query.eq('status', status);
+        if (motor)   query = query.eq('motor', motor);  // NOVO: filtro por motor/origem
         if (empresa) query = query.or(
             `empresa_nome.ilike.%${empresa}%,empresa_dominio.ilike.%${empresa}%`
         );
@@ -57,8 +62,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Normalizar: achatar o join app_users → campo gravado_por_nome
         const leads = (data || []).map((row: any) => ({
             ...row,
-            gravado_por_nome: row.app_users?.nome_usuario || null,
-            app_users: undefined, // remover objeto aninhado da resposta
+            gravado_por_nome:   row.app_users?.nome_usuario || null,
+            exportado_por_nome: null, // será enriquecido se necessário
+            app_users: undefined,
         }));
 
         return res.status(200).json({ success: true, leads, total: leads.length });

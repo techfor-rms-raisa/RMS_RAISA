@@ -1,0 +1,368 @@
+/**
+ * api/prospect-cv-extract.ts
+ *
+ * Extrai empresas do histórico de experiências de candidatos (pessoa_experiencias)
+ * e insere como leads na tabela prospect_leads com motor = cv_alocacao | cv_infra | cv_ia_ml | cv_sap
+ *
+ * Modos de operação:
+ * - POST { modo: 'bulk' }           → carga inicial de todos os candidatos
+ * - POST { modo: 'pessoa', pessoa_id } → extração de um candidato específico (trigger automático)
+ * - POST { modo: 'marcar_exportado', lead_id, user_id } → marcar lead como exportado
+ *
+ * Versão: 1.0
+ * Data: 23/03/2026
+ */
+
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { createClient } from '@supabase/supabase-js';
+
+export const config = { maxDuration: 60 };
+
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+// ─── TIPOS ────────────────────────────────────────────────────────────────────
+
+type MotorCV = 'cv_alocacao' | 'cv_infra' | 'cv_ia_ml' | 'cv_sap';
+
+interface PessoaExperiencia {
+  empresa: string;
+  cargo: string;
+  data_inicio: string | null;
+  data_fim: string | null;
+}
+
+interface PessoaSkill {
+  skill: string;
+}
+
+interface PessoaData {
+  id: number;
+  nome_completo: string;
+  email: string | null;
+  linkedin_url: string | null;
+  cidade: string | null;
+  estado: string | null;
+  experiencias: PessoaExperiencia[];
+  skills: PessoaSkill[];
+}
+
+// ─── KEYWORDS DE CLASSIFICAÇÃO ────────────────────────────────────────────────
+
+const KEYWORDS: Record<MotorCV, string[]> = {
+  cv_sap: [
+    'sap', 'abap', 'basis', 'fiori', 'hana', 's/4', 's4hana', 'ecc',
+    'fi/co', 'fi co', 'sd', 'mm', 'pp', 'wm', 'pm', 'ps', 'hr', 'hcm',
+    'successfactors', 'ariba', 'concur', 'bw', 'bi sap',
+  ],
+  cv_infra: [
+    'infraestrutura', 'infrastructure', 'cloud', 'aws', 'azure', 'gcp',
+    'google cloud', 'redes', 'network', 'firewall', 'vpn', 'vmware',
+    'virtualização', 'datacenter', 'data center', 'linux', 'windows server',
+    'active directory', 'siem', 'soc', 'cyber', 'segurança', 'security',
+    'pentest', 'iso 27001', 'nist', 'devops', 'sre', 'kubernetes', 'docker',
+    'terraform', 'ansible', 'monitoramento', 'zabbix', 'nagios',
+  ],
+  cv_ia_ml: [
+    'dados', 'data', 'machine learning', 'ml', 'ia', 'ai', 'inteligência artificial',
+    'ciência de dados', 'data science', 'engenharia de dados', 'data engineer',
+    'analytics', 'bi', 'business intelligence', 'power bi', 'tableau', 'qlik',
+    'spark', 'hadoop', 'kafka', 'airflow', 'dbt', 'databricks', 'snowflake',
+    'dba', 'banco de dados', 'oracle', 'sql server', 'postgresql', 'mysql',
+    'mongodb', 'redis', 'etl', 'pipeline', 'python', 'r language',
+    'deep learning', 'nlp', 'llm',
+  ],
+  cv_alocacao: [
+    'desenvolvedor', 'developer', 'desenvolvimento', 'development',
+    'java', '.net', 'dotnet', 'c#', 'c++', 'python', 'javascript',
+    'typescript', 'react', 'angular', 'vue', 'node', 'nodejs',
+    'php', 'ruby', 'golang', 'kotlin', 'swift', 'flutter', 'dart',
+    'mobile', 'android', 'ios', 'fullstack', 'full stack', 'backend',
+    'frontend', 'front-end', 'back-end', 'software engineer',
+    'engenheiro de software', 'programador', 'arquiteto de software',
+    'microservices', 'api rest', 'springboot', 'spring boot',
+  ],
+};
+
+// ─── CLASSIFICAÇÃO DO PERFIL ──────────────────────────────────────────────────
+
+function classificarPerfil(skills: string[], cargos: string[]): MotorCV | null {
+  const texto = [...skills, ...cargos].join(' ').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, ''); // remove acentos
+
+  // Contar matches por categoria
+  const contagem: Record<MotorCV, number> = {
+    cv_sap: 0,
+    cv_infra: 0,
+    cv_ia_ml: 0,
+    cv_alocacao: 0,
+  };
+
+  for (const [motor, keywords] of Object.entries(KEYWORDS) as [MotorCV, string[]][]) {
+    for (const kw of keywords) {
+      if (texto.includes(kw)) {
+        contagem[motor]++;
+      }
+    }
+  }
+
+  // Perfil dominante = maior contagem
+  let melhorMotor: MotorCV | null = null;
+  let melhorCount = 0;
+
+  for (const [motor, count] of Object.entries(contagem) as [MotorCV, number][]) {
+    if (count > melhorCount) {
+      melhorMotor = motor;
+      melhorCount = count;
+    }
+  }
+
+  // Mínimo de 1 match para classificar
+  return melhorCount >= 1 ? melhorMotor : null;
+}
+
+// ─── EXTRAIR DOMÍNIO DE EMAIL ─────────────────────────────────────────────────
+
+function extrairDominio(email: string | null): string {
+  if (!email) return '';
+  const parts = email.split('@');
+  return parts.length > 1 ? parts[1].toLowerCase().trim() : '';
+}
+
+// ─── PROCESSAR UMA PESSOA ────────────────────────────────────────────────────
+
+async function processarPessoa(pessoa: PessoaData, userId: number): Promise<{
+  inseridos: number;
+  ignorados: number;
+  empresas: string[];
+}> {
+  const skills = pessoa.skills.map(s => s.skill || '');
+  const cargos = pessoa.experiencias.map(e => e.cargo || '');
+  const motor = classificarPerfil(skills, cargos);
+
+  if (!motor) {
+    return { inseridos: 0, ignorados: 0, empresas: [] };
+  }
+
+  // Deduplica empresas (pode aparecer 2x em experiências diferentes)
+  const empresasUnicas = new Map<string, PessoaExperiencia>();
+  for (const exp of pessoa.experiencias) {
+    const chave = (exp.empresa || '').trim().toLowerCase();
+    if (chave.length < 3) continue;
+    if (!empresasUnicas.has(chave)) {
+      empresasUnicas.set(chave, exp);
+    }
+  }
+
+  if (empresasUnicas.size === 0) {
+    return { inseridos: 0, ignorados: 0, empresas: [] };
+  }
+
+  const dominioPessoa = extrairDominio(pessoa.email);
+  const rows: any[] = [];
+  const nomesEmpresas: string[] = [];
+
+  for (const [, exp] of empresasUnicas) {
+    const empresaNome = exp.empresa.trim();
+    nomesEmpresas.push(empresaNome);
+
+    // Verificar se já existe esse par pessoa+empresa na tabela
+    const { data: jaExiste } = await supabase
+      .from('prospect_leads')
+      .select('id')
+      .eq('pessoa_id', pessoa.id)
+      .ilike('empresa_nome', empresaNome)
+      .limit(1);
+
+    if (jaExiste && jaExiste.length > 0) continue;
+
+    rows.push({
+      buscado_por:      userId,
+      pessoa_id:        pessoa.id,
+      candidato_nome:   pessoa.nome_completo,
+      motor:            motor,
+      nome_completo:    pessoa.nome_completo,
+      primeiro_nome:    pessoa.nome_completo.split(' ')[0] || '',
+      ultimo_nome:      pessoa.nome_completo.split(' ').slice(1).join(' ') || '',
+      cargo:            exp.cargo || null,
+      email:            pessoa.email || null,
+      email_status:     pessoa.email ? 'provavel' : null,
+      linkedin_url:     pessoa.linkedin_url || null,
+      empresa_nome:     empresaNome,
+      empresa_dominio:  dominioPessoa || null,
+      cidade:           pessoa.cidade || null,
+      estado:           pessoa.estado || null,
+      pais:             'Brasil',
+      departamentos:    [],
+      filtros_busca:    { origem: 'cv_extract', pessoa_id: pessoa.id },
+      enriquecido:      false,
+      status:           'novo',
+      exportado_por:    null,
+      exportado_em:     null,
+    });
+  }
+
+  if (rows.length === 0) {
+    return { inseridos: 0, ignorados: empresasUnicas.size, empresas: nomesEmpresas };
+  }
+
+  const { data, error } = await supabase
+    .from('prospect_leads')
+    .insert(rows)
+    .select('id');
+
+  if (error) {
+    console.error(`❌ [cv-extract] Erro ao inserir pessoa ${pessoa.id}:`, error.message);
+    return { inseridos: 0, ignorados: rows.length, empresas: nomesEmpresas };
+  }
+
+  return {
+    inseridos: data?.length || 0,
+    ignorados: empresasUnicas.size - (data?.length || 0),
+    empresas: nomesEmpresas,
+  };
+}
+
+// ─── HANDLER ─────────────────────────────────────────────────────────────────
+
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Use POST.' });
+
+  const { modo, pessoa_id, lead_id, user_id } = req.body;
+
+  // ── MODO: marcar exportado ──────────────────────────────────────────────────
+  if (modo === 'marcar_exportado') {
+    if (!lead_id || !user_id) {
+      return res.status(400).json({ error: 'lead_id e user_id são obrigatórios' });
+    }
+
+    const { error } = await supabase
+      .from('prospect_leads')
+      .update({
+        exportado_por: user_id,
+        exportado_em:  new Date().toISOString(),
+      })
+      .eq('id', lead_id);
+
+    if (error) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    console.log(`✅ [cv-extract] Lead ${lead_id} marcado como exportado por user ${user_id}`);
+    return res.status(200).json({ success: true });
+  }
+
+  // ── MODO: pessoa individual ─────────────────────────────────────────────────
+  if (modo === 'pessoa') {
+    if (!pessoa_id || !user_id) {
+      return res.status(400).json({ error: 'pessoa_id e user_id são obrigatórios' });
+    }
+
+    const { data: pessoas, error: errP } = await supabase
+      .from('pessoas')
+      .select(`
+        id, nome_completo, email, linkedin_url, cidade, estado,
+        pessoa_experiencias ( empresa, cargo, data_inicio, data_fim ),
+        pessoa_skills ( skill )
+      `)
+      .eq('id', pessoa_id)
+      .limit(1);
+
+    if (errP || !pessoas || pessoas.length === 0) {
+      return res.status(404).json({ error: 'Pessoa não encontrada' });
+    }
+
+    const pessoa = pessoas[0] as any;
+    const result = await processarPessoa({
+      id:           pessoa.id,
+      nome_completo: pessoa.nome_completo,
+      email:        pessoa.email,
+      linkedin_url: pessoa.linkedin_url,
+      cidade:       pessoa.cidade,
+      estado:       pessoa.estado,
+      experiencias: pessoa.pessoa_experiencias || [],
+      skills:       pessoa.pessoa_skills || [],
+    }, user_id);
+
+    return res.status(200).json({ success: true, ...result });
+  }
+
+  // ── MODO: bulk (carga inicial) ──────────────────────────────────────────────
+  if (modo === 'bulk') {
+    if (!user_id) {
+      return res.status(400).json({ error: 'user_id é obrigatório' });
+    }
+
+    console.log('🚀 [cv-extract] Iniciando carga bulk...');
+
+    // Buscar todas as pessoas com pelo menos 1 experiência
+    const { data: pessoas, error: errPessoas } = await supabase
+      .from('pessoas')
+      .select(`
+        id, nome_completo, email, linkedin_url, cidade, estado,
+        pessoa_experiencias ( empresa, cargo, data_inicio, data_fim ),
+        pessoa_skills ( skill )
+      `)
+      .not('pessoa_experiencias', 'is', null);
+
+    if (errPessoas) {
+      return res.status(500).json({ error: errPessoas.message });
+    }
+
+    const lista = (pessoas || []).filter((p: any) =>
+      p.pessoa_experiencias && p.pessoa_experiencias.length > 0
+    );
+
+    console.log(`📋 [cv-extract] ${lista.length} candidatos com experiências encontrados`);
+
+    let totalInseridos = 0;
+    let totalIgnorados = 0;
+    let totalProcessados = 0;
+    const erros: string[] = [];
+
+    // Processar em lotes de 10 para não exceder timeout
+    const LOTE = 10;
+    for (let i = 0; i < lista.length; i += LOTE) {
+      const lote = lista.slice(i, i + LOTE);
+      const results = await Promise.all(
+        lote.map((p: any) => processarPessoa({
+          id:            p.id,
+          nome_completo: p.nome_completo,
+          email:         p.email,
+          linkedin_url:  p.linkedin_url,
+          cidade:        p.cidade,
+          estado:        p.estado,
+          experiencias:  p.pessoa_experiencias || [],
+          skills:        p.pessoa_skills || [],
+        }, user_id).catch(err => {
+          erros.push(`Pessoa ${p.id}: ${err.message}`);
+          return { inseridos: 0, ignorados: 0, empresas: [] };
+        }))
+      );
+
+      for (const r of results) {
+        totalInseridos  += r.inseridos;
+        totalIgnorados  += r.ignorados;
+        totalProcessados++;
+      }
+    }
+
+    console.log(`✅ [cv-extract] Bulk concluído: ${totalInseridos} leads inseridos, ${totalIgnorados} ignorados`);
+
+    return res.status(200).json({
+      success:          true,
+      processados:      totalProcessados,
+      leads_inseridos:  totalInseridos,
+      leads_ignorados:  totalIgnorados,
+      erros:            erros.length > 0 ? erros : undefined,
+    });
+  }
+
+  return res.status(400).json({ error: 'modo inválido. Use: bulk | pessoa | marcar_exportado' });
+}
