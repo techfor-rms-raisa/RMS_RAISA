@@ -40,7 +40,7 @@ interface PessoaSkill {
 
 interface PessoaData {
   id: number;
-  nome_completo: string;
+  nome: string;
   email: string | null;
   linkedin_url: string | null;
   cidade: string | null;
@@ -181,11 +181,11 @@ async function processarPessoa(pessoa: PessoaData, userId: number): Promise<{
     rows.push({
       buscado_por:      userId,
       pessoa_id:        pessoa.id,
-      candidato_nome:   pessoa.nome_completo,
+      candidato_nome:   pessoa.nome,
       motor:            motor,
-      nome_completo:    pessoa.nome_completo,
-      primeiro_nome:    pessoa.nome_completo.split(' ')[0] || '',
-      ultimo_nome:      pessoa.nome_completo.split(' ').slice(1).join(' ') || '',
+      nome_completo:    pessoa.nome,
+      primeiro_nome:    pessoa.nome.split(' ')[0] || '',
+      ultimo_nome:      pessoa.nome.split(' ').slice(1).join(' ') || '',
       cargo:            exp.cargo || null,
       email:            pessoa.email || null,
       email_status:     pessoa.email ? 'provavel' : null,
@@ -267,7 +267,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: pessoas, error: errP } = await supabase
       .from('pessoas')
       .select(`
-        id, nome_completo, email, linkedin_url, cidade, estado,
+        id, nome, email, linkedin_url, cidade, estado,
         pessoa_experiencias ( empresa, cargo, data_inicio, data_fim ),
         pessoa_skills ( skill_nome )
       `)
@@ -281,7 +281,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const pessoa = pessoas[0] as any;
     const result = await processarPessoa({
       id:           pessoa.id,
-      nome_completo: pessoa.nome_completo,
+      nome: pessoa.nome,
       email:        pessoa.email,
       linkedin_url: pessoa.linkedin_url,
       cidade:       pessoa.cidade,
@@ -305,7 +305,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: pessoas, error: errPessoas } = await supabase
       .from('pessoas')
       .select(`
-        id, nome_completo, email, linkedin_url, cidade, estado,
+        id, nome, email, linkedin_url, cidade, estado,
         pessoa_experiencias ( empresa, cargo, data_inicio, data_fim ),
         pessoa_skills ( skill_nome )
       `)
@@ -333,7 +333,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const results = await Promise.all(
         lote.map((p: any) => processarPessoa({
           id:            p.id,
-          nome_completo: p.nome_completo,
+          nome: p.nome,
           email:         p.email,
           linkedin_url:  p.linkedin_url,
           cidade:        p.cidade,

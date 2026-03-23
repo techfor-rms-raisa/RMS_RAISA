@@ -153,6 +153,10 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [filtroOrigem, setFiltroOrigem]               = useState(''); // NOVO: filtro por origem CV
     const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null); // NOVO: controle de loading
 
+    // Paginação Leads Salvos
+    const [paginaAtual, setPaginaAtual]                 = useState(1);
+    const ITENS_POR_PAGINA = 25;
+
     // Seleção
     const [todosSelecionados, setTodosSelecionados]     = useState(false);
 
@@ -444,7 +448,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             if (filtroOrigem)  params.set('motor',   filtroOrigem); // NOVO: filtro por motor/origem
             const res  = await fetch(`/api/prospect-leads?${params}`);
             const data = await res.json();
-            if (data.success) setLeadsSalvos(data.leads || []);
+            if (data.success) { setLeadsSalvos(data.leads || []); setPaginaAtual(1); }
         } catch (e) {
             console.error('Erro ao carregar leads salvos:', e);
         } finally {
@@ -1231,8 +1235,21 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         {/* ══════════════════════════════════════════ */}
         {abaAtiva === 'salvos' && (
         <>
+            {/* Ref para scroll topo */}
+            {(() => {
+                // Calcular paginação
+                const totalPaginas = Math.ceil(leadsSalvos.length / ITENS_POR_PAGINA);
+                const inicio = (paginaAtual - 1) * ITENS_POR_PAGINA;
+                const fim = inicio + ITENS_POR_PAGINA;
+                const leadsPagina = leadsSalvos.slice(inicio, fim);
+
+                const irParaPagina = (pagina: number) => {
+                    setPaginaAtual(pagina);
+                    // Scroll suave para o topo da seção
+                    document.getElementById('leads-salvos-topo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                };
             {/* Filtros */}
-            <div className="flex flex-wrap gap-3 mb-4">
+            <div id="leads-salvos-topo" className="flex flex-wrap gap-3 mb-4">
                 <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
                     className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
                     <option value="">Todos os status</option>
@@ -1329,7 +1346,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                 </tr>
                             </thead>
                             <tbody>
-                                {leadsSalvos.map(lead => (
+                                {leadsPagina.map(lead => (
                                     <tr key={lead.id} className="border-b hover:bg-gray-50">
                                         <td className="px-3 py-2 font-medium text-gray-800">{lead.nome_completo}</td>
                                         <td className="px-3 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={lead.cargo || ''}>{lead.cargo || '—'}</td>
@@ -1439,8 +1456,88 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                             </tbody>
                         </table>
                     </div>
+
+                    {/* ── Rodapé de Paginação ── */}
+                    {totalPaginas > 1 && (
+                        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
+                            {/* Info */}
+                            <span className="text-xs text-gray-500">
+                                {inicio + 1}–{Math.min(fim, leadsSalvos.length)} de <strong>{leadsSalvos.length}</strong> leads
+                            </span>
+
+                            {/* Navegação */}
+                            <div className="flex items-center gap-1">
+                                {/* Início */}
+                                <button
+                                    onClick={() => irParaPagina(1)}
+                                    disabled={paginaAtual === 1}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                    title="Primeira página"
+                                >
+                                    <i className="fa-solid fa-angles-left"></i>
+                                </button>
+                                {/* Anterior */}
+                                <button
+                                    onClick={() => irParaPagina(paginaAtual - 1)}
+                                    disabled={paginaAtual === 1}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                    title="Página anterior"
+                                >
+                                    <i className="fa-solid fa-angle-left"></i>
+                                </button>
+
+                                {/* Números de página */}
+                                {Array.from({ length: totalPaginas }, (_, i) => i + 1)
+                                    .filter(p => p === 1 || p === totalPaginas || Math.abs(p - paginaAtual) <= 2)
+                                    .reduce<(number | '...')[]>((acc, p, idx, arr) => {
+                                        if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push('...');
+                                        acc.push(p);
+                                        return acc;
+                                    }, [])
+                                    .map((p, idx) => p === '...'
+                                        ? <span key={`ellipsis-${idx}`} className="px-1 text-xs text-gray-400">…</span>
+                                        : (
+                                            <button
+                                                key={p}
+                                                onClick={() => irParaPagina(p as number)}
+                                                className={`px-2.5 py-1 text-xs rounded border transition-colors font-medium ${
+                                                    paginaAtual === p
+                                                        ? 'bg-blue-600 text-white border-blue-600'
+                                                        : 'border-gray-200 text-gray-600 hover:bg-white hover:border-blue-300 hover:text-blue-600'
+                                                }`}
+                                            >
+                                                {p}
+                                            </button>
+                                        )
+                                    )
+                                }
+
+                                {/* Próxima */}
+                                <button
+                                    onClick={() => irParaPagina(paginaAtual + 1)}
+                                    disabled={paginaAtual === totalPaginas}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                    title="Próxima página"
+                                >
+                                    <i className="fa-solid fa-angle-right"></i>
+                                </button>
+                                {/* Final */}
+                                <button
+                                    onClick={() => irParaPagina(totalPaginas)}
+                                    disabled={paginaAtual === totalPaginas}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                    title="Última página"
+                                >
+                                    <i className="fa-solid fa-angles-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
+            {/* Fechar bloco de paginação IIFE */}
+            </>);
+            })()}
         </>
         )}
     </div>
