@@ -63,3 +63,6 @@ $RECYCLE.BIN/
 node_modules/
 dist/
 .vercel/
+
+# Dumps de banco de dados
+*.dump
