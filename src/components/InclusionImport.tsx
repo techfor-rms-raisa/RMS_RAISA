@@ -1,9 +1,11 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v1.7 - 22/03/2026
+ * VERSÃO: Fix v1.9 - 22/03/2026
  * 
  * CORREÇÕES:
+ * - ✅ v1.9: RH: extração definitiva por regex após data de emissão + busca por analistas
+ * - ✅ v1.8: Analista R&S: findUserByName filtra tipo_usuario; exclui GP do rodapé
  * - ✅ v1.7: Intercepta window.alert() do ManageConsultants para tratar erro duplicata
  * - ✅ v1.6: EMPRESA normalize sem acento + fallback texto; duplicata CPF/email verificada localmente
  * - ✅ v1.5: EMPRESA regex espaço + fallback FAVORECIDO PJ; erro duplicata CPF com mensagem clara
@@ -80,26 +82,100 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
         return fullText;
     };
 
-    const findUserByName = (name: string): User | null => {
+    // ✅ v2.1: Extração com coordenadas X — identifica colunas do rodapé
+    // Retorna mapa de coluna → nome baseado na posição horizontal de cada item
+    const extractRodapeByPosition = async (file: File): Promise<Record<string, string>> => {
+        try {
+            const arrayBuffer = await file.arrayBuffer();
+            const loadingTask = pdfjsLib.getDocument(arrayBuffer);
+            const pdf = await loadingTask.promise;
+            
+            // Pegar a última página (rodapé geralmente está na última)
+            const page = await pdf.getPage(pdf.numPages);
+            const textContent = await page.getTextContent();
+            const viewport = page.getViewport({ scale: 1.0 });
+            const pageWidth = viewport.width;
+            
+            // Mapear headers do rodapé para suas posições X relativas (0-100%)
+            // Baseado na ficha padrão TechFor:
+            // DATA EMISSÃO (≈0-20%) | RECURSOS HUMANOS (≈20-40%) | GERENTE COMERCIAL (≈40-60%) | DIRETORIA (≈60-80%) | GESTÃO DE PESSOAS (≈80-100%)
+            const RODAPE_HEADERS = [
+                { key: 'data_emissao',        label: 'DATA EMISSÃO',       xMin: 0,   xMax: 0.22 },
+                { key: 'recursos_humanos',     label: 'RECURSOS HUMANOS',   xMin: 0.20, xMax: 0.42 },
+                { key: 'gerente_comercial',    label: 'GERENTE COMERCIAL',  xMin: 0.40, xMax: 0.62 },
+                { key: 'diretoria',            label: 'DIRETORIA',          xMin: 0.60, xMax: 0.78 },
+                { key: 'gestao_de_pessoas',    label: 'GESTÃO DE PESSOAS',  xMin: 0.76, xMax: 1.00 },
+            ];
+            
+            // Coletar todos os itens de texto com posição X normalizada
+            const items: { str: string; xRel: number; y: number }[] = [];
+            for (const item of textContent.items as any[]) {
+                if (!item.str?.trim()) continue;
+                const xRel = item.transform[4] / pageWidth; // posição X relativa (0-1)
+                const y = item.transform[5]; // posição Y
+                items.push({ str: item.str.trim(), xRel, y });
+            }
+            
+            // Identificar a linha dos HEADERS do rodapé (linha que contém "RECURSOS HUMANOS")
+            const rhItem = items.find(it => it.str.toUpperCase().includes('RECURSOS HUMANOS'));
+            if (!rhItem) {
+                console.log('⚠️ Rodapé não encontrado por posição');
+                return {};
+            }
+            
+            // Pegar itens na mesma faixa Y (± 8px) que os headers → são os headers
+            // Pegar itens na linha de valores (Y menor que os headers, dentro de ±20px)
+            const headerY = rhItem.y;
+            const headerItems = items.filter(it => Math.abs(it.y - headerY) < 8);
+            const valueItems  = items.filter(it => Math.abs(it.y - (headerY - 18)) < 12);
+            
+            console.log('📍 Headers encontrados por posição:', headerItems.map(h => `${h.str}(x=${h.xRel.toFixed(2)})`).join(', '));
+            console.log('📍 Valores encontrados por posição:', valueItems.map(v => `${v.str}(x=${v.xRel.toFixed(2)})`).join(', '));
+            
+            // Mapear cada valor à sua coluna pelo X
+            const result: Record<string, string> = {};
+            for (const col of RODAPE_HEADERS) {
+                const val = valueItems.find(it => it.xRel >= col.xMin && it.xRel < col.xMax);
+                if (val) {
+                    result[col.key] = val.str;
+                    console.log(`✅ Coluna ${col.key}: "${val.str}" (x=${val.xRel.toFixed(2)})`);
+                }
+            }
+            
+            return result;
+        } catch (err) {
+            console.warn('⚠️ Extração por posição falhou, usando fallback texto:', err);
+            return {};
+        }
+    };
+
+    // ✅ FIX v1.8: findUserByName com filtro opcional de tipo_usuario
+    // Para Analista R&S, só busca em users com tipo correto — evita confundir com Gestão de Pessoas
+    const findUserByName = (name: string, tiposPermitidos?: string[]): User | null => {
         if (!name || name === 'XXX' || name === 'xxx') return null;
         
         const normalizedName = normalize(name);
         console.log(`🔍 Buscando usuário: "${name}" (normalizado: "${normalizedName}")`);
         
-        let user = users.find(u => normalize(u.nome_usuario) === normalizedName);
+        // Pool de busca: filtrar por tipos permitidos se especificado
+        const pool = tiposPermitidos && tiposPermitidos.length > 0
+            ? users.filter(u => tiposPermitidos.includes(u.tipo_usuario))
+            : users;
+        
+        let user = pool.find(u => normalize(u.nome_usuario) === normalizedName);
         if (user) {
             console.log(`✅ Usuário encontrado (exato): ${user.nome_usuario} (ID: ${user.id})`);
             return user;
         }
         
         const firstName = normalizedName.split(' ')[0];
-        user = users.find(u => normalize(u.nome_usuario).startsWith(firstName));
+        user = pool.find(u => normalize(u.nome_usuario).startsWith(firstName));
         if (user) {
             console.log(`✅ Usuário encontrado (primeiro nome): ${user.nome_usuario} (ID: ${user.id})`);
             return user;
         }
         
-        user = users.find(u => normalize(u.nome_usuario).includes(normalizedName) || normalizedName.includes(normalize(u.nome_usuario)));
+        user = pool.find(u => normalize(u.nome_usuario).includes(normalizedName) || normalizedName.includes(normalize(u.nome_usuario)));
         if (user) {
             console.log(`✅ Usuário encontrado (contém): ${user.nome_usuario} (ID: ${user.id})`);
             return user;
@@ -122,6 +198,12 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             }
 
             const text = await extractTextFromPDF(file);
+            
+            // ✅ v2.1: Extração por coordenadas X (mais precisa para o rodapé)
+            const rodapePosicional = await extractRodapeByPosition(file);
+            if (rodapePosicional.recursos_humanos) {
+                console.log(`✅ RH por coordenada X: "${rodapePosicional.recursos_humanos}"`);
+            }
             
             console.log('📄 Texto extraído do PDF (primeiras 2000 chars):', text.substring(0, 2000));
             
@@ -156,7 +238,11 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let faturavel = true;
             let faturavelConfirmado = false;
             let observacoesStr = '';
-            let recursosHumanosStr = '';
+            // ✅ v2.1: Usar valor extraído por posição X se disponível (mais confiável)
+            let recursosHumanosStr = rodapePosicional.recursos_humanos || '';
+            if (recursosHumanosStr) {
+                console.log(`📍 RH inicializado por coordenada: "${recursosHumanosStr}"`);
+            }
             
             // ✅ FIX v1.4: Coletar apenas emails CORPORATIVOS do gestor/cliente para excluir
             // Emails pessoais (@gmail, @hotmail etc) NUNCA são excluídos — podem ser do consultor
@@ -477,47 +563,10 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 // porque a estrutura do PDF mistura seções
                 
                 // ===== RECURSOS HUMANOS =====
-                // ✅ FIX v1.4: "PRISCILA DO ESPÍRITO SANTO" está na linha LOGO APÓS "RECURSOS HUMANOS"
-                // na estrutura do rodapé. Capturar diretamente a próxima linha válida.
-                if (cleanLine === 'RECURSOS HUMANOS' && !recursosHumanosStr) {
-                    console.log(`🔍 Encontrado header RECURSOS HUMANOS na linha ${i}`);
-                    
-                    // Método direto: próxima linha não vazia e não é header/número/data
-                    for (let k = i + 1; k < Math.min(i + 5, lines.length); k++) {
-                        const testLine = lines[k].trim();
-                        if (testLine && 
-                            testLine.length > 3 &&
-                            testLine !== 'XXX' &&
-                            !testLine.match(/^\d/) &&
-                            !testLine.match(/^\d{2}\/\d{2}\/\d{4}$/) &&
-                            !testLine.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|DATA|RECURSOS|BASE|HORA|VALOR|ITEM|NOVO|ANTERIOR)/i)) {
-                            recursosHumanosStr = testLine;
-                            console.log(`✅ Recursos Humanos extraído (linha direta): ${recursosHumanosStr}`);
-                            break;
-                        }
-                    }
-                    
-                    // Se não encontrou diretamente, buscar por data de emissão + próxima linha
-                    if (!recursosHumanosStr) {
-                        for (let k = i + 1; k < Math.min(i + 25, lines.length); k++) {
-                            const testLine = lines[k].trim();
-                            if (testLine.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
-                                if (k + 1 < lines.length) {
-                                    const possibleRH = lines[k + 1].trim();
-                                    if (possibleRH && 
-                                        possibleRH.length > 3 &&
-                                        possibleRH !== 'XXX' &&
-                                        !possibleRH.match(/^\d/) &&
-                                        !possibleRH.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|DATA|RECURSOS|BASE|HORA)/i)) {
-                                        recursosHumanosStr = possibleRH;
-                                        console.log(`✅ Recursos Humanos extraído (após data): ${recursosHumanosStr}`);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // ✅ FIX v1.9: Marcador — a extração real é feita por regex no texto completo
+                // O loop linha por linha não funciona porque os headers e valores do rodapé
+                // ficam distantes entre si na extração do pdf.js
+                // (ver bloco de fallbacks após o loop)
             }
 
             // ===== 🔧 FIX v1.1: FALLBACKS MELHORADOS =====
@@ -795,53 +844,76 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // Fallback para RECURSOS HUMANOS
+            // ✅ FIX v1.9: RECURSOS HUMANOS — extração definitiva via regex no texto completo
+            // O rodapé tem estrutura de tabela: headers em sequência, depois valores em sequência
+            // pdf.js extrai: "DATA EMISSÃO\nRECURSOS HUMANOS\nGERENTE COMERCIAL\nDIRETORIA\nGESTÃO DE PESSOAS"
+            // depois:        "19/03/2026\nMACIELMA SILVA\nXXXXX\nMESSIAS OLIVEIRA\nPRISCILA..."
+            // Estratégia: capturar o valor imediatamente após a data de emissão DD/MM/YYYY,
+            // que é SEMPRE o nome do RECURSOS HUMANOS (1ª coluna de valores após a data)
             if (!recursosHumanosStr) {
-                console.log('🔄 Tentando fallback para recursos_humanos...');
+                console.log('🔄 Extraindo RECURSOS HUMANOS via regex no texto completo...');
                 
-                // Método 1: Buscar padrão específico no rodapé
-                const rhMatch = text.match(/RECURSOS HUMANOS[\s\S]*?(\d{2}\/\d{2}\/\d{4})\s*\n\s*([A-Za-zÀ-ÿ\s]+?)(?:\n|GERENTE|MARCOS)/i);
-                if (rhMatch && rhMatch[2]) {
-                    const nome = rhMatch[2].trim();
-                    if (nome.length > 3 && !nome.match(/GERENTE|COMERCIAL|DIRETORIA/i)) {
-                        recursosHumanosStr = nome;
-                        console.log(`✅ Recursos Humanos extraído (fallback 1): ${recursosHumanosStr}`);
-                    }
-                }
+                // Nomes de Gestão de Pessoas para excluir
+                const gpFirstNames = users
+                    .filter(u => u.tipo_usuario === 'Gestão de Pessoas')
+                    .map(u => normalize(u.nome_usuario).split(' ')[0]);
                 
-                // ✅ FIX v1.2: Método 2 — buscar pelos primeiros nomes dos usuários do sistema
-                // Remove dependência de lista hardcoded — usa os users reais cadastrados
-                if (!recursosHumanosStr) {
-                    const primeiroNomesUsers = users
-                        .filter(u => u.nome_usuario && u.nome_usuario.length > 2)
-                        .map(u => u.nome_usuario.split(' ')[0].toUpperCase());
-                    
-                    for (const primeiroNome of primeiroNomesUsers) {
-                        if (text.toUpperCase().includes(primeiroNome)) {
-                            const nomeCompleto = text.match(new RegExp(`(${primeiroNome}[A-Za-zÀ-ÿ\\s]+?)(?:\\n|MARCOS|GERENTE|ROSENI|MESSIAS|DIRETORIA)`, 'i'));
-                            if (nomeCompleto && nomeCompleto[1]) {
-                                const nomeTrimmed = nomeCompleto[1].trim();
-                                // Verificar se o nome existe em users (confirmar que é analista)
-                                const userConfirmado = findUserByName(nomeTrimmed);
-                                if (userConfirmado) {
-                                    recursosHumanosStr = nomeTrimmed;
-                                    console.log(`✅ Recursos Humanos extraído (fallback dinâmico): ${recursosHumanosStr}`);
-                                    break;
-                                }
-                            }
+                // Método 1: Logo após a data de emissão (DD/MM/YYYY) vem o nome do RH
+                // Padrão: DATA_EMISSÃO\n<NOME_RH>\n (onde NOME_RH não é GP, não é XXXXX, não é número)
+                const dataEmissaoIdx = text.search(/\d{2}\/\d{2}\/\d{4}/);
+                if (dataEmissaoIdx >= 0) {
+                    const textoAposData = text.substring(dataEmissaoIdx);
+                    const linesAposData = textoAposData.split('\n').map((l: string) => l.trim()).filter((l: string) => l.length > 0);
+                    // linesAposData[0] = a data em si (DD/MM/YYYY)
+                    // linesAposData[1] = nome do RECURSOS HUMANOS
+                    if (linesAposData.length > 1) {
+                        const candidato = linesAposData[1];
+                        const candidatoNorm = normalize(candidato).split(' ')[0];
+                        if (candidato.length > 3 &&
+                            candidato !== 'XXX' &&
+                            !candidato.match(/^\d/) &&
+                            !candidato.match(/^(GERENTE|COMERCIAL|DIRETORIA|GESTÃO|MARCOS|MESSIAS)/i) &&
+                            !gpFirstNames.includes(candidatoNorm)) {
+                            recursosHumanosStr = candidato;
+                            console.log(`✅ RH extraído (após data emissão): ${recursosHumanosStr}`);
                         }
                     }
                 }
                 
-                // Método 3: Buscar após data de emissão
+                // Método 2: Buscar nome de analista conhecido no texto, na posição certa
+                // (entre a data de emissão e o GERENTE COMERCIAL)
                 if (!recursosHumanosStr) {
-                    const afterDateMatch = text.match(/(\d{2}\/\d{2}\/\d{4})\s*\n\s*([A-Za-zÀ-ÿ]+\s+[A-Za-zÀ-ÿ]+)/);
-                    if (afterDateMatch && afterDateMatch[2]) {
-                        const possibleName = afterDateMatch[2].trim();
-                        if (possibleName.length > 5 && 
-                            !possibleName.match(/^(GERENTE|MARCOS|ROSENI|PRISCILA DO)/i)) {
-                            recursosHumanosStr = possibleName;
-                            console.log(`✅ Recursos Humanos extraído (fallback 3): ${recursosHumanosStr}`);
+                    const tiposAnalista = ['Analista de R&S', 'Gestão de R&S', 'Administrador'];
+                    // Região do rodapé: entre a data de emissão e GESTÃO DE PESSOAS
+                    const rodapeMatch = text.match(/(\d{2}\/\d{2}\/\d{4})[\s\S]*?GESTÃO DE PESSOAS/i);
+                    const rodapeText = rodapeMatch ? rodapeMatch[0] : text;
+                    
+                    const analistas = users.filter(u => tiposAnalista.includes(u.tipo_usuario));
+                    for (const analista of analistas) {
+                        const nomeNorm = normalize(analista.nome_usuario);
+                        const primeiroNome = nomeNorm.split(' ')[0];
+                        if (primeiroNome.length < 3) continue;
+                        
+                        // Verificar se o primeiro nome do analista aparece no rodapé
+                        const rodapeNorm = normalize(rodapeText);
+                        if (rodapeNorm.includes(primeiroNome)) {
+                            recursosHumanosStr = analista.nome_usuario;
+                            console.log(`✅ RH extraído (analista no rodapé): ${recursosHumanosStr}`);
+                            break;
+                        }
+                    }
+                }
+                
+                // Método 3: Fallback final — buscar qualquer nome logo após a data no texto
+                if (!recursosHumanosStr) {
+                    const m = text.match(/(\d{2}\/\d{2}\/\d{4})\s*\n([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s]{3,30})\n/);
+                    if (m && m[2]) {
+                        const nome = m[2].trim();
+                        const nomeNorm = normalize(nome).split(' ')[0];
+                        if (!gpFirstNames.includes(nomeNorm) && 
+                            !nome.match(/^(GERENTE|MARCOS|MESSIAS|ROSENI)/i)) {
+                            recursosHumanosStr = nome;
+                            console.log(`✅ RH extraído (fallback final data+nome): ${recursosHumanosStr}`);
                         }
                     }
                 }
@@ -918,13 +990,22 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 else if (modalidadeContratoStr.toUpperCase() === 'PJ') modalidadeContrato = 'PJ';
             }
 
-            // Buscar analista_rs_id
+            // ✅ FIX v1.8: Buscar analista_rs_id filtrando por tipo_usuario Analista de R&S
+            // Evita retornar usuário de Gestão de Pessoas com nome similar
             let analistaRsId: number | null = null;
             if (recursosHumanosStr) {
-                const analistaUser = findUserByName(recursosHumanosStr);
+                const tiposAnalista = ['Analista de R&S', 'Gestão de R&S', 'Administrador'];
+                const analistaUser = findUserByName(recursosHumanosStr, tiposAnalista);
                 if (analistaUser) {
                     analistaRsId = analistaUser.id;
                     console.log(`✅ Analista R&S encontrado: ${analistaUser.nome_usuario} (ID: ${analistaUser.id})`);
+                } else {
+                    // Fallback: buscar sem filtro de tipo (caso o tipo esteja diferente no banco)
+                    const analistaFallback = findUserByName(recursosHumanosStr);
+                    if (analistaFallback) {
+                        analistaRsId = analistaFallback.id;
+                        console.log(`✅ Analista R&S encontrado (fallback sem filtro): ${analistaFallback.nome_usuario}`);
+                    }
                 }
             }
             
