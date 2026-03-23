@@ -4,6 +4,7 @@
 // Consultores em Quarentena / Risco Alto / Altíssimo → acompanhamento semanal
 // Botão +Atividade: Azul=pendente | Verde=feito hoje | Vermelho=atrasado
 // v1.1: Layout mobile responsivo com 3 abas (Hoje / Agenda / Consultores)
+// v1.2: Filtro Gestão de Pessoas adicionado na aba "Consultores" do mobile
 //       Detecção automática via window.innerWidth < 768 + listener resize
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
@@ -676,7 +677,25 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
         {/* ── ABA: CONSULTORES (Lista completa) */}
         {mobileTab === 'lista' && (
           <div className="flex flex-col flex-1 overflow-hidden">
-            {/* Filtros rápidos */}
+
+            {/* ── Filtro Gestão de Pessoas (mobile) */}
+            {gpManagers.length > 0 && (
+              <div className="px-3 pt-2.5 pb-2 bg-white border-b border-gray-100 flex-shrink-0">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Gestão de Pessoas</label>
+                <select
+                  value={filterManager}
+                  onChange={e => setFilterManager(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+                >
+                  <option value="all">Todas as gestoras</option>
+                  {gpManagers.map(u => (
+                    <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* ── Filtros rápidos */}
             <div className="flex gap-2 px-3 py-2 bg-white border-b border-gray-100 flex-shrink-0 overflow-x-auto">
               {([
                 ['todos', 'Todos'],
