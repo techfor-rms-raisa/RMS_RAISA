@@ -35,7 +35,7 @@ interface PessoaExperiencia {
 }
 
 interface PessoaSkill {
-  skill: string;
+  skill_nome: string;
 }
 
 interface PessoaData {
@@ -138,7 +138,7 @@ async function processarPessoa(pessoa: PessoaData, userId: number): Promise<{
   ignorados: number;
   empresas: string[];
 }> {
-  const skills = pessoa.skills.map(s => s.skill || '');
+  const skills = pessoa.skills.map(s => s.skill_nome || '');
   const cargos = pessoa.experiencias.map(e => e.cargo || '');
   const motor = classificarPerfil(skills, cargos);
 
@@ -269,7 +269,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select(`
         id, nome_completo, email, linkedin_url, cidade, estado,
         pessoa_experiencias ( empresa, cargo, data_inicio, data_fim ),
-        pessoa_skills ( skill )
+        pessoa_skills ( skill_nome )
       `)
       .eq('id', pessoa_id)
       .limit(1);
@@ -307,7 +307,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select(`
         id, nome_completo, email, linkedin_url, cidade, estado,
         pessoa_experiencias ( empresa, cargo, data_inicio, data_fim ),
-        pessoa_skills ( skill )
+        pessoa_skills ( skill_nome )
       `)
       .not('pessoa_experiencias', 'is', null);
 
