@@ -5,7 +5,6 @@
 // Botão +Atividade: Azul=pendente | Verde=feito hoje | Vermelho=atrasado
 // v1.1: Layout mobile responsivo com 3 abas (Hoje / Agenda / Consultores)
 // v1.2: Filtro Gestão de Pessoas adicionado na aba "Consultores" do mobile
-// v1.3: Filtro GP movido para top bar (visível em todas as abas); corrigido filtro ativo_usuario
 //       Detecção automática via window.innerWidth < 768 + listener resize
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
@@ -133,6 +132,7 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
   const [selectedDay, setSelectedDay] = useState<number | null>(today.getDate());
   const [filterManager, setFilterManager] = useState<string>('all');
   const [filterScore, setFilterScore] = useState<string>('all');
+  const [filterSearch, setFilterSearch] = useState<string>('');
   const [activityCache, setActivityCache] = useState<Record<number, ConsultantReport[]>>({});
   const [loadingIds, setLoadingIds] = useState<Set<number>>(new Set());
   const [expandedConsultant, setExpandedConsultant] = useState<number | null>(null);
@@ -155,9 +155,8 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
   }, []);
 
   // ── Gestores de Pessoas disponíveis para filtro
-  // ✅ FIX v1.3: Removido filtro ativo_usuario (campo pode ser null no banco)
   const gpManagers = useMemo(() => 
-    users.filter(u => u.tipo_usuario === 'Gestão de Pessoas')
+    users.filter(u => u.tipo_usuario === 'Gestão de Pessoas' && u.ativo_usuario)
       .sort((a, b) => a.nome_usuario.localeCompare(b.nome_usuario))
   , [users]);
 
@@ -192,8 +191,17 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
       }
     }
 
+    // Filtro por nome do consultor
+    if (filterSearch.trim()) {
+      const search = filterSearch.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      list = list.filter(c => {
+        const nome = (c.nome_consultores || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        return nome.includes(search);
+      });
+    }
+
     return list;
-  }, [consultants, clients, usuariosCliente, filterManager, filterScore]);
+  }, [consultants, clients, usuariosCliente, filterManager, filterScore, filterSearch]);
 
   // ── Carregar atividades do cache ou Supabase
   const loadActivity = useCallback(async (consultantId: number) => {
@@ -537,21 +545,22 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
             </button>
           </div>
 
-          {/* ── Filtro Gestão de Pessoas — visível em todas as abas */}
-          {gpManagers.length > 0 && (
-            <div className="mb-2">
-              <select
-                value={filterManager}
-                onChange={e => setFilterManager(e.target.value)}
-                className="w-full border border-indigo-400 rounded-lg px-3 py-1.5 text-xs bg-indigo-700 text-white focus:ring-2 focus:ring-white focus:border-transparent"
-              >
-                <option value="all">👥 Todas as gestoras</option>
-                {gpManagers.map(u => (
-                  <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* ── Busca por nome (mobile) */}
+          <div className="relative mb-2">
+            <input
+              type="text"
+              value={filterSearch}
+              onChange={e => setFilterSearch(e.target.value)}
+              placeholder="🔍 Buscar consultor..."
+              className="w-full border border-indigo-400 rounded-lg pl-3 pr-7 py-1.5 text-xs bg-indigo-700 text-white placeholder-indigo-300 focus:ring-2 focus:ring-white focus:border-transparent"
+            />
+            {filterSearch && (
+              <button
+                onClick={() => setFilterSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-300 hover:text-white text-xs font-bold"
+              >✕</button>
+            )}
+          </div>
 
           {/* ── ABAS */}
           <div className="flex gap-1">
@@ -695,6 +704,23 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
         {/* ── ABA: CONSULTORES (Lista completa) */}
         {mobileTab === 'lista' && (
           <div className="flex flex-col flex-1 overflow-hidden">
+
+            {/* ── Filtro Gestão de Pessoas (mobile) */}
+            {gpManagers.length > 0 && (
+              <div className="px-3 pt-2.5 pb-2 bg-white border-b border-gray-100 flex-shrink-0">
+                <label className="block text-xs font-medium text-gray-500 mb-1">Gestão de Pessoas</label>
+                <select
+                  value={filterManager}
+                  onChange={e => setFilterManager(e.target.value)}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+                >
+                  <option value="all">Todas as gestoras</option>
+                  {gpManagers.map(u => (
+                    <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* ── Filtros rápidos */}
             <div className="flex gap-2 px-3 py-2 bg-white border-b border-gray-100 flex-shrink-0 overflow-x-auto">
@@ -857,6 +883,27 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
             <option value="2">Score 2 — Baixo</option>
             <option value="new">Novo Consultor (&lt; 45 dias)</option>
           </select>
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Buscar Consultor</label>
+          <div className="relative">
+            <input
+              type="text"
+              value={filterSearch}
+              onChange={e => setFilterSearch(e.target.value)}
+              placeholder="Digite o nome..."
+              className="w-full border border-gray-300 rounded-lg pl-8 pr-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+            />
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            {filterSearch && (
+              <button
+                onClick={() => setFilterSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs font-bold"
+              >✕</button>
+            )}
+          </div>
         </div>
       </div>
 
