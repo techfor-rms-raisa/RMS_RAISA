@@ -453,6 +453,39 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     }, [filtroStatus, filtroEmpresa, filtroOrigem]);
 
     // ============================================
+    // PROSPECTAR — leva empresa do CV para Nova Busca
+    // ============================================
+    const prospectar = useCallback((lead: ProspectLead) => {
+        // Prioridade: domínio cadastrado → tentar inferir do nome
+        const dominio = lead.empresa_dominio?.trim() || '';
+
+        // Limpar estado da busca atual
+        setResultados([]);
+        setEmpresaInfo(null);
+        setQueriesGoogle([]);
+        setQueriesExecutadas(new Set());
+
+        // Preencher domínio — se não tiver, preencher nome no campo nome específico
+        if (dominio) {
+            setDomain(dominio);
+            setEmpresaNome('');
+        } else {
+            setDomain('');
+            setEmpresaNome(lead.empresa_nome || '');
+        }
+
+        // Navegar para aba Nova Busca
+        setAbaAtiva('busca');
+
+        // Toast orientativo
+        const msg = dominio
+            ? `Domínio "${dominio}" carregado — configure os filtros e clique em Buscar`
+            : `Nome "${lead.empresa_nome}" carregado — informe o domínio e clique em Buscar`;
+        setToastMsg({ tipo: 'ok', msg });
+        setTimeout(() => setToastMsg(null), 5000);
+    }, []);
+
+    // ============================================
     // MARCAR COMO EXPORTADO (leads de CV)
     // ============================================
     const marcarExportado = useCallback(async (leadId: number) => {
@@ -1290,6 +1323,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">GRAVADO POR</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">EXPORTADO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÃO</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
                                 </tr>
@@ -1370,6 +1404,23 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                                         : '↗ Marcar exportado'
                                                     }
                                                 </button>
+                                            )}
+                                        </td>
+                                        {/* AÇÃO — botão Prospectar (só para leads de CV ou sem contato) */}
+                                        <td className="px-3 py-2 text-center">
+                                            {['cv_alocacao','cv_infra','cv_ia_ml','cv_sap'].includes(lead.motor) || !lead.email ? (
+                                                <button
+                                                    onClick={() => prospectar(lead)}
+                                                    className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-600 hover:text-white transition-colors whitespace-nowrap font-medium"
+                                                    title={lead.empresa_dominio
+                                                        ? `Buscar contatos em ${lead.empresa_dominio}`
+                                                        : `Buscar contatos em ${lead.empresa_nome}`}
+                                                >
+                                                    <i className="fa-solid fa-magnifying-glass text-[9px]"></i>
+                                                    Prospectar
+                                                </button>
+                                            ) : (
+                                                <span className="text-gray-200 text-xs">—</span>
                                             )}
                                         </td>
                                         <td className="px-3 py-2 text-center">
