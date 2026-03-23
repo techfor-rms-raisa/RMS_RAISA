@@ -164,9 +164,26 @@ async function processarPessoa(pessoa: PessoaData, userId: number): Promise<{
   const rows: any[] = [];
   const nomesEmpresas: string[] = [];
 
-  for (const [, exp] of empresasUnicas) {
+  // Buscar lista de exclusões UMA vez para todas as empresas do lote
+  const nomesParaVerificar = Array.from(empresasUnicas.keys());
+  const { data: exclusoes } = await supabase
+    .from('prospect_exclusoes')
+    .select('empresa_nome')
+    .or(nomesParaVerificar.map(n => `empresa_nome.ilike.%${n}%`).join(','));
+
+  const nomesExcluidos = new Set(
+    (exclusoes || []).map((e: any) => e.empresa_nome.toLowerCase().trim())
+  );
+
+  for (const [chave, exp] of empresasUnicas) {
     const empresaNome = exp.empresa.trim();
     nomesEmpresas.push(empresaNome);
+
+    // Verificar se está na lista de exclusões
+    if (nomesExcluidos.has(chave)) {
+      console.log(`⛔ [cv-extract] "${empresaNome}" está na lista de exclusões — ignorado`);
+      continue;
+    }
 
     // Verificar se já existe esse par pessoa+empresa na tabela
     const { data: jaExiste } = await supabase

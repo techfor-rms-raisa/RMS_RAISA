@@ -115,7 +115,7 @@ const SENIORIDADES = [
 // COMPONENTE PRINCIPAL
 // ============================================
 interface ProspectSearchPageProps {
-    initialTab?: 'busca' | 'salvos';
+    initialTab?: 'busca' | 'salvos' | 'exclusoes';
 }
 
 const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'busca' }) => {
@@ -137,7 +137,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [toastMsg, setToastMsg]                       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
 
     // Abas
-    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'>(initialTab ?? 'busca');
+    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'|'exclusoes'>(initialTab ?? 'busca');
 
     // Sincronizar abaAtiva quando initialTab mudar
     // (ex: usuário navega de "Buscar Leads" → "Meus Prospects" sem desmontar o componente)
@@ -151,11 +151,17 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [filtroStatus, setFiltroStatus]               = useState('');
     const [filtroEmpresa, setFiltroEmpresa]             = useState('');
     const [filtroOrigem, setFiltroOrigem]               = useState(''); // NOVO: filtro por origem CV
-    const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null); // NOVO: controle de loading
+    const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null);
+    const [marcandoExclusao, setMarcandoExclusao]       = useState<number | null>(null); // NOVO
 
     // Paginação Leads Salvos
     const [paginaAtual, setPaginaAtual]                 = useState(1);
     const ITENS_POR_PAGINA = 25;
+
+    // Exclusões
+    const [exclusoes, setExclusoes]                     = useState<any[]>([]);
+    const [loadingExclusoes, setLoadingExclusoes]       = useState(false);
+    const [buscaExclusao, setBuscaExclusao]             = useState('');
 
     // Seleção
     const [todosSelecionados, setTodosSelecionados]     = useState(false);
@@ -522,6 +528,79 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         }
     }, [currentUser]);
 
+    // ============================================
+    // MARCAR COMO CONSULTORIA — adiciona exclusão + remove leads
+    // ============================================
+    const marcarComoConsultoria = useCallback(async (lead: ProspectLead) => {
+        if (!currentUser?.id) return;
+        if (!confirm(`Marcar "${lead.empresa_nome}" como Consultoria de TI?\n\nTodos os leads desta empresa serão removidos da base.`)) return;
+
+        setMarcandoExclusao(lead.id);
+        try {
+            const res = await fetch('/api/prospect-exclusoes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    acao:         'adicionar',
+                    empresa_nome: lead.empresa_nome,
+                    dominio:      lead.empresa_dominio || null,
+                    motivo:       'consultoria_ti',
+                    user_id:      currentUser.id,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                // Remove leads da empresa da lista local
+                setLeadsSalvos(prev => prev.filter(l =>
+                    l.empresa_nome?.toLowerCase() !== lead.empresa_nome?.toLowerCase()
+                ));
+                setToastMsg({ tipo: 'ok', msg: data.mensagem });
+                setTimeout(() => setToastMsg(null), 5000);
+            }
+        } catch (e) {
+            console.error('Erro ao marcar consultoria:', e);
+        } finally {
+            setMarcandoExclusao(null);
+        }
+    }, [currentUser]);
+
+    // ============================================
+    // EXCLUSÕES — carregar lista
+    // ============================================
+    const carregarExclusoes = useCallback(async () => {
+        setLoadingExclusoes(true);
+        try {
+            const params = new URLSearchParams();
+            if (buscaExclusao) params.set('busca', buscaExclusao);
+            const res  = await fetch(`/api/prospect-exclusoes?${params}`);
+            const data = await res.json();
+            if (data.success) setExclusoes(data.exclusoes || []);
+        } catch (e) {
+            console.error('Erro ao carregar exclusões:', e);
+        } finally {
+            setLoadingExclusoes(false);
+        }
+    }, [buscaExclusao]);
+
+    const removerExclusao = useCallback(async (id: number, nome: string) => {
+        if (!confirm(`Remover "${nome}" da lista de exclusões?\n\nA empresa voltará a aparecer em futuras extrações de CV.`)) return;
+        const res  = await fetch('/api/prospect-exclusoes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ acao: 'remover', exclusao_id: id }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            setExclusoes(prev => prev.filter(e => e.id !== id));
+            setToastMsg({ tipo: 'ok', msg: `"${nome}" removida das exclusões.` });
+            setTimeout(() => setToastMsg(null), 3000);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (abaAtiva === 'exclusoes') carregarExclusoes();
+    }, [abaAtiva, carregarExclusoes]);
+
     useEffect(() => {
         if (abaAtiva === 'salvos') carregarLeadsSalvos();
     }, [abaAtiva, carregarLeadsSalvos]);
@@ -773,14 +852,15 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
         {/* Abas */}
         <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
-            {(['busca', 'salvos'] as const).map(aba => (
+            {(['busca', 'salvos', 'exclusoes'] as const).map(aba => (
                 <button key={aba} onClick={() => setAbaAtiva(aba)}
                     className={`px-4 py-2 text-sm font-medium rounded-t transition-colors
                         ${abaAtiva === aba
                             ? 'bg-white border border-b-white border-gray-200 text-blue-600 -mb-px'
                             : 'text-gray-500 hover:text-gray-700'}`}>
-                    {aba === 'busca'  ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
-                                      : <><i className="fa-solid fa-database mr-2"></i>Leads Salvos</>}
+                    {aba === 'busca'     ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
+                     : aba === 'salvos' ? <><i className="fa-solid fa-database mr-2"></i>Leads Salvos</>
+                                        : <><i className="fa-solid fa-ban mr-2 text-red-400"></i>Exclusões</>}
                 </button>
             ))}
             {/* Botão Reset — limpa tudo para nova pesquisa */}
@@ -1423,22 +1503,34 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                                 </button>
                                             )}
                                         </td>
-                                        {/* AÇÃO — botão Prospectar (só para leads de CV ou sem contato) */}
+                                        {/* AÇÃO — botão Prospectar + É Consultoria */}
                                         <td className="px-3 py-2 text-center">
-                                            {['cv_alocacao','cv_infra','cv_ia_ml','cv_sap'].includes(lead.motor) || !lead.email ? (
-                                                <button
-                                                    onClick={() => prospectar(lead)}
-                                                    className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-600 hover:text-white transition-colors whitespace-nowrap font-medium"
-                                                    title={lead.empresa_dominio
-                                                        ? `Buscar contatos em ${lead.empresa_dominio}`
-                                                        : `Buscar contatos em ${lead.empresa_nome}`}
-                                                >
-                                                    <i className="fa-solid fa-magnifying-glass text-[9px]"></i>
-                                                    Prospectar
-                                                </button>
-                                            ) : (
-                                                <span className="text-gray-200 text-xs">—</span>
-                                            )}
+                                            <div className="flex flex-col items-center gap-1">
+                                                {(['cv_alocacao','cv_infra','cv_ia_ml','cv_sap'].includes(lead.motor) || !lead.email) && (
+                                                    <button
+                                                        onClick={() => prospectar(lead)}
+                                                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-600 hover:text-white transition-colors whitespace-nowrap font-medium w-full justify-center"
+                                                        title={lead.empresa_dominio ? `Buscar contatos em ${lead.empresa_dominio}` : `Buscar contatos em ${lead.empresa_nome}`}
+                                                    >
+                                                        <i className="fa-solid fa-magnifying-glass text-[9px]"></i>
+                                                        Prospectar
+                                                    </button>
+                                                )}
+                                                {lead.empresa_nome && (
+                                                    <button
+                                                        onClick={() => marcarComoConsultoria(lead)}
+                                                        disabled={marcandoExclusao === lead.id}
+                                                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 hover:bg-red-500 hover:text-white transition-colors whitespace-nowrap font-medium w-full justify-center disabled:opacity-50"
+                                                        title="Marcar como Consultoria de TI e remover da base"
+                                                    >
+                                                        {marcandoExclusao === lead.id
+                                                            ? <i className="fa-solid fa-spinner fa-spin text-[9px]"></i>
+                                                            : <i className="fa-solid fa-ban text-[9px]"></i>
+                                                        }
+                                                        É Consultoria
+                                                    </button>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="px-3 py-2 text-center">
                                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
@@ -1533,6 +1625,112 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                             </div>
                         </div>
                     )}
+                </div>
+            )}
+        </>
+        )}
+        {/* ══════════════════════════════════════════ */}
+        {/* ABA: EXCLUSÕES                             */}
+        {/* ══════════════════════════════════════════ */}
+        {abaAtiva === 'exclusoes' && (
+        <>
+            {/* Cabeçalho explicativo */}
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl">
+                <div className="flex items-start gap-3">
+                    <i className="fa-solid fa-ban text-red-400 text-lg mt-0.5"></i>
+                    <div>
+                        <p className="text-sm font-semibold text-red-700">Lista de Exclusões — Consultorias de TI</p>
+                        <p className="text-xs text-red-500 mt-0.5">
+                            Empresas nesta lista são ignoradas automaticamente na extração de CVs.
+                            Para adicionar, clique em <strong>"É Consultoria"</strong> na aba Leads Salvos.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Barra de busca */}
+            <div className="flex gap-3 mb-4">
+                <input
+                    type="text"
+                    value={buscaExclusao}
+                    onChange={e => setBuscaExclusao(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && carregarExclusoes()}
+                    placeholder="Buscar empresa na lista de exclusões..."
+                    className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-300"
+                />
+                <button onClick={carregarExclusoes}
+                    className="px-3 py-1.5 bg-gray-600 text-white rounded-lg text-sm hover:bg-gray-700 flex items-center gap-1">
+                    <i className="fa-solid fa-magnifying-glass"></i>
+                    Buscar
+                </button>
+            </div>
+
+            {loadingExclusoes ? (
+                <div className="text-center py-10 text-gray-400">
+                    <i className="fa-solid fa-spinner fa-spin text-2xl mb-2 block"></i>
+                    Carregando lista de exclusões...
+                </div>
+            ) : exclusoes.length === 0 ? (
+                <div className="text-center py-16 text-gray-400">
+                    <i className="fa-solid fa-ban text-5xl mb-3 block text-gray-200"></i>
+                    <p className="font-medium">Nenhuma empresa na lista de exclusões</p>
+                    <p className="text-xs mt-1">Use o botão "É Consultoria" nos Leads Salvos para adicionar</p>
+                </div>
+            ) : (
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                    {/* Contador */}
+                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                        <span className="text-xs text-gray-500">
+                            <strong>{exclusoes.length}</strong> empresa{exclusoes.length !== 1 ? 's' : ''} na lista de exclusões
+                        </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="bg-gray-100 text-left">
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">DOMÍNIO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">MOTIVO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ADICIONADO POR</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÃO</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {exclusoes.map(exc => (
+                                    <tr key={exc.id} className="border-b hover:bg-red-50">
+                                        <td className="px-3 py-2 font-medium text-gray-800">{exc.empresa_nome}</td>
+                                        <td className="px-3 py-2 text-xs text-gray-500">{exc.dominio || '—'}</td>
+                                        <td className="px-3 py-2 text-center">
+                                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-medium">
+                                                {exc.motivo === 'consultoria_ti' ? '🏢 Consultoria TI' : exc.motivo}
+                                            </span>
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            {exc.adicionado_por_nome ? (
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">
+                                                    {exc.adicionado_por_nome.split(' ').slice(0, 2).join(' ')}
+                                                </span>
+                                            ) : <span className="text-gray-300 text-xs">—</span>}
+                                        </td>
+                                        <td className="px-3 py-2 text-center text-xs text-gray-400">
+                                            {new Date(exc.created_at).toLocaleDateString('pt-BR')}
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            <button
+                                                onClick={() => removerExclusao(exc.id, exc.empresa_nome)}
+                                                className="text-[10px] px-2 py-0.5 rounded border border-dashed border-gray-300 text-gray-400 hover:border-red-400 hover:text-red-500 transition-colors whitespace-nowrap"
+                                                title="Remover da lista de exclusões"
+                                            >
+                                                <i className="fa-solid fa-trash-can mr-1"></i>
+                                                Remover
+                                            </button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             )}
         </>
