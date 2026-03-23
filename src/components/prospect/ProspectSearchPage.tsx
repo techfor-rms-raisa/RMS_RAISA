@@ -1368,7 +1368,8 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     <i className="fa-solid fa-file-excel"></i>
                     Exportar XLS ({leadsSalvos.length})
                 </button>
-                {/* NOVO: botão carga bulk CV */}
+                {/* Botão carga bulk CV — apenas Administrador */}
+                {currentUser?.tipo_usuario === 'Administrador' && (
                 <button
                     onClick={async () => {
                         if (!currentUser?.id) return;
@@ -1394,6 +1395,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     <i className="fa-solid fa-file-import"></i>
                     Importar CVs
                 </button>
+                )}
             </div>
 
             {loadingSalvos ? (
@@ -1516,7 +1518,8 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                                         Prospectar
                                                     </button>
                                                 )}
-                                                {lead.empresa_nome && (
+                                                {/* É Consultoria — apenas Administrador */}
+                                                {lead.empresa_nome && currentUser?.tipo_usuario === 'Administrador' && (
                                                     <button
                                                         onClick={() => marcarComoConsultoria(lead)}
                                                         disabled={marcandoExclusao === lead.id}
