@@ -545,21 +545,35 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
             </button>
           </div>
 
-          {/* ── Busca por nome (mobile) */}
-          <div className="relative mb-2">
-            <input
-              type="text"
-              value={filterSearch}
-              onChange={e => setFilterSearch(e.target.value)}
-              placeholder="🔍 Buscar consultor..."
-              className="w-full border border-indigo-400 rounded-lg pl-3 pr-7 py-1.5 text-xs bg-indigo-700 text-white placeholder-indigo-300 focus:ring-2 focus:ring-white focus:border-transparent"
-            />
-            {filterSearch && (
-              <button
-                onClick={() => setFilterSearch('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-300 hover:text-white text-xs font-bold"
-              >✕</button>
+          {/* ── Filtros: Gestão de Pessoas + Busca por nome */}
+          <div className="flex flex-col gap-1.5 mb-2">
+            {gpManagers.length > 0 && (
+              <select
+                value={filterManager}
+                onChange={e => setFilterManager(e.target.value)}
+                className="w-full border border-indigo-400 rounded-lg px-3 py-1.5 text-xs bg-indigo-700 text-white focus:ring-2 focus:ring-white focus:border-transparent"
+              >
+                <option value="all">👥 Todas as gestoras</option>
+                {gpManagers.map(u => (
+                  <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
+                ))}
+              </select>
             )}
+            <div className="relative">
+              <input
+                type="text"
+                value={filterSearch}
+                onChange={e => setFilterSearch(e.target.value)}
+                placeholder="🔍 Buscar consultor..."
+                className="w-full border border-indigo-400 rounded-lg pl-3 pr-7 py-1.5 text-xs bg-indigo-700 text-white placeholder-indigo-300 focus:ring-2 focus:ring-white focus:border-transparent"
+              />
+              {filterSearch && (
+                <button
+                  onClick={() => setFilterSearch('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-indigo-300 hover:text-white text-xs font-bold"
+                >✕</button>
+              )}
+            </div>
           </div>
 
           {/* ── ABAS */}
@@ -704,23 +718,6 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
         {/* ── ABA: CONSULTORES (Lista completa) */}
         {mobileTab === 'lista' && (
           <div className="flex flex-col flex-1 overflow-hidden">
-
-            {/* ── Filtro Gestão de Pessoas (mobile) */}
-            {gpManagers.length > 0 && (
-              <div className="px-3 pt-2.5 pb-2 bg-white border-b border-gray-100 flex-shrink-0">
-                <label className="block text-xs font-medium text-gray-500 mb-1">Gestão de Pessoas</label>
-                <select
-                  value={filterManager}
-                  onChange={e => setFilterManager(e.target.value)}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm bg-gray-50 focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
-                >
-                  <option value="all">Todas as gestoras</option>
-                  {gpManagers.map(u => (
-                    <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
-                  ))}
-                </select>
-              </div>
-            )}
 
             {/* ── Filtros rápidos */}
             <div className="flex gap-2 px-3 py-2 bg-white border-b border-gray-100 flex-shrink-0 overflow-x-auto">
