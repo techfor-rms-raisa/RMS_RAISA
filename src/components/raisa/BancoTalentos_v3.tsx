@@ -429,7 +429,17 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
         try {
             // Upload para Supabase Storage
             const timestamp = Date.now();
-            const filePath = `pessoa_${pessoaId}/${timestamp}_${file.name}`;
+            // ✅ FIX: Sanitizar nome do arquivo — Supabase Storage rejeita espaços,
+            // acentos e caracteres especiais na key. Preservar a extensão original.
+            const ext = file.name.split('.').pop()?.toLowerCase() || '';
+            const nomeBase = file.name.replace(/\.[^/.]+$/, ''); // sem extensão
+            const nomeSanitizado = nomeBase
+                .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove acentos
+                .replace(/[^a-zA-Z0-9_\-]/g, '_')                  // espaços e especiais → _
+                .replace(/_+/g, '_')                                  // múltiplos _ → um
+                .replace(/^_|_$/g, '')                                // trim _
+                .substring(0, 80);                                    // limitar comprimento
+            const filePath = `pessoa_${pessoaId}/${timestamp}_${nomeSanitizado}.${ext}`;
             
             const { error: uploadError } = await supabase.storage
                 .from('pessoa-anexos')
