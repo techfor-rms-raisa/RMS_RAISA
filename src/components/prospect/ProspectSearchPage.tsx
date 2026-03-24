@@ -476,6 +476,33 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     }, [filtroStatus, filtroEmpresa, filtroOrigem, currentUser]);
 
     // ============================================
+    // RESERVAR EMPRESA — atribui analista ao(s) lead(s)
+    // Chamado: ao clicar Prospectar OU ao exportar XLS com seleção
+    // ============================================
+    const reservarEmpresas = useCallback(async (ids: number[]) => {
+        if (!currentUser?.id || ids.length === 0) return;
+        try {
+            await fetch('/api/prospect-leads', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids,
+                    reservado_por: currentUser.id,
+                }),
+            });
+            // Atualiza lista local imediatamente
+            const nomeAnalista = currentUser.nome_usuario || 'Você';
+            setLeadsSalvos(prev => prev.map(l =>
+                ids.includes(l.id)
+                    ? { ...l, reservado_por: currentUser.id, reservado_em: new Date().toISOString(), reservado_por_nome: nomeAnalista }
+                    : l
+            ));
+        } catch (e) {
+            console.error('Erro ao reservar empresa:', e);
+        }
+    }, [currentUser]);
+
+    // ============================================
     // PROSPECTAR — leva empresa do CV para Nova Busca + reserva para o analista
     // ============================================
     const prospectar = useCallback((lead: ProspectLead) => {
@@ -580,34 +607,6 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         }
     }, [currentUser]);
 
-    // ============================================
-    // RESERVAR EMPRESA — atribui analista ao(s) lead(s)
-    // Chamado: ao clicar Prospectar OU ao exportar XLS com seleção
-    // ============================================
-    const reservarEmpresas = useCallback(async (ids: number[]) => {
-        if (!currentUser?.id || ids.length === 0) return;
-        try {
-            await fetch('/api/prospect-leads', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    ids,
-                    reservado_por: currentUser.id,
-                }),
-            });
-            // Atualiza lista local imediatamente
-            const nomeAnalista = currentUser.nome_usuario || 'Você';
-            setLeadsSalvos(prev => prev.map(l =>
-                ids.includes(l.id)
-                    ? { ...l, reservado_por: currentUser.id, reservado_em: new Date().toISOString(), reservado_por_nome: nomeAnalista }
-                    : l
-            ));
-        } catch (e) {
-            console.error('Erro ao reservar empresa:', e);
-        }
-    }, [currentUser]);
-
-    
     const carregarExclusoes = useCallback(async () => {
         setLoadingExclusoes(true);
         try {
