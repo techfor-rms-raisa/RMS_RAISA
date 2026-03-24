@@ -168,11 +168,11 @@ async function processarPessoa(pessoa: PessoaData, userId: number): Promise<{
   const nomesParaVerificar = Array.from(empresasUnicas.keys());
   const { data: exclusoes } = await supabase
     .from('prospect_exclusoes')
-    .select('empresa_nome')
-    .or(nomesParaVerificar.map(n => `empresa_nome.ilike.%${n}%`).join(','));
+    .select('nome')
+    .or(nomesParaVerificar.map(n => `nome.ilike.%${n}%`).join(','));
 
   const nomesExcluidos = new Set(
-    (exclusoes || []).map((e: any) => e.empresa_nome.toLowerCase().trim())
+    (exclusoes || []).map((e: any) => e.nome.toLowerCase().trim())
   );
 
   for (const [chave, exp] of empresasUnicas) {
