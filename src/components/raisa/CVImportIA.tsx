@@ -265,6 +265,11 @@ REGRAS:
 // ============================================
 
 const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) => {
+  // 🔧 TRACE v6.0 — remover após confirmar deploy
+  React.useEffect(() => {
+    console.log('🔧 [CVImportIA] Versão carregada: v6.0 — endpoint: /api/extract-cv-text');
+  }, []);
+
   // 🆕 v56.0: Obter usuário logado para exclusividade
   const { user } = useAuth();
   
