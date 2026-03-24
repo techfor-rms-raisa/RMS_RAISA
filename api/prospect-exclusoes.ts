@@ -29,20 +29,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let query = supabase
       .from('prospect_exclusoes')
-      .select(`id, nome, dominio, tipo, criado_em, adicionado_por,
+      .select(`id, empresa_nome, dominio, motivo, created_at, adicionado_por,
         app_users!prospect_exclusoes_adicionado_por_fkey ( nome_usuario )`)
-      .order('nome', { ascending: true });
+      .order('empresa_nome', { ascending: true });
 
-    if (busca) query = query.ilike('nome', `%${busca}%`);
+    if (busca) query = query.ilike('empresa_nome', `%${busca}%`);
 
     const { data, error } = await query;
     if (error) return res.status(500).json({ success: false, error: error.message });
 
     const exclusoes = (data || []).map((r: any) => ({
       ...r,
-      empresa_nome:        r.nome,
-      motivo:              r.tipo,
-      created_at:          r.criado_em,
+      empresa_nome:        r.empresa_nome,
+      motivo:              r.motivo,
+      created_at:          r.created_at,
       adicionado_por_nome: r.app_users?.nome_usuario || null,
       app_users:           undefined,
     }));
@@ -61,16 +61,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const { data: jaExiste } = await supabase
         .from('prospect_exclusoes')
         .select('id')
-        .ilike('nome', empresa_nome.trim())
+        .ilike('empresa_nome', empresa_nome.trim())
         .limit(1);
 
       if (!jaExiste || jaExiste.length === 0) {
         const { error: errInsert } = await supabase
           .from('prospect_exclusoes')
           .insert({
-            nome:           empresa_nome.trim(),
+            empresa_nome:   empresa_nome.trim(),
             dominio:        dominio?.trim() || null,
-            tipo:           motivo || 'consultoria_ti',
+            motivo:         motivo || 'consultoria_ti',
             adicionado_por: user_id,
           });
         if (errInsert)
