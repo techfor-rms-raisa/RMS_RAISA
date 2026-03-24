@@ -86,6 +86,10 @@ interface ProspectLead {
     exportado_por:  number | null;
     exportado_em:   string | null;
     exportado_por_nome?: string | null;
+    // Reserva de empresa para prospecção
+    reservado_por:      number | null;
+    reservado_em:       string | null;
+    reservado_por_nome: string | null;
 }
 
 // ============================================
@@ -153,6 +157,10 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [filtroOrigem, setFiltroOrigem]               = useState(''); // NOVO: filtro por origem CV
     const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null);
     const [marcandoExclusao, setMarcandoExclusao]       = useState<number | null>(null); // NOVO
+
+    // Seleção de leads salvos (para reserva e exportação)
+    const [leadsSelecionados, setLeadsSelecionados]     = useState<Set<number>>(new Set());
+    const [reservando, setReservando]                   = useState(false);
 
     // Paginação Leads Salvos
     const [paginaAtual, setPaginaAtual]                 = useState(1);
@@ -449,9 +457,14 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         setLoadingSalvos(true);
         try {
             const params = new URLSearchParams();
-            if (filtroStatus)  params.set('status',  filtroStatus);
+            // Filtro especial "Minhas Empresas" — filtra por reservado_por do usuário atual
+            if (filtroStatus === '__minhas__') {
+                if (currentUser?.id) params.set('reservado_por', String(currentUser.id));
+            } else if (filtroStatus) {
+                params.set('status', filtroStatus);
+            }
             if (filtroEmpresa) params.set('empresa', filtroEmpresa);
-            if (filtroOrigem)  params.set('motor',   filtroOrigem); // NOVO: filtro por motor/origem
+            if (filtroOrigem)  params.set('motor',   filtroOrigem);
             const res  = await fetch(`/api/prospect-leads?${params}`);
             const data = await res.json();
             if (data.success) { setLeadsSalvos(data.leads || []); setPaginaAtual(1); }
@@ -460,12 +473,15 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         } finally {
             setLoadingSalvos(false);
         }
-    }, [filtroStatus, filtroEmpresa, filtroOrigem]);
+    }, [filtroStatus, filtroEmpresa, filtroOrigem, currentUser]);
 
     // ============================================
-    // PROSPECTAR — leva empresa do CV para Nova Busca
+    // PROSPECTAR — leva empresa do CV para Nova Busca + reserva para o analista
     // ============================================
     const prospectar = useCallback((lead: ProspectLead) => {
+        // Registrar analista responsável pela prospecção
+        reservarEmpresas([lead.id]);
+
         // Prioridade: domínio cadastrado → tentar inferir do nome
         const dominio = lead.empresa_dominio?.trim() || '';
 
@@ -475,7 +491,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         setQueriesGoogle([]);
         setQueriesExecutadas(new Set());
 
-        // Preencher domínio — se não tiver, preencher nome no campo nome específico
+        // Preencher: se tiver domínio → campo Domínio; senão → campo Nome Específico
         if (dominio) {
             setDomain(dominio);
             setEmpresaNome('');
@@ -493,7 +509,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             : `Nome "${lead.empresa_nome}" carregado — informe o domínio e clique em Buscar`;
         setToastMsg({ tipo: 'ok', msg });
         setTimeout(() => setToastMsg(null), 5000);
-    }, []);
+    }, [reservarEmpresas]);
 
     // ============================================
     // MARCAR COMO EXPORTADO (leads de CV)
@@ -565,8 +581,33 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     }, [currentUser]);
 
     // ============================================
-    // EXCLUSÕES — carregar lista
+    // RESERVAR EMPRESA — atribui analista ao(s) lead(s)
+    // Chamado: ao clicar Prospectar OU ao exportar XLS com seleção
     // ============================================
+    const reservarEmpresas = useCallback(async (ids: number[]) => {
+        if (!currentUser?.id || ids.length === 0) return;
+        try {
+            await fetch('/api/prospect-leads', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids,
+                    reservado_por: currentUser.id,
+                }),
+            });
+            // Atualiza lista local imediatamente
+            const nomeAnalista = currentUser.nome_usuario || 'Você';
+            setLeadsSalvos(prev => prev.map(l =>
+                ids.includes(l.id)
+                    ? { ...l, reservado_por: currentUser.id, reservado_em: new Date().toISOString(), reservado_por_nome: nomeAnalista }
+                    : l
+            ));
+        } catch (e) {
+            console.error('Erro ao reservar empresa:', e);
+        }
+    }, [currentUser]);
+
+    
     const carregarExclusoes = useCallback(async () => {
         setLoadingExclusoes(true);
         try {
@@ -1337,6 +1378,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     <option value="contactado">Contactado</option>
                     <option value="qualificado">Qualificado</option>
                     <option value="descartado">Descartado</option>
+                    <option value="__minhas__">🔒 Minhas Empresas</option>
                 </select>
                 {/* NOVO: filtro por origem */}
                 <select value={filtroOrigem} onChange={e => setFiltroOrigem(e.target.value)}
@@ -1363,10 +1405,26 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     <i className="fa-solid fa-filter"></i>
                     Filtrar
                 </button>
-                <button onClick={() => exportarXLS(leadsSalvos, 'leads_salvos')} disabled={leadsSalvos.length === 0}
+                <button onClick={async () => {
+                        const dadosParaExportar = leadsSelecionados.size > 0
+                            ? leadsSalvos.filter(l => leadsSelecionados.has(l.id))
+                            : leadsSalvos;
+                        if (dadosParaExportar.length === 0) return;
+                        // Reservar empresas selecionadas para o analista
+                        if (leadsSelecionados.size > 0) {
+                            setReservando(true);
+                            await reservarEmpresas(Array.from(leadsSelecionados));
+                            setReservando(false);
+                        }
+                        exportarXLS(dadosParaExportar, 'leads_salvos');
+                    }}
+                    disabled={leadsSalvos.length === 0 || reservando}
                     className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-1">
-                    <i className="fa-solid fa-file-excel"></i>
-                    Exportar XLS ({leadsSalvos.length})
+                    <i className={`fa-solid ${reservando ? 'fa-spinner fa-spin' : 'fa-file-excel'}`}></i>
+                    {leadsSelecionados.size > 0
+                        ? `Exportar Selecionados (${leadsSelecionados.size})`
+                        : `Exportar XLS (${leadsSalvos.length})`
+                    }
                 </button>
                 {/* Botão carga bulk CV — apenas Administrador */}
                 {currentUser?.tipo_usuario === 'Administrador' && (
@@ -1414,11 +1472,26 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                         <table className="w-full text-sm">
                             <thead>
                                 <tr className="bg-gray-100 text-left">
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center w-8">
+                                        <input
+                                            type="checkbox"
+                                            className="w-4 h-4 rounded"
+                                            checked={leadsSalvos.length > 0 && leadsSalvos.every(l => leadsSelecionados.has(l.id))}
+                                            onChange={e => {
+                                                if (e.target.checked) {
+                                                    setLeadsSelecionados(new Set(leadsSalvos.map(l => l.id)));
+                                                } else {
+                                                    setLeadsSelecionados(new Set());
+                                                }
+                                            }}
+                                            title="Selecionar todos"
+                                        />
+                                    </th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">NOME</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">CARGO</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">LINKEDIN</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">RESERVADO</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">GRAVADO POR</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">EXPORTADO</th>
@@ -1429,17 +1502,42 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                             </thead>
                             <tbody>
                                 {leadsPagina.map(lead => (
-                                    <tr key={lead.id} className="border-b hover:bg-gray-50">
+                                    <tr key={lead.id} className={`border-b hover:bg-gray-50 ${leadsSelecionados.has(lead.id) ? 'bg-blue-50' : ''}`}>
+                                        {/* ── Checkbox seleção ── */}
+                                        <td className="px-3 py-2 text-center">
+                                            <input
+                                                type="checkbox"
+                                                className="w-4 h-4 rounded"
+                                                checked={leadsSelecionados.has(lead.id)}
+                                                onChange={() => {
+                                                    setLeadsSelecionados(prev => {
+                                                        const next = new Set(prev);
+                                                        if (next.has(lead.id)) next.delete(lead.id);
+                                                        else next.add(lead.id);
+                                                        return next;
+                                                    });
+                                                }}
+                                            />
+                                        </td>
                                         <td className="px-3 py-2 font-medium text-gray-800">{lead.nome_completo}</td>
                                         <td className="px-3 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={lead.cargo || ''}>{lead.cargo || '—'}</td>
                                         <td className="px-3 py-2 text-gray-600 text-xs">{lead.empresa_nome || '—'}</td>
-                                        <td className="px-3 py-2 text-xs text-gray-700">{lead.email || <span className="text-gray-300">—</span>}</td>
                                         <td className="px-3 py-2 text-center">
                                             {lead.linkedin_url ? (
                                                 <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
                                                     <i className="fa-brands fa-linkedin"></i>
                                                 </a>
                                             ) : '—'}
+                                        </td>
+                                        {/* ── RESERVADO — analista que reservou a empresa ── */}
+                                        <td className="px-3 py-2 text-center">
+                                            {lead.reservado_por_nome ? (
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 font-medium whitespace-nowrap" title={`Reservado por ${lead.reservado_por_nome}`}>
+                                                    🔒 {lead.reservado_por_nome.split(' ')[0]}
+                                                </span>
+                                            ) : (
+                                                <span className="text-gray-300 text-xs">—</span>
+                                            )}
                                         </td>
                                         {/* ORIGEM — motor com badges distintos para CV */}
                                         <td className="px-3 py-2 text-center">
@@ -1473,6 +1571,10 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                             {lead.gravado_por_nome ? (
                                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium whitespace-nowrap">
                                                     {lead.gravado_por_nome.split(' ').slice(0, 2).join(' ')}
+                                                </span>
+                                            ) : lead.motor?.startsWith('cv_') ? (
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-medium whitespace-nowrap" title="Importado automaticamente pelo sistema RAISA">
+                                                    🤖 RAISA
                                                 </span>
                                             ) : (
                                                 <span className="text-gray-300 text-xs">—</span>

@@ -133,7 +133,7 @@ function extrairDominio(email: string | null): string {
 
 // ─── PROCESSAR UMA PESSOA ────────────────────────────────────────────────────
 
-async function processarPessoa(pessoa: PessoaData, userId: number): Promise<{
+async function processarPessoa(pessoa: PessoaData, userId: number | null): Promise<{
   inseridos: number;
   ignorados: number;
   empresas: string[];
@@ -168,11 +168,11 @@ async function processarPessoa(pessoa: PessoaData, userId: number): Promise<{
   const nomesParaVerificar = Array.from(empresasUnicas.keys());
   const { data: exclusoes } = await supabase
     .from('prospect_exclusoes')
-    .select('empresa_nome')
-    .or(nomesParaVerificar.map(n => `empresa_nome.ilike.%${n}%`).join(','));
+    .select('nome')
+    .or(nomesParaVerificar.map(n => `nome.ilike.%${n}%`).join(','));
 
   const nomesExcluidos = new Set(
-    (exclusoes || []).map((e: any) => e.empresa_nome.toLowerCase().trim())
+    (exclusoes || []).map((e: any) => e.nome.toLowerCase().trim())
   );
 
   for (const [chave, exp] of empresasUnicas) {
@@ -276,10 +276,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ── MODO: pessoa individual ─────────────────────────────────────────────────
+  // user_id é OPCIONAL aqui: quando chamado pelo trigger pg_net, não há usuário.
+  // Nesse caso buscado_por = null → frontend exibe "RAISA" para leads de CV automáticos.
   if (modo === 'pessoa') {
-    if (!pessoa_id || !user_id) {
-      return res.status(400).json({ error: 'pessoa_id e user_id são obrigatórios' });
+    if (!pessoa_id) {
+      return res.status(400).json({ error: 'pessoa_id é obrigatório' });
     }
+    // user_id pode ser null/undefined quando originado de trigger automático
 
     const { data: pessoas, error: errP } = await supabase
       .from('pessoas')
@@ -305,7 +308,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       estado:       pessoa.estado,
       experiencias: pessoa.pessoa_experiencias || [],
       skills:       pessoa.pessoa_skills || [],
-    }, user_id);
+    }, user_id || null);
 
     return res.status(200).json({ success: true, ...result });
   }
