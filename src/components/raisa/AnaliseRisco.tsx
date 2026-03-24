@@ -168,7 +168,6 @@ const AnaliseRisco: React.FC = () => {
   // Estados da aba Triagem
   const [arquivo, setArquivo] = useState<File | null>(null);
   const [textoExtraido, setTextoExtraido] = useState<string>('');
-  const [base64Original, setBase64Original] = useState<string>(''); // 🆕 v4.4: Manter PDF original para re-extração estruturada
   const [isExtraindo, setIsExtraindo] = useState(false);
   const [isAnalisando, setIsAnalisando] = useState(false);
   const [analise, setAnalise] = useState<AnaliseTriagem | null>(null);
@@ -339,39 +338,34 @@ const AnaliseRisco: React.FC = () => {
     setAnalise(null);
     setAnaliseAdequacao(null);
     setSalvouBanco(false);
-    setBase64Original(''); // 🆕 v4.4: Limpar base64 anterior
     
     await extrairTexto(file);
   };
 
-  // v5.0: Usa action leve 'extrair_texto_pdf' (só Etapa 1)
-  // Evita timeout 504 que ocorria com 'extrair_cv' (3 extrações paralelas = 60s+)
+  // v6.0: Usa /api/extract-cv-text via multipart/form-data
+  // Resolve HTTP 413 em PDFs > 4.5MB e suporta DOCX nativamente
+  // Limite: 20MB (vs 4.5MB do JSON body anterior)
   const extrairTexto = async (file: File) => {
     setIsExtraindo(true);
     setErro(null);
 
     try {
-      const base64 = await fileToBase64(file);
-      setBase64Original(base64); // 🆕 v4.4: Persistir para re-uso nas análises
+      const formData = new FormData();
+      formData.append('arquivo', file);
 
-      const response = await fetch('/api/gemini-analyze', {
+      const response = await fetch('/api/extract-cv-text', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'extrair_texto_pdf',  // ✅ v5.0: action LEVE — só extrai texto bruto
-          payload: {
-            base64PDF: base64
-          }
-        })
+        body: formData
+        // Sem Content-Type manual — browser define automaticamente com boundary
       });
 
       // ✅ Verificar status HTTP antes de parsear JSON
       if (!response.ok) {
         const statusCode = response.status;
         if (statusCode === 504 || statusCode === 408) {
-          throw new Error('⏱️ Extração do PDF excedeu o tempo limite. Tente um arquivo menor ou cole o texto manualmente.');
+          throw new Error('⏱️ Extração do arquivo excedeu o tempo limite. Tente um arquivo menor ou cole o texto manualmente.');
         }
-        throw new Error(`Erro HTTP ${statusCode} ao extrair texto do PDF.`);
+        throw new Error(`Erro HTTP ${statusCode} ao extrair texto do arquivo.`);
       }
 
       const result = await response.json();
@@ -379,7 +373,7 @@ const AnaliseRisco: React.FC = () => {
       if (result.success && result.data?.texto_original) {
         setTextoExtraido(result.data.texto_original);
       } else {
-        throw new Error(result.data?.erro || result.error || 'Falha ao extrair texto do arquivo');
+        throw new Error(result.error || result.data?.error || 'Falha ao extrair texto do arquivo');
       }
     } catch (err: any) {
       console.error('Erro ao extrair texto:', err);
@@ -388,19 +382,6 @@ const AnaliseRisco: React.FC = () => {
     } finally {
       setIsExtraindo(false);
     }
-  };
-
-  const fileToBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const result = reader.result as string;
-        const base64 = result.split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = error => reject(error);
-    });
   };
 
   const montarTextoDeCV = (dados: any): string => {
