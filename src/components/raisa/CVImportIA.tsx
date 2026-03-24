@@ -265,6 +265,11 @@ REGRAS:
 // ============================================
 
 const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) => {
+  // 🔧 TRACE v6.0 — remover após confirmar deploy
+  React.useEffect(() => {
+    console.log('🔧 [CVImportIA] Versão carregada: v6.0 — endpoint: /api/extract-cv-text');
+  }, []);
+
   // 🆕 v56.0: Obter usuário logado para exclusividade
   const { user } = useAuth();
   
@@ -293,8 +298,8 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
     if (!file) return;
 
     const extensao = file.name.split('.').pop()?.toLowerCase();
-    if (!['pdf', 'txt'].includes(extensao || '')) {
-      setErro('Formato não suportado. Use PDF ou TXT.');
+    if (!['pdf', 'docx', 'doc', 'txt'].includes(extensao || '')) {
+      setErro('Formato não suportado. Use PDF, DOCX ou TXT.');
       return;
     }
 
@@ -316,43 +321,37 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
         textoParaProcessar = await file.text();
         setProgresso(40);
       } else {
-        // PDF: v5.0 — ETAPA 1 LEVE: extrair apenas texto bruto via API
-        // Usa action 'extrair_texto_pdf' (1 chamada Gemini simples, ~8s)
-        // Evita timeout causado por 'extrair_cv' com base64PDF (4 chamadas, ~60s+)
-        console.log('📄 [CVImportIA v5.0] Extraindo texto do PDF (etapa leve)...');
+        // PDF / DOCX / DOC — v6.0: endpoint dedicado via multipart/form-data
+        // Resolve HTTP 413 (PDF grande > 4.5MB) e suporta DOCX nativamente
+        // Limite: 20MB (vs 4.5MB do JSON body anterior)
+        console.log(`📄 [CVImportIA v6.0] Extraindo texto do ${extensao?.toUpperCase()} via /api/extract-cv-text...`);
         setProgresso(20);
 
-        const base64 = await fileParaBase64(file);
+        const formData = new FormData();
+        formData.append('arquivo', file);
 
-        const respostaTexto = await fetch('/api/gemini-analyze', {
+        const respostaTexto = await fetch('/api/extract-cv-text', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'extrair_texto_pdf',
-            payload: { base64PDF: base64 }
-          })
+          body: formData
+          // Sem Content-Type manual — browser define automaticamente com boundary correto
         });
 
-        // Verificar status ANTES de parsear (evita "not valid JSON" no 504)
         if (!respostaTexto.ok) {
           const status = respostaTexto.status;
           if (status === 504 || status === 408) {
-            throw new Error('⏱️ Extração do PDF excedeu o tempo limite. Tente um arquivo menor ou cole o texto manualmente.');
+            throw new Error('⏱️ Extração do arquivo excedeu o tempo limite. Tente um arquivo menor ou cole o texto manualmente.');
           }
-          if (status === 413) {
-            throw new Error('Tamanho do arquivo excede a capacidade de processamento da IA, tente um arquivo menor ou TXT.');
-          }
-          throw new Error(`Erro HTTP ${status} ao extrair texto do PDF.`);
+          throw new Error(`Erro HTTP ${status} ao extrair texto do arquivo.`);
         }
 
         const resultadoTexto = await respostaTexto.json();
 
         if (!resultadoTexto.success || !resultadoTexto.data?.texto_original) {
-          throw new Error(resultadoTexto.data?.erro || 'Não foi possível extrair texto do PDF.');
+          throw new Error(resultadoTexto.error || resultadoTexto.data?.error || 'Não foi possível extrair texto do arquivo.');
         }
 
         textoParaProcessar = resultadoTexto.data.texto_original;
-        console.log(`✅ [CVImportIA v5.0] Texto extraído: ${textoParaProcessar.length} caracteres`);
+        console.log(`✅ [CVImportIA v6.0] Texto extraído (${extensao?.toUpperCase()}): ${textoParaProcessar.length} caracteres`);
         setProgresso(40);
       }
 
@@ -366,19 +365,6 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
       setErro(err.message || 'Erro ao processar arquivo');
       setEtapaAtual(1);
     }
-  };
-
-  // Converte File para base64 puro (sem prefixo data:...)
-  const fileParaBase64 = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1];
-        resolve(base64);
-      };
-      reader.onerror = () => reject(new Error('Erro ao ler arquivo'));
-      reader.readAsDataURL(file);
-    });
   };
 
   // Processar CV usando API backend (Vercel + Gemini)
@@ -1285,7 +1271,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
                   Arraste o CV aqui ou clique para selecionar
                 </h3>
                 <p className="text-gray-500 mb-4">
-                  Formatos aceitos: PDF, TXT (máx. 10MB)
+                  Formatos aceitos: PDF, DOCX, TXT (máx. 20MB)
                 </p>
                 <button className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
                   Selecionar Arquivo
@@ -1295,7 +1281,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.txt"
+                accept=".pdf,.docx,.doc,.txt"
                 onChange={handleFileUpload}
                 className="hidden"
               />
@@ -1635,3 +1621,4 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
 };
 
 export default CVImportIA;
+

@@ -26,10 +26,15 @@ function getAI(): GoogleGenAI {
 }
 
 // ============================================================
-// CONFIGURAÇÃO VERCEL - Timeout estendido para processamento de PDF
+// CONFIGURAÇÃO VERCEL - Timeout estendido + body size aumentado para PDFs grandes
 // ============================================================
 export const config = {
   maxDuration: 60, // 60 segundos (máximo do plano Pro)
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb', // PDFs em base64 chegam a ~5MB para arquivos de 3.5MB
+    },
+  },
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

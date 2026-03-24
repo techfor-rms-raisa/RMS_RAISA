@@ -80,6 +80,12 @@ interface ProspectLead {
     senioridade:    string | null;
     departamentos:  string[];
     gravado_por_nome: string | null;
+    // Campos CV Extract
+    pessoa_id:      number | null;
+    candidato_nome: string | null;
+    exportado_por:  number | null;
+    exportado_em:   string | null;
+    exportado_por_nome?: string | null;
 }
 
 // ============================================
@@ -109,7 +115,7 @@ const SENIORIDADES = [
 // COMPONENTE PRINCIPAL
 // ============================================
 interface ProspectSearchPageProps {
-    initialTab?: 'busca' | 'salvos';
+    initialTab?: 'busca' | 'salvos' | 'exclusoes';
 }
 
 const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'busca' }) => {
@@ -131,7 +137,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [toastMsg, setToastMsg]                       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
 
     // Abas
-    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'>(initialTab ?? 'busca');
+    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'|'exclusoes'>(initialTab ?? 'busca');
 
     // Sincronizar abaAtiva quando initialTab mudar
     // (ex: usuário navega de "Buscar Leads" → "Meus Prospects" sem desmontar o componente)
@@ -144,6 +150,18 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [loadingSalvos, setLoadingSalvos]             = useState(false);
     const [filtroStatus, setFiltroStatus]               = useState('');
     const [filtroEmpresa, setFiltroEmpresa]             = useState('');
+    const [filtroOrigem, setFiltroOrigem]               = useState(''); // NOVO: filtro por origem CV
+    const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null);
+    const [marcandoExclusao, setMarcandoExclusao]       = useState<number | null>(null); // NOVO
+
+    // Paginação Leads Salvos
+    const [paginaAtual, setPaginaAtual]                 = useState(1);
+    const ITENS_POR_PAGINA = 25;
+
+    // Exclusões
+    const [exclusoes, setExclusoes]                     = useState<any[]>([]);
+    const [loadingExclusoes, setLoadingExclusoes]       = useState(false);
+    const [buscaExclusao, setBuscaExclusao]             = useState('');
 
     // Seleção
     const [todosSelecionados, setTodosSelecionados]     = useState(false);
@@ -433,15 +451,155 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             const params = new URLSearchParams();
             if (filtroStatus)  params.set('status',  filtroStatus);
             if (filtroEmpresa) params.set('empresa', filtroEmpresa);
+            if (filtroOrigem)  params.set('motor',   filtroOrigem); // NOVO: filtro por motor/origem
             const res  = await fetch(`/api/prospect-leads?${params}`);
             const data = await res.json();
-            if (data.success) setLeadsSalvos(data.leads || []);
+            if (data.success) { setLeadsSalvos(data.leads || []); setPaginaAtual(1); }
         } catch (e) {
             console.error('Erro ao carregar leads salvos:', e);
         } finally {
             setLoadingSalvos(false);
         }
-    }, [filtroStatus, filtroEmpresa]);
+    }, [filtroStatus, filtroEmpresa, filtroOrigem]);
+
+    // ============================================
+    // PROSPECTAR — leva empresa do CV para Nova Busca
+    // ============================================
+    const prospectar = useCallback((lead: ProspectLead) => {
+        // Prioridade: domínio cadastrado → tentar inferir do nome
+        const dominio = lead.empresa_dominio?.trim() || '';
+
+        // Limpar estado da busca atual
+        setResultados([]);
+        setEmpresaInfo(null);
+        setQueriesGoogle([]);
+        setQueriesExecutadas(new Set());
+
+        // Preencher domínio — se não tiver, preencher nome no campo nome específico
+        if (dominio) {
+            setDomain(dominio);
+            setEmpresaNome('');
+        } else {
+            setDomain('');
+            setEmpresaNome(lead.empresa_nome || '');
+        }
+
+        // Navegar para aba Nova Busca
+        setAbaAtiva('busca');
+
+        // Toast orientativo
+        const msg = dominio
+            ? `Domínio "${dominio}" carregado — configure os filtros e clique em Buscar`
+            : `Nome "${lead.empresa_nome}" carregado — informe o domínio e clique em Buscar`;
+        setToastMsg({ tipo: 'ok', msg });
+        setTimeout(() => setToastMsg(null), 5000);
+    }, []);
+
+    // ============================================
+    // MARCAR COMO EXPORTADO (leads de CV)
+    // ============================================
+    const marcarExportado = useCallback(async (leadId: number) => {
+        if (!currentUser?.id) return;
+        setMarcandoExportado(leadId);
+        try {
+            const res = await fetch('/api/prospect-cv-extract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    modo:    'marcar_exportado',
+                    lead_id: leadId,
+                    user_id: currentUser.id,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setLeadsSalvos(prev => prev.map(l =>
+                    l.id === leadId
+                        ? { ...l, exportado_por: currentUser.id, exportado_em: new Date().toISOString(), exportado_por_nome: currentUser.nome_usuario || 'Você' }
+                        : l
+                ));
+                setToastMsg({ tipo: 'ok', msg: 'Lead marcado como exportado!' });
+                setTimeout(() => setToastMsg(null), 3000);
+            }
+        } catch (e) {
+            console.error('Erro ao marcar exportado:', e);
+        } finally {
+            setMarcandoExportado(null);
+        }
+    }, [currentUser]);
+
+    // ============================================
+    // MARCAR COMO CONSULTORIA — adiciona exclusão + remove leads
+    // ============================================
+    const marcarComoConsultoria = useCallback(async (lead: ProspectLead) => {
+        if (!currentUser?.id) return;
+        if (!confirm(`Marcar "${lead.empresa_nome}" como Consultoria de TI?\n\nTodos os leads desta empresa serão removidos da base.`)) return;
+
+        setMarcandoExclusao(lead.id);
+        try {
+            const res = await fetch('/api/prospect-exclusoes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    acao:         'adicionar',
+                    empresa_nome: lead.empresa_nome,
+                    dominio:      lead.empresa_dominio || null,
+                    motivo:       'consultoria_ti',
+                    user_id:      currentUser.id,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                // Remove leads da empresa da lista local
+                setLeadsSalvos(prev => prev.filter(l =>
+                    l.empresa_nome?.toLowerCase() !== lead.empresa_nome?.toLowerCase()
+                ));
+                setToastMsg({ tipo: 'ok', msg: data.mensagem });
+                setTimeout(() => setToastMsg(null), 5000);
+            }
+        } catch (e) {
+            console.error('Erro ao marcar consultoria:', e);
+        } finally {
+            setMarcandoExclusao(null);
+        }
+    }, [currentUser]);
+
+    // ============================================
+    // EXCLUSÕES — carregar lista
+    // ============================================
+    const carregarExclusoes = useCallback(async () => {
+        setLoadingExclusoes(true);
+        try {
+            const params = new URLSearchParams();
+            if (buscaExclusao) params.set('busca', buscaExclusao);
+            const res  = await fetch(`/api/prospect-exclusoes?${params}`);
+            const data = await res.json();
+            if (data.success) setExclusoes(data.exclusoes || []);
+        } catch (e) {
+            console.error('Erro ao carregar exclusões:', e);
+        } finally {
+            setLoadingExclusoes(false);
+        }
+    }, [buscaExclusao]);
+
+    const removerExclusao = useCallback(async (id: number, nome: string) => {
+        if (!confirm(`Remover "${nome}" da lista de exclusões?\n\nA empresa voltará a aparecer em futuras extrações de CV.`)) return;
+        const res  = await fetch('/api/prospect-exclusoes', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ acao: 'remover', exclusao_id: id }),
+        });
+        const data = await res.json();
+        if (data.success) {
+            setExclusoes(prev => prev.filter(e => e.id !== id));
+            setToastMsg({ tipo: 'ok', msg: `"${nome}" removida das exclusões.` });
+            setTimeout(() => setToastMsg(null), 3000);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (abaAtiva === 'exclusoes') carregarExclusoes();
+    }, [abaAtiva, carregarExclusoes]);
 
     useEffect(() => {
         if (abaAtiva === 'salvos') carregarLeadsSalvos();
@@ -647,6 +805,19 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     };
 
     // ============================================
+    // PAGINAÇÃO — Leads Salvos
+    // ============================================
+    const totalPaginas = Math.ceil(leadsSalvos.length / ITENS_POR_PAGINA);
+    const inicioPagina = (paginaAtual - 1) * ITENS_POR_PAGINA;
+    const fimPagina    = inicioPagina + ITENS_POR_PAGINA;
+    const leadsPagina  = leadsSalvos.slice(inicioPagina, fimPagina);
+
+    const irParaPagina = (pagina: number) => {
+        setPaginaAtual(pagina);
+        document.getElementById('leads-salvos-topo')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    // ============================================
     // RENDER
     // ============================================
     return (
@@ -681,14 +852,15 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
         {/* Abas */}
         <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
-            {(['busca', 'salvos'] as const).map(aba => (
+            {(['busca', 'salvos', 'exclusoes'] as const).map(aba => (
                 <button key={aba} onClick={() => setAbaAtiva(aba)}
                     className={`px-4 py-2 text-sm font-medium rounded-t transition-colors
                         ${abaAtiva === aba
                             ? 'bg-white border border-b-white border-gray-200 text-blue-600 -mb-px'
                             : 'text-gray-500 hover:text-gray-700'}`}>
-                    {aba === 'busca'  ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
-                                      : <><i className="fa-solid fa-database mr-2"></i>Leads Salvos</>}
+                    {aba === 'busca'     ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
+                     : aba === 'salvos' ? <><i className="fa-solid fa-database mr-2"></i>Leads Salvos</>
+                                        : <><i className="fa-solid fa-ban mr-2 text-red-400"></i>Exclusões</>}
                 </button>
             ))}
             {/* Botão Reset — limpa tudo para nova pesquisa */}
@@ -1157,7 +1329,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         {abaAtiva === 'salvos' && (
         <>
             {/* Filtros */}
-            <div className="flex flex-wrap gap-3 mb-4">
+            <div id="leads-salvos-topo" className="flex flex-wrap gap-3 mb-4">
                 <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
                     className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
                     <option value="">Todos os status</option>
@@ -1165,6 +1337,19 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     <option value="contactado">Contactado</option>
                     <option value="qualificado">Qualificado</option>
                     <option value="descartado">Descartado</option>
+                </select>
+                {/* NOVO: filtro por origem */}
+                <select value={filtroOrigem} onChange={e => setFiltroOrigem(e.target.value)}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    <option value="">Todas as origens</option>
+                    <option value="gemini">🤖 Gemini AI</option>
+                    <option value="hunter">🎯 Hunter.io</option>
+                    <option value="gemini+hunter">🤖+🎯 Gemini+Hunter</option>
+                    <option value="extension">🔌 Extensão Chrome</option>
+                    <option value="cv_alocacao">👨‍💻 CV Origem Alocação</option>
+                    <option value="cv_infra">🖥️ CV Origem Infra</option>
+                    <option value="cv_ia_ml">🧠 CV Origem IA/ML</option>
+                    <option value="cv_sap">⚙️ CV Origem SAP</option>
                 </select>
                 <input
                     type="text"
@@ -1183,6 +1368,34 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     <i className="fa-solid fa-file-excel"></i>
                     Exportar XLS ({leadsSalvos.length})
                 </button>
+                {/* Botão carga bulk CV — apenas Administrador */}
+                {currentUser?.tipo_usuario === 'Administrador' && (
+                <button
+                    onClick={async () => {
+                        if (!currentUser?.id) return;
+                        if (!confirm('Iniciar carga de empresas dos CVs dos candidatos para a base de Prospects?\n\nEste processo pode levar alguns minutos.')) return;
+                        setToastMsg({ tipo: 'ok', msg: '⏳ Carga iniciada — aguarde...' });
+                        const res = await fetch('/api/prospect-cv-extract', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ modo: 'bulk', user_id: currentUser.id }),
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            setToastMsg({ tipo: 'ok', msg: `✅ Carga concluída: ${data.leads_inseridos} leads inseridos de ${data.processados} candidatos.` });
+                            setTimeout(() => { setToastMsg(null); carregarLeadsSalvos(); }, 5000);
+                        } else {
+                            setToastMsg({ tipo: 'erro', msg: `Erro na carga: ${data.error}` });
+                            setTimeout(() => setToastMsg(null), 4000);
+                        }
+                    }}
+                    className="px-3 py-1.5 bg-violet-600 text-white rounded-lg text-sm hover:bg-violet-700 flex items-center gap-1"
+                    title="Extrair empresas dos CVs dos candidatos para a base de Prospects"
+                >
+                    <i className="fa-solid fa-file-import"></i>
+                    Importar CVs
+                </button>
+                )}
             </div>
 
             {loadingSalvos ? (
@@ -1206,14 +1419,16 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">LINKEDIN</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">MOTOR</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">GRAVADO POR</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">EXPORTADO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÃO</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {leadsSalvos.map(lead => (
+                                {leadsPagina.map(lead => (
                                     <tr key={lead.id} className="border-b hover:bg-gray-50">
                                         <td className="px-3 py-2 font-medium text-gray-800">{lead.nome_completo}</td>
                                         <td className="px-3 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={lead.cargo || ''}>{lead.cargo || '—'}</td>
@@ -1226,10 +1441,33 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                                 </a>
                                             ) : '—'}
                                         </td>
+                                        {/* ORIGEM — motor com badges distintos para CV */}
                                         <td className="px-3 py-2 text-center">
-                                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 font-medium">
-                                                {lead.motor || 'gemini'}
-                                            </span>
+                                            {(() => {
+                                                const m = lead.motor || 'gemini';
+                                                const badges: Record<string, { label: string; cls: string }> = {
+                                                    'gemini':        { label: '🤖 Gemini',       cls: 'bg-blue-100 text-blue-700' },
+                                                    'hunter':        { label: '🎯 Hunter',        cls: 'bg-orange-100 text-orange-700' },
+                                                    'gemini+hunter': { label: '🤖+🎯 G+H',        cls: 'bg-amber-100 text-amber-700' },
+                                                    'extension':     { label: '🔌 Extensão',      cls: 'bg-gray-100 text-gray-600' },
+                                                    'cv_alocacao':   { label: '👨‍💻 CV Alocação',   cls: 'bg-indigo-100 text-indigo-700' },
+                                                    'cv_infra':      { label: '🖥️ CV Infra',       cls: 'bg-teal-100 text-teal-700' },
+                                                    'cv_ia_ml':      { label: '🧠 CV IA/ML',       cls: 'bg-purple-100 text-purple-700' },
+                                                    'cv_sap':        { label: '⚙️ CV SAP',          cls: 'bg-yellow-100 text-yellow-700' },
+                                                };
+                                                const b = badges[m] || { label: m, cls: 'bg-gray-100 text-gray-500' };
+                                                return (
+                                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${b.cls}`}>
+                                                        {b.label}
+                                                    </span>
+                                                );
+                                            })()}
+                                            {/* Candidato de origem (só para leads de CV) */}
+                                            {lead.candidato_nome && (
+                                                <div className="text-[9px] text-gray-400 mt-0.5 truncate max-w-[100px]" title={lead.candidato_nome}>
+                                                    {lead.candidato_nome.split(' ').slice(0, 2).join(' ')}
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="px-3 py-2 text-center">
                                             {lead.gravado_por_nome ? (
@@ -1239,6 +1477,63 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                             ) : (
                                                 <span className="text-gray-300 text-xs">—</span>
                                             )}
+                                        </td>
+                                        {/* EXPORTADO — botão ou badge */}
+                                        <td className="px-3 py-2 text-center">
+                                            {lead.exportado_em ? (
+                                                <div className="flex flex-col items-center gap-0.5">
+                                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium whitespace-nowrap">
+                                                        ✅ Exportado
+                                                    </span>
+                                                    {lead.exportado_por_nome && (
+                                                        <span className="text-[9px] text-gray-400">
+                                                            {lead.exportado_por_nome.split(' ')[0]}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    onClick={() => marcarExportado(lead.id)}
+                                                    disabled={marcandoExportado === lead.id}
+                                                    className="text-[10px] px-2 py-0.5 rounded-full border border-dashed border-gray-300 text-gray-400 hover:border-green-400 hover:text-green-600 transition-colors disabled:opacity-50 whitespace-nowrap"
+                                                    title="Marcar como exportado para Leads2B"
+                                                >
+                                                    {marcandoExportado === lead.id
+                                                        ? <i className="fa-solid fa-spinner fa-spin"></i>
+                                                        : '↗ Marcar exportado'
+                                                    }
+                                                </button>
+                                            )}
+                                        </td>
+                                        {/* AÇÃO — botão Prospectar + É Consultoria */}
+                                        <td className="px-3 py-2 text-center">
+                                            <div className="flex flex-col items-center gap-1">
+                                                {(['cv_alocacao','cv_infra','cv_ia_ml','cv_sap'].includes(lead.motor) || !lead.email) && (
+                                                    <button
+                                                        onClick={() => prospectar(lead)}
+                                                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-600 hover:text-white transition-colors whitespace-nowrap font-medium w-full justify-center"
+                                                        title={lead.empresa_dominio ? `Buscar contatos em ${lead.empresa_dominio}` : `Buscar contatos em ${lead.empresa_nome}`}
+                                                    >
+                                                        <i className="fa-solid fa-magnifying-glass text-[9px]"></i>
+                                                        Prospectar
+                                                    </button>
+                                                )}
+                                                {/* É Consultoria — apenas Administrador */}
+                                                {lead.empresa_nome && currentUser?.tipo_usuario === 'Administrador' && (
+                                                    <button
+                                                        onClick={() => marcarComoConsultoria(lead)}
+                                                        disabled={marcandoExclusao === lead.id}
+                                                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 hover:bg-red-500 hover:text-white transition-colors whitespace-nowrap font-medium w-full justify-center disabled:opacity-50"
+                                                        title="Marcar como Consultoria de TI e remover da base"
+                                                    >
+                                                        {marcandoExclusao === lead.id
+                                                            ? <i className="fa-solid fa-spinner fa-spin text-[9px]"></i>
+                                                            : <i className="fa-solid fa-ban text-[9px]"></i>
+                                                        }
+                                                        É Consultoria
+                                                    </button>
+                                                )}
+                                            </div>
                                         </td>
                                         <td className="px-3 py-2 text-center">
                                             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
@@ -1250,6 +1545,189 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                                         </td>
                                         <td className="px-3 py-2 text-center text-xs text-gray-400">
                                             {new Date(lead.criado_em).toLocaleDateString('pt-BR')}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* ── Rodapé de Paginação ── */}
+                    {totalPaginas > 1 && (
+                        <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
+                            {/* Info */}
+                            <span className="text-xs text-gray-500">
+                                {inicioPagina + 1}–{Math.min(fimPagina, leadsSalvos.length)} de <strong>{leadsSalvos.length}</strong> leads
+                            </span>
+
+                            {/* Navegação */}
+                            <div className="flex items-center gap-1">
+                                {/* Início */}
+                                <button
+                                    onClick={() => irParaPagina(1)}
+                                    disabled={paginaAtual === 1}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                    title="Primeira página"
+                                >
+                                    <i className="fa-solid fa-angles-left"></i>
+                                </button>
+                                {/* Anterior */}
+                                <button
+                                    onClick={() => irParaPagina(paginaAtual - 1)}
+                                    disabled={paginaAtual === 1}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                    title="Página anterior"
+                                >
+                                    <i className="fa-solid fa-angle-left"></i>
+                                </button>
+
+                                {/* Números de página */}
+                                {Array.from({ length: totalPaginas }, (_, i) => i + 1)
+                                    .filter(p => p === 1 || p === totalPaginas || Math.abs(p - paginaAtual) <= 2)
+                                    .reduce<(number | '...')[]>((acc, p, idx, arr) => {
+                                        if (idx > 0 && p - (arr[idx - 1] as number) > 1) acc.push('...');
+                                        acc.push(p);
+                                        return acc;
+                                    }, [])
+                                    .map((p, idx) => p === '...'
+                                        ? <span key={`ellipsis-${idx}`} className="px-1 text-xs text-gray-400">…</span>
+                                        : (
+                                            <button
+                                                key={p}
+                                                onClick={() => irParaPagina(p as number)}
+                                                className={`px-2.5 py-1 text-xs rounded border transition-colors font-medium ${
+                                                    paginaAtual === p
+                                                        ? 'bg-blue-600 text-white border-blue-600'
+                                                        : 'border-gray-200 text-gray-600 hover:bg-white hover:border-blue-300 hover:text-blue-600'
+                                                }`}
+                                            >
+                                                {p}
+                                            </button>
+                                        )
+                                    )
+                                }
+
+                                {/* Próxima */}
+                                <button
+                                    onClick={() => irParaPagina(paginaAtual + 1)}
+                                    disabled={paginaAtual === totalPaginas}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                    title="Próxima página"
+                                >
+                                    <i className="fa-solid fa-angle-right"></i>
+                                </button>
+                                {/* Final */}
+                                <button
+                                    onClick={() => irParaPagina(totalPaginas)}
+                                    disabled={paginaAtual === totalPaginas}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                                    title="Última página"
+                                >
+                                    <i className="fa-solid fa-angles-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </>
+        )}
+        {/* ══════════════════════════════════════════ */}
+        {/* ABA: EXCLUSÕES                             */}
+        {/* ══════════════════════════════════════════ */}
+        {abaAtiva === 'exclusoes' && (
+        <>
+            {/* Cabeçalho explicativo */}
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl">
+                <div className="flex items-start gap-3">
+                    <i className="fa-solid fa-ban text-red-400 text-lg mt-0.5"></i>
+                    <div>
+                        <p className="text-sm font-semibold text-red-700">Lista de Exclusões — Consultorias de TI</p>
+                        <p className="text-xs text-red-500 mt-0.5">
+                            Empresas nesta lista são ignoradas automaticamente na extração de CVs.
+                            Para adicionar, clique em <strong>"É Consultoria"</strong> na aba Leads Salvos.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Barra de busca */}
+            <div className="flex gap-3 mb-4">
+                <input
+                    type="text"
+                    value={buscaExclusao}
+                    onChange={e => setBuscaExclusao(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && carregarExclusoes()}
+                    placeholder="Buscar empresa na lista de exclusões..."
+                    className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-300"
+                />
+                <button onClick={carregarExclusoes}
+                    className="px-3 py-1.5 bg-gray-600 text-white rounded-lg text-sm hover:bg-gray-700 flex items-center gap-1">
+                    <i className="fa-solid fa-magnifying-glass"></i>
+                    Buscar
+                </button>
+            </div>
+
+            {loadingExclusoes ? (
+                <div className="text-center py-10 text-gray-400">
+                    <i className="fa-solid fa-spinner fa-spin text-2xl mb-2 block"></i>
+                    Carregando lista de exclusões...
+                </div>
+            ) : exclusoes.length === 0 ? (
+                <div className="text-center py-16 text-gray-400">
+                    <i className="fa-solid fa-ban text-5xl mb-3 block text-gray-200"></i>
+                    <p className="font-medium">Nenhuma empresa na lista de exclusões</p>
+                    <p className="text-xs mt-1">Use o botão "É Consultoria" nos Leads Salvos para adicionar</p>
+                </div>
+            ) : (
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                    {/* Contador */}
+                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                        <span className="text-xs text-gray-500">
+                            <strong>{exclusoes.length}</strong> empresa{exclusoes.length !== 1 ? 's' : ''} na lista de exclusões
+                        </span>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="bg-gray-100 text-left">
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">DOMÍNIO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">MOTIVO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ADICIONADO POR</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÃO</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {exclusoes.map(exc => (
+                                    <tr key={exc.id} className="border-b hover:bg-red-50">
+                                        <td className="px-3 py-2 font-medium text-gray-800">{exc.empresa_nome}</td>
+                                        <td className="px-3 py-2 text-xs text-gray-500">{exc.dominio || '—'}</td>
+                                        <td className="px-3 py-2 text-center">
+                                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-medium">
+                                                {exc.motivo === 'consultoria_ti' ? '🏢 Consultoria TI' : exc.motivo}
+                                            </span>
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            {exc.adicionado_por_nome ? (
+                                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-medium">
+                                                    {exc.adicionado_por_nome.split(' ').slice(0, 2).join(' ')}
+                                                </span>
+                                            ) : <span className="text-gray-300 text-xs">—</span>}
+                                        </td>
+                                        <td className="px-3 py-2 text-center text-xs text-gray-400">
+                                            {new Date(exc.created_at).toLocaleDateString('pt-BR')}
+                                        </td>
+                                        <td className="px-3 py-2 text-center">
+                                            <button
+                                                onClick={() => removerExclusao(exc.id, exc.empresa_nome)}
+                                                className="text-[10px] px-2 py-0.5 rounded border border-dashed border-gray-300 text-gray-400 hover:border-red-400 hover:text-red-500 transition-colors whitespace-nowrap"
+                                                title="Remover da lista de exclusões"
+                                            >
+                                                <i className="fa-solid fa-trash-can mr-1"></i>
+                                                Remover
+                                            </button>
                                         </td>
                                     </tr>
                                 ))}
