@@ -13,8 +13,13 @@
  * - BUG 3: Limite de pesquisas — max_resultados agora vem do frontend (configurável);
  *   maxPorChamada aumentado de 15 → 25; prompt instrui até 6 buscas (era 5).
  *
- * Versão: 2.1
- * Data: 12/03/2026
+ * Correções v2.2 (25/03/2026):
+ * - BUG 4: Resposta raw 0 chars — gemini-2.5-flash com thinkingConfig não popula
+ *   result.text diretamente. Corrigido: extração robusta via candidates[0].content.parts,
+ *   com fallback para result.text para compatibilidade com versões anteriores da SDK.
+ *
+ * Versão: 2.2
+ * Data: 25/03/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -193,8 +198,49 @@ Responda SOMENTE JSON sem markdown:
         } as any
     });
 
-    const rawText = result.text || '';
+    // ── BUG 4 FIX: gemini-2.5-flash com thinkingConfig + Search Grounding ──────
+    // result.text retorna '' quando o modelo usa thinking — o conteúdo fica em
+    // candidates[0].content.parts. Extração robusta com fallback para result.text.
+    let rawText = '';
+    try {
+        const candidates = (result as any).candidates;
+        if (candidates?.[0]?.content?.parts) {
+            rawText = candidates[0].content.parts
+                .filter((p: any) => p.text && typeof p.text === 'string')
+                .map((p: any) => p.text)
+                .join('');
+        }
+        // Fallback: usar result.text se candidates não trouxe conteúdo
+        if (!rawText && result.text) {
+            rawText = result.text;
+        }
+    } catch {
+        rawText = result.text || '';
+    }
     console.log(`📦 [GeminiSearch] Resposta raw (${rawText.length} chars)`);
+    if (rawText.length === 0) {
+        // Log diagnóstico
+        console.warn('⚠️ [GeminiSearch] Resposta vazia — estrutura result:', JSON.stringify({
+            hasText:      !!result.text,
+            candidates:   (result as any).candidates?.length ?? 0,
+            partsCount:   (result as any).candidates?.[0]?.content?.parts?.length ?? 0,
+            finishReason: (result as any).candidates?.[0]?.finishReason ?? 'N/A',
+        }));
+        // ── Resposta vazia: empresa não indexada ou sem dados públicos ──────────
+        // Não lançar erro — retornar resultado vazio com queries para o analista usar
+        const queriesVazio: string[] = [
+            `site:linkedin.com/in "${empresaAncora}" (${cargosQuery})`,
+            `site:linkedin.com/in "${empresaAncora}" ${deptosQuery.split(' OR ')[0]} Brasil`,
+            `"${empresaAncora}" ${cargosQuery.split(' OR ')[0]} linkedin`,
+        ];
+        console.log(`⚠️ [GeminiSearch] Nenhum dado público encontrado para "${empresaAncora}" — retornando queries manuais`);
+        return {
+            resultados:    [],
+            empresa_nome:  empresaAncora,
+            queries_usadas: queriesVazio,
+            sem_resultados: true,
+        } as any;
+    }
 
     // Parse defensivo — remove markdown se vier
     const cleanText = rawText
@@ -207,7 +253,18 @@ Responda SOMENTE JSON sem markdown:
     if (!jsonMatch) {
         console.error('❌ [GeminiSearch] Nenhum JSON válido na resposta');
         console.error('Raw:', rawText.substring(0, 500));
-        throw new Error('Gemini não retornou JSON válido. Tente novamente.');
+        // Tratar como empresa não encontrada em vez de erro 500
+        const queriesFallback: string[] = [
+            `site:linkedin.com/in "${empresaAncora}" (${cargosQuery})`,
+            `site:linkedin.com/in "${empresaAncora}" ${deptosQuery.split(' OR ')[0]} Brasil`,
+            `"${empresaAncora}" ${cargosQuery.split(' OR ')[0]} linkedin`,
+        ];
+        return {
+            resultados:    [],
+            empresa_nome:  empresaAncora,
+            queries_usadas: queriesFallback,
+            sem_resultados: true,
+        } as any;
     }
 
     let parsed: any;
@@ -480,6 +537,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 listA = resultado.resultados;
                 nomeA = resultado.empresa_nome;
                 qrsA  = resultado.queries_usadas;
+                // Propagar flag sem_resultados para uso no retorno
+                if ((resultado as any).sem_resultados) {
+                    (listA as any).sem_resultados = true;
+                }
             } catch (e: any) {
                 console.warn('⚠️ [GeminiSearch] Chamada falhou:', e.message);
                 throw e;
@@ -534,6 +595,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         console.log(`✅ [GeminiSearch] A: ${listA.length} | B: ${listB.length} | Final: ${merged.length} únicos`);
 
+        // Verificar se alguma das chamadas sinalizou sem_resultados
+        const semResultados = merged.length === 0 && (
+            (resA as any)?.value?.sem_resultados ||
+            (resB as any)?.value?.sem_resultados ||
+            listA.length === 0 && listB.length === 0
+        );
+
         return res.status(200).json({
             success:             true,
             resultados:          merged,
@@ -542,6 +610,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             queries_google:      queriesAll,
             motor:               'gemini',
             creditos_consumidos: 0,
+            sem_resultados:      merged.length === 0,
+            aviso:               merged.length === 0
+                ? `Nenhum executivo encontrado para "${empresaNomeFinal}". O domínio pode ter poucos dados públicos indexados. Use as queries abaixo para buscar manualmente no Google.`
+                : undefined,
         });
 
     } catch (error: any) {
