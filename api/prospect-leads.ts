@@ -23,18 +23,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     if (req.method === 'OPTIONS') return res.status(204).end();
 
-    // ── PATCH: reservar empresa para analista ──────────────────────────────
+    // ── PATCH: reservar / redistribuir / liberar empresa ──────────────────────
     if (req.method === 'PATCH') {
-        const { ids, reservado_por } = req.body;
-        if (!ids?.length || !reservado_por) {
-            return res.status(400).json({ error: 'ids e reservado_por são obrigatórios' });
+        const { ids, reservado_por, redistribuir } = req.body;
+
+        // reservado_por pode ser null (liberar) ou number (reservar/redistribuir)
+        if (!ids?.length || reservado_por === undefined) {
+            return res.status(400).json({ error: 'ids e reservado_por são obrigatórios (null para liberar)' });
         }
+
+        const updatePayload: Record<string, any> = {
+            reservado_por: reservado_por ?? null,
+            reservado_em:  reservado_por ? new Date().toISOString() : null,
+        };
+
         const { error } = await supabase
             .from('prospect_leads')
-            .update({ reservado_por, reservado_em: new Date().toISOString() })
+            .update(updatePayload)
             .in('id', ids);
+
         if (error) return res.status(500).json({ success: false, error: error.message });
-        console.log(`✅ [prospect-leads] ${ids.length} leads reservados para user ${reservado_por}`);
+
+        const acao = reservado_por === null
+            ? `${ids.length} leads LIBERADOS`
+            : redistribuir
+                ? `${ids.length} leads REDISTRIBUÍDOS para user ${reservado_por}`
+                : `${ids.length} leads RESERVADOS para user ${reservado_por}`;
+        console.log(`✅ [prospect-leads] ${acao}`);
         return res.status(200).json({ success: true });
     }
 
@@ -42,7 +57,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Use GET ou PATCH.' });
     }
 
-    const { status, empresa, motor, reservado_por } = req.query as Record<string, string>;
+    const { status, empresa, motor, reservado_por, usuarios } = req.query as Record<string, string>;
+
+    // ── GET ?usuarios=true — lista de usuários para dropdown de redistribuição ──
+    if (usuarios === 'true') {
+        const { data: users, error: usersError } = await supabase
+            .from('app_users')
+            .select('id, nome_usuario, tipo_usuario')
+            .in('tipo_usuario', ['Administrador', 'Gestão Comercial', 'SDR'])
+            .order('nome_usuario');
+        if (usersError) return res.status(500).json({ success: false, error: usersError.message });
+        return res.status(200).json({ success: true, usuarios: users || [] });
+    }
 
     try {
         let query = supabase

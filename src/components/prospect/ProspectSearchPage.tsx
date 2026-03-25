@@ -162,6 +162,13 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [leadsSelecionados, setLeadsSelecionados]     = useState<Set<number>>(new Set());
     const [reservando, setReservando]                   = useState(false);
 
+    // ── VIEW TERRITÓRIO ──────────────────────────────────────────────────────
+    const [viewTerritorio, setViewTerritorio]           = useState(false);
+    const [usuariosDisponiveis, setUsuariosDisponiveis] = useState<{id: number; nome_usuario: string; tipo_usuario: string}[]>([]);
+    const [redistribuindoEmpresa, setRedistribuindoEmpresa] = useState<string | null>(null);
+    const [novoResponsavel, setNovoResponsavel]         = useState<string>('');
+    // ────────────────────────────────────────────────────────────────────────
+
     // Paginação Leads Salvos
     const [paginaAtual, setPaginaAtual]                 = useState(1);
     const ITENS_POR_PAGINA = 25;
@@ -501,6 +508,78 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             console.error('Erro ao reservar empresa:', e);
         }
     }, [currentUser]);
+
+    // ============================================
+    // TERRITÓRIO — carregar usuários para dropdown de redistribuição
+    // ============================================
+    const carregarUsuarios = useCallback(async () => {
+        if (usuariosDisponiveis.length > 0) return; // cache — só carrega uma vez
+        try {
+            const res  = await fetch('/api/prospect-leads?usuarios=true');
+            const data = await res.json();
+            if (data.success) setUsuariosDisponiveis(data.usuarios || []);
+        } catch (e) {
+            console.error('Erro ao carregar usuários:', e);
+        }
+    }, [usuariosDisponiveis]);
+
+    // Redistribuir todos os leads de uma empresa para outro analista
+    const redistribuirEmpresa = useCallback(async (empresaNome: string, novoUserId: number, novoNome: string) => {
+        const idsEmpresa = leadsSalvos
+            .filter(l => l.empresa_nome === empresaNome)
+            .map(l => l.id);
+        if (!idsEmpresa.length) return;
+
+        try {
+            await fetch('/api/prospect-leads', {
+                method:  'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: idsEmpresa, reservado_por: novoUserId, redistribuir: true }),
+            });
+            // Atualiza lista local
+            setLeadsSalvos(prev => prev.map(l =>
+                idsEmpresa.includes(l.id)
+                    ? { ...l, reservado_por: novoUserId, reservado_em: new Date().toISOString(), reservado_por_nome: novoNome }
+                    : l
+            ));
+            setToastMsg({ tipo: 'ok', msg: `${idsEmpresa.length} leads de "${empresaNome}" redistribuídos para ${novoNome}` });
+            setTimeout(() => setToastMsg(null), 4000);
+        } catch (e) {
+            console.error('Erro ao redistribuir:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Erro ao redistribuir empresa.' });
+            setTimeout(() => setToastMsg(null), 3000);
+        }
+        setRedistribuindoEmpresa(null);
+        setNovoResponsavel('');
+    }, [leadsSalvos]);
+
+    // Liberar empresa — remove reserva (reservado_por → null)
+    const liberarEmpresa = useCallback(async (empresaNome: string) => {
+        if (!confirm(`Liberar "${empresaNome}" para que outro analista possa prospectar?
+
+A empresa ficará disponível para a equipe.`)) return;
+        const idsEmpresa = leadsSalvos
+            .filter(l => l.empresa_nome === empresaNome)
+            .map(l => l.id);
+        if (!idsEmpresa.length) return;
+
+        try {
+            await fetch('/api/prospect-leads', {
+                method:  'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: idsEmpresa, reservado_por: null }),
+            });
+            setLeadsSalvos(prev => prev.map(l =>
+                idsEmpresa.includes(l.id)
+                    ? { ...l, reservado_por: null, reservado_em: null, reservado_por_nome: null }
+                    : l
+            ));
+            setToastMsg({ tipo: 'ok', msg: `"${empresaNome}" liberada para a equipe.` });
+            setTimeout(() => setToastMsg(null), 3000);
+        } catch (e) {
+            console.error('Erro ao liberar empresa:', e);
+        }
+    }, [leadsSalvos]);
 
     // ============================================
     // PROSPECTAR — leva empresa do CV para Nova Busca + reserva para o analista
@@ -1368,8 +1447,27 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         {/* ══════════════════════════════════════════ */}
         {abaAtiva === 'salvos' && (
         <>
-            {/* Filtros */}
+            {/* Filtros + Toggle Lista/Território */}
             <div id="leads-salvos-topo" className="flex flex-wrap gap-3 mb-4">
+                {/* Toggle Lista / Território */}
+                <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden bg-white shadow-sm">
+                    <button
+                        onClick={() => setViewTerritorio(false)}
+                        className={`px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                            !viewTerritorio ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'
+                        }`}
+                    >
+                        <i className="fa-solid fa-list"></i> Lista
+                    </button>
+                    <button
+                        onClick={() => { setViewTerritorio(true); carregarUsuarios(); }}
+                        className={`px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors ${
+                            viewTerritorio ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'
+                        }`}
+                    >
+                        <i className="fa-solid fa-map-location-dot"></i> Território
+                    </button>
+                </div>
                 <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
                     className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
                     <option value="">Todos os status</option>
@@ -1465,6 +1563,251 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     <i className="fa-solid fa-database text-5xl mb-3 block"></i>
                     <p>Nenhum lead salvo ainda</p>
                 </div>
+
+            ) : viewTerritorio ? (
+                /* ══════════════════════════════════════════════════════════
+                   VIEW TERRITÓRIO — agrupado por empresa
+                   ══════════════════════════════════════════════════════════ */
+                (() => {
+                    // Agrupar leads por empresa_nome
+                    const grupos: Record<string, typeof leadsSalvos> = {};
+                    leadsSalvos.forEach(l => {
+                        const key = l.empresa_nome || '(sem empresa)';
+                        if (!grupos[key]) grupos[key] = [];
+                        grupos[key].push(l);
+                    });
+
+                    // Derivar status da empresa a partir dos dados existentes
+                    const statusEmpresa = (leads: typeof leadsSalvos): { label: string; cls: string; icon: string } => {
+                        const exportados  = leads.filter(l => l.exportado_em).length;
+                        const reservado   = leads.some(l => l.reservado_por_nome);
+                        if (exportados === leads.length && leads.length > 0)
+                            return { label: 'Exportada',       cls: 'bg-green-100 text-green-700',   icon: 'fa-check-double' };
+                        if (exportados > 0)
+                            return { label: 'Em Prospecção',   cls: 'bg-blue-100 text-blue-700',     icon: 'fa-magnifying-glass-chart' };
+                        if (reservado)
+                            return { label: 'Reservada',       cls: 'bg-amber-100 text-amber-700',   icon: 'fa-lock' };
+                        return { label: 'Disponível',          cls: 'bg-gray-100 text-gray-500',     icon: 'fa-circle-dot' };
+                    };
+
+                    const empresasOrdenadas = Object.entries(grupos).sort(([, a], [, b]) => {
+                        // Ordenar: Em Prospecção > Reservada > Disponível > Exportada
+                        const prioridade = (leads: typeof leadsSalvos) => {
+                            const st = statusEmpresa(leads).label;
+                            if (st === 'Em Prospecção') return 0;
+                            if (st === 'Reservada')     return 1;
+                            if (st === 'Disponível')    return 2;
+                            return 3;
+                        };
+                        return prioridade(a) - prioridade(b);
+                    });
+
+                    return (
+                        <div className="space-y-2">
+                            {/* Legenda de status */}
+                            <div className="flex flex-wrap gap-3 mb-4 px-1">
+                                {[
+                                    { label: 'Em Prospecção', cls: 'bg-blue-100 text-blue-700',   icon: 'fa-magnifying-glass-chart' },
+                                    { label: 'Reservada',     cls: 'bg-amber-100 text-amber-700', icon: 'fa-lock' },
+                                    { label: 'Disponível',    cls: 'bg-gray-100 text-gray-500',   icon: 'fa-circle-dot' },
+                                    { label: 'Exportada',     cls: 'bg-green-100 text-green-700', icon: 'fa-check-double' },
+                                ].map(s => (
+                                    <span key={s.label} className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium ${s.cls}`}>
+                                        <i className={`fa-solid ${s.icon} text-[10px]`}></i>
+                                        {s.label}
+                                    </span>
+                                ))}
+                                <span className="text-xs text-gray-400 ml-auto self-center">
+                                    {Object.keys(grupos).length} empresa{Object.keys(grupos).length !== 1 ? 's' : ''}
+                                </span>
+                            </div>
+
+                            {/* Tabela de empresas */}
+                            <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="bg-gray-100 text-left">
+                                            <th className="px-4 py-2.5 text-xs font-semibold text-gray-600">EMPRESA</th>
+                                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-center">LEADS</th>
+                                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-center">E-MAILS</th>
+                                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-center">EXPORTADO</th>
+                                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-center">STATUS</th>
+                                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-center">ANALISTA</th>
+                                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-center">DESDE</th>
+                                            <th className="px-3 py-2.5 text-xs font-semibold text-gray-600 text-center">AÇÕES</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {empresasOrdenadas.map(([empresaNome, leads]) => {
+                                            const st         = statusEmpresa(leads);
+                                            const responsavel = leads.find(l => l.reservado_por_nome)?.reservado_por_nome || null;
+                                            const responsavelId = leads.find(l => l.reservado_por)?.reservado_por || null;
+                                            const comEmail   = leads.filter(l => l.email).length;
+                                            const exportados = leads.filter(l => l.exportado_em).length;
+                                            const maisAntigo = leads.reduce((min, l) =>
+                                                l.criado_em < min ? l.criado_em : min, leads[0].criado_em);
+                                            const isRedistribuindo = redistribuindoEmpresa === empresaNome;
+                                            const ehMinha = responsavelId === currentUser?.id;
+
+                                            return (
+                                                <tr key={empresaNome} className="border-b hover:bg-indigo-50/30 transition-colors">
+                                                    {/* EMPRESA */}
+                                                    <td className="px-4 py-3">
+                                                        <div className="font-medium text-gray-800 text-sm">{empresaNome}</div>
+                                                        {leads[0]?.empresa_dominio && (
+                                                            <div className="text-[10px] text-gray-400 mt-0.5">
+                                                                {leads[0].empresa_dominio}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    {/* LEADS */}
+                                                    <td className="px-3 py-3 text-center">
+                                                        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-blue-50 text-blue-700 text-xs font-bold">
+                                                            {leads.length}
+                                                        </span>
+                                                    </td>
+                                                    {/* E-MAILS */}
+                                                    <td className="px-3 py-3 text-center">
+                                                        {comEmail > 0 ? (
+                                                            <span className="text-xs text-green-600 font-medium">
+                                                                {comEmail}/{leads.length}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-xs text-gray-300">—</span>
+                                                        )}
+                                                    </td>
+                                                    {/* EXPORTADO */}
+                                                    <td className="px-3 py-3 text-center">
+                                                        {exportados > 0 ? (
+                                                            <span className="text-xs font-medium text-green-600">
+                                                                ✅ {exportados}/{leads.length}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-xs text-gray-300">—</span>
+                                                        )}
+                                                    </td>
+                                                    {/* STATUS */}
+                                                    <td className="px-3 py-3 text-center">
+                                                        <span className={`inline-flex items-center gap-1 text-[10px] px-2.5 py-1 rounded-full font-medium ${st.cls}`}>
+                                                            <i className={`fa-solid ${st.icon} text-[9px]`}></i>
+                                                            {st.label}
+                                                        </span>
+                                                    </td>
+                                                    {/* ANALISTA */}
+                                                    <td className="px-3 py-3 text-center min-w-[160px]">
+                                                        {isRedistribuindo ? (
+                                                            /* Dropdown de redistribuição */
+                                                            <div className="flex items-center gap-1.5">
+                                                                <select
+                                                                    value={novoResponsavel}
+                                                                    onChange={e => setNovoResponsavel(e.target.value)}
+                                                                    className="flex-1 text-xs px-2 py-1 border border-indigo-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                                                    autoFocus
+                                                                >
+                                                                    <option value="">Selecionar...</option>
+                                                                    {usuariosDisponiveis.map(u => (
+                                                                        <option key={u.id} value={String(u.id)}>
+                                                                            {u.nome_usuario.split(' ')[0]}
+                                                                        </option>
+                                                                    ))}
+                                                                </select>
+                                                                <button
+                                                                    onClick={() => {
+                                                                        if (!novoResponsavel) return;
+                                                                        const user = usuariosDisponiveis.find(u => u.id === Number(novoResponsavel));
+                                                                        if (user) redistribuirEmpresa(empresaNome, user.id, user.nome_usuario);
+                                                                    }}
+                                                                    disabled={!novoResponsavel}
+                                                                    className="px-1.5 py-1 bg-indigo-600 text-white rounded text-xs hover:bg-indigo-700 disabled:opacity-40"
+                                                                    title="Confirmar redistribuição"
+                                                                >
+                                                                    <i className="fa-solid fa-check"></i>
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => { setRedistribuindoEmpresa(null); setNovoResponsavel(''); }}
+                                                                    className="px-1.5 py-1 bg-gray-200 text-gray-600 rounded text-xs hover:bg-gray-300"
+                                                                    title="Cancelar"
+                                                                >
+                                                                    <i className="fa-solid fa-xmark"></i>
+                                                                </button>
+                                                            </div>
+                                                        ) : responsavel ? (
+                                                            <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${
+                                                                ehMinha ? 'bg-sky-100 text-sky-700' : 'bg-violet-100 text-violet-700'
+                                                            }`}>
+                                                                <i className="fa-solid fa-user text-[9px]"></i>
+                                                                {responsavel.split(' ')[0]}
+                                                                {ehMinha && <span className="text-[9px] opacity-70">(você)</span>}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-gray-300 text-xs">—</span>
+                                                        )}
+                                                    </td>
+                                                    {/* DESDE */}
+                                                    <td className="px-3 py-3 text-center text-xs text-gray-400 whitespace-nowrap">
+                                                        {new Date(maisAntigo).toLocaleDateString('pt-BR')}
+                                                    </td>
+                                                    {/* AÇÕES */}
+                                                    <td className="px-3 py-3 text-center">
+                                                        {!isRedistribuindo && (
+                                                            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                                                {/* Prospectar — só se não tem responsável ou é minha */}
+                                                                {(!responsavel || ehMinha) && (
+                                                                    <button
+                                                                        onClick={() => prospectar(leads[0])}
+                                                                        className="text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-600 hover:text-white transition-colors whitespace-nowrap font-medium"
+                                                                        title="Buscar contatos nesta empresa"
+                                                                    >
+                                                                        <i className="fa-solid fa-magnifying-glass mr-1 text-[9px]"></i>
+                                                                        Prospectar
+                                                                    </button>
+                                                                )}
+                                                                {/* Redistribuir — Admin redistribui qualquer empresa; outros só as suas */}
+                                                                {(currentUser?.tipo_usuario === 'Administrador' || ehMinha) && responsavel && (
+                                                                    <button
+                                                                        onClick={() => { setRedistribuindoEmpresa(empresaNome); setNovoResponsavel(''); carregarUsuarios(); }}
+                                                                        className="text-[10px] px-2 py-1 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-600 hover:text-white transition-colors whitespace-nowrap font-medium"
+                                                                        title="Redistribuir para outro analista"
+                                                                    >
+                                                                        <i className="fa-solid fa-arrows-rotate mr-1 text-[9px]"></i>
+                                                                        Redistribuir
+                                                                    </button>
+                                                                )}
+                                                                {/* Liberar — Admin libera qualquer; outros só as suas */}
+                                                                {(currentUser?.tipo_usuario === 'Administrador' || ehMinha) && responsavel && (
+                                                                    <button
+                                                                        onClick={() => liberarEmpresa(empresaNome)}
+                                                                        className="text-[10px] px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 hover:bg-red-500 hover:text-white transition-colors whitespace-nowrap font-medium"
+                                                                        title="Liberar empresa para a equipe"
+                                                                    >
+                                                                        <i className="fa-solid fa-lock-open mr-1 text-[9px]"></i>
+                                                                        Liberar
+                                                                    </button>
+                                                                )}
+                                                                {/* Reservar — empresa disponível */}
+                                                                {!responsavel && (
+                                                                    <button
+                                                                        onClick={() => reservarEmpresas(leads.map(l => l.id))}
+                                                                        className="text-[10px] px-2 py-1 rounded-lg bg-amber-50 text-amber-600 border border-amber-200 hover:bg-amber-500 hover:text-white transition-colors whitespace-nowrap font-medium"
+                                                                        title="Reservar empresa para você"
+                                                                    >
+                                                                        <i className="fa-solid fa-lock mr-1 text-[9px]"></i>
+                                                                        Reservar
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    );
+                })()
+
             ) : (
                 <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
                     <div className="overflow-x-auto">
