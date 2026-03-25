@@ -1712,7 +1712,7 @@ A empresa ficará disponível para a equipe.`)) return;
                     <option value="contactado">Contactado</option>
                     <option value="qualificado">Qualificado</option>
                     <option value="descartado">Descartado</option>
-                    <option value="__minhas__">🔒 Minhas Empresas</option>
+                    <option value="__minhas__">🔒 Meus Prospects</option>
                 </select>
                 {/* NOVO: filtro por origem */}
                 <select value={filtroOrigem} onChange={e => setFiltroOrigem(e.target.value)}
@@ -1739,6 +1739,8 @@ A empresa ficará disponível para a equipe.`)) return;
                     <i className="fa-solid fa-filter"></i>
                     Filtrar
                 </button>
+                {/* Exportar — visível APENAS no filtro "Meus Prospects" (__minhas__) */}
+                {filtroStatus === '__minhas__' && (
                 <button onClick={async () => {
                         const dadosParaExportar = leadsSelecionados.size > 0
                             ? leadsSalvos.filter(l => leadsSelecionados.has(l.id))
@@ -1750,16 +1752,18 @@ A empresa ficará disponível para a equipe.`)) return;
                             await reservarEmpresas(Array.from(leadsSelecionados));
                             setReservando(false);
                         }
-                        exportarXLS(dadosParaExportar, 'leads_salvos');
+                        exportarXLS(dadosParaExportar, 'meus_prospects');
                     }}
                     disabled={leadsSalvos.length === 0 || reservando}
-                    className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-1">
+                    className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
+                    title="Exportar Meus Prospects para Leads2B">
                     <i className={`fa-solid ${reservando ? 'fa-spinner fa-spin' : 'fa-file-excel'}`}></i>
                     {leadsSelecionados.size > 0
                         ? `Exportar Selecionados (${leadsSelecionados.size})`
-                        : `Exportar XLS (${leadsSalvos.length})`
+                        : `Exportar Meus Prospects (${leadsSalvos.length})`
                     }
                 </button>
+                )}
                 {/* Botão carga bulk CV — apenas Administrador */}
                 {currentUser?.tipo_usuario === 'Administrador' && (
                 <button
@@ -2118,10 +2122,7 @@ A empresa ficará disponível para a equipe.`)) return;
                                             title="Selecionar todos"
                                         />
                                     </th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">NOME</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">CARGO</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">LINKEDIN</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">RESERVADO</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">GRAVADO POR</th>
@@ -2150,15 +2151,21 @@ A empresa ficará disponível para a equipe.`)) return;
                                                 }}
                                             />
                                         </td>
-                                        <td className="px-3 py-2 font-medium text-gray-800">{lead.nome_completo}</td>
-                                        <td className="px-3 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={lead.cargo || ''}>{lead.cargo || '—'}</td>
-                                        <td className="px-3 py-2 text-gray-600 text-xs">{lead.empresa_nome || '—'}</td>
-                                        <td className="px-3 py-2 text-center">
-                                            {lead.linkedin_url ? (
-                                                <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
-                                                    <i className="fa-brands fa-linkedin"></i>
+                                        {/* EMPRESA — nome + cargo como subtítulo */}
+                                        <td className="px-3 py-2">
+                                            <div className="font-medium text-gray-800 text-sm">{lead.empresa_nome || '—'}</div>
+                                            {lead.nome_completo && (
+                                                <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[200px]" title={`${lead.nome_completo}${lead.cargo ? ` · ${lead.cargo}` : ''}`}>
+                                                    {lead.nome_completo}
+                                                    {lead.cargo ? <span className="text-gray-300"> · {lead.cargo.substring(0, 30)}{lead.cargo.length > 30 ? '…' : ''}</span> : ''}
+                                                </div>
+                                            )}
+                                            {lead.linkedin_url && (
+                                                <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer"
+                                                    className="text-[10px] text-blue-400 hover:text-blue-600 mt-0.5 inline-flex items-center gap-0.5">
+                                                    <i className="fa-brands fa-linkedin text-[9px]"></i> LinkedIn
                                                 </a>
-                                            ) : '—'}
+                                            )}
                                         </td>
                                         {/* ── RESERVADO — analista que reservou a empresa ── */}
                                         <td className="px-3 py-2 text-center">
