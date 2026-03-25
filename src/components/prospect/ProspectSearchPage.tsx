@@ -313,9 +313,20 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
             setEmpresaInfo(dataGemini.empresa);
             setQueriesGoogle(dataGemini.queries_google || []);
+            setResultados(leadsGemini);
+
+            // Empresa não encontrada — resultado vazio com aviso amigável + queries para busca manual
+            if (dataGemini.sem_resultados || leadsGemini.length === 0) {
+                setSearchState({
+                    loading: false,
+                    fase: 'concluido',
+                    error: dataGemini.aviso ||
+                        `Nenhum executivo encontrado para o domínio "${domain}". O domínio pode ter poucos dados públicos indexados. Use as queries abaixo para buscar manualmente no Google.`,
+                });
+                return;
+            }
 
             // Exibe resultados Gemini imediatamente — Hunter só roda se usuário ativar o checkbox
-            setResultados(leadsGemini);
             setSearchState({ loading: false, fase: 'concluido', error: null });
 
         } catch (err: any) {
@@ -1077,9 +1088,17 @@ A empresa ficará disponível para a equipe.`)) return;
                             </div>
                         )}
                         {searchState.error && (
-                            <p className="mt-2 text-xs text-red-500">
-                                <i className="fa-solid fa-circle-exclamation mr-1"></i>
-                                {searchState.error}
+                            <p className={`mt-2 text-xs flex items-start gap-1.5 ${
+                                searchState.fase === 'concluido'
+                                    ? 'text-amber-600'   // aviso: empresa não encontrada
+                                    : 'text-red-500'     // erro real de sistema
+                            }`}>
+                                <i className={`fa-solid mt-0.5 flex-shrink-0 ${
+                                    searchState.fase === 'concluido'
+                                        ? 'fa-triangle-exclamation'
+                                        : 'fa-circle-exclamation'
+                                }`}></i>
+                                <span>{searchState.error}</span>
                             </p>
                         )}
                     </div>
@@ -1413,18 +1432,60 @@ A empresa ficará disponível para a equipe.`)) return;
                 </div>
             )}
 
-            {/* Estado vazio */}
-            {!searchState.loading && resultados.length === 0 && !searchState.error && searchState.fase === 'concluido' && (
-                <div className="text-center py-16 text-gray-400">
-                    <i className="fa-solid fa-user-slash text-5xl mb-4 block text-gray-200"></i>
-                    <p className="text-lg font-medium text-gray-500">Nenhum executivo encontrado</p>
-                    <p className="text-sm mt-2 text-gray-400 max-w-md mx-auto">
-                        A empresa pode ter baixa visibilidade pública no LinkedIn ou Google.
-                    </p>
-                    <div className="mt-4 text-xs text-gray-400 space-y-1">
+            {/* Estado vazio — empresa não encontrada com queries para busca manual */}
+            {!searchState.loading && resultados.length === 0 && searchState.fase === 'concluido' && (
+                <div className="py-8">
+                    {/* Card de aviso */}
+                    <div className="flex flex-col items-center text-center mb-6">
+                        <i className="fa-solid fa-building-circle-exclamation text-5xl mb-3 text-amber-300"></i>
+                        <p className="text-lg font-semibold text-gray-600">Empresa não encontrada automaticamente</p>
+                        <p className="text-sm mt-1 text-gray-400 max-w-lg mx-auto">
+                            O domínio <strong className="text-gray-600">{domain}</strong> tem poucos dados públicos indexados pelo Google.
+                            Use as queries abaixo para buscar manualmente e capturar os leads via Extensão Chrome.
+                        </p>
+                    </div>
+
+                    {/* Queries para busca manual */}
+                    {queriesGoogle.length > 0 && (
+                        <div className="max-w-2xl mx-auto bg-amber-50 border border-amber-200 rounded-xl p-4">
+                            <p className="text-xs font-semibold text-amber-700 mb-3 flex items-center gap-2">
+                                <i className="fa-brands fa-google"></i>
+                                Pesquise no Google e use a Extensão Chrome para capturar os leads:
+                            </p>
+                            <div className="space-y-2">
+                                {queriesGoogle.map((q, i) => (
+                                    <div key={i} className="flex items-center gap-2">
+                                        <a
+                                            href={`https://www.google.com/search?q=${encodeURIComponent(q)}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="flex-1 flex items-center gap-2 px-3 py-2 bg-white border border-amber-200 rounded-lg text-xs text-gray-700 hover:border-blue-400 hover:bg-blue-50 transition-colors group"
+                                        >
+                                            <i className="fa-brands fa-google text-blue-500 flex-shrink-0"></i>
+                                            <span className="font-mono truncate">{q}</span>
+                                            <i className="fa-solid fa-arrow-up-right-from-square text-gray-300 group-hover:text-blue-500 flex-shrink-0 ml-auto text-[10px]"></i>
+                                        </a>
+                                        <button
+                                            onClick={() => { navigator.clipboard.writeText(q); setToastMsg({ tipo: 'ok', msg: 'Query copiada!' }); setTimeout(() => setToastMsg(null), 2000); }}
+                                            className="px-2 py-2 text-xs bg-white border border-amber-200 rounded-lg text-gray-400 hover:text-blue-600 hover:border-blue-300 transition-colors flex-shrink-0"
+                                            title="Copiar query"
+                                        >
+                                            <i className="fa-solid fa-copy"></i>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="text-[10px] text-amber-500 mt-3 flex items-center gap-1">
+                                <i className="fa-solid fa-circle-info"></i>
+                                Abra cada link no Google, a Extensão detectará automaticamente os perfis LinkedIn nos resultados.
+                            </p>
+                        </div>
+                    )}
+
+                    {/* Dicas adicionais */}
+                    <div className="mt-4 text-center text-xs text-gray-400 space-y-1">
                         <p>💡 Tente sem filtros de departamento ou nível hierárquico</p>
-                        <p>💡 Verifique se o nome da unidade está correto</p>
-                        <p>💡 Empresas menores podem não ter perfis indexados</p>
+                        <p>💡 Verifique se o nome da unidade está correto no campo "Nome específico"</p>
                     </div>
                 </div>
             )}
