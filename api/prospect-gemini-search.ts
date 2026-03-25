@@ -18,8 +18,10 @@
  *   result.text diretamente. Corrigido: extração robusta via candidates[0].content.parts,
  *   com fallback para result.text para compatibilidade com versões anteriores da SDK.
  *
- * Versão: 2.2
+ * Versão: 2.3
  * Data: 25/03/2026
+ * v2.3: fix regex guloso no parse JSON — extrai primeiro objeto balanceado
+ *       evita "Unexpected non-whitespace character" quando Gemini retorna múltiplos blocos
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -248,8 +250,28 @@ Responda SOMENTE JSON sem markdown:
         .replace(/```\s*/gi, '')
         .trim();
 
-    // Extrai bloco JSON
-    const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
+    // Extrai o PRIMEIRO objeto JSON balanceado da resposta
+    // Fix: regex guloso /\{[\s\S]*\}/ capturava múltiplos JSONs concatenados
+    // causando "Unexpected non-whitespace character after JSON at position N"
+    function extrairPrimeiroJSON(text: string): string | null {
+        const start = text.indexOf('{');
+        if (start === -1) return null;
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+        for (let i = start; i < text.length; i++) {
+            const ch = text[i];
+            if (escape)            { escape = false; continue; }
+            if (ch === '\\' && inString) { escape = true;  continue; }
+            if (ch === '"')        { inString = !inString; continue; }
+            if (inString)          continue;
+            if (ch === '{') depth++;
+            if (ch === '}') { depth--; if (depth === 0) return text.substring(start, i + 1); }
+        }
+        return null;
+    }
+
+    const jsonMatch = extrairPrimeiroJSON(cleanText);
     if (!jsonMatch) {
         console.error('❌ [GeminiSearch] Nenhum JSON válido na resposta');
         console.error('Raw:', rawText.substring(0, 500));
@@ -273,7 +295,7 @@ Responda SOMENTE JSON sem markdown:
         // 1. Remove caracteres de controle ASCII (0x00-0x1F) exceto \n \r \t
         // 2. Normaliza aspas tipográficas
         // 3. Remove null bytes
-        const sanitized = jsonMatch[0]
+        const sanitized = jsonMatch
             .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
             .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
             .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
@@ -285,10 +307,10 @@ Responda SOMENTE JSON sem markdown:
         // Tentativa de recuperação 1: extrair array de pessoas mesmo com JSON truncado
         try {
             // Estratégia: encontrar o array "pessoas" e fechar todos os colchetes/chaves abertos
-            const pessoasStart = jsonMatch[0].indexOf('"pessoas"');
+            const pessoasStart = jsonMatch.indexOf('"pessoas"');
             if (pessoasStart === -1) throw new Error('Campo pessoas não encontrado');
 
-            const arrayStart = jsonMatch[0].indexOf('[', pessoasStart);
+            const arrayStart = jsonMatch.indexOf('[', pessoasStart);
             if (arrayStart === -1) throw new Error('Array não encontrado');
 
             // Percorrer o array contando colchetes/chaves para extrair objetos completos
@@ -296,7 +318,7 @@ Responda SOMENTE JSON sem markdown:
             let lastCompleteObj = arrayStart + 1; // posição após o '['
             let inString = false;
             let escape = false;
-            const src = jsonMatch[0];
+            const src = jsonMatch;
             const objPositions: number[] = [arrayStart + 1];
 
             for (let i = arrayStart; i < src.length; i++) {
@@ -326,7 +348,7 @@ Responda SOMENTE JSON sem markdown:
         } catch (e2) {
             // Tentativa de recuperação 2: regex simples como fallback final
             try {
-                const pessoasMatch = jsonMatch[0].match(/"pessoas"\s*:\s*(\[[\s\S]*)/);
+                const pessoasMatch = jsonMatch.match(/"pessoas"\s*:\s*(\[[\s\S]*)/);
                 if (!pessoasMatch) throw new Error('Sem array de pessoas');
 
                 // Fechar o array no último '}' encontrado
