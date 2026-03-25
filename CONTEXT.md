@@ -523,3 +523,44 @@ npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 | 👥 Claude RH | Gestão de Pessoas Sênior | Onboarding, adoção |
 | 📊 Claude Processos | Gestão de Processos Sênior | Workflows, automações |
 | 🗄️ Claude DBA | Supabase/PostgreSQL Sênior | Queries, performance, RLS |
+
+---
+
+## 12. Protocolo de Sessões Claude
+
+### Regra geral: 1 chat = 1 módulo ou 1 problema
+O contexto da conversa acumula tokens a cada mensagem (histórico + arquivos + CONTEXT.md).
+Arquivos grandes como `ProspectSearchPage.tsx` (~1.900 linhas) consomem muito contexto rapidamente.
+
+### Como abrir cada chat
+1. Sempre anexar o `CONTEXT.md` atualizado
+2. Anexar **apenas** os arquivos do módulo que será trabalhado
+3. Nunca subir mais de 2 arquivos `.tsx` grandes por sessão
+4. Nunca subir arquivos que não sejam diretamente relevantes para a tarefa
+
+### Mapa de sessões por módulo
+
+| Módulo | Arquivos para subir |
+|---|---|
+| Prospect Engine (busca) | `ProspectSearchPage.tsx` + `prospect-gemini-search.ts` |
+| Leads Salvos / Território | `ProspectSearchPage.tsx` + `prospect-leads.ts` |
+| Preparar Campanha | `CampanhaPrep.tsx` + endpoints relevantes |
+| CV / Entrevista | `EntrevistaComportamental.tsx` ou `cv-generator-docx.ts` |
+| LinkedIn / Banco Talentos | `BancoTalentos_v3.tsx` + `LinkedInImportPanel.tsx` |
+| Banco de Dados (SQL/migrations) | Só o `CONTEXT.md` — sem código |
+| Bugs pontuais | `CONTEXT.md` + **só o arquivo com o bug** |
+
+### Ritual de fim de sessão
+Ao final de cada sessão importante, registrar no CONTEXT.md:
+- ✅ O que foi feito (CHECKPOINT)
+- 🔄 O que ficou pendente
+- ▶️ Por onde começar na próxima sessão
+
+### Dicas para sessões longas de código
+- Subir o arquivo grande **no início** e fazer todas as alterações dele em sequência
+- Claude **sempre entrega o arquivo completo** — nunca trechos ou patches parciais (evita erros de integração)
+- Abrir chat novo ao mudar de módulo, mesmo que a sessão não tenha travado
+
+### Resumo
+> **"CONTEXT.md + 1 ou 2 arquivos do módulo + 1 tema por chat"**
+> = máximo aproveitamento, mínimo desperdício de contexto.
