@@ -510,13 +510,13 @@ npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 46 arquivos | 535.3 KB | 24/03/2026 |
-| `src/components/` | 110 arquivos | 895.9 KB | 24/03/2026 |
+| `api/` | 49 arquivos | 560.4 KB | 25/03/2026 |
+| `src/components/` | 110 arquivos | 896.0 KB | 25/03/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 24/03/2026 |
-| `src/types/` | 6 arquivos | 29.9 KB | 24/03/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 24/03/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 24/03/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 25/03/2026 |
+| `src/types/` | 6 arquivos | 29.9 KB | 25/03/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 25/03/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 25/03/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -527,6 +527,7 @@ npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 - `api/cv-generator-docx.ts`
 - `api/debug-env.ts`
 - `api/entrevista-docx.ts`
+- `api/extract-cv-text.ts`
 - `api/gemini-analyze.ts`
 - `api/gemini-audio-transcription.ts`
 - `api/gemini-cv-generator-v2.ts`
@@ -534,8 +535,10 @@ npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 - `api/predicao-riscos.ts`
 - `api/prospect-apollo-search.ts`
 - `api/prospect-capture.ts`
+- `api/prospect-cv-extract.ts`
 - `api/prospect-email-finder.ts`
 - `api/prospect-enrich-company.ts`
+- `api/prospect-exclusoes.ts`
 - `api/prospect-gemini-search.ts`
 - `api/prospect-hunter-enrich.ts`
 - `api/prospect-infer-emails.ts`
