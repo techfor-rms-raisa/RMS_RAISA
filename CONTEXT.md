@@ -1,5 +1,5 @@
 # RMS-RAISA — Contexto do Projeto
-> Atualizado manualmente em 22/03/2026
+> Atualizado manualmente em 25/03/2026
 
 ---
 
@@ -475,10 +475,30 @@ npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 | LinkedIn duplicatas por variação de URL | `normalizarLinkedInUrl()` com regex extrai username canônico |
 | `user_id` null na Prospect Extension | `buscarUserIdDoRMS()` busca ID antes da chamada API |
 | Extensão Chrome não capturava de `www.techfortirms.online` | Adicionar URL com `www.` em `host_permissions` e `content_scripts` |
+| Site cai com `DNS_PROBE_FINISHED_NXDOMAIN` — Vercel mostra deploy Ready | Hostinger resetou nameservers para `ns1.dns-parking.com` — corrigir para `ns1.vercel-dns.com` / `ns2.vercel-dns.com` |
+| Extensão Chrome: inversão empresa_nome × cargo nos leads capturados | Parser `content.js` v1.04: segmento `i===1` sem `\|` é cargo (não empresa); bio >60 chars descartada |
 
 ---
 
-## 9. Backlog / Pendências
+## 9. Infraestrutura de Domínio
+
+| Item | Detalhe |
+|---|---|
+| Registrador | Hostinger |
+| Domínio principal | `techfortirms.online` (expira 2026-11-23, renovação automática ativa) |
+| Domínio secundário | `techforti.online` (expira 2026-07-02, renovação automática ativa) |
+| Nameservers corretos | `ns1.vercel-dns.com` / `ns2.vercel-dns.com` |
+| URL produção | `techfortirms.online` e `www.techfortirms.online` |
+
+**⚠️ Problema recorrente — DNS resetado pela Hostinger**
+- **Sintoma:** `DNS_PROBE_FINISHED_NXDOMAIN` — site inacessível, mas Vercel mostra deployment `Ready`
+- **Causa:** Hostinger reseta nameservers para `ns1.dns-parking.com` / `ns2.dns-parking.com` após operações no painel
+- **Correção:** Hostinger → Domínios → Gerenciar `techfortirms.online` → Nameservers → Alterar → inserir `ns1.vercel-dns.com` e `ns2.vercel-dns.com` → Salvar
+- **Propagação:** 15 min a 2h — acompanhar em https://dnschecker.org/#NS/techfortirms.online
+
+---
+
+## 10. Backlog / Pendências
 
 | Item | Prioridade | Detalhes |
 |---|---|---|
@@ -491,7 +511,7 @@ npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 
 ---
 
-## 10. Especialidades Ativas (Claude)
+## 11. Especialidades Ativas (Claude)
 
 | Código | Especialidade | Quando usar |
 |---|---|---|
