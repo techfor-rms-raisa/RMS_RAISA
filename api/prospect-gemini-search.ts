@@ -13,8 +13,13 @@
  * - BUG 3: Limite de pesquisas — max_resultados agora vem do frontend (configurável);
  *   maxPorChamada aumentado de 15 → 25; prompt instrui até 6 buscas (era 5).
  *
- * Versão: 2.1
- * Data: 12/03/2026
+ * Correções v2.2 (25/03/2026):
+ * - BUG 4: Resposta raw 0 chars — gemini-2.5-flash com thinkingConfig não popula
+ *   result.text diretamente. Corrigido: extração robusta via candidates[0].content.parts,
+ *   com fallback para result.text para compatibilidade com versões anteriores da SDK.
+ *
+ * Versão: 2.2
+ * Data: 25/03/2026
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -193,8 +198,35 @@ Responda SOMENTE JSON sem markdown:
         } as any
     });
 
-    const rawText = result.text || '';
+    // ── BUG 4 FIX: gemini-2.5-flash com thinkingConfig + Search Grounding ──────
+    // result.text retorna '' quando o modelo usa thinking — o conteúdo fica em
+    // candidates[0].content.parts. Extração robusta com fallback para result.text.
+    let rawText = '';
+    try {
+        const candidates = (result as any).candidates;
+        if (candidates?.[0]?.content?.parts) {
+            rawText = candidates[0].content.parts
+                .filter((p: any) => p.text && typeof p.text === 'string')
+                .map((p: any) => p.text)
+                .join('');
+        }
+        // Fallback: usar result.text se candidates não trouxe conteúdo
+        if (!rawText && result.text) {
+            rawText = result.text;
+        }
+    } catch {
+        rawText = result.text || '';
+    }
     console.log(`📦 [GeminiSearch] Resposta raw (${rawText.length} chars)`);
+    if (rawText.length === 0) {
+        // Log diagnóstico para entender a estrutura da resposta em caso de falha
+        console.warn('⚠️ [GeminiSearch] Resposta vazia — estrutura result:', JSON.stringify({
+            hasText:      !!result.text,
+            candidates:   (result as any).candidates?.length ?? 0,
+            partsCount:   (result as any).candidates?.[0]?.content?.parts?.length ?? 0,
+            finishReason: (result as any).candidates?.[0]?.finishReason ?? 'N/A',
+        }));
+    }
 
     // Parse defensivo — remove markdown se vier
     const cleanText = rawText
