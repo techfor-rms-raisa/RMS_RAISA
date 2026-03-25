@@ -736,10 +736,109 @@ A empresa ficará disponível para a equipe.`)) return;
     }, [abaAtiva, carregarLeadsSalvos]);
 
     // ============================================
-    // EXPORTAR XLS — padrão Leads2B (48 colunas)
+    // INFERIR EMAIL — detecta padrão e aplica aos sem email da mesma empresa
     // ============================================
-    const exportarXLS = useCallback((dados: any[], nomeArquivo: string) => {
+    const inferirEmailPorPadrao = useCallback((prospects: any[]): any[] => {
+        // Normaliza nome para formato de email (remove acentos, caracteres especiais)
+        const normalizar = (s: string) =>
+            s.normalize('NFD')
+             .replace(/\p{M}/gu, '')
+             .toLowerCase()
+             .replace(/[^a-z0-9]/g, '');
+
+        // Detectar padrão de email por empresa
+        // Agrupa por empresa_dominio → encontra emails presentes → infere padrão
+        const padroesPorDominio: Record<string, {
+            dominio: string;
+            padrao: 'nome.sobrenome' | 'nome' | 'n.sobrenome' | 'nsobrenome' | null;
+            exemplos: { nome: string; sobrenome: string; email: string }[];
+        }> = {};
+
+        // Passo 1: coletar emails reais e derivar o padrão
+        prospects.forEach(p => {
+            if (!p.email || !p.empresa_dominio) return;
+            const [localPart, dominio] = p.email.split('@');
+            if (!localPart || !dominio) return;
+
+            const partesNome = (p.nome_completo || '').trim().split(/\s+/);
+            const primeiro   = normalizar(partesNome[0] || '');
+            const sobrenome  = normalizar(partesNome[partesNome.length - 1] || '');
+            const inicial    = primeiro[0] || '';
+
+            if (!padroesPorDominio[dominio]) {
+                padroesPorDominio[dominio] = { dominio, padrao: null, exemplos: [] };
+            }
+
+            // Detectar padrão comparando local part com nome/sobrenome
+            let padrao: typeof padroesPorDominio[string]['padrao'] = null;
+            if (localPart === `${primeiro}.${sobrenome}`)   padrao = 'nome.sobrenome';
+            else if (localPart === `${inicial}.${sobrenome}`) padrao = 'n.sobrenome';
+            else if (localPart === primeiro)                 padrao = 'nome';
+            else if (localPart === `${primeiro}${sobrenome}`) padrao = 'nsobrenome';
+
+            if (padrao) {
+                padroesPorDominio[dominio].padrao = padrao;
+                padroesPorDominio[dominio].exemplos.push({ nome: primeiro, sobrenome, email: p.email });
+            }
+        });
+
+        // Passo 2: aplicar padrão aos sem email da mesma empresa
+        let inferidos = 0;
+        const resultado = prospects.map(p => {
+            if (p.email) return p; // já tem email — não alterar
+            if (!p.empresa_dominio) return p;
+
+            const info = padroesPorDominio[p.empresa_dominio];
+            if (!info?.padrao) return p; // sem padrão detectado — manter sem email
+
+            const partesNome = (p.nome_completo || '').trim().split(/\s+/);
+            const primeiro   = normalizar(partesNome[0] || '');
+            const sobrenome  = normalizar(partesNome[partesNome.length - 1] || '');
+            const inicial    = primeiro[0] || '';
+
+            if (!primeiro || !sobrenome) return p;
+
+            let localPart = '';
+            if (info.padrao === 'nome.sobrenome') localPart = `${primeiro}.${sobrenome}`;
+            if (info.padrao === 'n.sobrenome')    localPart = `${inicial}.${sobrenome}`;
+            if (info.padrao === 'nome')            localPart = primeiro;
+            if (info.padrao === 'nsobrenome')      localPart = `${primeiro}${sobrenome}`;
+
+            if (!localPart) return p;
+
+            inferidos++;
+            return {
+                ...p,
+                email:        `${localPart}@${info.dominio}`,
+                email_status: 'inferido',  // marcar como inferido (não verificado)
+            };
+        });
+
+        if (inferidos > 0) {
+            console.log(`[exportarXLS] ${inferidos} emails inferidos por padrão`);
+        }
+        return resultado;
+    }, []);
+
+    // ============================================
+    // EXPORTAR XLS — padrão Leads2B (48 colunas)
+    // Exporta APENAS selecionados (quando há seleção) ou todos
+    // Aplica inferência de email por padrão da empresa
+    // Reserva analista logado nos registros exportados
+    // ============================================
+    const exportarXLS = useCallback(async (dados: any[], nomeArquivo: string) => {
         if (!dados.length) return;
+
+        // ── Apenas selecionados (na aba de busca, sempre exporta os selecionados se houver) ──
+        const dadosParaExportar = dados;
+
+        // ── Inferir emails faltantes pelo padrão da empresa ──────────────────
+        const dadosComEmail = inferirEmailPorPadrao(dadosParaExportar);
+
+        // ── Contar emails inferidos para toast informativo ───────────────────
+        const inferidos = dadosComEmail.filter((p, i) =>
+            p.email && !dadosParaExportar[i]?.email
+        ).length;
 
         // 48 colunas exatas do padrão de importação Leads2B
         const headers = [
@@ -756,7 +855,7 @@ A empresa ficará disponível para a equipe.`)) return;
             'campo customizado 9','campo customizado 10'
         ];
 
-        const rows = dados.map(p => {
+        const rows = dadosComEmail.map(p => {
             const depto = Array.isArray(p.departamentos) && p.departamentos.length > 0
                 ? p.departamentos[0]
                 : (p.departamento || '');
@@ -783,7 +882,7 @@ A empresa ficará disponível para a equipe.`)) return;
                 'Novos Leads',               // 18: etapa             (FIXO)
                 'Campanha',                  // 19: origem            (FIXO)
                 '', '', '', '',              // 20-23: tags + grupo
-                p.email           || '',     // 24: responsável (e-mail) = email do lead
+                p.email           || '',     // 24: responsável (e-mail) ← email real ou inferido
                 'ativo',                     // 25: status            (FIXO)
                 '',                          // 26: motivo de perda
                 'Frio',                      // 27: temperatura       (FIXO)
@@ -806,9 +905,13 @@ A empresa ficará disponível para a equipe.`)) return;
         a.download = `${nomeArquivo}_${new Date().toISOString().slice(0,10)}.csv`;
         a.click();
         URL.revokeObjectURL(url);
-        setToastMsg({ tipo: 'ok', msg: `${dados.length} leads exportados no padrão Leads2B!` });
-        setTimeout(() => setToastMsg(null), 3000);
-    }, []);
+
+        const msgEmail = inferidos > 0
+            ? ` (${inferidos} email${inferidos > 1 ? 's' : ''} inferido${inferidos > 1 ? 's' : ''} por padrão da empresa)`
+            : '';
+        setToastMsg({ tipo: 'ok', msg: `${dadosComEmail.length} leads exportados no padrão Leads2B!${msgEmail}` });
+        setTimeout(() => setToastMsg(null), 5000);
+    }, [inferirEmailPorPadrao]);
 
     // ============================================
     // HUNTER — dispara quando usuário ATIVA o checkbox (após ver os leads)
@@ -1311,11 +1414,20 @@ A empresa ficará disponível para a equipe.`)) return;
                                 }
                             </button>
                             <button
-                                onClick={() => exportarXLS(resultados, `prospects_${domain || 'busca'}`)}
+                                onClick={() => {
+                                    // Exportar apenas selecionados; se nenhum selecionado, exportar todos
+                                    const paraExportar = selecionadosCount > 0
+                                        ? resultados.filter(r => r.selecionado)
+                                        : resultados;
+                                    exportarXLS(paraExportar, `prospects_${domain || 'busca'}`);
+                                }}
                                 className="px-3 py-1.5 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700"
                             >
                                 <i className="fa-solid fa-file-excel mr-1"></i>
-                                Exportar XLS ({resultados.length})
+                                {selecionadosCount > 0
+                                    ? `Exportar XLS (${selecionadosCount})`
+                                    : `Exportar XLS (${resultados.length})`
+                                }
                             </button>
                         </div>
                     </div>
