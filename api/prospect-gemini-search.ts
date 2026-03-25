@@ -595,13 +595,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         console.log(`✅ [GeminiSearch] A: ${listA.length} | B: ${listB.length} | Final: ${merged.length} únicos`);
 
-        // Verificar se alguma das chamadas sinalizou sem_resultados
-        const semResultados = merged.length === 0 && (
-            (resA as any)?.value?.sem_resultados ||
-            (resB as any)?.value?.sem_resultados ||
-            listA.length === 0 && listB.length === 0
-        );
-
         return res.status(200).json({
             success:             true,
             resultados:          merged,
