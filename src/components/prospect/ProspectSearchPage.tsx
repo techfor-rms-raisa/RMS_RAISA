@@ -167,6 +167,8 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [usuariosDisponiveis, setUsuariosDisponiveis] = useState<{id: number; nome_usuario: string; tipo_usuario: string}[]>([]);
     const [redistribuindoEmpresa, setRedistribuindoEmpresa] = useState<string | null>(null);
     const [novoResponsavel, setNovoResponsavel]         = useState<string>('');
+    const [paginaTerritorio, setPaginaTerritorio]       = useState(1);
+    const ITENS_TERRITORIO = 25;
     // ────────────────────────────────────────────────────────────────────────
 
     // Paginação Leads Salvos
@@ -599,8 +601,10 @@ A empresa ficará disponível para a equipe.`)) return;
         // Registrar analista responsável pela prospecção
         reservarEmpresas([lead.id]);
 
-        // Prioridade: domínio cadastrado → tentar inferir do nome
-        const dominio = lead.empresa_dominio?.trim() || '';
+        // FIX: 'pendente.cadastro' é placeholder de leads de CV sem domínio real — tratar como vazio
+        const DOMINIOS_INVALIDOS = ['pendente.cadastro', 'pendente', ''];
+        const dominioRaw = lead.empresa_dominio?.trim() || '';
+        const dominio = DOMINIOS_INVALIDOS.includes(dominioRaw.toLowerCase()) ? '' : dominioRaw;
 
         // Limpar estado da busca atual
         setResultados([]);
@@ -608,7 +612,7 @@ A empresa ficará disponível para a equipe.`)) return;
         setQueriesGoogle([]);
         setQueriesExecutadas(new Set());
 
-        // Preencher: se tiver domínio → campo Domínio; senão → campo Nome Específico
+        // Preencher: se tiver domínio válido → campo Domínio; senão → campo Nome Específico
         if (dominio) {
             setDomain(dominio);
             setEmpresaNome('');
@@ -1008,6 +1012,14 @@ A empresa ficará disponível para a equipe.`)) return;
         runHunter();
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [enriquecerHunter]);
+
+    // ============================================
+    // HELPERS DE PERMISSÃO
+    // ============================================
+    const podeGerenciarProspects = () => {
+        const perfis = ['Administrador', 'Gestão Comercial', 'SDR'];
+        return perfis.includes(currentUser?.tipo_usuario || '');
+    };
 
     // ============================================
     // HELPERS DE STATUS
@@ -1633,7 +1645,7 @@ A empresa ficará disponível para a equipe.`)) return;
                         <i className="fa-solid fa-list"></i> Lista
                     </button>
                     <button
-                        onClick={() => { setViewTerritorio(true); carregarUsuarios(); }}
+                        onClick={() => { setViewTerritorio(true); setPaginaTerritorio(1); carregarUsuarios(); }}
                         className={`px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors ${
                             viewTerritorio ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
@@ -1775,6 +1787,10 @@ A empresa ficará disponível para a equipe.`)) return;
                         return prioridade(a) - prioridade(b);
                     });
 
+                    const totalPaginasTerritorio = Math.ceil(empresasOrdenadas.length / ITENS_TERRITORIO);
+                    const inicioTerritorio = (paginaTerritorio - 1) * ITENS_TERRITORIO;
+                    const empresasPagina   = empresasOrdenadas.slice(inicioTerritorio, inicioTerritorio + ITENS_TERRITORIO);
+
                     return (
                         <div className="space-y-2">
                             {/* Legenda de status */}
@@ -1811,7 +1827,7 @@ A empresa ficará disponível para a equipe.`)) return;
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {empresasOrdenadas.map(([empresaNome, leads]) => {
+                                        {empresasPagina.map(([empresaNome, leads]) => {
                                             const st         = statusEmpresa(leads);
                                             const responsavel = leads.find(l => l.reservado_por_nome)?.reservado_por_nome || null;
                                             const responsavelId = leads.find(l => l.reservado_por)?.reservado_por || null;
@@ -1935,8 +1951,8 @@ A empresa ficará disponível para a equipe.`)) return;
                                                                         Prospectar
                                                                     </button>
                                                                 )}
-                                                                {/* Redistribuir — Admin redistribui qualquer empresa; outros só as suas */}
-                                                                {(currentUser?.tipo_usuario === 'Administrador' || ehMinha) && responsavel && (
+                                                                {/* Redistribuir — Admin/Comercial/SDR redistribuem qualquer; outros só as suas */}
+                                                                {(podeGerenciarProspects() || ehMinha) && responsavel && (
                                                                     <button
                                                                         onClick={() => { setRedistribuindoEmpresa(empresaNome); setNovoResponsavel(''); carregarUsuarios(); }}
                                                                         className="text-[10px] px-2 py-1 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-600 hover:text-white transition-colors whitespace-nowrap font-medium"
@@ -1946,8 +1962,8 @@ A empresa ficará disponível para a equipe.`)) return;
                                                                         Redistribuir
                                                                     </button>
                                                                 )}
-                                                                {/* Liberar — Admin libera qualquer; outros só as suas */}
-                                                                {(currentUser?.tipo_usuario === 'Administrador' || ehMinha) && responsavel && (
+                                                                {/* Liberar — Admin/Comercial/SDR liberam qualquer; outros só as suas */}
+                                                                {(podeGerenciarProspects() || ehMinha) && responsavel && (
                                                                     <button
                                                                         onClick={() => liberarEmpresa(empresaNome)}
                                                                         className="text-[10px] px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 hover:bg-red-500 hover:text-white transition-colors whitespace-nowrap font-medium"
@@ -1977,6 +1993,54 @@ A empresa ficará disponível para a equipe.`)) return;
                                     </tbody>
                                 </table>
                             </div>
+
+                            {/* Paginação Território */}
+                            {totalPaginasTerritorio > 1 && (
+                                <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50 rounded-b-xl">
+                                    <span className="text-xs text-gray-500">
+                                        {inicioTerritorio + 1}–{Math.min(inicioTerritorio + ITENS_TERRITORIO, empresasOrdenadas.length)} de <strong>{empresasOrdenadas.length}</strong> empresas
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={() => setPaginaTerritorio(1)} disabled={paginaTerritorio === 1}
+                                            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                            <i className="fa-solid fa-angles-left"></i>
+                                        </button>
+                                        <button onClick={() => setPaginaTerritorio(p => Math.max(1, p - 1))} disabled={paginaTerritorio === 1}
+                                            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                            <i className="fa-solid fa-angle-left"></i>
+                                        </button>
+                                        {Array.from({ length: totalPaginasTerritorio }, (_, i) => i + 1)
+                                            .filter(p => p === 1 || p === totalPaginasTerritorio || Math.abs(p - paginaTerritorio) <= 1)
+                                            .reduce((acc: (number|string)[], p, i, arr) => {
+                                                if (i > 0 && (p as number) - (arr[i-1] as number) > 1) acc.push('...');
+                                                acc.push(p);
+                                                return acc;
+                                            }, [])
+                                            .map((p, idx) => p === '...'
+                                                ? <span key={`ell-${idx}`} className="px-1 text-xs text-gray-400">…</span>
+                                                : (
+                                                    <button key={p} onClick={() => setPaginaTerritorio(p as number)}
+                                                        className={`px-2.5 py-1 text-xs rounded border transition-colors font-medium ${
+                                                            paginaTerritorio === p
+                                                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                                                : 'border-gray-200 text-gray-600 hover:bg-white hover:border-indigo-300 hover:text-indigo-600'
+                                                        }`}>
+                                                        {p}
+                                                    </button>
+                                                )
+                                            )
+                                        }
+                                        <button onClick={() => setPaginaTerritorio(p => Math.min(totalPaginasTerritorio, p + 1))} disabled={paginaTerritorio === totalPaginasTerritorio}
+                                            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                            <i className="fa-solid fa-angle-right"></i>
+                                        </button>
+                                        <button onClick={() => setPaginaTerritorio(totalPaginasTerritorio)} disabled={paginaTerritorio === totalPaginasTerritorio}
+                                            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                            <i className="fa-solid fa-angles-right"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     );
                 })()
@@ -2135,8 +2199,8 @@ A empresa ficará disponível para a equipe.`)) return;
                                                         Prospectar
                                                     </button>
                                                 )}
-                                                {/* É Consultoria — apenas Administrador */}
-                                                {lead.empresa_nome && currentUser?.tipo_usuario === 'Administrador' && (
+                                                {/* É Consultoria — Administrador, Gestão Comercial e SDR */}
+                                                {lead.empresa_nome && podeGerenciarProspects() && (
                                                     <button
                                                         onClick={() => marcarComoConsultoria(lead)}
                                                         disabled={marcandoExclusao === lead.id}
