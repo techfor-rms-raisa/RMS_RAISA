@@ -157,6 +157,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [filtroOrigem, setFiltroOrigem]               = useState(''); // NOVO: filtro por origem CV
     const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null);
     const [marcandoExclusao, setMarcandoExclusao]       = useState<number | null>(null); // NOVO
+    const [resolvendoDominio, setResolvendoDominio]     = useState<number | null>(null); // id do lead sendo resolvido
 
     // Seleção de leads salvos (para reserva e exportação)
     const [leadsSelecionados, setLeadsSelecionados]     = useState<Set<number>>(new Set());
@@ -701,6 +702,45 @@ A empresa ficará disponível para a equipe.`)) return;
         }
     }, [currentUser]);
 
+    // ============================================
+    // RESOLVER DOMÍNIO VIA IA — botão por linha nos Leads Salvos
+    // ============================================
+    const resolverDominioLead = useCallback(async (lead: ProspectLead) => {
+        if (!lead.empresa_nome) return;
+        setResolvendoDominio(lead.id);
+        try {
+            const res = await fetch('/api/prospect-resolve-domain', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ empresa_nome: lead.empresa_nome }),
+            });
+            const data = await res.json();
+            if (data.dominio) {
+                // Atualizar no Supabase e na lista local
+                await fetch('/api/prospect-leads', {
+                    method:  'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({
+                        ids:             [lead.id],
+                        empresa_dominio: data.dominio,
+                    }),
+                });
+                setLeadsSalvos(prev => prev.map(l =>
+                    l.id === lead.id ? { ...l, empresa_dominio: data.dominio } : l
+                ));
+                setToastMsg({ tipo: 'ok', msg: `Domínio encontrado: ${data.dominio}` });
+            } else {
+                setToastMsg({ tipo: 'erro', msg: `Domínio não encontrado para "${lead.empresa_nome}"` });
+            }
+        } catch (e) {
+            console.error('Erro ao resolver domínio:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Erro ao buscar domínio.' });
+        } finally {
+            setResolvendoDominio(null);
+            setTimeout(() => setToastMsg(null), 3000);
+        }
+    }, []);
+
     const carregarExclusoes = useCallback(async () => {
         setLoadingExclusoes(true);
         try {
@@ -758,11 +798,21 @@ A empresa ficará disponível para a equipe.`)) return;
             exemplos: { nome: string; sobrenome: string; email: string }[];
         }> = {};
 
+        // Domínios que NÃO são corporativos — nunca inferir email por eles
+        const DOMINIOS_INVALIDOS_INFERENCIA = [
+            'pendente.cadastro', 'pendente',
+            'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'yahoo.com.br',
+            'live.com', 'msn.com', 'icloud.com', 'bol.com.br', 'uol.com.br',
+            'terra.com.br', 'ig.com.br', 'globo.com', 'r7.com',
+        ];
+
         // Passo 1: coletar emails reais e derivar o padrão
         prospects.forEach(p => {
             if (!p.email || !p.empresa_dominio) return;
             const [localPart, dominio] = p.email.split('@');
             if (!localPart || !dominio) return;
+            // Ignorar domínios pessoais e placeholders
+            if (DOMINIOS_INVALIDOS_INFERENCIA.includes(dominio.toLowerCase())) return;
 
             const partesNome = (p.nome_completo || '').trim().split(/\s+/);
             const primeiro   = normalizar(partesNome[0] || '');
@@ -791,6 +841,8 @@ A empresa ficará disponível para a equipe.`)) return;
         const resultado = prospects.map(p => {
             if (p.email) return p; // já tem email — não alterar
             if (!p.empresa_dominio) return p;
+            // Nunca inferir email para domínios inválidos ou pessoais
+            if (DOMINIOS_INVALIDOS_INFERENCIA.includes(p.empresa_dominio.toLowerCase())) return p;
 
             const info = padroesPorDominio[p.empresa_dominio];
             if (!info?.padrao) return p; // sem padrão detectado — manter sem email
@@ -2197,6 +2249,20 @@ A empresa ficará disponível para a equipe.`)) return;
                                                     >
                                                         <i className="fa-solid fa-magnifying-glass text-[9px]"></i>
                                                         Prospectar
+                                                    </button>
+                                                )}
+                                                {/* Resolver Domínio via IA — só para leads sem domínio ou com placeholder */}
+                                                {(!lead.empresa_dominio || lead.empresa_dominio === 'pendente.cadastro') && (
+                                                    <button
+                                                        onClick={() => resolverDominioLead(lead)}
+                                                        disabled={resolvendoDominio === lead.id}
+                                                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-violet-50 text-violet-600 border border-violet-200 hover:bg-violet-600 hover:text-white transition-colors whitespace-nowrap font-medium w-full justify-center disabled:opacity-50"
+                                                        title={`Buscar domínio de "${lead.empresa_nome}" via IA`}
+                                                    >
+                                                        {resolvendoDominio === lead.id
+                                                            ? <><i className="fa-solid fa-spinner fa-spin text-[9px]"></i> Buscando...</>
+                                                            : <><i className="fa-brands fa-google text-[9px]"></i> Resolver domínio</>
+                                                        }
                                                     </button>
                                                 )}
                                                 {/* É Consultoria — Administrador, Gestão Comercial e SDR */}

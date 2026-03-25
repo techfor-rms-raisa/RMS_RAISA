@@ -9,8 +9,10 @@
  * - POST { modo: 'pessoa', pessoa_id } → extração de um candidato específico (trigger automático)
  * - POST { modo: 'marcar_exportado', lead_id, user_id } → marcar lead como exportado
  *
- * Versão: 1.0
- * Data: 23/03/2026
+ * Versão: 1.1
+ * Data: 25/03/2026
+ * v1.1: empresa_dominio não recebe mais domínio pessoal do candidato
+ *       (gmail, hotmail, outlook etc.) — campo fica null para preenchimento manual
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -131,6 +133,32 @@ function extrairDominio(email: string | null): string {
   return parts.length > 1 ? parts[1].toLowerCase().trim() : '';
 }
 
+// ─── RESOLVER DOMÍNIO VIA IA ─────────────────────────────────────────────────
+// Chama prospect-resolve-domain internamente via fetch (mesmo servidor Vercel)
+
+async function resolverDominioPorIA(empresaNome: string): Promise<string | null> {
+  try {
+    // Em ambiente Vercel, chamar o próprio endpoint via URL absoluta não é confiável
+    // Usamos a função diretamente via import dinâmico ou chamada HTTP ao próprio servidor
+    // Por simplicidade e confiabilidade: chamada ao endpoint externo
+    const baseUrl = process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : 'http://localhost:3000';
+
+    const resp = await fetch(`${baseUrl}/api/prospect-resolve-domain`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ empresa_nome: empresaNome }),
+    });
+
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.dominio || null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── PROCESSAR UMA PESSOA ────────────────────────────────────────────────────
 
 async function processarPessoa(pessoa: PessoaData, userId: number | null): Promise<{
@@ -160,7 +188,16 @@ async function processarPessoa(pessoa: PessoaData, userId: number | null): Promi
     return { inseridos: 0, ignorados: 0, empresas: [] };
   }
 
-  const dominioPessoa = extrairDominio(pessoa.email);
+  // Domínios pessoais não são domínios corporativos
+  const DOMINIOS_PESSOAIS = [
+    'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'yahoo.com.br',
+    'live.com', 'msn.com', 'icloud.com', 'bol.com.br', 'uol.com.br',
+    'terra.com.br', 'ig.com.br', 'globo.com', 'r7.com',
+  ];
+  const dominioCandidato = extrairDominio(pessoa.email);
+  const dominioPessoa = dominioCandidato && !DOMINIOS_PESSOAIS.includes(dominioCandidato)
+    ? dominioCandidato
+    : null;
   const rows: any[] = [];
   const nomesEmpresas: string[] = [];
 
@@ -195,6 +232,17 @@ async function processarPessoa(pessoa: PessoaData, userId: number | null): Promi
 
     if (jaExiste && jaExiste.length > 0) continue;
 
+    // Tentar resolver domínio corporativo via IA se não temos do candidato
+    let dominioEmpresa = dominioPessoa;
+    if (!dominioEmpresa) {
+      dominioEmpresa = await resolverDominioPorIA(empresaNome);
+      if (dominioEmpresa) {
+        console.log(`🌐 [cv-extract] Domínio resolvido por IA: "${empresaNome}" → ${dominioEmpresa}`);
+      } else {
+        console.log(`📋 [cv-extract] Sem domínio para "${empresaNome}" — deixado para review manual`);
+      }
+    }
+
     rows.push({
       buscado_por:      userId,
       pessoa_id:        pessoa.id,
@@ -208,7 +256,7 @@ async function processarPessoa(pessoa: PessoaData, userId: number | null): Promi
       email_status:     pessoa.email ? 'provavel' : null,
       linkedin_url:     pessoa.linkedin_url || null,
       empresa_nome:     empresaNome,
-      empresa_dominio:  dominioPessoa || null,
+      empresa_dominio:  dominioEmpresa || null,
       cidade:           pessoa.cidade || null,
       estado:           pessoa.estado || null,
       pais:             'Brasil',
