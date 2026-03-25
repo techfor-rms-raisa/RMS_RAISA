@@ -199,6 +199,11 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
     })));
   };
 
+  // Excluir lead da lista (sem afetar o banco — apenas remove da seleção atual)
+  const excluirLead = (index: number) => {
+    setLeads(prev => prev.filter((_, i) => i !== index));
+  };
+
   // Importar de prospects do banco
   const importarProspects = () => {
     const converted = prospectsBanco.map(prospectToLead);
@@ -593,6 +598,7 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
                       <th className="p-2 text-left">Domínio</th>
                       <th className="p-2 text-left">Email</th>
                       <th className="p-2 text-left">Depto</th>
+                      <th className="p-2 text-center w-16">Ação</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -621,6 +627,15 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
                           )}
                         </td>
                         <td className="p-2 text-gray-500 text-xs">{lead.departamento || '-'}</td>
+                        <td className="p-2 text-center">
+                          <button
+                            onClick={() => excluirLead(i)}
+                            className="text-[10px] px-2 py-1 rounded border border-dashed border-red-200 text-red-400 hover:bg-red-500 hover:text-white hover:border-red-500 transition-colors"
+                            title="Remover este lead da campanha"
+                          >
+                            <i className="fa-solid fa-trash-can"></i>
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
