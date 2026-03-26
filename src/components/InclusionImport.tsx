@@ -1,14 +1,12 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v2.4 - 26/03/2026
+ * VERSÃO: Fix v2.5 - 26/03/2026
  * 
  * CORREÇÕES:
- * - ✅ v2.4: CAUSA RAIZ email — pdf.js inverte ordem de colunas da ficha TechFor.
- *            emailsGestor agora identificado por domínio no texto INTEIRO (não por posição)
- * - ✅ v2.4: Celular — regex corrigida para capturar DDD com traço (ex: 41-99174-7735)
- * - ✅ v2.4: Substituição — detecta checkbox INCLUSÃO (false) vs INCLUSÃO REF.SUBSTITUIÇÃO (true)
- *            via flag substituicaoTipoDefinido; pdf.js extrai os 5 labels sempre
+ * - ✅ v2.5: Email — fallback global em 3 camadas; captura email pessoal do consultor
+ *            mesmo quando pdf.js extrai sem prefixo "E-MAIL:" e antes de DADOS DO PROFISSIONAL
+ * - ✅ v2.4: Celular regex DDD com traço | Substituição por ordem de checkbox | emailsGestor por domínio
  * - ✅ v2.2: verificação de duplicata de email inclui ano_vigencia
  * - ✅ v1.9: RH: extração definitiva por regex após data de emissão + busca por analistas
  * - ✅ v1.8: Analista R&S: findUserByName filtra tipo_usuario; exclui GP do rodapé
@@ -239,7 +237,6 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let dtAniversarioStr = '';
             let especialidadeStr = '';
             let substituicao = false;
-            let substituicaoTipoDefinido = false; // ✅ v2.4: flag para detectar o primeiro checkbox marcado
             let nomeSubstituidoStr = '';
             let modalidadeContratoStr = '';
             let faturavel = true;
@@ -251,39 +248,47 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 console.log(`📍 RH inicializado por coordenada: "${recursosHumanosStr}"`);
             }
             
-            // ✅ FIX v2.4: Identificar domínio do cliente NO TEXTO INTEIRO
-            // CAUSA RAIZ: o pdf.js lê o formulário em ordem de blocos/colunas, NÃO em ordem visual.
-            // Na ficha TechFor (2 colunas), o email do consultor aparece ANTES de "DADOS DO PROFISSIONAL"
-            // no texto extraído, enquanto os emails do gestor/cliente ficam DEPOIS.
-            // Portanto: NÃO usar posição no texto para distinguir emails — usar DOMÍNIO.
+            // ✅ FIX v2.3: Coletar emails do gestor/cliente com estratégia por domínio
+            // Emails pessoais (@gmail, @hotmail etc) NUNCA são excluídos — podem ser do consultor
             const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
             const dominiosPersonais = ['gmail', 'hotmail', 'outlook', 'yahoo', 'live', 'icloud', 'uol', 'bol', 'terra'];
+            const emailsGestorSet = new Set<string>();
 
-            // Coletar TODOS os emails do texto inteiro
-            const todosEmailsTexto = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
-
-            // Separar corporativos (domínio do cliente) de pessoais (consultor)
-            const emailsCorporativos = todosEmailsTexto.filter(e =>
+            // === PASSO 1: Identificar domínio do cliente ===
+            // A ficha sempre tem "E-MAIL:" logo após "NOME SOLICITANTE" (pode ser linha diferente)
+            // Pegar o primeiro email corporativo encontrado antes de DADOS DO PROFISSIONAL
+            const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : text;
+            const todosEmailsAntes = textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+            const emailsCorporativosAntes = todosEmailsAntes.filter(e =>
                 !dominiosPersonais.some(d => e.toLowerCase().includes('@' + d))
             );
-
-            // Domínio do cliente = domínio do primeiro email corporativo no texto
-            const dominioCliente = emailsCorporativos.length > 0
-                ? emailsCorporativos[0].split('@')[1]?.toLowerCase()
+            
+            // Domínio do cliente = domínio do primeiro email corporativo encontrado antes de DADOS DO PROFISSIONAL
+            const dominioCliente = emailsCorporativosAntes.length > 0
+                ? emailsCorporativosAntes[0].split('@')[1]?.toLowerCase()
                 : null;
             console.log(`🏢 Domínio do cliente identificado: "${dominioCliente}"`);
 
-            // emailsGestor = todos os emails do domínio do cliente (bloquear completamente)
-            const emailsGestorSet = new Set<string>();
+            // === PASSO 2: Adicionar emails antes de DADOS DO PROFISSIONAL (corporativos) ===
+            for (const e of emailsCorporativosAntes) {
+                emailsGestorSet.add(e.toLowerCase());
+            }
+
+            // === PASSO 3: Adicionar TODOS os emails do domínio do cliente no texto inteiro ===
+            // Isso garante que emails do cliente/gestor que apareçam após DADOS DO PROFISSIONAL
+            // (por quebra de ordem do pdf.js) também sejam bloqueados
             if (dominioCliente) {
-                for (const e of todosEmailsTexto) {
-                    if (e.toLowerCase().endsWith('@' + dominioCliente)) {
-                        emailsGestorSet.add(e.toLowerCase());
+                const todosEmails = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+                for (const e of todosEmails) {
+                    const el = e.toLowerCase();
+                    if (el.endsWith('@' + dominioCliente)) {
+                        emailsGestorSet.add(el);
                     }
                 }
             }
+
             const emailsGestor = emailsGestorSet;
-            console.log(`🔍 Emails do gestor/cliente (bloqueados): ${[...emailsGestor].join(', ')}`);
+            console.log(`🔍 Emails do gestor/cliente (a ignorar): ${[...emailsGestor].join(', ')}`);
 
             // Flags de seção
             let inDadosProfissional = false;
@@ -412,16 +417,12 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== TELEFONE CELULAR =====
-                // ✅ FIX v2.4: regex expandida para capturar DDD separado por traço (ex: 41-99174-7735)
                 if (cleanLine.match(/TELEFONE CELULAR/i)) {
-                    // Aceita: 41-99174-7735 | 41 99174-7735 | 41999174735 | (41) 99174-7735
-                    const phoneMatch = cleanLine.match(/(\(?\d{2}\)?[-\s]?\d{4,5}[-\s]?\d{4})/);
+                    const phoneMatch = cleanLine.match(/(\d{2}\s*\d{4,5}[-\s]?\d{4})/);
                     if (phoneMatch) {
                         celularStr = phoneMatch[1].replace(/\s/g, '');
-                        console.log(`✅ Celular extraído (inline): ${celularStr}`);
                     } else if (nextLine.match(/^\d/)) {
                         celularStr = nextLine.replace(/\s/g, '');
-                        console.log(`✅ Celular extraído (próxima linha): ${celularStr}`);
                     }
                 }
                 
@@ -545,27 +546,11 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== SUBSTITUIÇÃO =====
-                // ✅ FIX v2.4: O pdf.js extrai os labels de TODOS os checkboxes (sem indicar qual está marcado).
-                // Estratégia: detectar qual checkbox é o PRIMEIRO não-vazio no texto — ele é o marcado.
-                // "INCLUSÃO" isolado (sem "REF.SUBSTITUIÇÃO") → substituicao = false
-                // "INCLUSÃO REF.SUBSTITUIÇÃO" → substituicao = true
-                // Os labels aparecem nas primeiras linhas do texto, antes de "CLIENTE:"
-                // Detectamos via flag: se já vimos "INCLUSÃO" puro antes de "INCLUSÃO REF.SUBSTITUIÇÃO"
-                if (cleanLine.match(/^INCLUSÃO REF\.?\s*SUBSTITUIÇÃO$/i)) {
-                    // Checkbox "INCLUSÃO REF.SUBSTITUIÇÃO" detectado
-                    // Só marca substituicao=true se for o primeiro tipo detectado
-                    // (se "INCLUSÃO" puro já foi detectado antes, este é apenas o label não marcado)
-                    if (!substituicaoTipoDefinido) {
+                if (cleanLine.match(/INCLUSÃO REF\.?\s*SUBSTITUIÇÃO/i) || cleanLine.match(/SUBSTITUIÇÃO/i)) {
+                    const hasX = cleanLine.includes('X') || cleanLine.includes('x');
+                    if (hasX) {
                         substituicao = true;
-                        substituicaoTipoDefinido = true;
-                        console.log(`✅ Tipo INCLUSÃO REF.SUBSTITUIÇÃO detectado → substituicao=true`);
-                    }
-                } else if (cleanLine.match(/^INCLUSÃO$/i)) {
-                    // Checkbox "INCLUSÃO" puro detectado — NÃO é substituição
-                    if (!substituicaoTipoDefinido) {
-                        substituicao = false;
-                        substituicaoTipoDefinido = true;
-                        console.log(`✅ Tipo INCLUSÃO detectado → substituicao=false`);
+                        console.log(`✅ Substituição detectada: ${substituicao}`);
                     }
                 }
                 
@@ -668,33 +653,43 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             
-            // ✅ FIX v1.2: Fallback email — buscar na seção DADOS DO PROFISSIONAL,
-            // excluindo emails do gestor/solicitante coletados anteriormente
+            // ✅ FIX v2.5: Fallback email em 3 camadas
+            // CAUSA: pdf.js pode extrair o email do consultor SEM o prefixo "E-MAIL:" —
+            // como item isolado de bloco de texto. O loop só captura linhas com "E-MAIL:".
             if (!emailStr) {
+                // Camada 1: buscar na seção DADOS DO PROFISSIONAL (com prefixo E-MAIL:)
                 const textoDadosProf = dadosProfissionalIdx > 0
                     ? text.substring(dadosProfissionalIdx)
                     : text;
-                const emailMatches = textoDadosProf.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi);
-                if (emailMatches && emailMatches.length > 0) {
-                    // 1º: email pessoal que não seja do gestor
-                    const emailPessoal = emailMatches.find(e => {
+                const emailMatchesSecao = textoDadosProf.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+                const emailPessoalSecao = emailMatchesSecao.find(e => {
+                    const el = e.toLowerCase();
+                    return !emailsGestor.has(el) && dominiosPersonais.some(d => el.includes('@' + d));
+                });
+                if (emailPessoalSecao) {
+                    emailStr = emailPessoalSecao.toLowerCase();
+                    console.log(`✅ Email extraído (fallback seção DADOS): ${emailStr}`);
+                }
+
+                // Camada 2: buscar no TEXTO INTEIRO — captura email mesmo sem prefixo "E-MAIL:"
+                // e mesmo que apareça antes de DADOS DO PROFISSIONAL (pdf.js inverte colunas)
+                if (!emailStr) {
+                    const emailPessoalGlobal = todosEmailsTexto.find(e => {
                         const el = e.toLowerCase();
-                        return !emailsGestor.has(el) && (
-                            el.includes('@gmail') || el.includes('@hotmail') ||
-                            el.includes('@outlook') || el.includes('@yahoo') ||
-                            el.includes('@live') || el.includes('@icloud')
-                        );
+                        return !emailsGestor.has(el) && dominiosPersonais.some(d => el.includes('@' + d));
                     });
-                    if (emailPessoal) {
-                        emailStr = emailPessoal.toLowerCase();
-                        console.log(`✅ Email pessoal extraído (fallback seção): ${emailStr}`);
-                    } else {
-                        // 2º: qualquer email que não seja do gestor
-                        const emailNaoGestor = emailMatches.find(e => !emailsGestor.has(e.toLowerCase()));
-                        if (emailNaoGestor) {
-                            emailStr = emailNaoGestor.toLowerCase();
-                            console.log(`✅ Email extraído (fallback não-gestor): ${emailStr}`);
-                        }
+                    if (emailPessoalGlobal) {
+                        emailStr = emailPessoalGlobal.toLowerCase();
+                        console.log(`✅ Email extraído (fallback global pessoal): ${emailStr}`);
+                    }
+                }
+
+                // Camada 3: qualquer email não-gestor no texto inteiro (corporativo do consultor PJ)
+                if (!emailStr) {
+                    const emailNaoGestor = todosEmailsTexto.find(e => !emailsGestor.has(e.toLowerCase()));
+                    if (emailNaoGestor) {
+                        emailStr = emailNaoGestor.toLowerCase();
+                        console.log(`✅ Email extraído (fallback global não-gestor): ${emailStr}`);
                     }
                 }
             }
