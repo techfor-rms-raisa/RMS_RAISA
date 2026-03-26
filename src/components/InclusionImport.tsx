@@ -1,11 +1,11 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v2.2 - 26/03/2026
+ * VERSÃO: Fix v2.3 - 26/03/2026
  * 
  * CORREÇÕES:
- * - ✅ v2.2: emailsGestor extraído por domínio do cliente + linhas de cabeçalho conhecidas
- *            (resolve extração do email da solicitante Adriana em vez do email do consultor)
+ * - ✅ v2.3: emailsGestor por domínio do cliente — bloqueia TODOS os emails do domínio no texto inteiro
+ *            (fix v2.2 tinha regex que não atravessava \n entre NOME SOLICITANTE e E-MAIL)
  * - ✅ v2.2: verificação de duplicata de email inclui ano_vigencia (alinhado com constraint do banco)
  * - ✅ v1.9: RH: extração definitiva por regex após data de emissão + busca por analistas
  * - ✅ v1.8: Analista R&S: findUserByName filtra tipo_usuario; exclui GP do rodapé
@@ -247,60 +247,45 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 console.log(`📍 RH inicializado por coordenada: "${recursosHumanosStr}"`);
             }
             
-            // ✅ FIX v2.2: Coletar emails do gestor/solicitante DIRETAMENTE das linhas de cabeçalho
-            // O pdf.js pode linearizar o texto fora de ordem, então NÃO dependemos de posição no texto.
-            // Estratégia: extrair emails de todas as linhas que sabemos ser do cabeçalho da ficha:
-            //   - Linha "NOME SOLICITANTE: ..." → campo E-MAIL após
-            //   - Linha "RESPONSÁVEL APROVADOR DE HORAS: ..." → campo E-MAIL após
-            //   - Linhas "E-MAIL:" que contenham domínio do cliente (não pessoais)
+            // ✅ FIX v2.3: Coletar emails do gestor/cliente com estratégia por domínio
             // Emails pessoais (@gmail, @hotmail etc) NUNCA são excluídos — podem ser do consultor
             const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
             const dominiosPersonais = ['gmail', 'hotmail', 'outlook', 'yahoo', 'live', 'icloud', 'uol', 'bol', 'terra'];
-            
-            // Coletar emails de campos específicos do cabeçalho via regex no texto completo
             const emailsGestorSet = new Set<string>();
+
+            // === PASSO 1: Identificar domínio do cliente ===
+            // A ficha sempre tem "E-MAIL:" logo após "NOME SOLICITANTE" (pode ser linha diferente)
+            // Pegar o primeiro email corporativo encontrado antes de DADOS DO PROFISSIONAL
+            const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : text;
+            const todosEmailsAntes = textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+            const emailsCorporativosAntes = todosEmailsAntes.filter(e =>
+                !dominiosPersonais.some(d => e.toLowerCase().includes('@' + d))
+            );
             
-            // 1. Emails nas linhas com "NOME SOLICITANTE" e "RESPONSÁVEL APROVADOR"
-            const linhasCabecalho = [
-                ...text.matchAll(/(?:NOME SOLICITANTE|RESPONSÁVEL APROVADOR)[^\n]*E-MAIL[^\n]*/gi)
-            ].map(m => m[0]);
-            
-            // 2. Linha(s) de E-MAIL que aparecem antes de DADOS DO PROFISSIONAL no texto (quando a ordem é preservada)
-            const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : '';
-            const emailsAntes = textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
-            
-            // 3. Qualquer linha do texto que contenha "E-MAIL:" e tenha email corporativo (do cliente/gestor)
-            //    — identificamos o domínio do cliente a partir do email do solicitante
-            const emailSolicitanteLine = text.match(/NOME SOLICITANTE[^\n]*?\n?[^\n]*?([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
-            const dominioCliente = emailSolicitanteLine
-                ? emailSolicitanteLine[1].split('@')[1]?.toLowerCase()
+            // Domínio do cliente = domínio do primeiro email corporativo encontrado antes de DADOS DO PROFISSIONAL
+            const dominioCliente = emailsCorporativosAntes.length > 0
+                ? emailsCorporativosAntes[0].split('@')[1]?.toLowerCase()
                 : null;
-            
-            // Adicionar emails corporativos encontrados antes de DADOS DO PROFISSIONAL
-            for (const e of emailsAntes) {
-                const el = e.toLowerCase();
-                if (!dominiosPersonais.some(d => el.includes('@' + d))) {
-                    emailsGestorSet.add(el);
-                }
+            console.log(`🏢 Domínio do cliente identificado: "${dominioCliente}"`);
+
+            // === PASSO 2: Adicionar emails antes de DADOS DO PROFISSIONAL (corporativos) ===
+            for (const e of emailsCorporativosAntes) {
+                emailsGestorSet.add(e.toLowerCase());
             }
-            // Adicionar emails das linhas de cabeçalho (mesmo se aparecerem depois de DADOS DO PROFISSIONAL)
-            for (const linha of linhasCabecalho) {
-                const emailsNaLinha = linha.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
-                for (const e of emailsNaLinha) {
-                    emailsGestorSet.add(e.toLowerCase());
-                }
-            }
-            // Se identificamos o domínio do cliente, adicionar todos os emails desse domínio encontrados no texto
+
+            // === PASSO 3: Adicionar TODOS os emails do domínio do cliente no texto inteiro ===
+            // Isso garante que emails do cliente/gestor que apareçam após DADOS DO PROFISSIONAL
+            // (por quebra de ordem do pdf.js) também sejam bloqueados
             if (dominioCliente) {
-                const emailsDominioCliente = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
-                for (const e of emailsDominioCliente) {
+                const todosEmails = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+                for (const e of todosEmails) {
                     const el = e.toLowerCase();
-                    if (el.endsWith('@' + dominioCliente) || el.includes('@' + dominioCliente.split('.')[0])) {
+                    if (el.endsWith('@' + dominioCliente)) {
                         emailsGestorSet.add(el);
                     }
                 }
             }
-            
+
             const emailsGestor = emailsGestorSet;
             console.log(`🔍 Emails do gestor/cliente (a ignorar): ${[...emailsGestor].join(', ')}`);
 
