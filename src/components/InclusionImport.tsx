@@ -1,12 +1,15 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v2.3 - 26/03/2026
+ * VERSÃO: Fix v2.4 - 26/03/2026
  * 
  * CORREÇÕES:
- * - ✅ v2.3: emailsGestor por domínio do cliente — bloqueia TODOS os emails do domínio no texto inteiro
- *            (fix v2.2 tinha regex que não atravessava \n entre NOME SOLICITANTE e E-MAIL)
- * - ✅ v2.2: verificação de duplicata de email inclui ano_vigencia (alinhado com constraint do banco)
+ * - ✅ v2.4: CAUSA RAIZ descoberta — pdf.js inverte ordem de colunas do formulário TechFor.
+ *            Email do consultor aparece ANTES de "DADOS DO PROFISSIONAL" no texto extraído;
+ *            emails do gestor/cliente aparecem DEPOIS. Solução definitiva: identificar domínio
+ *            do cliente no texto INTEIRO (primeiro email corporativo), bloquear todos desse domínio.
+ * - ✅ v2.3: emailsGestor por domínio (bug: regex não atravessava \n entre linhas)
+ * - ✅ v2.2: verificação de duplicata de email inclui ano_vigencia
  * - ✅ v1.9: RH: extração definitiva por regex após data de emissão + busca por analistas
  * - ✅ v1.8: Analista R&S: findUserByName filtra tipo_usuario; exclui GP do rodapé
  * - ✅ v1.7: Intercepta window.alert() do ManageConsultants para tratar erro duplicata
@@ -247,47 +250,45 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 console.log(`📍 RH inicializado por coordenada: "${recursosHumanosStr}"`);
             }
             
-            // ✅ FIX v2.3: Coletar emails do gestor/cliente com estratégia por domínio
-            // Emails pessoais (@gmail, @hotmail etc) NUNCA são excluídos — podem ser do consultor
+            // ✅ FIX v2.4: Identificar domínio do cliente NO TEXTO INTEIRO
+            // CAUSA RAIZ: o pdf.js lê o formulário em ordem de blocos/colunas, NÃO em ordem visual.
+            // Na ficha TechFor (2 colunas), o email do consultor aparece ANTES de "DADOS DO PROFISSIONAL"
+            // no texto extraído, enquanto os emails do gestor/cliente ficam DEPOIS.
+            // Portanto: NÃO usar posição no texto para distinguir emails — usar DOMÍNIO.
+            // Estratégia definitiva:
+            //   1. Coletar todos os emails corporativos do texto inteiro
+            //   2. Identificar domínio do cliente (domínio do primeiro email corporativo)
+            //   3. Bloquear TODOS os emails desse domínio
+            //   4. Email do consultor = primeiro email pessoal (@gmail etc) não bloqueado
             const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
             const dominiosPersonais = ['gmail', 'hotmail', 'outlook', 'yahoo', 'live', 'icloud', 'uol', 'bol', 'terra'];
-            const emailsGestorSet = new Set<string>();
-
-            // === PASSO 1: Identificar domínio do cliente ===
-            // A ficha sempre tem "E-MAIL:" logo após "NOME SOLICITANTE" (pode ser linha diferente)
-            // Pegar o primeiro email corporativo encontrado antes de DADOS DO PROFISSIONAL
-            const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : text;
-            const todosEmailsAntes = textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
-            const emailsCorporativosAntes = todosEmailsAntes.filter(e =>
+            
+            // Coletar TODOS os emails do texto inteiro
+            const todosEmailsTexto = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+            
+            // Separar corporativos de pessoais
+            const emailsCorporativos = todosEmailsTexto.filter(e =>
                 !dominiosPersonais.some(d => e.toLowerCase().includes('@' + d))
             );
             
-            // Domínio do cliente = domínio do primeiro email corporativo encontrado antes de DADOS DO PROFISSIONAL
-            const dominioCliente = emailsCorporativosAntes.length > 0
-                ? emailsCorporativosAntes[0].split('@')[1]?.toLowerCase()
+            // Domínio do cliente = domínio do primeiro email corporativo encontrado no texto
+            const dominioCliente = emailsCorporativos.length > 0
+                ? emailsCorporativos[0].split('@')[1]?.toLowerCase()
                 : null;
             console.log(`🏢 Domínio do cliente identificado: "${dominioCliente}"`);
-
-            // === PASSO 2: Adicionar emails antes de DADOS DO PROFISSIONAL (corporativos) ===
-            for (const e of emailsCorporativosAntes) {
-                emailsGestorSet.add(e.toLowerCase());
-            }
-
-            // === PASSO 3: Adicionar TODOS os emails do domínio do cliente no texto inteiro ===
-            // Isso garante que emails do cliente/gestor que apareçam após DADOS DO PROFISSIONAL
-            // (por quebra de ordem do pdf.js) também sejam bloqueados
+            
+            // emailsGestor = todos os emails do domínio do cliente (bloquear completamente)
+            const emailsGestorSet = new Set<string>();
             if (dominioCliente) {
-                const todosEmails = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
-                for (const e of todosEmails) {
-                    const el = e.toLowerCase();
-                    if (el.endsWith('@' + dominioCliente)) {
-                        emailsGestorSet.add(el);
+                for (const e of todosEmailsTexto) {
+                    if (e.toLowerCase().endsWith('@' + dominioCliente)) {
+                        emailsGestorSet.add(e.toLowerCase());
                     }
                 }
             }
-
+            
             const emailsGestor = emailsGestorSet;
-            console.log(`🔍 Emails do gestor/cliente (a ignorar): ${[...emailsGestor].join(', ')}`);
+            console.log(`🔍 Emails do gestor/cliente (bloqueados): ${[...emailsGestor].join(', ')}`);
 
             // Flags de seção
             let inDadosProfissional = false;
