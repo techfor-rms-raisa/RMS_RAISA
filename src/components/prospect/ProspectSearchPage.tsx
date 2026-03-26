@@ -499,12 +499,8 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         setLoadingSalvos(true);
         try {
             const params = new URLSearchParams();
-            // modo Lista  → apenas empresas extraídas de CVs (motor cv_%)
-            // modo Território → todos os registros (Gemini + Hunter + Extension + CV)
-            // Usa ref para evitar dependência cíclica no useCallback
-            if (!viewTerritorioRef.current) {
-                params.set('origem', 'empresas');
-            }
+            // Lista e Território mostram os mesmos dados — o modo de visualização é local
+            // O filtro de motor é controlado pelo dropdown "Todas as origens" pelo usuário
             // SDR vê apenas empresas reservadas para ele
             if (!podeVerTodoTerritorio && currentUser?.id) {
                 params.set('reservado_por', String(currentUser.id));
