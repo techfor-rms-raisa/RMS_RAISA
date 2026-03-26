@@ -4,11 +4,11 @@
  * VERSÃO: Fix v2.4 - 26/03/2026
  * 
  * CORREÇÕES:
- * - ✅ v2.4: CAUSA RAIZ descoberta — pdf.js inverte ordem de colunas do formulário TechFor.
- *            Email do consultor aparece ANTES de "DADOS DO PROFISSIONAL" no texto extraído;
- *            emails do gestor/cliente aparecem DEPOIS. Solução definitiva: identificar domínio
- *            do cliente no texto INTEIRO (primeiro email corporativo), bloquear todos desse domínio.
- * - ✅ v2.3: emailsGestor por domínio (bug: regex não atravessava \n entre linhas)
+ * - ✅ v2.4: CAUSA RAIZ email — pdf.js inverte ordem de colunas da ficha TechFor.
+ *            emailsGestor agora identificado por domínio no texto INTEIRO (não por posição)
+ * - ✅ v2.4: Celular — regex corrigida para capturar DDD com traço (ex: 41-99174-7735)
+ * - ✅ v2.4: Substituição — detecta checkbox INCLUSÃO (false) vs INCLUSÃO REF.SUBSTITUIÇÃO (true)
+ *            via flag substituicaoTipoDefinido; pdf.js extrai os 5 labels sempre
  * - ✅ v2.2: verificação de duplicata de email inclui ano_vigencia
  * - ✅ v1.9: RH: extração definitiva por regex após data de emissão + busca por analistas
  * - ✅ v1.8: Analista R&S: findUserByName filtra tipo_usuario; exclui GP do rodapé
@@ -239,6 +239,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let dtAniversarioStr = '';
             let especialidadeStr = '';
             let substituicao = false;
+            let substituicaoTipoDefinido = false; // ✅ v2.4: flag para detectar o primeiro checkbox marcado
             let nomeSubstituidoStr = '';
             let modalidadeContratoStr = '';
             let faturavel = true;
@@ -255,28 +256,23 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             // Na ficha TechFor (2 colunas), o email do consultor aparece ANTES de "DADOS DO PROFISSIONAL"
             // no texto extraído, enquanto os emails do gestor/cliente ficam DEPOIS.
             // Portanto: NÃO usar posição no texto para distinguir emails — usar DOMÍNIO.
-            // Estratégia definitiva:
-            //   1. Coletar todos os emails corporativos do texto inteiro
-            //   2. Identificar domínio do cliente (domínio do primeiro email corporativo)
-            //   3. Bloquear TODOS os emails desse domínio
-            //   4. Email do consultor = primeiro email pessoal (@gmail etc) não bloqueado
             const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
             const dominiosPersonais = ['gmail', 'hotmail', 'outlook', 'yahoo', 'live', 'icloud', 'uol', 'bol', 'terra'];
-            
+
             // Coletar TODOS os emails do texto inteiro
             const todosEmailsTexto = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
-            
-            // Separar corporativos de pessoais
+
+            // Separar corporativos (domínio do cliente) de pessoais (consultor)
             const emailsCorporativos = todosEmailsTexto.filter(e =>
                 !dominiosPersonais.some(d => e.toLowerCase().includes('@' + d))
             );
-            
-            // Domínio do cliente = domínio do primeiro email corporativo encontrado no texto
+
+            // Domínio do cliente = domínio do primeiro email corporativo no texto
             const dominioCliente = emailsCorporativos.length > 0
                 ? emailsCorporativos[0].split('@')[1]?.toLowerCase()
                 : null;
             console.log(`🏢 Domínio do cliente identificado: "${dominioCliente}"`);
-            
+
             // emailsGestor = todos os emails do domínio do cliente (bloquear completamente)
             const emailsGestorSet = new Set<string>();
             if (dominioCliente) {
@@ -286,7 +282,6 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                     }
                 }
             }
-            
             const emailsGestor = emailsGestorSet;
             console.log(`🔍 Emails do gestor/cliente (bloqueados): ${[...emailsGestor].join(', ')}`);
 
@@ -417,12 +412,16 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== TELEFONE CELULAR =====
+                // ✅ FIX v2.4: regex expandida para capturar DDD separado por traço (ex: 41-99174-7735)
                 if (cleanLine.match(/TELEFONE CELULAR/i)) {
-                    const phoneMatch = cleanLine.match(/(\d{2}\s*\d{4,5}[-\s]?\d{4})/);
+                    // Aceita: 41-99174-7735 | 41 99174-7735 | 41999174735 | (41) 99174-7735
+                    const phoneMatch = cleanLine.match(/(\(?\d{2}\)?[-\s]?\d{4,5}[-\s]?\d{4})/);
                     if (phoneMatch) {
                         celularStr = phoneMatch[1].replace(/\s/g, '');
+                        console.log(`✅ Celular extraído (inline): ${celularStr}`);
                     } else if (nextLine.match(/^\d/)) {
                         celularStr = nextLine.replace(/\s/g, '');
+                        console.log(`✅ Celular extraído (próxima linha): ${celularStr}`);
                     }
                 }
                 
@@ -546,11 +545,27 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== SUBSTITUIÇÃO =====
-                if (cleanLine.match(/INCLUSÃO REF\.?\s*SUBSTITUIÇÃO/i) || cleanLine.match(/SUBSTITUIÇÃO/i)) {
-                    const hasX = cleanLine.includes('X') || cleanLine.includes('x');
-                    if (hasX) {
+                // ✅ FIX v2.4: O pdf.js extrai os labels de TODOS os checkboxes (sem indicar qual está marcado).
+                // Estratégia: detectar qual checkbox é o PRIMEIRO não-vazio no texto — ele é o marcado.
+                // "INCLUSÃO" isolado (sem "REF.SUBSTITUIÇÃO") → substituicao = false
+                // "INCLUSÃO REF.SUBSTITUIÇÃO" → substituicao = true
+                // Os labels aparecem nas primeiras linhas do texto, antes de "CLIENTE:"
+                // Detectamos via flag: se já vimos "INCLUSÃO" puro antes de "INCLUSÃO REF.SUBSTITUIÇÃO"
+                if (cleanLine.match(/^INCLUSÃO REF\.?\s*SUBSTITUIÇÃO$/i)) {
+                    // Checkbox "INCLUSÃO REF.SUBSTITUIÇÃO" detectado
+                    // Só marca substituicao=true se for o primeiro tipo detectado
+                    // (se "INCLUSÃO" puro já foi detectado antes, este é apenas o label não marcado)
+                    if (!substituicaoTipoDefinido) {
                         substituicao = true;
-                        console.log(`✅ Substituição detectada: ${substituicao}`);
+                        substituicaoTipoDefinido = true;
+                        console.log(`✅ Tipo INCLUSÃO REF.SUBSTITUIÇÃO detectado → substituicao=true`);
+                    }
+                } else if (cleanLine.match(/^INCLUSÃO$/i)) {
+                    // Checkbox "INCLUSÃO" puro detectado — NÃO é substituição
+                    if (!substituicaoTipoDefinido) {
+                        substituicao = false;
+                        substituicaoTipoDefinido = true;
+                        console.log(`✅ Tipo INCLUSÃO detectado → substituicao=false`);
                     }
                 }
                 
