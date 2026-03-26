@@ -829,11 +829,18 @@ A empresa ficará disponível para a equipe.`)) return;
         if (abaAtiva === 'exclusoes') carregarExclusoes();
     }, [abaAtiva, carregarExclusoes]);
 
+    // Controla se é a primeira vez que entra na aba empresas (para iniciar no modo Território)
+    const primeiraEntradaEmpresas = useRef(true);
+
     useEffect(() => {
         if (abaAtiva === 'empresas') {
-            setViewTerritorio(true); // Lista Empresas abre sempre no modo agrupado por empresa
+            // Só força Território na primeira entrada — não interfere com o toggle manual
+            if (primeiraEntradaEmpresas.current) {
+                setViewTerritorio(true);
+                primeiraEntradaEmpresas.current = false;
+                carregarUsuarios();
+            }
             carregarLeadsSalvos();
-            carregarUsuarios();
         }
         if (abaAtiva === 'leads') carregarMeusLeads();
     }, [abaAtiva, carregarLeadsSalvos, carregarMeusLeads, carregarUsuarios]);
@@ -1813,7 +1820,7 @@ A empresa ficará disponível para a equipe.`)) return;
                 {/* Toggle Lista / Território */}
                 <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden bg-white shadow-sm">
                     <button
-                        onClick={() => setViewTerritorio(false)}
+                        onClick={() => { setViewTerritorio(false); }}
                         className={`px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors ${
                             !viewTerritorio ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
