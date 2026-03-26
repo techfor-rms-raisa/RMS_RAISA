@@ -498,8 +498,11 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         setLoadingSalvos(true);
         try {
             const params = new URLSearchParams();
-            // Lista Empresas → sempre filtrar por motores de CV Extract
-            params.set('origem', 'empresas');
+            // modo Lista  → apenas empresas extraídas de CVs (motor cv_%)
+            // modo Território → todos os registros (Gemini + Hunter + Extension + CV)
+            if (!viewTerritorio) {
+                params.set('origem', 'empresas');
+            }
             // SDR vê apenas empresas reservadas para ele
             if (!podeVerTodoTerritorio && currentUser?.id) {
                 params.set('reservado_por', String(currentUser.id));
@@ -519,7 +522,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         } finally {
             setLoadingSalvos(false);
         }
-    }, [filtroStatus, filtroEmpresa, filtroOrigem, currentUser, podeVerTodoTerritorio]);
+    }, [viewTerritorio, filtroStatus, filtroEmpresa, filtroOrigem, currentUser, podeVerTodoTerritorio]);
 
     // ============================================
     // MEUS LEADS SALVOS — leads pesquisados via Gemini/Hunter/Extension
@@ -827,9 +830,13 @@ A empresa ficará disponível para a equipe.`)) return;
     }, [abaAtiva, carregarExclusoes]);
 
     useEffect(() => {
-        if (abaAtiva === 'empresas') carregarLeadsSalvos();
+        if (abaAtiva === 'empresas') {
+            setViewTerritorio(true); // Lista Empresas abre sempre no modo agrupado por empresa
+            carregarLeadsSalvos();
+            carregarUsuarios();
+        }
         if (abaAtiva === 'leads') carregarMeusLeads();
-    }, [abaAtiva, carregarLeadsSalvos, carregarMeusLeads]);
+    }, [abaAtiva, carregarLeadsSalvos, carregarMeusLeads, carregarUsuarios]);
 
     // ============================================
     // SUPABASE REALTIME — refresh automático ao detectar
