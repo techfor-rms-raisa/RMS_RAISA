@@ -1824,8 +1824,8 @@ A empresa ficará disponível para a equipe.`)) return;
                     <i className="fa-solid fa-filter"></i>
                     Filtrar
                 </button>
-                {/* Exportar — visível APENAS no filtro "Meus Prospects" (__minhas__) */}
-                {abaAtiva === 'empresas' && (
+                {/* Exportar — visível APENAS no filtro "Meus Prospects" e apenas para Administrador */}
+                {abaAtiva === 'empresas' && currentUser?.tipo_usuario === 'Administrador' && (
                 <button onClick={async () => {
                         const dadosParaExportar = leadsSelecionados.size > 0
                             ? leadsSalvos.filter(l => leadsSelecionados.has(l.id))
