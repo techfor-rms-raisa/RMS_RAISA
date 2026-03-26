@@ -119,7 +119,7 @@ const SENIORIDADES = [
 // COMPONENTE PRINCIPAL
 // ============================================
 interface ProspectSearchPageProps {
-    initialTab?: 'busca' | 'salvos' | 'exclusoes';
+    initialTab?: 'busca' | 'empresas' | 'leads' | 'exclusoes';
 }
 
 const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'busca' }) => {
@@ -141,7 +141,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [toastMsg, setToastMsg]                       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
 
     // Abas
-    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'salvos'|'exclusoes'>(initialTab ?? 'busca');
+    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'empresas'|'leads'|'exclusoes'>(initialTab ?? 'busca');
 
     // Sincronizar abaAtiva quando initialTab mudar
     // (ex: usuário navega de "Buscar Leads" → "Meus Prospects" sem desmontar o componente)
@@ -153,6 +153,13 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [leadsSalvos, setLeadsSalvos]                 = useState<ProspectLead[]>([]);
     const [loadingSalvos, setLoadingSalvos]             = useState(false);
     const [filtroStatus, setFiltroStatus]               = useState('');
+
+    // Meus Leads Salvos (leads pesquisados via Gemini/Hunter/Extension)
+    const [meusLeads, setMeusLeads]                     = useState<ProspectLead[]>([]);
+    const [loadingMeusLeads, setLoadingMeusLeads]       = useState(false);
+    const [filtroLeadsEmpresa, setFiltroLeadsEmpresa]   = useState('');
+    const [filtroLeadsStatus, setFiltroLeadsStatus]     = useState('');
+    const [paginaMeusLeads, setPaginaMeusLeads]         = useState(1);
     const [filtroEmpresa, setFiltroEmpresa]             = useState('');
     const [filtroOrigem, setFiltroOrigem]               = useState(''); // NOVO: filtro por origem CV
     const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null);
@@ -453,7 +460,6 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                 body: JSON.stringify({
                     prospects:    prospectsPayload,
                     user_id:      currentUser.id,
-                    reservado_por: currentUser.id,
                     filtros_busca: {
                         departamentos:   departamentosSelecionados,
                         senioridades:    senioridadesSelecionadas,
@@ -484,26 +490,47 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         setLoadingSalvos(true);
         try {
             const params = new URLSearchParams();
-            // Filtro especial "Minhas Empresas" — filtra por reservado_por do usuário atual
-            if (filtroStatus === '__minhas__') {
-                if (currentUser?.id) params.set('reservado_por', String(currentUser.id));
-            } else if (filtroStatus) {
-                params.set('status', filtroStatus);
-            }
+            // Lista Empresas → sempre filtrar por motores de CV Extract
+            params.set('origem', 'empresas');
+            if (filtroStatus) params.set('status', filtroStatus);
             if (filtroEmpresa) params.set('empresa', filtroEmpresa);
             if (filtroOrigem)  params.set('motor',   filtroOrigem);
             const res  = await fetch(`/api/prospect-leads?${params}`);
             const data = await res.json();
             if (data.success) { setLeadsSalvos(data.leads || []); setPaginaAtual(1); }
         } catch (e) {
-            console.error('Erro ao carregar leads salvos:', e);
+            console.error('Erro ao carregar empresas:', e);
         } finally {
             setLoadingSalvos(false);
         }
     }, [filtroStatus, filtroEmpresa, filtroOrigem, currentUser]);
 
     // ============================================
-    // RESERVAR EMPRESA — atribui analista ao(s) lead(s)
+    // MEUS LEADS SALVOS — leads pesquisados via Gemini/Hunter/Extension
+    // Admin vê todos; outros veem apenas os seus (reservado_por)
+    // ============================================
+    const podeVerTodosLeads = ['Administrador', 'Gestão Comercial'].includes(currentUser?.tipo_usuario || '');
+
+    const carregarMeusLeads = useCallback(async () => {
+        setLoadingMeusLeads(true);
+        try {
+            const params = new URLSearchParams();
+            // Filtrar apenas leads de pesquisa (não CV Extract)
+            params.set('origem', 'leads');
+            if (!podeVerTodosLeads && currentUser?.id) {
+                params.set('reservado_por', String(currentUser.id));
+            }
+            if (filtroLeadsEmpresa) params.set('empresa', filtroLeadsEmpresa);
+            if (filtroLeadsStatus)  params.set('status',  filtroLeadsStatus);
+            const res  = await fetch(`/api/prospect-leads?${params}`);
+            const data = await res.json();
+            if (data.success) { setMeusLeads(data.leads || []); setPaginaMeusLeads(1); }
+        } catch (e) {
+            console.error('Erro ao carregar meus leads:', e);
+        } finally {
+            setLoadingMeusLeads(false);
+        }
+    }, [filtroLeadsEmpresa, filtroLeadsStatus, currentUser, podeVerTodosLeads]);
     // Chamado: ao clicar Prospectar OU ao exportar XLS com seleção
     // ============================================
     const reservarEmpresas = useCallback(async (ids: number[]) => {
@@ -782,8 +809,9 @@ A empresa ficará disponível para a equipe.`)) return;
     }, [abaAtiva, carregarExclusoes]);
 
     useEffect(() => {
-        if (abaAtiva === 'salvos') carregarLeadsSalvos();
-    }, [abaAtiva, carregarLeadsSalvos]);
+        if (abaAtiva === 'empresas') carregarLeadsSalvos();
+        if (abaAtiva === 'leads') carregarMeusLeads();
+    }, [abaAtiva, carregarLeadsSalvos, carregarMeusLeads]);
 
     // ============================================
     // INFERIR EMAIL — detecta padrão e aplica aos sem email da mesma empresa
@@ -1156,14 +1184,15 @@ A empresa ficará disponível para a equipe.`)) return;
 
         {/* Abas */}
         <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
-            {(['busca', 'salvos', 'exclusoes'] as const).map(aba => (
+            {(['busca', 'empresas', 'leads', 'exclusoes'] as const).map(aba => (
                 <button key={aba} onClick={() => setAbaAtiva(aba)}
                     className={`px-4 py-2 text-sm font-medium rounded-t transition-colors
                         ${abaAtiva === aba
                             ? 'bg-white border border-b-white border-gray-200 text-blue-600 -mb-px'
                             : 'text-gray-500 hover:text-gray-700'}`}>
                     {aba === 'busca'     ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
-                     : aba === 'salvos' ? <><i className="fa-solid fa-database mr-2"></i>Leads Salvos</>
+                     : aba === 'empresas' ? <><i className="fa-solid fa-building mr-2"></i>Lista Empresas</>
+                     : aba === 'leads'   ? <><i className="fa-solid fa-users mr-2"></i>Meus Leads Salvos</>
                                         : <><i className="fa-solid fa-ban mr-2 text-red-400"></i>Exclusões</>}
                 </button>
             ))}
@@ -1689,7 +1718,7 @@ A empresa ficará disponível para a equipe.`)) return;
         {/* ══════════════════════════════════════════ */}
         {/* ABA: LEADS SALVOS                          */}
         {/* ══════════════════════════════════════════ */}
-        {abaAtiva === 'salvos' && (
+        {abaAtiva === 'empresas' && (
         <>
             {/* Filtros + Toggle Lista/Território */}
             <div id="leads-salvos-topo" className="flex flex-wrap gap-3 mb-4">
@@ -1719,7 +1748,6 @@ A empresa ficará disponível para a equipe.`)) return;
                     <option value="contactado">Contactado</option>
                     <option value="qualificado">Qualificado</option>
                     <option value="descartado">Descartado</option>
-                    <option value="__minhas__">🔒 Meus Prospects</option>
                 </select>
                 {/* NOVO: filtro por origem */}
                 <select value={filtroOrigem} onChange={e => setFiltroOrigem(e.target.value)}
@@ -1747,7 +1775,7 @@ A empresa ficará disponível para a equipe.`)) return;
                     Filtrar
                 </button>
                 {/* Exportar — visível APENAS no filtro "Meus Prospects" (__minhas__) */}
-                {filtroStatus === '__minhas__' && (
+                {abaAtiva === 'empresas' && (
                 <button onClick={async () => {
                         const dadosParaExportar = leadsSelecionados.size > 0
                             ? leadsSalvos.filter(l => leadsSelecionados.has(l.id))
@@ -1767,7 +1795,7 @@ A empresa ficará disponível para a equipe.`)) return;
                     <i className={`fa-solid ${reservando ? 'fa-spinner fa-spin' : 'fa-file-excel'}`}></i>
                     {leadsSelecionados.size > 0
                         ? `Exportar Selecionados (${leadsSelecionados.size})`
-                        : `Exportar Meus Prospects (${leadsSalvos.length})`
+                        : `Exportar Lista Empresas (${leadsSalvos.length})`
                     }
                 </button>
                 )}
@@ -2399,6 +2427,141 @@ A empresa ficará disponível para a equipe.`)) return;
                                     title="Última página"
                                 >
                                     <i className="fa-solid fa-angles-right"></i>
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+        </>
+        )}
+        {/* ══════════════════════════════════════════ */}
+        {/* ABA: MEUS LEADS SALVOS                     */}
+        {/* ══════════════════════════════════════════ */}
+        {abaAtiva === 'leads' && (
+        <>
+            {/* Toolbar */}
+            <div className="flex flex-wrap gap-2 mb-4">
+                <input
+                    type="text"
+                    value={filtroLeadsEmpresa}
+                    onChange={e => setFiltroLeadsEmpresa(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && carregarMeusLeads()}
+                    placeholder="Filtrar por empresa..."
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+                <select value={filtroLeadsStatus} onChange={e => setFiltroLeadsStatus(e.target.value)}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    <option value="">Todos os status</option>
+                    <option value="novo">Novo</option>
+                    <option value="contactado">Contactado</option>
+                    <option value="qualificado">Qualificado</option>
+                    <option value="descartado">Descartado</option>
+                </select>
+                <button onClick={carregarMeusLeads}
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1">
+                    <i className="fa-solid fa-filter"></i> Filtrar
+                </button>
+                <span className="ml-auto self-center text-xs text-gray-400">
+                    {meusLeads.length} lead{meusLeads.length !== 1 ? 's' : ''}
+                    {podeVerTodosLeads ? ' (toda a equipe)' : ' (meus)'}
+                </span>
+            </div>
+
+            {loadingMeusLeads ? (
+                <div className="text-center py-10 text-gray-400">
+                    <i className="fa-solid fa-spinner fa-spin text-2xl mb-2 block"></i>
+                    Carregando leads...
+                </div>
+            ) : meusLeads.length === 0 ? (
+                <div className="text-center py-16 text-gray-400">
+                    <i className="fa-solid fa-users text-5xl mb-3 block text-gray-200"></i>
+                    <p className="font-medium">Nenhum lead salvo ainda</p>
+                    <p className="text-xs mt-1">Busque executivos em "Nova Busca" e salve os resultados</p>
+                </div>
+            ) : (
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                    <table className="w-full text-sm">
+                        <thead>
+                            <tr className="bg-gray-100 text-left">
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600">NOME</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600">CARGO</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ANALISTA</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">EXPORTADO</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {meusLeads
+                                .slice((paginaMeusLeads - 1) * ITENS_POR_PAGINA, paginaMeusLeads * ITENS_POR_PAGINA)
+                                .map(lead => (
+                                <tr key={lead.id} className="border-b hover:bg-blue-50/30 transition-colors">
+                                    <td className="px-3 py-2">
+                                        <div className="font-medium text-gray-800 text-sm">{lead.nome_completo || '—'}</div>
+                                    </td>
+                                    <td className="px-3 py-2 text-xs text-gray-500">{lead.cargo || '—'}</td>
+                                    <td className="px-3 py-2 text-xs text-gray-700">{lead.empresa_nome || '—'}</td>
+                                    <td className="px-3 py-2 text-xs">
+                                        {lead.email
+                                            ? <span className="text-green-600">{lead.email}</span>
+                                            : <span className="text-gray-300">sem email</span>
+                                        }
+                                    </td>
+                                    <td className="px-3 py-2 text-center">
+                                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 font-medium">
+                                            {lead.motor === 'gemini' || lead.motor === 'gemini+hunter' ? '🤖 Gemini'
+                                             : lead.motor === 'extension' ? '🔌 Extension'
+                                             : lead.motor === 'hunter' ? '🎯 Hunter'
+                                             : lead.motor}
+                                        </span>
+                                    </td>
+                                    <td className="px-3 py-2 text-center">
+                                        {lead.reservado_por_nome
+                                            ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 font-medium">{lead.reservado_por_nome.split(' ')[0]}</span>
+                                            : <span className="text-gray-300 text-xs">—</span>
+                                        }
+                                    </td>
+                                    <td className="px-3 py-2 text-center">
+                                        {lead.exportado_em
+                                            ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">✓ Exportado</span>
+                                            : <span className="text-gray-300 text-xs">—</span>
+                                        }
+                                    </td>
+                                    <td className="px-3 py-2 text-center">
+                                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                                            lead.status === 'qualificado' ? 'bg-green-100 text-green-700'
+                                            : lead.status === 'contactado' ? 'bg-blue-100 text-blue-700'
+                                            : lead.status === 'descartado' ? 'bg-red-100 text-red-500'
+                                            : 'bg-gray-100 text-gray-500'
+                                        }`}>{lead.status || 'novo'}</span>
+                                    </td>
+                                    <td className="px-3 py-2 text-center text-xs text-gray-400 whitespace-nowrap">
+                                        {new Date(lead.criado_em).toLocaleDateString('pt-BR')}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {/* Paginação */}
+                    {Math.ceil(meusLeads.length / ITENS_POR_PAGINA) > 1 && (
+                        <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 bg-gray-50">
+                            <span className="text-xs text-gray-400">
+                                Página {paginaMeusLeads} de {Math.ceil(meusLeads.length / ITENS_POR_PAGINA)}
+                            </span>
+                            <div className="flex gap-1">
+                                <button onClick={() => setPaginaMeusLeads(p => Math.max(1, p - 1))}
+                                    disabled={paginaMeusLeads === 1}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white disabled:opacity-30">
+                                    <i className="fa-solid fa-angle-left"></i>
+                                </button>
+                                <button onClick={() => setPaginaMeusLeads(p => Math.min(Math.ceil(meusLeads.length / ITENS_POR_PAGINA), p + 1))}
+                                    disabled={paginaMeusLeads === Math.ceil(meusLeads.length / ITENS_POR_PAGINA)}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white disabled:opacity-30">
+                                    <i className="fa-solid fa-angle-right"></i>
                                 </button>
                             </div>
                         </div>

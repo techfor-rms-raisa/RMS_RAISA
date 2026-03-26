@@ -5,8 +5,9 @@
  * Suporta filtros: status, empresa_dominio, empresa_nome, motor, reservado_por
  * Método PATCH: atualizar reservado_por (analista responsável pela prospecção)
  *
- * Versão: 1.1
- * Data: 24/03/2026
+ * Versão: 1.2
+ * Data: 26/03/2026
+ * v1.2: Filtro origem=leads (Gemini/Hunter/Extension) vs origem=empresas (CV Extract)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -72,7 +73,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Use GET ou PATCH.' });
     }
 
-    const { status, empresa, motor, reservado_por, usuarios } = req.query as Record<string, string>;
+    const { status, empresa, motor, reservado_por, usuarios, origem } = req.query as Record<string, string>;
 
     // ── GET ?usuarios=true — lista de usuários para dropdown de redistribuição ──
     if (usuarios === 'true') {
@@ -110,6 +111,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             `)
             .order('criado_em', { ascending: false })
             .limit(500);
+
+        // origem=leads  → apenas Gemini/Hunter/Extension (leads pesquisados)
+        // origem=empresas → apenas CV Extract (empresas para prospectar)
+        const MOTORES_LEADS    = ['gemini', 'gemini+hunter', 'hunter', 'extension'];
+        const MOTORES_EMPRESAS = ['cv_alocacao', 'cv_infra', 'cv_ia_ml', 'cv_sap'];
+
+        if (origem === 'leads') {
+            query = query.in('motor', MOTORES_LEADS);
+        } else if (origem === 'empresas') {
+            query = query.in('motor', MOTORES_EMPRESAS);
+        }
 
         if (status)        query = query.eq('status', status);
         if (motor)         query = query.eq('motor', motor);
