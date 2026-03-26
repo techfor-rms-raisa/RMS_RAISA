@@ -501,7 +501,6 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             const params = new URLSearchParams();
             // modo Lista  → apenas empresas extraídas de CVs (motor cv_%)
             // modo Território → todos os registros (Gemini + Hunter + Extension + CV)
-            // Usa ref para evitar dependência cíclica no useCallback
             if (!viewTerritorioRef.current) {
                 params.set('origem', 'empresas');
             }
