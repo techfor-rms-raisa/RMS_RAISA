@@ -173,6 +173,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
     // ── VIEW TERRITÓRIO ──────────────────────────────────────────────────────
     const [viewTerritorio, setViewTerritorio]           = useState(false);
+    const viewTerritorioRef = useRef(false); // ref espelho — evita dependência cíclica no useCallback
     const [usuariosDisponiveis, setUsuariosDisponiveis] = useState<{id: number; nome_usuario: string; tipo_usuario: string}[]>([]);
     const [redistribuindoEmpresa, setRedistribuindoEmpresa] = useState<string | null>(null);
     const [novoResponsavel, setNovoResponsavel]         = useState<string>('');
@@ -500,7 +501,8 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             const params = new URLSearchParams();
             // modo Lista  → apenas empresas extraídas de CVs (motor cv_%)
             // modo Território → todos os registros (Gemini + Hunter + Extension + CV)
-            if (!viewTerritorio) {
+            // Usa ref para evitar dependência cíclica no useCallback
+            if (!viewTerritorioRef.current) {
                 params.set('origem', 'empresas');
             }
             // SDR vê apenas empresas reservadas para ele
@@ -522,7 +524,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         } finally {
             setLoadingSalvos(false);
         }
-    }, [viewTerritorio, filtroStatus, filtroEmpresa, filtroOrigem, currentUser, podeVerTodoTerritorio]);
+    }, [filtroStatus, filtroEmpresa, filtroOrigem, currentUser, podeVerTodoTerritorio]);
 
     // ============================================
     // MEUS LEADS SALVOS — leads pesquisados via Gemini/Hunter/Extension
@@ -836,6 +838,7 @@ A empresa ficará disponível para a equipe.`)) return;
         if (abaAtiva === 'empresas') {
             // Só força Território na primeira entrada — não interfere com o toggle manual
             if (primeiraEntradaEmpresas.current) {
+                viewTerritorioRef.current = true;
                 setViewTerritorio(true);
                 primeiraEntradaEmpresas.current = false;
                 carregarUsuarios();
@@ -1820,7 +1823,7 @@ A empresa ficará disponível para a equipe.`)) return;
                 {/* Toggle Lista / Território */}
                 <div className="flex items-center rounded-lg border border-gray-200 overflow-hidden bg-white shadow-sm">
                     <button
-                        onClick={() => { setViewTerritorio(false); }}
+                        onClick={() => { viewTerritorioRef.current = false; setViewTerritorio(false); carregarLeadsSalvos(); }}
                         className={`px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors ${
                             !viewTerritorio ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
@@ -1828,7 +1831,7 @@ A empresa ficará disponível para a equipe.`)) return;
                         <i className="fa-solid fa-list"></i> Lista
                     </button>
                     <button
-                        onClick={() => { setViewTerritorio(true); setPaginaTerritorio(1); carregarUsuarios(); }}
+                        onClick={() => { viewTerritorioRef.current = true; setViewTerritorio(true); setPaginaTerritorio(1); carregarUsuarios(); carregarLeadsSalvos(); }}
                         className={`px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors ${
                             viewTerritorio ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
