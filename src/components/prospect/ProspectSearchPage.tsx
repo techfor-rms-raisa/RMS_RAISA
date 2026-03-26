@@ -458,8 +458,9 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    prospects:    prospectsPayload,
-                    user_id:      currentUser.id,
+                    prospects:     prospectsPayload,
+                    user_id:       currentUser.id,
+                    reservado_por: currentUser.id,   // ← reserva automaticamente para quem salvou
                     filtros_busca: {
                         departamentos:   departamentosSelecionados,
                         senioridades:    senioridadesSelecionadas,
