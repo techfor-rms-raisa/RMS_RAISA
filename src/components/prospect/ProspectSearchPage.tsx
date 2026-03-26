@@ -1123,6 +1123,7 @@ A empresa ficará disponível para a equipe.`)) return;
     // RENDER
     // ============================================
     return (
+    <>
     <div className="p-6 max-w-full">
 
         {/* Toast */}
@@ -2511,7 +2512,6 @@ A empresa ficará disponível para a equipe.`)) return;
             )}
         </>
         )}
-    </div>
 
     {/* ══════════════════════════════════════════════════════════
         MODAL — LEADS DA EMPRESA (View Território → Ver Leads)
@@ -2635,6 +2635,7 @@ A empresa ficará disponível para a equipe.`)) return;
         </div>
     )}
     </div>
+    </>
     );
 };
 
