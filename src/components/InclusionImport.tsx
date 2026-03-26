@@ -1,9 +1,12 @@
 /**
  * InclusionImport.tsx - Importador de Ficha de Inclusão
  * 
- * VERSÃO: Fix v1.9 - 22/03/2026
+ * VERSÃO: Fix v2.2 - 26/03/2026
  * 
  * CORREÇÕES:
+ * - ✅ v2.2: emailsGestor extraído por domínio do cliente + linhas de cabeçalho conhecidas
+ *            (resolve extração do email da solicitante Adriana em vez do email do consultor)
+ * - ✅ v2.2: verificação de duplicata de email inclui ano_vigencia (alinhado com constraint do banco)
  * - ✅ v1.9: RH: extração definitiva por regex após data de emissão + busca por analistas
  * - ✅ v1.8: Analista R&S: findUserByName filtra tipo_usuario; exclui GP do rodapé
  * - ✅ v1.7: Intercepta window.alert() do ManageConsultants para tratar erro duplicata
@@ -244,19 +247,62 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 console.log(`📍 RH inicializado por coordenada: "${recursosHumanosStr}"`);
             }
             
-            // ✅ FIX v1.4: Coletar apenas emails CORPORATIVOS do gestor/cliente para excluir
+            // ✅ FIX v2.2: Coletar emails do gestor/solicitante DIRETAMENTE das linhas de cabeçalho
+            // O pdf.js pode linearizar o texto fora de ordem, então NÃO dependemos de posição no texto.
+            // Estratégia: extrair emails de todas as linhas que sabemos ser do cabeçalho da ficha:
+            //   - Linha "NOME SOLICITANTE: ..." → campo E-MAIL após
+            //   - Linha "RESPONSÁVEL APROVADOR DE HORAS: ..." → campo E-MAIL após
+            //   - Linhas "E-MAIL:" que contenham domínio do cliente (não pessoais)
             // Emails pessoais (@gmail, @hotmail etc) NUNCA são excluídos — podem ser do consultor
-            // Somente emails corporativos do gestor (mesmo domínio que o email do gestor/solicitante)
             const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
-            const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : '';
             const dominiosPersonais = ['gmail', 'hotmail', 'outlook', 'yahoo', 'live', 'icloud', 'uol', 'bol', 'terra'];
-            const emailsGestor = new Set(
-                (textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [])
-                    .map((e: string) => e.toLowerCase())
-                    // Só excluir emails corporativos (não pessoais) — email pessoal pode ser do consultor
-                    .filter((e: string) => !dominiosPersonais.some(d => e.includes('@' + d)))
-            );
-            console.log(`🔍 Emails corporativos do gestor (a ignorar): ${[...emailsGestor].join(', ')}`);
+            
+            // Coletar emails de campos específicos do cabeçalho via regex no texto completo
+            const emailsGestorSet = new Set<string>();
+            
+            // 1. Emails nas linhas com "NOME SOLICITANTE" e "RESPONSÁVEL APROVADOR"
+            const linhasCabecalho = [
+                ...text.matchAll(/(?:NOME SOLICITANTE|RESPONSÁVEL APROVADOR)[^\n]*E-MAIL[^\n]*/gi)
+            ].map(m => m[0]);
+            
+            // 2. Linha(s) de E-MAIL que aparecem antes de DADOS DO PROFISSIONAL no texto (quando a ordem é preservada)
+            const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : '';
+            const emailsAntes = textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+            
+            // 3. Qualquer linha do texto que contenha "E-MAIL:" e tenha email corporativo (do cliente/gestor)
+            //    — identificamos o domínio do cliente a partir do email do solicitante
+            const emailSolicitanteLine = text.match(/NOME SOLICITANTE[^\n]*?\n?[^\n]*?([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
+            const dominioCliente = emailSolicitanteLine
+                ? emailSolicitanteLine[1].split('@')[1]?.toLowerCase()
+                : null;
+            
+            // Adicionar emails corporativos encontrados antes de DADOS DO PROFISSIONAL
+            for (const e of emailsAntes) {
+                const el = e.toLowerCase();
+                if (!dominiosPersonais.some(d => el.includes('@' + d))) {
+                    emailsGestorSet.add(el);
+                }
+            }
+            // Adicionar emails das linhas de cabeçalho (mesmo se aparecerem depois de DADOS DO PROFISSIONAL)
+            for (const linha of linhasCabecalho) {
+                const emailsNaLinha = linha.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+                for (const e of emailsNaLinha) {
+                    emailsGestorSet.add(e.toLowerCase());
+                }
+            }
+            // Se identificamos o domínio do cliente, adicionar todos os emails desse domínio encontrados no texto
+            if (dominioCliente) {
+                const emailsDominioCliente = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+                for (const e of emailsDominioCliente) {
+                    const el = e.toLowerCase();
+                    if (el.endsWith('@' + dominioCliente) || el.includes('@' + dominioCliente.split('.')[0])) {
+                        emailsGestorSet.add(el);
+                    }
+                }
+            }
+            
+            const emailsGestor = emailsGestorSet;
+            console.log(`🔍 Emails do gestor/cliente (a ignorar): ${[...emailsGestor].join(', ')}`);
 
             // Flags de seção
             let inDadosProfissional = false;
@@ -1083,12 +1129,15 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             }
             if (newConsultantData.email_consultor) {
                 const emailLimpo = newConsultantData.email_consultor.toLowerCase().trim();
+                // ✅ FIX v2.2: verificar duplicata de email APENAS para o ano vigente (mesmo critério do banco)
+                // A constraint é (email_consultor, ano_vigencia) — não bloquear emails de anos anteriores
                 const duplicataEmail = consultants.find((c: any) =>
-                    (c.email_consultor || '').toLowerCase().trim() === emailLimpo
+                    (c.email_consultor || '').toLowerCase().trim() === emailLimpo &&
+                    (c.ano_vigencia === anoAtual || !c.ano_vigencia)
                 );
                 if (duplicataEmail) {
                     throw new Error(
-                        `E-mail já cadastrado!\n\nO e-mail "${newConsultantData.email_consultor}" já pertence ao consultor "${duplicataEmail.nome_consultores}" no sistema.\n\nSe precisar atualizar os dados, edite o consultor existente na lista.`
+                        `E-mail já cadastrado!\n\nO e-mail "${newConsultantData.email_consultor}" já pertence ao consultor "${duplicataEmail.nome_consultores}" no sistema (ano ${anoAtual}).\n\nSe precisar atualizar os dados, edite o consultor existente na lista.`
                     );
                 }
             }
