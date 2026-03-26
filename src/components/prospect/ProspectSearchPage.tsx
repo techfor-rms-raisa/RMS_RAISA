@@ -831,30 +831,10 @@ A empresa ficará disponível para a equipe.`)) return;
         if (abaAtiva === 'exclusoes') carregarExclusoes();
     }, [abaAtiva, carregarExclusoes]);
 
-    // Refs estáveis para callbacks — evitam que useEffect dispare ao recriar funções
-    const carregarLeadsSalvosRef   = useRef(carregarLeadsSalvos);
-    const carregarMeusLeadsRef     = useRef(carregarMeusLeads);
-    const carregarUsuariosRef      = useRef(carregarUsuarios);
-    useEffect(() => { carregarLeadsSalvosRef.current = carregarLeadsSalvos; }, [carregarLeadsSalvos]);
-    useEffect(() => { carregarMeusLeadsRef.current   = carregarMeusLeads;   }, [carregarMeusLeads]);
-    useEffect(() => { carregarUsuariosRef.current    = carregarUsuarios;    }, [carregarUsuarios]);
-
-    // Controla se é a primeira vez que entra na aba empresas (para iniciar no modo Território)
-    const primeiraEntradaEmpresas = useRef(true);
-
     useEffect(() => {
-        if (abaAtiva === 'empresas') {
-            // Só força Território na primeira entrada — não interfere com o toggle manual
-            if (primeiraEntradaEmpresas.current) {
-                viewTerritorioRef.current = true;
-                setViewTerritorio(true);
-                primeiraEntradaEmpresas.current = false;
-                carregarUsuariosRef.current();
-            }
-            carregarLeadsSalvosRef.current();
-        }
-        if (abaAtiva === 'leads') carregarMeusLeadsRef.current();
-    }, [abaAtiva]); // ← apenas abaAtiva — callbacks acessados via ref estável
+        if (abaAtiva === 'empresas') carregarLeadsSalvos();
+        if (abaAtiva === 'leads')    carregarMeusLeads();
+    }, [abaAtiva, carregarLeadsSalvos, carregarMeusLeads]);
 
     // ============================================
     // SUPABASE REALTIME — refresh automático ao detectar
