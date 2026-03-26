@@ -484,6 +484,12 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     }, [resultados, currentUser, departamentosSelecionados, senioridadesSelecionadas, domain]);
 
     // ============================================
+    // PERMISSÕES DE VISIBILIDADE
+    // ============================================
+    const podeVerTodosLeads     = currentUser?.tipo_usuario === 'Administrador';
+    const podeVerTodoTerritorio = ['Administrador', 'Gestão Comercial'].includes(currentUser?.tipo_usuario || '');
+
+    // ============================================
     // LEADS SALVOS
     // ============================================
     const carregarLeadsSalvos = useCallback(async () => {
@@ -517,9 +523,6 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     // MEUS LEADS SALVOS — leads pesquisados via Gemini/Hunter/Extension
     // Admin vê todos; Gestão Comercial e SDR veem apenas os seus (reservado_por)
     // ============================================
-    const podeVerTodosLeads     = currentUser?.tipo_usuario === 'Administrador';
-    const podeVerTodoTerritorio = ['Administrador', 'Gestão Comercial'].includes(currentUser?.tipo_usuario || '');
-
     const carregarMeusLeads = useCallback(async () => {
         setLoadingMeusLeads(true);
         try {
