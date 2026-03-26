@@ -5,9 +5,10 @@
  * Suporta filtros: status, empresa_dominio, empresa_nome, motor, reservado_por
  * Método PATCH: atualizar reservado_por (analista responsável pela prospecção)
  *
- * Versão: 1.2
+ * Versão: 1.3
  * Data: 26/03/2026
  * v1.2: Filtro origem=leads (Gemini/Hunter/Extension) vs origem=empresas (CV Extract)
+ * v1.3: Filtro excluir_status — exclui registros com status específico (ex: descartado)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -73,7 +74,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Use GET ou PATCH.' });
     }
 
-    const { status, empresa, motor, reservado_por, usuarios, origem } = req.query as Record<string, string>;
+    const { status, empresa, motor, reservado_por, usuarios, origem, excluir_status } = req.query as Record<string, string>;
 
     // ── GET ?usuarios=true — lista de usuários para dropdown de redistribuição ──
     if (usuarios === 'true') {
@@ -123,9 +124,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             query = query.in('motor', MOTORES_EMPRESAS);
         }
 
-        if (status)        query = query.eq('status', status);
-        if (motor)         query = query.eq('motor', motor);
-        if (reservado_por) query = query.eq('reservado_por', reservado_por);
+        if (status)          query = query.eq('status', status);
+        if (excluir_status)  query = query.neq('status', excluir_status);
+        if (motor)           query = query.eq('motor', motor);
+        if (reservado_por)   query = query.eq('reservado_por', reservado_por);
         if (empresa)       query = query.or(
             `empresa_nome.ilike.%${empresa}%,empresa_dominio.ilike.%${empresa}%`
         );

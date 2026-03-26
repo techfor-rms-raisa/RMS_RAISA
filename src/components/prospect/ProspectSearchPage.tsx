@@ -492,6 +492,14 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             const params = new URLSearchParams();
             // Lista Empresas → sempre filtrar por motores de CV Extract
             params.set('origem', 'empresas');
+            // SDR vê apenas empresas reservadas para ele
+            if (!podeVerTodoTerritorio && currentUser?.id) {
+                params.set('reservado_por', String(currentUser.id));
+            }
+            // Excluir descartados por padrão — só aparecem com filtro explícito
+            if (filtroStatus !== 'descartado') {
+                params.set('excluir_status', 'descartado');
+            }
             if (filtroStatus) params.set('status', filtroStatus);
             if (filtroEmpresa) params.set('empresa', filtroEmpresa);
             if (filtroOrigem)  params.set('motor',   filtroOrigem);
@@ -503,13 +511,14 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         } finally {
             setLoadingSalvos(false);
         }
-    }, [filtroStatus, filtroEmpresa, filtroOrigem, currentUser]);
+    }, [filtroStatus, filtroEmpresa, filtroOrigem, currentUser, podeVerTodoTerritorio]);
 
     // ============================================
     // MEUS LEADS SALVOS — leads pesquisados via Gemini/Hunter/Extension
-    // Admin vê todos; outros veem apenas os seus (reservado_por)
+    // Admin vê todos; Gestão Comercial e SDR veem apenas os seus (reservado_por)
     // ============================================
-    const podeVerTodosLeads = ['Administrador', 'Gestão Comercial'].includes(currentUser?.tipo_usuario || '');
+    const podeVerTodosLeads     = currentUser?.tipo_usuario === 'Administrador';
+    const podeVerTodoTerritorio = ['Administrador', 'Gestão Comercial'].includes(currentUser?.tipo_usuario || '');
 
     const carregarMeusLeads = useCallback(async () => {
         setLoadingMeusLeads(true);
@@ -519,6 +528,10 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             params.set('origem', 'leads');
             if (!podeVerTodosLeads && currentUser?.id) {
                 params.set('reservado_por', String(currentUser.id));
+            }
+            // Excluir descartados por padrão — só aparecem com filtro explícito
+            if (filtroLeadsStatus !== 'descartado') {
+                params.set('excluir_status', 'descartado');
             }
             if (filtroLeadsEmpresa) params.set('empresa', filtroLeadsEmpresa);
             if (filtroLeadsStatus)  params.set('status',  filtroLeadsStatus);
@@ -1743,11 +1756,10 @@ A empresa ficará disponível para a equipe.`)) return;
                 </div>
                 <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)}
                     className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                    <option value="">Todos os status</option>
+                    <option value="">Todos (exceto descartados)</option>
                     <option value="novo">Novo</option>
-                    <option value="contactado">Contactado</option>
-                    <option value="qualificado">Qualificado</option>
-                    <option value="descartado">Descartado</option>
+                    <option value="exportado">Exportado</option>
+                    <option value="descartado">Ver descartados</option>
                 </select>
                 {/* NOVO: filtro por origem */}
                 <select value={filtroOrigem} onChange={e => setFiltroOrigem(e.target.value)}
@@ -2452,11 +2464,10 @@ A empresa ficará disponível para a equipe.`)) return;
                 />
                 <select value={filtroLeadsStatus} onChange={e => setFiltroLeadsStatus(e.target.value)}
                     className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
-                    <option value="">Todos os status</option>
+                    <option value="">Todos (exceto descartados)</option>
                     <option value="novo">Novo</option>
-                    <option value="contactado">Contactado</option>
-                    <option value="qualificado">Qualificado</option>
-                    <option value="descartado">Descartado</option>
+                    <option value="exportado">Exportado</option>
+                    <option value="descartado">Ver descartados</option>
                 </select>
                 <button onClick={carregarMeusLeads}
                     className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1">
@@ -2464,7 +2475,7 @@ A empresa ficará disponível para a equipe.`)) return;
                 </button>
                 <span className="ml-auto self-center text-xs text-gray-400">
                     {meusLeads.length} lead{meusLeads.length !== 1 ? 's' : ''}
-                    {podeVerTodosLeads ? ' (toda a equipe)' : ' (meus)'}
+                    {podeVerTodosLeads ? ' — toda a equipe' : ' — meus leads'}
                 </span>
             </div>
 
