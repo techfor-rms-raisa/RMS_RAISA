@@ -131,8 +131,9 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
     try {
       const { data, error: qErr } = await supabase
         .from('prospect_leads')
-        .select('id, nome_completo, cargo, email, email_status, empresa_nome, empresa_dominio, departamentos, cidade, estado')
+        .select('id, nome_completo, cargo, email, email_status, empresa_nome, empresa_dominio, departamentos, cidade, estado, motor')
         .eq('reservado_por', currentUser.id)
+        .not('motor', 'like', 'cv_%')   // excluir leads de CV Extract (cv_alocacao, cv_infra, etc.)
         .order('reservado_em', { ascending: false })
         .limit(200);
 

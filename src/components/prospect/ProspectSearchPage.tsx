@@ -1017,7 +1017,42 @@ A empresa ficará disponível para a equipe.`)) return;
             : '';
         setToastMsg({ tipo: 'ok', msg: `${dadosComEmail.length} leads exportados no padrão Leads2B!${msgEmail}` });
         setTimeout(() => setToastMsg(null), 5000);
-    }, [inferirEmailPorPadrao]);
+
+        // ── Marcar todos os leads exportados como 'exportado' no banco ──────
+        if (currentUser?.id) {
+            const idsComId = dadosParaExportar
+                .filter((l: any) => l.id)
+                .map((l: any) => l.id);
+            if (idsComId.length > 0) {
+                try {
+                    await fetch('/api/prospect-leads', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            ids:              idsComId,
+                            marcar_exportado: true,
+                            exportado_por:    currentUser.id,
+                        }),
+                    });
+                    // Atualizar estado local imediatamente (sem reload)
+                    const agora = new Date().toISOString();
+                    const nome  = currentUser.nome_usuario || 'Você';
+                    setLeadsSalvos(prev => prev.map(l =>
+                        idsComId.includes(l.id)
+                            ? { ...l, exportado_por: currentUser.id, exportado_em: agora, exportado_por_nome: nome }
+                            : l
+                    ));
+                    setMeusLeads(prev => prev.map(l =>
+                        idsComId.includes(l.id)
+                            ? { ...l, exportado_por: currentUser.id, exportado_em: agora, exportado_por_nome: nome }
+                            : l
+                    ));
+                } catch (e) {
+                    console.error('Erro ao marcar leads como exportados:', e);
+                }
+            }
+        }
+    }, [inferirEmailPorPadrao, currentUser, setLeadsSalvos, setMeusLeads]);
 
     // ============================================
     // HUNTER — dispara quando usuário ATIVA o checkbox (após ver os leads)
