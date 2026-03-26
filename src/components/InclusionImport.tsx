@@ -4,9 +4,11 @@
  * VERSÃO: Fix v2.5 - 26/03/2026
  * 
  * CORREÇÕES:
- * - ✅ v2.5: Email — fallback global em 3 camadas; captura email pessoal do consultor
- *            mesmo quando pdf.js extrai sem prefixo "E-MAIL:" e antes de DADOS DO PROFISSIONAL
- * - ✅ v2.4: Celular regex DDD com traço | Substituição por ordem de checkbox | emailsGestor por domínio
+ * - ✅ v2.5: Email — loop expandido: captura E-MAIL: fora de DADOS DO PROFISSIONAL quando não-gestor
+ *            + fallback global 3 camadas usando todosEmailsTexto
+ *            (pdf.js extrai E-MAIL do consultor na L120, ANTES de DADOS DO PROFISSIONAL na L140+)
+ * - ✅ v2.4: emailsGestor por domínio no texto inteiro | Celular regex DDD com traço
+ *            | Substituição por ordem de checkbox
  * - ✅ v2.2: verificação de duplicata de email inclui ano_vigencia
  * - ✅ v1.9: RH: extração definitiva por regex após data de emissão + busca por analistas
  * - ✅ v1.8: Analista R&S: findUserByName filtra tipo_usuario; exclui GP do rodapé
@@ -248,47 +250,38 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 console.log(`📍 RH inicializado por coordenada: "${recursosHumanosStr}"`);
             }
             
-            // ✅ FIX v2.3: Coletar emails do gestor/cliente com estratégia por domínio
-            // Emails pessoais (@gmail, @hotmail etc) NUNCA são excluídos — podem ser do consultor
+            // ✅ FIX v2.4: Identificar domínio do cliente NO TEXTO INTEIRO
+            // CAUSA RAIZ: pdf.js lê colunas do formulário fora de ordem visual.
+            // Email do consultor aparece ANTES de DADOS DO PROFISSIONAL; emails do gestor DEPOIS.
+            // Solução: identificar domínio do cliente pelo primeiro email corporativo no texto inteiro.
             const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
             const dominiosPersonais = ['gmail', 'hotmail', 'outlook', 'yahoo', 'live', 'icloud', 'uol', 'bol', 'terra'];
-            const emailsGestorSet = new Set<string>();
 
-            // === PASSO 1: Identificar domínio do cliente ===
-            // A ficha sempre tem "E-MAIL:" logo após "NOME SOLICITANTE" (pode ser linha diferente)
-            // Pegar o primeiro email corporativo encontrado antes de DADOS DO PROFISSIONAL
-            const textoAntesDadosProfissional = dadosProfissionalIdx > 0 ? text.substring(0, dadosProfissionalIdx) : text;
-            const todosEmailsAntes = textoAntesDadosProfissional.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
-            const emailsCorporativosAntes = todosEmailsAntes.filter(e =>
+            // Coletar TODOS os emails do texto inteiro
+            const todosEmailsTexto = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+
+            // Separar corporativos de pessoais
+            const emailsCorporativos = todosEmailsTexto.filter(e =>
                 !dominiosPersonais.some(d => e.toLowerCase().includes('@' + d))
             );
-            
-            // Domínio do cliente = domínio do primeiro email corporativo encontrado antes de DADOS DO PROFISSIONAL
-            const dominioCliente = emailsCorporativosAntes.length > 0
-                ? emailsCorporativosAntes[0].split('@')[1]?.toLowerCase()
+
+            // Domínio do cliente = domínio do primeiro email corporativo no texto inteiro
+            const dominioCliente = emailsCorporativos.length > 0
+                ? emailsCorporativos[0].split('@')[1]?.toLowerCase()
                 : null;
             console.log(`🏢 Domínio do cliente identificado: "${dominioCliente}"`);
 
-            // === PASSO 2: Adicionar emails antes de DADOS DO PROFISSIONAL (corporativos) ===
-            for (const e of emailsCorporativosAntes) {
-                emailsGestorSet.add(e.toLowerCase());
-            }
-
-            // === PASSO 3: Adicionar TODOS os emails do domínio do cliente no texto inteiro ===
-            // Isso garante que emails do cliente/gestor que apareçam após DADOS DO PROFISSIONAL
-            // (por quebra de ordem do pdf.js) também sejam bloqueados
+            // emailsGestor = todos os emails do domínio do cliente
+            const emailsGestorSet = new Set<string>();
             if (dominioCliente) {
-                const todosEmails = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
-                for (const e of todosEmails) {
-                    const el = e.toLowerCase();
-                    if (el.endsWith('@' + dominioCliente)) {
-                        emailsGestorSet.add(el);
+                for (const e of todosEmailsTexto) {
+                    if (e.toLowerCase().endsWith('@' + dominioCliente)) {
+                        emailsGestorSet.add(e.toLowerCase());
                     }
                 }
             }
-
             const emailsGestor = emailsGestorSet;
-            console.log(`🔍 Emails do gestor/cliente (a ignorar): ${[...emailsGestor].join(', ')}`);
+            console.log(`🔍 Emails do gestor/cliente (bloqueados): ${[...emailsGestor].join(', ')}`);
 
             // Flags de seção
             let inDadosProfissional = false;
@@ -462,19 +455,18 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                         }
                     }
                 }
-                // Buscar email em linha E-MAIL fora da seção (fallback menos prioritário)
+                // ✅ FIX v2.5: Buscar email em linha E-MAIL: fora da seção DADOS DO PROFISSIONAL
+                // Captura qualquer email não-gestor — inclui pessoal (@gmail) E corporativo próprio do consultor PJ
+                // O pdf.js extrai o E-MAIL do consultor ANTES de DADOS DO PROFISSIONAL (inversão de colunas)
                 if (cleanLine.match(/E-MAIL\s*:/i) && !emailStr && !inDadosProfissional && !inInformacoesEmergencia) {
                     const emailMatch = cleanLine.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
                     if (emailMatch) {
                         const emailFallback = emailMatch[1].toLowerCase();
-                        // Só captura se for claramente pessoal e não for do gestor
-                        if (!emailsGestor.has(emailFallback) && (
-                            emailFallback.includes('@gmail') || emailFallback.includes('@hotmail') ||
-                            emailFallback.includes('@outlook') || emailFallback.includes('@yahoo') ||
-                            emailFallback.includes('@live') || emailFallback.includes('@icloud')
-                        )) {
+                        if (!emailsGestor.has(emailFallback)) {
                             emailStr = emailFallback;
-                            console.log(`✅ Email pessoal extraído (fora seção): ${emailStr}`);
+                            console.log(`✅ Email extraído (fora seção, não-gestor): ${emailStr}`);
+                        } else {
+                            console.log(`⚠️ Email ignorado fora seção (gestor): ${emailFallback}`);
                         }
                     }
                 }
