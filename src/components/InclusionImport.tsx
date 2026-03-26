@@ -4,11 +4,9 @@
  * VERSÃO: Fix v2.5 - 26/03/2026
  * 
  * CORREÇÕES:
- * - ✅ v2.5: Email — loop expandido: captura E-MAIL: fora de DADOS DO PROFISSIONAL quando não-gestor
- *            + fallback global 3 camadas usando todosEmailsTexto
- *            (pdf.js extrai E-MAIL do consultor na L120, ANTES de DADOS DO PROFISSIONAL na L140+)
- * - ✅ v2.4: emailsGestor por domínio no texto inteiro | Celular regex DDD com traço
- *            | Substituição por ordem de checkbox
+ * - ✅ v2.5: Email — fallback global em 3 camadas; captura email pessoal do consultor
+ *            mesmo quando pdf.js extrai sem prefixo "E-MAIL:" e antes de DADOS DO PROFISSIONAL
+ * - ✅ v2.4: Celular regex DDD com traço | Substituição por ordem de checkbox | emailsGestor por domínio
  * - ✅ v2.2: verificação de duplicata de email inclui ano_vigencia
  * - ✅ v1.9: RH: extração definitiva por regex após data de emissão + busca por analistas
  * - ✅ v1.8: Analista R&S: findUserByName filtra tipo_usuario; exclui GP do rodapé
@@ -239,6 +237,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
             let dtAniversarioStr = '';
             let especialidadeStr = '';
             let substituicao = false;
+            let substituicaoTipoDefinido = false; // ✅ v2.4: primeiro checkbox detectado define o tipo
             let nomeSubstituidoStr = '';
             let modalidadeContratoStr = '';
             let faturavel = true;
@@ -250,28 +249,30 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 console.log(`📍 RH inicializado por coordenada: "${recursosHumanosStr}"`);
             }
             
-            // ✅ FIX v2.4: Identificar domínio do cliente NO TEXTO INTEIRO
-            // CAUSA RAIZ: pdf.js lê colunas do formulário fora de ordem visual.
-            // Email do consultor aparece ANTES de DADOS DO PROFISSIONAL; emails do gestor DEPOIS.
-            // Solução: identificar domínio do cliente pelo primeiro email corporativo no texto inteiro.
+            // ✅ FIX v2.4 — emailsGestor POR DOMÍNIO NO TEXTO INTEIRO
+            // CAUSA RAIZ COMPROVADA: pdf.js (browser) extrai E-MAIL do consultor na linha 120,
+            // ANTES de DADOS DO PROFISSIONAL (linha 140+). Emails do gestor ficam DEPOIS.
+            // Qualquer lógica baseada em posição falha. Solução: identificar domínio do cliente
+            // pelo primeiro email corporativo no texto INTEIRO e bloquear todos desse domínio.
             const dadosProfissionalIdx = text.indexOf('DADOS DO PROFISSIONAL');
             const dominiosPersonais = ['gmail', 'hotmail', 'outlook', 'yahoo', 'live', 'icloud', 'uol', 'bol', 'terra'];
 
-            // Coletar TODOS os emails do texto inteiro
+            // Todos os emails do texto inteiro (usados no fallback também)
             const todosEmailsTexto = text.match(/[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,}/gi) || [];
+            console.log(`📧 Todos emails no texto: ${todosEmailsTexto.join(', ')}`);
 
-            // Separar corporativos de pessoais
+            // Corporativos = não são de domínio pessoal
             const emailsCorporativos = todosEmailsTexto.filter(e =>
                 !dominiosPersonais.some(d => e.toLowerCase().includes('@' + d))
             );
 
-            // Domínio do cliente = domínio do primeiro email corporativo no texto inteiro
+            // Domínio do cliente = domínio do primeiro email corporativo encontrado
             const dominioCliente = emailsCorporativos.length > 0
                 ? emailsCorporativos[0].split('@')[1]?.toLowerCase()
                 : null;
-            console.log(`🏢 Domínio do cliente identificado: "${dominioCliente}"`);
+            console.log(`🏢 Domínio do cliente: "${dominioCliente}"`);
 
-            // emailsGestor = todos os emails do domínio do cliente
+            // Bloquear TODOS os emails do domínio do cliente (independe de posição no texto)
             const emailsGestorSet = new Set<string>();
             if (dominioCliente) {
                 for (const e of todosEmailsTexto) {
@@ -281,7 +282,7 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
             }
             const emailsGestor = emailsGestorSet;
-            console.log(`🔍 Emails do gestor/cliente (bloqueados): ${[...emailsGestor].join(', ')}`);
+            console.log(`🔍 Emails bloqueados (domínio cliente): ${[...emailsGestor].join(', ')}`);
 
             // Flags de seção
             let inDadosProfissional = false;
@@ -410,10 +411,12 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== TELEFONE CELULAR =====
+                // ✅ FIX v2.4: regex aceita DDD com traço (ex: 41-99174-7735)
                 if (cleanLine.match(/TELEFONE CELULAR/i)) {
-                    const phoneMatch = cleanLine.match(/(\d{2}\s*\d{4,5}[-\s]?\d{4})/);
+                    const phoneMatch = cleanLine.match(/(\(?\d{2}\)?[-\s]?\d{4,5}[-\s]?\d{4})/);
                     if (phoneMatch) {
                         celularStr = phoneMatch[1].replace(/\s/g, '');
+                        console.log(`✅ Celular extraído: ${celularStr}`);
                     } else if (nextLine.match(/^\d/)) {
                         celularStr = nextLine.replace(/\s/g, '');
                     }
@@ -455,9 +458,9 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                         }
                     }
                 }
-                // ✅ FIX v2.5: Buscar email em linha E-MAIL: fora da seção DADOS DO PROFISSIONAL
-                // Captura qualquer email não-gestor — inclui pessoal (@gmail) E corporativo próprio do consultor PJ
-                // O pdf.js extrai o E-MAIL do consultor ANTES de DADOS DO PROFISSIONAL (inversão de colunas)
+                // Buscar email em linha E-MAIL: fora da seção — ✅ FIX v2.5
+                // Captura QUALQUER email não-gestor (não limita a @gmail/@hotmail)
+                // O pdf.js extrai E-MAIL do consultor ANTES de DADOS DO PROFISSIONAL
                 if (cleanLine.match(/E-MAIL\s*:/i) && !emailStr && !inDadosProfissional && !inInformacoesEmergencia) {
                     const emailMatch = cleanLine.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z]{2,})/i);
                     if (emailMatch) {
@@ -538,11 +541,19 @@ const InclusionImport: React.FC<InclusionImportProps> = ({ clients, managers, co
                 }
                 
                 // ===== SUBSTITUIÇÃO =====
-                if (cleanLine.match(/INCLUSÃO REF\.?\s*SUBSTITUIÇÃO/i) || cleanLine.match(/SUBSTITUIÇÃO/i)) {
-                    const hasX = cleanLine.includes('X') || cleanLine.includes('x');
-                    if (hasX) {
+                // ✅ FIX v2.4: pdf.js extrai labels de TODOS os checkboxes sempre.
+                // O PRIMEIRO detectado é o marcado. Flag substituicaoTipoDefinido evita sobrescrever.
+                if (cleanLine.match(/^INCLUSÃO REF\.?\s*SUBSTITUIÇÃO$/i)) {
+                    if (!substituicaoTipoDefinido) {
                         substituicao = true;
-                        console.log(`✅ Substituição detectada: ${substituicao}`);
+                        substituicaoTipoDefinido = true;
+                        console.log(`✅ Tipo INCLUSÃO REF.SUBSTITUIÇÃO → substituicao=true`);
+                    }
+                } else if (cleanLine.match(/^INCLUSÃO$/i)) {
+                    if (!substituicaoTipoDefinido) {
+                        substituicao = false;
+                        substituicaoTipoDefinido = true;
+                        console.log(`✅ Tipo INCLUSÃO → substituicao=false`);
                     }
                 }
                 
