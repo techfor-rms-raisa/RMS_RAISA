@@ -23,8 +23,9 @@
  * - motor_email propagado no buscarEmailIndividual (botão por linha)
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../config/supabase';
 
 // ============================================
 // TIPOS
@@ -828,6 +829,34 @@ A empresa ficará disponível para a equipe.`)) return;
     useEffect(() => {
         if (abaAtiva === 'empresas') carregarLeadsSalvos();
         if (abaAtiva === 'leads') carregarMeusLeads();
+    }, [abaAtiva, carregarLeadsSalvos, carregarMeusLeads]);
+
+    // ============================================
+    // SUPABASE REALTIME — refresh automático ao detectar
+    // INSERT / UPDATE / DELETE na tabela prospect_leads
+    // ============================================
+    useEffect(() => {
+        const channel = supabase
+            .channel('prospect_leads_changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'prospect_leads' },
+                () => {
+                    // Debounce: evitar múltiplos refreshes em lote (ex: insert de 10 leads de uma vez)
+                    if ((window as any).__prospectRealtimeTimer) {
+                        clearTimeout((window as any).__prospectRealtimeTimer);
+                    }
+                    (window as any).__prospectRealtimeTimer = setTimeout(() => {
+                        if (abaAtiva === 'empresas') carregarLeadsSalvos();
+                        if (abaAtiva === 'leads')    carregarMeusLeads();
+                    }, 800);
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, [abaAtiva, carregarLeadsSalvos, carregarMeusLeads]);
 
     // ============================================
