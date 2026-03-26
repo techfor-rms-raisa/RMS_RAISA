@@ -413,7 +413,7 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
   // ============================================
   // ETAPA 4: Exportar CSV Leads2B
   // ============================================
-  const exportarCSV = (filtroScore?: EmailScore[]) => {
+  const exportarCSV = async (filtroScore?: EmailScore[]) => {
     const leadsExport = selecionados.filter(l =>
       !filtroScore || filtroScore.includes(l.email_score)
     );
@@ -479,6 +479,27 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+
+    // ── Marcar leads exportados como 'exportado' no banco ──────────────
+    const idsParaMarcar = leadsExport
+      .filter((l: LeadRow) => l.id)
+      .map((l: LeadRow) => l.id as number);
+
+    if (idsParaMarcar.length > 0 && currentUser?.id) {
+      try {
+        await fetch('/api/prospect-leads', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ids:              idsParaMarcar,
+            marcar_exportado: true,
+            exportado_por:    currentUser.id,
+          }),
+        });
+      } catch (e) {
+        console.error('Erro ao marcar leads como exportados:', e);
+      }
+    }
   };
 
   // ============================================
