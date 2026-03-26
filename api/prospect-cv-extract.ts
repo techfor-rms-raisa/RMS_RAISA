@@ -159,6 +159,35 @@ async function resolverDominioPorIA(empresaNome: string): Promise<string | null>
   }
 }
 
+
+// ─── SANITIZAÇÃO DE DADOS ──────────────────────────────────
+const EMPRESA_INVALIDA_CV = new Set([
+    'tempo integral', 'autônomo', 'autonomo', 'freelancer',
+    'cto', 'coo', 'cfo', 'ceo', 'cio', 'ciso',
+    'gerente de ti', 'gerente de projetos', 'gerente de projetos senior',
+    'coordenador de ti', 'coordenadora de ti',
+    'diretor geral', 'diretor de ti', 'analista de ti',
+    'analista de infraestrutura sap business one',
+]);
+
+function sanitizarEmpresaCV(nome: string | null | undefined): string | null {
+    if (!nome) return null;
+    const trimmed = nome.trim();
+    if (!trimmed) return null;
+    if (EMPRESA_INVALIDA_CV.has(trimmed.toLowerCase())) return null;
+    if (trimmed.length > 100) return null;
+    return trimmed
+        .toLowerCase()
+        .replace(/(?:^|\s|[-\/&(])(\S)/g, (match) => match.toUpperCase());
+}
+
+function sanitizarNomeCV(nome: string | null | undefined): string {
+    if (!nome) return '';
+    return nome.trim()
+        .toLowerCase()
+        .replace(/(?:^|\s)(\S)/g, (match) => match.toUpperCase());
+}
+
 // ─── PROCESSAR UMA PESSOA ────────────────────────────────────────────────────
 
 async function processarPessoa(pessoa: PessoaData, userId: number | null): Promise<{
@@ -213,7 +242,9 @@ async function processarPessoa(pessoa: PessoaData, userId: number | null): Promi
   );
 
   for (const [chave, exp] of empresasUnicas) {
-    const empresaNome = exp.empresa.trim();
+    const empresaNomeRaw = exp.empresa.trim();
+    const empresaNome = sanitizarEmpresaCV(empresaNomeRaw);
+    if (!empresaNome) continue; // descarta valores inválidos (cargo no lugar de empresa)
     nomesEmpresas.push(empresaNome);
 
     // Verificar se está na lista de exclusões
@@ -248,10 +279,10 @@ async function processarPessoa(pessoa: PessoaData, userId: number | null): Promi
       pessoa_id:        pessoa.id,
       candidato_nome:   pessoa.nome,
       motor:            motor,
-      nome_completo:    pessoa.nome,
+      nome_completo:    sanitizarNomeCV(pessoa.nome),
       primeiro_nome:    pessoa.nome.split(' ')[0] || '',
       ultimo_nome:      pessoa.nome.split(' ').slice(1).join(' ') || '',
-      cargo:            exp.cargo || null,
+      cargo:            exp.cargo?.trim() || null,
       email:            pessoa.email || null,
       email_status:     pessoa.email ? 'provavel' : null,
       linkedin_url:     pessoa.linkedin_url || null,

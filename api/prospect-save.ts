@@ -19,6 +19,63 @@ const supabase = createClient(
     process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+
+// ─── SANITIZAÇÃO DE DADOS ──────────────────────────────────
+// Valores que indicam cargo/status sendo usado como empresa — descartar
+const EMPRESA_INVALIDA = new Set([
+    'tempo integral', 'autônomo', 'autonomo', 'freelancer',
+    'cto', 'coo', 'cfo', 'ceo', 'cio', 'ciso',
+    'gerente de ti', 'gerente de projetos', 'gerente de projetos senior',
+    'coordenador de ti', 'coordenadora de ti',
+    'diretor geral', 'diretor de ti', 'analista de ti',
+    'analista de infraestrutura sap business one',
+]);
+
+/**
+ * Normaliza nome de empresa para Title Case, preservando siglas conhecidas.
+ * Retorna null se o valor for inválido (cargo/status no lugar de empresa).
+ */
+function sanitizarEmpresa(nome: string | null | undefined): string | null {
+    if (!nome) return null;
+    const trimmed = nome.trim();
+    if (!trimmed) return null;
+
+    // Descartar valores que são claramente cargos ou status
+    if (EMPRESA_INVALIDA.has(trimmed.toLowerCase())) return null;
+
+    // Descartar strings muito longas (provavelmente lixo do LinkedIn)
+    if (trimmed.length > 100) return null;
+
+    // Converter para Title Case
+    const titleCase = trimmed
+        .toLowerCase()
+        .replace(/(?:^|\s|[-\/&(])(\S)/g, (match) => match.toUpperCase());
+
+    return titleCase;
+}
+
+/**
+ * Normaliza nome de pessoa para Title Case.
+ */
+function sanitizarNome(nome: string | null | undefined): string {
+    if (!nome) return '';
+    const trimmed = nome.trim();
+    if (!trimmed) return '';
+    return trimmed
+        .toLowerCase()
+        .replace(/(?:^|\s)(\S)/g, (match) => match.toUpperCase());
+}
+
+/**
+ * Normaliza cargo: trim + Title Case básico.
+ */
+function sanitizarCargo(cargo: string | null | undefined): string | null {
+    if (!cargo) return null;
+    const trimmed = cargo.trim();
+    if (!trimmed || trimmed.length > 150) return null;
+    return trimmed;
+}
+
 // ─── TIPO INPUT ────────────────────────────────────────────
 interface ProspectPayload {
     apollo_id?:       string | null;
@@ -78,15 +135,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             fonte_id_apollo:  p.apollo_id  || null,
             fonte_id_snovio:  p.snovio_id  || null,
             fonte_id_gemini:  (p as any).gemini_id || null,
-            nome_completo:    (p.nome_completo || '').trim(),
+            nome_completo:    sanitizarNome(p.nome_completo),
             primeiro_nome:    p.primeiro_nome  || null,
             ultimo_nome:      p.ultimo_nome    || null,
-            cargo:            p.cargo          || null,
+            cargo:            sanitizarCargo(p.cargo),
             email:            p.email          || null,
             email_status:     p.email_status   || null,
             linkedin_url:     p.linkedin_url   || null,
             foto_url:         p.foto_url       || null,
-            empresa_nome:     p.empresa_nome   || null,
+            empresa_nome:     sanitizarEmpresa(p.empresa_nome),
             empresa_dominio:  p.empresa_dominio|| null,
             empresa_setor:    p.empresa_setor  || null,
             empresa_porte:    (() => {
