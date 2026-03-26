@@ -453,6 +453,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                 body: JSON.stringify({
                     prospects:    prospectsPayload,
                     user_id:      currentUser.id,
+                    reservado_por: currentUser.id,
                     filtros_busca: {
                         departamentos:   departamentosSelecionados,
                         senioridades:    senioridadesSelecionadas,

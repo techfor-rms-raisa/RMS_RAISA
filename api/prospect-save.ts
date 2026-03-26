@@ -4,9 +4,10 @@
  * Persiste decisores encontrados pelo Dual Engine na tabela prospect_leads
  * Recebe array de prospects + userId e faz upsert em lote
  *
- * Versão: 1.1
- * Data: 04/03/2026
+ * Versão: 1.2
+ * Data: 26/03/2026
  * v1.1: Log detalhado de erro Supabase + diagnóstico tabela inexistente
+ * v1.2: Aceita e persiste reservado_por — leads salvos via Gemini aparecem em Meus Prospects
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -55,11 +56,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const {
         prospects,
         user_id,
+        reservado_por = null,
         filtros_busca = {}
     } = req.body as {
-        prospects:     ProspectPayload[];
-        user_id:       number;
-        filtros_busca: Record<string, unknown>;
+        prospects:      ProspectPayload[];
+        user_id:        number;
+        reservado_por?: number | null;
+        filtros_busca:  Record<string, unknown>;
     };
 
     if (!user_id)                    return res.status(400).json({ error: 'user_id obrigatório' });
@@ -103,6 +106,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             departamentos:    p.departamentos  || [],
             filtros_busca:    filtros_busca,
             enriquecido:      p.enriquecido    ?? false,
+            reservado_por:    reservado_por ?? null,
+            reservado_em:     reservado_por ? new Date().toISOString() : null,
             status:           'novo',
         }));
 
