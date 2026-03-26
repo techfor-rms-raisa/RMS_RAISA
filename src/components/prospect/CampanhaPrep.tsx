@@ -109,7 +109,7 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [prospectsBanco, setProspectsBanco] = useState<any[]>([]);
   const [loadingProspects, setLoadingProspects] = useState(false);
-  const [modoImport, setModoImport] = useState<'prospects' | 'csv'>('prospects');
+  const [modoImport, setModoImport] = useState<'prospects' | 'csv' | null>(null);
   const [selectAll, setSelectAll] = useState(false);
 
   // Etapa 2: Configuração
@@ -123,24 +123,18 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
   // ============================================
   // ETAPA 1: Carregar prospects do banco
   // ============================================
-  // Admin e Gestão Comercial veem prospects de toda a equipe; SDR só vê os seus
-  const podeVerTodos = ['Administrador', 'Gestão Comercial'].includes(currentUser.tipo_usuario);
+  // Carrega apenas leads reservados pelo analista logado (via botão "Prospectar" no Prospect Engine)
+  // Não carrega automaticamente — só quando o usuário clicar em "Meus Prospects"
 
   const carregarProspects = useCallback(async () => {
     setLoadingProspects(true);
     try {
-      let query = supabase
+      const { data, error: qErr } = await supabase
         .from('prospect_leads')
         .select('id, nome_completo, cargo, email, email_status, empresa_nome, empresa_dominio, departamentos, cidade, estado')
-        .order('criado_em', { ascending: false })
+        .eq('reservado_por', currentUser.id)
+        .order('reservado_em', { ascending: false })
         .limit(200);
-
-      // SDR: apenas os próprios leads
-      if (!podeVerTodos) {
-        query = query.eq('buscado_por', currentUser.id);
-      }
-
-      const { data, error: qErr } = await query;
 
       if (qErr) throw qErr;
       setProspectsBanco(data || []);
@@ -149,11 +143,7 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
     } finally {
       setLoadingProspects(false);
     }
-  }, [currentUser.id, podeVerTodos]);
-
-  useEffect(() => {
-    carregarProspects();
-  }, [carregarProspects]);
+  }, [currentUser.id]);
 
   // Converter prospect do banco para LeadRow
   const prospectToLead = (p: any): LeadRow => ({
@@ -204,12 +194,19 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
     setLeads(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Importar de prospects do banco
-  const importarProspects = () => {
-    const converted = prospectsBanco.map(prospectToLead);
-    setLeads(converted);
+  // Importar de prospects do banco — busca leads reservados pelo analista logado
+  const importarProspects = async () => {
+    await carregarProspects();
     setModoImport('prospects');
   };
+
+  // Aplicar prospectsBanco → leads quando modoImport === 'prospects' e carregamento concluir
+  useEffect(() => {
+    if (modoImport === 'prospects' && !loadingProspects && prospectsBanco.length >= 0) {
+      const converted = prospectsBanco.map(prospectToLead);
+      setLeads(converted);
+    }
+  }, [prospectsBanco, modoImport, loadingProspects]);
 
   // Upload CSV
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
