@@ -134,6 +134,7 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
         .select('id, nome_completo, cargo, email, email_status, empresa_nome, empresa_dominio, departamentos, cidade, estado, motor')
         .eq('reservado_por', currentUser.id)
         .not('motor', 'like', 'cv_%')   // excluir leads de CV Extract (cv_alocacao, cv_infra, etc.)
+        .neq('status', 'exportado')     // excluir leads já exportados
         .order('reservado_em', { ascending: false })
         .limit(200);
 

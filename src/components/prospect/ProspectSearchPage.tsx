@@ -23,8 +23,9 @@
  * - motor_email propagado no buscarEmailIndividual (botão por linha)
  */
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../config/supabase';
 
 // ============================================
 // TIPOS
@@ -458,8 +459,9 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    prospects:    prospectsPayload,
-                    user_id:      currentUser.id,
+                    prospects:     prospectsPayload,
+                    user_id:       currentUser.id,
+                    reservado_por: currentUser.id,   // ← reserva automaticamente para quem salvou
                     filtros_busca: {
                         departamentos:   departamentosSelecionados,
                         senioridades:    senioridadesSelecionadas,
@@ -827,6 +829,34 @@ A empresa ficará disponível para a equipe.`)) return;
     useEffect(() => {
         if (abaAtiva === 'empresas') carregarLeadsSalvos();
         if (abaAtiva === 'leads') carregarMeusLeads();
+    }, [abaAtiva, carregarLeadsSalvos, carregarMeusLeads]);
+
+    // ============================================
+    // SUPABASE REALTIME — refresh automático ao detectar
+    // INSERT / UPDATE / DELETE na tabela prospect_leads
+    // ============================================
+    useEffect(() => {
+        const channel = supabase
+            .channel('prospect_leads_changes')
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'prospect_leads' },
+                () => {
+                    // Debounce: evitar múltiplos refreshes em lote (ex: insert de 10 leads de uma vez)
+                    if ((window as any).__prospectRealtimeTimer) {
+                        clearTimeout((window as any).__prospectRealtimeTimer);
+                    }
+                    (window as any).__prospectRealtimeTimer = setTimeout(() => {
+                        if (abaAtiva === 'empresas') carregarLeadsSalvos();
+                        if (abaAtiva === 'leads')    carregarMeusLeads();
+                    }, 800);
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
     }, [abaAtiva, carregarLeadsSalvos, carregarMeusLeads]);
 
     // ============================================
@@ -1824,8 +1854,8 @@ A empresa ficará disponível para a equipe.`)) return;
                     <i className="fa-solid fa-filter"></i>
                     Filtrar
                 </button>
-                {/* Exportar — visível APENAS no filtro "Meus Prospects" (__minhas__) */}
-                {abaAtiva === 'empresas' && (
+                {/* Exportar — visível APENAS no filtro "Meus Prospects" e apenas para Administrador */}
+                {abaAtiva === 'empresas' && currentUser?.tipo_usuario === 'Administrador' && (
                 <button onClick={async () => {
                         const dadosParaExportar = leadsSelecionados.size > 0
                             ? leadsSalvos.filter(l => leadsSelecionados.has(l.id))
@@ -2595,26 +2625,64 @@ A empresa ficará disponível para a equipe.`)) return;
                             ))}
                         </tbody>
                     </table>
-                    {/* Paginação */}
-                    {Math.ceil(meusLeads.length / ITENS_POR_PAGINA) > 1 && (
+                    {/* Paginação — padrão completo << < [páginas] > >> */}
+                    {Math.ceil(meusLeads.length / ITENS_POR_PAGINA) > 1 && (() => {
+                        const totalPaginasMeus = Math.ceil(meusLeads.length / ITENS_POR_PAGINA);
+                        return (
                         <div className="flex items-center justify-between px-4 py-2 border-t border-gray-100 bg-gray-50">
                             <span className="text-xs text-gray-400">
-                                Página {paginaMeusLeads} de {Math.ceil(meusLeads.length / ITENS_POR_PAGINA)}
+                                {((paginaMeusLeads - 1) * ITENS_POR_PAGINA) + 1}–{Math.min(paginaMeusLeads * ITENS_POR_PAGINA, meusLeads.length)} de {meusLeads.length} leads
                             </span>
-                            <div className="flex gap-1">
+                            <div className="flex items-center gap-1">
+                                {/* << Primeira */}
+                                <button onClick={() => setPaginaMeusLeads(1)}
+                                    disabled={paginaMeusLeads === 1}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white disabled:opacity-30">
+                                    <i className="fa-solid fa-angles-left"></i>
+                                </button>
+                                {/* < Anterior */}
                                 <button onClick={() => setPaginaMeusLeads(p => Math.max(1, p - 1))}
                                     disabled={paginaMeusLeads === 1}
                                     className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white disabled:opacity-30">
                                     <i className="fa-solid fa-angle-left"></i>
                                 </button>
-                                <button onClick={() => setPaginaMeusLeads(p => Math.min(Math.ceil(meusLeads.length / ITENS_POR_PAGINA), p + 1))}
-                                    disabled={paginaMeusLeads === Math.ceil(meusLeads.length / ITENS_POR_PAGINA)}
+                                {/* Números de página */}
+                                {Array.from({ length: totalPaginasMeus }, (_, i) => i + 1)
+                                    .filter(p => p === 1 || p === totalPaginasMeus || Math.abs(p - paginaMeusLeads) <= 1)
+                                    .reduce((acc: (number | '...')[], p, idx, arr) => {
+                                        if (idx > 0 && (p as number) - (arr[idx - 1] as number) > 1) acc.push('...');
+                                        acc.push(p);
+                                        return acc;
+                                    }, [])
+                                    .map((p, idx) => p === '...'
+                                        ? <span key={`dots-${idx}`} className="px-1 text-xs text-gray-400">...</span>
+                                        : <button key={p}
+                                            onClick={() => setPaginaMeusLeads(p as number)}
+                                            className={`px-2.5 py-1 text-xs rounded border transition-colors ${
+                                                paginaMeusLeads === p
+                                                    ? 'bg-blue-600 text-white border-blue-600 font-semibold'
+                                                    : 'border-gray-200 text-gray-500 hover:bg-white'
+                                            }`}>
+                                            {p}
+                                        </button>
+                                    )
+                                }
+                                {/* > Próxima */}
+                                <button onClick={() => setPaginaMeusLeads(p => Math.min(totalPaginasMeus, p + 1))}
+                                    disabled={paginaMeusLeads === totalPaginasMeus}
                                     className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white disabled:opacity-30">
                                     <i className="fa-solid fa-angle-right"></i>
                                 </button>
+                                {/* >> Última */}
+                                <button onClick={() => setPaginaMeusLeads(totalPaginasMeus)}
+                                    disabled={paginaMeusLeads === totalPaginasMeus}
+                                    className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white disabled:opacity-30">
+                                    <i className="fa-solid fa-angles-right"></i>
+                                </button>
                             </div>
                         </div>
-                    )}
+                        );
+                    })()}
                 </div>
             )}
         </>

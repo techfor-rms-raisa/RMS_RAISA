@@ -67,6 +67,32 @@ interface ProspectNormalizado {
   enriquecido:      false;
 }
 
+// ─── SANITIZAÇÃO DE DADOS ──────────────────────────────────────────────
+const EMPRESA_INVALIDA_EXT = new Set([
+    'tempo integral', 'autônomo', 'autonomo', 'freelancer',
+    'cto', 'coo', 'cfo', 'ceo', 'cio', 'ciso', 'cpo', 'chro', 'cmo',
+    'gerente de ti', 'gerente de projetos', 'gerente de projetos senior',
+    'coordenador de ti', 'coordenadora de ti',
+    'diretor geral', 'diretor de ti', 'analista de ti',
+]);
+
+function sanitizarEmpresaExt(nome: string): string {
+    const trimmed = nome.trim();
+    if (!trimmed || trimmed.length > 100) return '';
+    if (EMPRESA_INVALIDA_EXT.has(trimmed.toLowerCase())) return '';
+    // Normalizar para Title Case
+    return trimmed
+        .toLowerCase()
+        .replace(/(?:^|\s|[-\/&(])(\S)/g, (match) => match.toUpperCase());
+}
+
+function sanitizarNomeExt(nome: string): string {
+    if (!nome) return '';
+    return nome.trim()
+        .toLowerCase()
+        .replace(/(?:^|\s)(\S)/g, (match) => match.toUpperCase());
+}
+
 // ─── Inferência de nível a partir do cargo ────────────────────────────
 function inferirNivel(cargo: string): string {
   if (!cargo) return 'não informado';
@@ -144,10 +170,13 @@ function normalizarLead(lead: LeadCapturado, index: number): ProspectNormalizado
   if (!lead.nome_completo || lead.nome_completo.trim().length < 4) return null;
   if (!lead.linkedin_url || !lead.linkedin_url.includes('linkedin.com/in/')) return null;
 
-  const nome = lead.nome_completo.trim();
-  const cargo = (lead.cargo || '').trim();
-  const empresa = (lead.empresa_nome || '').trim();
+  const nome    = sanitizarNomeExt(lead.nome_completo);
+  const cargo   = (lead.cargo || '').trim();
+  const empresa = sanitizarEmpresaExt(lead.empresa_nome || '');
   const { cidade, estado, pais } = parsearLocalizacao(lead.localizacao);
+
+  // Rejeitar lead se empresa for inválida após sanitização
+  if (!empresa) return null;
 
   // Gerar ID único baseado no URL do LinkedIn (mais estável que nome)
   const linkedinSlug = lead.linkedin_url.split('/in/')[1]?.replace(/\/$/, '') || '';
@@ -245,10 +274,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         buscado_por:      user_id,
         motor:            'extension',
         fonte_id_gemini:  p.gemini_id,
-        nome_completo:    p.nome_completo,
+        nome_completo:    p.nome_completo,   // já sanitizado em normalizarLead
         primeiro_nome:    p.primeiro_nome,
         ultimo_nome:      p.ultimo_nome,
-        cargo:            p.cargo            || null,
+        cargo:            p.cargo            || null,  // já sanitizado em normalizarLead
         email:            null,
         email_status:     null,
         linkedin_url:     p.linkedin_url     || null,
