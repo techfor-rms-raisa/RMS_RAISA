@@ -23,13 +23,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     if (req.method === 'OPTIONS') return res.status(204).end();
 
-    // ── PATCH: reservar / redistribuir / liberar empresa ──────────────────────
+    // ── PATCH: reservar / redistribuir / liberar / atualizar campo ────────────
     if (req.method === 'PATCH') {
-        const { ids, reservado_por, redistribuir } = req.body;
+        const { ids, reservado_por, redistribuir, empresa_dominio } = req.body;
 
-        // reservado_por pode ser null (liberar) ou number (reservar/redistribuir)
-        if (!ids?.length || reservado_por === undefined) {
-            return res.status(400).json({ error: 'ids e reservado_por são obrigatórios (null para liberar)' });
+        if (!ids?.length) {
+            return res.status(400).json({ error: 'ids é obrigatório' });
+        }
+
+        // Modo: atualizar empresa_dominio (resolução de domínio via IA)
+        if (empresa_dominio !== undefined) {
+            const { error } = await supabase
+                .from('prospect_leads')
+                .update({ empresa_dominio: empresa_dominio || null })
+                .in('id', ids);
+            if (error) return res.status(500).json({ success: false, error: error.message });
+            console.log(`✅ [prospect-leads] ${ids.length} leads com domínio atualizado: ${empresa_dominio}`);
+            return res.status(200).json({ success: true });
+        }
+
+        // Modo: reservar / redistribuir / liberar
+        if (reservado_por === undefined) {
+            return res.status(400).json({ error: 'reservado_por ou empresa_dominio são obrigatórios' });
         }
 
         const updatePayload: Record<string, any> = {

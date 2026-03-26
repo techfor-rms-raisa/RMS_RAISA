@@ -1,5 +1,5 @@
 # RMS-RAISA — Contexto do Projeto
-> Atualizado manualmente em 22/03/2026
+> Atualizado manualmente em 25/03/2026 (fim do dia)
 
 ---
 
@@ -418,12 +418,33 @@ INSERT INTO cv_template (nome, ...) VALUES ('Techfor', ...), ('T-Systems', ...);
 git add [arquivos]
 git commit -m "tipo(escopo): descrição"
 git push origin preview
+```
 
-# Preview → Produção (após validação)
-# ⚠️ SEMPRE seguir esta ordem para evitar conflito com script update-context.js
+```powershell
+# Preview → Produção (sequência DEFINITIVA — evita conflito com update-context.js)
+# ⚠️ NÃO usar git merge — o script auto-commita CONTEXT.md e gera conflito sempre
+# Usar cherry-pick apenas dos commits de CÓDIGO (pular commits "chore(context):")
+
+# Passo 1: sincronizar main com remote
 git checkout main
-git merge preview --no-ff -m "descrição"
-git pull origin main --no-rebase   # ← integra commit automático do CONTEXT.md
+git fetch origin main
+git reset --hard origin/main
+
+# Passo 2: ver quais commits da preview ainda não estão na main
+git log origin/main..preview --oneline
+# → anote os hashes dos commits de CÓDIGO (ignorar os "chore(context): atualização automática")
+
+# Passo 3: aplicar cada hash na ordem (do mais antigo para o mais novo)
+# Exemplo com 3 commits (substituir pelos hashes reais):
+#   git cherry-pick abc1234
+#   git cherry-pick def5678
+#   git cherry-pick ghi9012
+# Se conflito aparecer em qualquer arquivo:
+#   git checkout --theirs nome-do-arquivo
+#   git add nome-do-arquivo
+#   git cherry-pick --continue
+
+# Passo 4: push e retorno
 git push origin main
 git checkout preview
 ```
@@ -464,7 +485,7 @@ npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 | RLS sem policies bloqueia silenciosamente | Verificar RLS em erros 403 |
 | Vercel dashboard para env vars é instável | Usar Vercel CLI |
 | `echo \|` no PowerShell adiciona `\r\n` às env vars | Usar prompt interativo do CLI |
-| `git push origin main` rejeitado após merge | Sempre `git pull origin main --no-rebase` antes do push |
+| `git push origin main` rejeitado — conflito recorrente no `CONTEXT.md` | Usar `cherry-pick` por hash (não `merge`) — ver seção Git Workflow |
 | Timeout 504 no Hunter com muitos prospects | Processamento paralelo em lotes de 4 via Promise.all |
 | Snov.io `taskHash` não encontrado | `task_hash` está em `startData.data.task_hash` |
 | `node_modules` no Git quebra Knowledge Base | `.gitignore` + `.claudeignore` corretos |
@@ -475,23 +496,54 @@ npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 | LinkedIn duplicatas por variação de URL | `normalizarLinkedInUrl()` com regex extrai username canônico |
 | `user_id` null na Prospect Extension | `buscarUserIdDoRMS()` busca ID antes da chamada API |
 | Extensão Chrome não capturava de `www.techfortirms.online` | Adicionar URL com `www.` em `host_permissions` e `content_scripts` |
+| Site cai com `DNS_PROBE_FINISHED_NXDOMAIN` — Vercel mostra deploy Ready | Hostinger resetou nameservers para `ns1.dns-parking.com` — corrigir para `ns1.vercel-dns.com` / `ns2.vercel-dns.com` |
+| Extensão Chrome: inversão empresa_nome × cargo nos leads capturados | Parser `content.js` v1.04: segmento `i===1` sem `\|` é cargo (não empresa); bio >60 chars descartada |
+| Schema de tabela diferente entre Preview e Produção causa erro silencioso | Sempre verificar schema dos dois bancos antes de mexer no código — migrar o banco, não o código |
+| `prospect_exclusoes` Produção com colunas `nome/tipo/criado_em` vs Preview `empresa_nome/motivo/created_at` | Resolvido renomeando colunas em Produção via `ALTER TABLE ... RENAME COLUMN` |
 
 ---
 
-## 9. Backlog / Pendências
+## 9. Infraestrutura de Domínio
+
+| Item | Detalhe |
+|---|---|
+| Registrador | Hostinger |
+| Domínio principal | `techfortirms.online` (expira 2026-11-23, renovação automática ativa) |
+| Domínio secundário | `techforti.online` (expira 2026-07-02, renovação automática ativa) |
+| Nameservers corretos | `ns1.vercel-dns.com` / `ns2.vercel-dns.com` |
+| URL produção | `techfortirms.online` e `www.techfortirms.online` |
+
+**⚠️ Problema recorrente — DNS resetado pela Hostinger**
+- **Sintoma:** `DNS_PROBE_FINISHED_NXDOMAIN` — site inacessível, mas Vercel mostra deployment `Ready`
+- **Causa:** Hostinger reseta nameservers para `ns1.dns-parking.com` / `ns2.dns-parking.com` após operações no painel
+- **Correção:** Hostinger → Domínios → Gerenciar `techfortirms.online` → Nameservers → Alterar → inserir `ns1.vercel-dns.com` e `ns2.vercel-dns.com` → Salvar
+- **Propagação:** 15 min a 2h — acompanhar em https://dnschecker.org/#NS/techfortirms.online
+
+---
+
+## 10. Backlog / Pendências
+
+> **CHECKPOINT 25/03/2026 — CONCLUÍDO**
+> - ✅ Extensão Chrome v1.04 — fix inversão empresa_nome × cargo
+> - ✅ View Território — agrupamento por empresa, reserva, redistribuição, liberação
+> - ✅ prospect-leads.ts v1.2 — PATCH aceita null para liberar + endpoint ?usuarios=true
+> - ✅ prospect-gemini-search.ts v2.2 — fix resposta 0 chars gemini-2.5-flash + aviso amigável empresa não encontrada com queries manuais
+> - ✅ DNS produção restaurado — nameservers Hostinger corrigidos
+> - ✅ prospect_exclusoes produção — colunas renomeadas para igualar Preview
+> - ✅ CONTEXT.md — seção Infraestrutura de Domínio + Protocolo de Sessões + Git Workflow definitivo
 
 | Item | Prioridade | Detalhes |
 |---|---|---|
 | `motivo_sem_interesse` — migration produção | 🔴 Alta | `ALTER TABLE candidaturas ADD COLUMN motivo_sem_interesse TEXT;` |
 | Remover `LinkedInImportPanel.tsx` legado | 🟡 Média | `src/components/raisa/LinkedInImportPanel.tsx` |
-| `podeUsarLinkedIn` para Gestão Comercial | 🟡 Média | Decisão pendente com Messias |
+| `podeUsarLinkedIn` para Gestão Comercial | 🟡 Média | Decisão: NEGADO — Gestão Comercial não acessa Banco de Talentos |
+| Testar Snov.io fallback com Hunter zerado | 🟡 Média | Validação em ambiente real |
 | Inteligência de Mercado | 🟢 Baixa | Arquitetura definida, build não iniciado |
 | Talent Finder pós-busca | 🟢 Baixa | Definir ações após captura de leads |
-| Testar Snov.io fallback com Hunter zerado | 🟡 Média | Validação em ambiente real |
 
 ---
 
-## 10. Especialidades Ativas (Claude)
+## 11. Especialidades Ativas (Claude)
 
 | Código | Especialidade | Quando usar |
 |---|---|---|
@@ -503,59 +555,44 @@ npx vercel switch   # selecionar Techfor (techfor) — usar sem parâmetros
 | 👥 Claude RH | Gestão de Pessoas Sênior | Onboarding, adoção |
 | 📊 Claude Processos | Gestão de Processos Sênior | Workflows, automações |
 | 🗄️ Claude DBA | Supabase/PostgreSQL Sênior | Queries, performance, RLS |
----
-
-## 10. Métricas do Repositório
-> Gerado automaticamente pelo script update-context.js
-
-| Módulo | Arquivos | Tamanho | Última modificação |
-|---|---|---|---|
-| `api/` | 49 arquivos | 564.2 KB | 26/03/2026 |
-| `src/components/` | 110 arquivos | 896.0 KB | 26/03/2026 |
-| `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 26/03/2026 |
-| `src/types/` | 6 arquivos | 29.9 KB | 26/03/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 26/03/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 26/03/2026 |
-
-### Endpoints API ativos
-- `api/analise-adequacao-perfil.ts`
-- `api/analyze-activity-report.ts`
-- `api/apollo-prospect-test.ts`
-- `api/claude-analyze.ts`
-- `api/cv-generator-docx-bg.ts`
-- `api/cv-generator-docx.ts`
-- `api/debug-env.ts`
-- `api/entrevista-docx.ts`
-- `api/extract-cv-text.ts`
-- `api/gemini-analyze.ts`
-- `api/gemini-audio-transcription.ts`
-- `api/gemini-cv-generator-v2.ts`
-- `api/gemini-cv.ts`
-- `api/predicao-riscos.ts`
-- `api/prospect-apollo-search.ts`
-- `api/prospect-capture.ts`
-- `api/prospect-cv-extract.ts`
-- `api/prospect-email-finder.ts`
-- `api/prospect-enrich-company.ts`
-- `api/prospect-exclusoes.ts`
-- `api/prospect-gemini-search.ts`
-- `api/prospect-hunter-enrich.ts`
-- `api/prospect-infer-emails.ts`
-- `api/prospect-leads.ts`
-- `api/prospect-save.ts`
-- `api/prospect-snovio-search.ts`
-- `api/prospect-stats.ts`
-- `api/prospect-validate-emails.ts`
-- `api/questoes-inteligentes.ts`
-- `api/recomendacao-analista.ts`
-- `api/send-email.ts`
-- `api/talent-finder-log.ts`
-- `api/talent-finder-search.ts`
-- `api/talent-finder-stats.ts`
-- `api/upload-audio.ts`
-- `api/vaga-analistas-recomendados.ts`
-- `api/vaga-prioridade.ts`
-- `api/version.ts`
 
 ---
+
+## 12. Protocolo de Sessões Claude
+
+### Regra geral: 1 chat = 1 módulo ou 1 problema
+O contexto da conversa acumula tokens a cada mensagem (histórico + arquivos + CONTEXT.md).
+Arquivos grandes como `ProspectSearchPage.tsx` (~1.900 linhas) consomem muito contexto rapidamente.
+
+### Como abrir cada chat
+1. Sempre anexar o `CONTEXT.md` atualizado
+2. Anexar **apenas** os arquivos do módulo que será trabalhado
+3. Nunca subir mais de 2 arquivos `.tsx` grandes por sessão
+4. Nunca subir arquivos que não sejam diretamente relevantes para a tarefa
+
+### Mapa de sessões por módulo
+
+| Módulo | Arquivos para subir |
+|---|---|
+| Prospect Engine (busca) | `ProspectSearchPage.tsx` + `prospect-gemini-search.ts` |
+| Leads Salvos / Território | `ProspectSearchPage.tsx` + `prospect-leads.ts` |
+| Preparar Campanha | `CampanhaPrep.tsx` + endpoints relevantes |
+| CV / Entrevista | `EntrevistaComportamental.tsx` ou `cv-generator-docx.ts` |
+| LinkedIn / Banco Talentos | `BancoTalentos_v3.tsx` + `LinkedInImportPanel.tsx` |
+| Banco de Dados (SQL/migrations) | Só o `CONTEXT.md` — sem código |
+| Bugs pontuais | `CONTEXT.md` + **só o arquivo com o bug** |
+
+### Ritual de fim de sessão
+Ao final de cada sessão importante, registrar no CONTEXT.md:
+- ✅ O que foi feito (CHECKPOINT)
+- 🔄 O que ficou pendente
+- ▶️ Por onde começar na próxima sessão
+
+### Dicas para sessões longas de código
+- Subir o arquivo grande **no início** e fazer todas as alterações dele em sequência
+- Claude **sempre entrega o arquivo completo** — nunca trechos ou patches parciais (evita erros de integração)
+- Abrir chat novo ao mudar de módulo, mesmo que a sessão não tenha travado
+
+### Resumo
+> **"CONTEXT.md + 1 ou 2 arquivos do módulo + 1 tema por chat"**
+> = máximo aproveitamento, mínimo desperdício de contexto.

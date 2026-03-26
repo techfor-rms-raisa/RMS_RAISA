@@ -157,6 +157,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [filtroOrigem, setFiltroOrigem]               = useState(''); // NOVO: filtro por origem CV
     const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null);
     const [marcandoExclusao, setMarcandoExclusao]       = useState<number | null>(null); // NOVO
+    const [resolvendoDominio, setResolvendoDominio]     = useState<number | null>(null); // id do lead sendo resolvido
 
     // Seleção de leads salvos (para reserva e exportação)
     const [leadsSelecionados, setLeadsSelecionados]     = useState<Set<number>>(new Set());
@@ -167,6 +168,8 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [usuariosDisponiveis, setUsuariosDisponiveis] = useState<{id: number; nome_usuario: string; tipo_usuario: string}[]>([]);
     const [redistribuindoEmpresa, setRedistribuindoEmpresa] = useState<string | null>(null);
     const [novoResponsavel, setNovoResponsavel]         = useState<string>('');
+    const [paginaTerritorio, setPaginaTerritorio]       = useState(1);
+    const ITENS_TERRITORIO = 25;
     // ────────────────────────────────────────────────────────────────────────
 
     // Paginação Leads Salvos
@@ -183,6 +186,11 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
     // BUG 3 FIX: controle de quantidade máxima de resultados (configurável)
     const [maxResultados, setMaxResultados]             = useState(25);
+
+    // Modal de leads da empresa (View Território → botão Prospectar)
+    const [modalEmpresa, setModalEmpresa]               = useState<{ nome: string; leads: ProspectLead[] } | null>(null);
+    const [modalSelecionados, setModalSelecionados]     = useState<Set<number>>(new Set());
+    const [enriquecendoModal, setEnriquecendoModal]     = useState(false);
 
     // Progresso do Hunter.io — exibido durante enriquecimento
     const [hunterProgresso, setHunterProgresso]         = useState<{ processados: number; total: number; atual: string } | null>(null);
@@ -599,8 +607,10 @@ A empresa ficará disponível para a equipe.`)) return;
         // Registrar analista responsável pela prospecção
         reservarEmpresas([lead.id]);
 
-        // Prioridade: domínio cadastrado → tentar inferir do nome
-        const dominio = lead.empresa_dominio?.trim() || '';
+        // FIX: 'pendente.cadastro' é placeholder de leads de CV sem domínio real — tratar como vazio
+        const DOMINIOS_INVALIDOS = ['pendente.cadastro', 'pendente', ''];
+        const dominioRaw = lead.empresa_dominio?.trim() || '';
+        const dominio = DOMINIOS_INVALIDOS.includes(dominioRaw.toLowerCase()) ? '' : dominioRaw;
 
         // Limpar estado da busca atual
         setResultados([]);
@@ -608,7 +618,7 @@ A empresa ficará disponível para a equipe.`)) return;
         setQueriesGoogle([]);
         setQueriesExecutadas(new Set());
 
-        // Preencher: se tiver domínio → campo Domínio; senão → campo Nome Específico
+        // Preencher: se tiver domínio válido → campo Domínio; senão → campo Nome Específico
         if (dominio) {
             setDomain(dominio);
             setEmpresaNome('');
@@ -697,6 +707,45 @@ A empresa ficará disponível para a equipe.`)) return;
         }
     }, [currentUser]);
 
+    // ============================================
+    // RESOLVER DOMÍNIO VIA IA — botão por linha nos Leads Salvos
+    // ============================================
+    const resolverDominioLead = useCallback(async (lead: ProspectLead) => {
+        if (!lead.empresa_nome) return;
+        setResolvendoDominio(lead.id);
+        try {
+            const res = await fetch('/api/prospect-resolve-domain', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ empresa_nome: lead.empresa_nome }),
+            });
+            const data = await res.json();
+            if (data.dominio) {
+                // Atualizar no Supabase e na lista local
+                await fetch('/api/prospect-leads', {
+                    method:  'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({
+                        ids:             [lead.id],
+                        empresa_dominio: data.dominio,
+                    }),
+                });
+                setLeadsSalvos(prev => prev.map(l =>
+                    l.id === lead.id ? { ...l, empresa_dominio: data.dominio } : l
+                ));
+                setToastMsg({ tipo: 'ok', msg: `Domínio encontrado: ${data.dominio}` });
+            } else {
+                setToastMsg({ tipo: 'erro', msg: `Domínio não encontrado para "${lead.empresa_nome}"` });
+            }
+        } catch (e) {
+            console.error('Erro ao resolver domínio:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Erro ao buscar domínio.' });
+        } finally {
+            setResolvendoDominio(null);
+            setTimeout(() => setToastMsg(null), 3000);
+        }
+    }, []);
+
     const carregarExclusoes = useCallback(async () => {
         setLoadingExclusoes(true);
         try {
@@ -754,11 +803,21 @@ A empresa ficará disponível para a equipe.`)) return;
             exemplos: { nome: string; sobrenome: string; email: string }[];
         }> = {};
 
+        // Domínios que NÃO são corporativos — nunca inferir email por eles
+        const DOMINIOS_INVALIDOS_INFERENCIA = [
+            'pendente.cadastro', 'pendente',
+            'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'yahoo.com.br',
+            'live.com', 'msn.com', 'icloud.com', 'bol.com.br', 'uol.com.br',
+            'terra.com.br', 'ig.com.br', 'globo.com', 'r7.com',
+        ];
+
         // Passo 1: coletar emails reais e derivar o padrão
         prospects.forEach(p => {
             if (!p.email || !p.empresa_dominio) return;
             const [localPart, dominio] = p.email.split('@');
             if (!localPart || !dominio) return;
+            // Ignorar domínios pessoais e placeholders
+            if (DOMINIOS_INVALIDOS_INFERENCIA.includes(dominio.toLowerCase())) return;
 
             const partesNome = (p.nome_completo || '').trim().split(/\s+/);
             const primeiro   = normalizar(partesNome[0] || '');
@@ -787,6 +846,8 @@ A empresa ficará disponível para a equipe.`)) return;
         const resultado = prospects.map(p => {
             if (p.email) return p; // já tem email — não alterar
             if (!p.empresa_dominio) return p;
+            // Nunca inferir email para domínios inválidos ou pessoais
+            if (DOMINIOS_INVALIDOS_INFERENCIA.includes(p.empresa_dominio.toLowerCase())) return p;
 
             const info = padroesPorDominio[p.empresa_dominio];
             if (!info?.padrao) return p; // sem padrão detectado — manter sem email
@@ -1010,6 +1071,14 @@ A empresa ficará disponível para a equipe.`)) return;
     }, [enriquecerHunter]);
 
     // ============================================
+    // HELPERS DE PERMISSÃO
+    // ============================================
+    const podeGerenciarProspects = () => {
+        const perfis = ['Administrador', 'Gestão Comercial', 'SDR'];
+        return perfis.includes(currentUser?.tipo_usuario || '');
+    };
+
+    // ============================================
     // HELPERS DE STATUS
     // ============================================
     const faseLabel: Record<string, string> = {
@@ -1054,6 +1123,7 @@ A empresa ficará disponível para a equipe.`)) return;
     // RENDER
     // ============================================
     return (
+    <>
     <div className="p-6 max-w-full">
 
         {/* Toast */}
@@ -1633,7 +1703,7 @@ A empresa ficará disponível para a equipe.`)) return;
                         <i className="fa-solid fa-list"></i> Lista
                     </button>
                     <button
-                        onClick={() => { setViewTerritorio(true); carregarUsuarios(); }}
+                        onClick={() => { setViewTerritorio(true); setPaginaTerritorio(1); carregarUsuarios(); }}
                         className={`px-3 py-1.5 text-xs font-medium flex items-center gap-1.5 transition-colors ${
                             viewTerritorio ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50'
                         }`}
@@ -1648,7 +1718,7 @@ A empresa ficará disponível para a equipe.`)) return;
                     <option value="contactado">Contactado</option>
                     <option value="qualificado">Qualificado</option>
                     <option value="descartado">Descartado</option>
-                    <option value="__minhas__">🔒 Minhas Empresas</option>
+                    <option value="__minhas__">🔒 Meus Prospects</option>
                 </select>
                 {/* NOVO: filtro por origem */}
                 <select value={filtroOrigem} onChange={e => setFiltroOrigem(e.target.value)}
@@ -1675,6 +1745,8 @@ A empresa ficará disponível para a equipe.`)) return;
                     <i className="fa-solid fa-filter"></i>
                     Filtrar
                 </button>
+                {/* Exportar — visível APENAS no filtro "Meus Prospects" (__minhas__) */}
+                {filtroStatus === '__minhas__' && (
                 <button onClick={async () => {
                         const dadosParaExportar = leadsSelecionados.size > 0
                             ? leadsSalvos.filter(l => leadsSelecionados.has(l.id))
@@ -1686,16 +1758,18 @@ A empresa ficará disponível para a equipe.`)) return;
                             await reservarEmpresas(Array.from(leadsSelecionados));
                             setReservando(false);
                         }
-                        exportarXLS(dadosParaExportar, 'leads_salvos');
+                        exportarXLS(dadosParaExportar, 'meus_prospects');
                     }}
                     disabled={leadsSalvos.length === 0 || reservando}
-                    className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-1">
+                    className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:opacity-50 flex items-center gap-1"
+                    title="Exportar Meus Prospects para Leads2B">
                     <i className={`fa-solid ${reservando ? 'fa-spinner fa-spin' : 'fa-file-excel'}`}></i>
                     {leadsSelecionados.size > 0
                         ? `Exportar Selecionados (${leadsSelecionados.size})`
-                        : `Exportar XLS (${leadsSalvos.length})`
+                        : `Exportar Meus Prospects (${leadsSalvos.length})`
                     }
                 </button>
+                )}
                 {/* Botão carga bulk CV — apenas Administrador */}
                 {currentUser?.tipo_usuario === 'Administrador' && (
                 <button
@@ -1775,6 +1849,10 @@ A empresa ficará disponível para a equipe.`)) return;
                         return prioridade(a) - prioridade(b);
                     });
 
+                    const totalPaginasTerritorio = Math.ceil(empresasOrdenadas.length / ITENS_TERRITORIO);
+                    const inicioTerritorio = (paginaTerritorio - 1) * ITENS_TERRITORIO;
+                    const empresasPagina   = empresasOrdenadas.slice(inicioTerritorio, inicioTerritorio + ITENS_TERRITORIO);
+
                     return (
                         <div className="space-y-2">
                             {/* Legenda de status */}
@@ -1811,7 +1889,7 @@ A empresa ficará disponível para a equipe.`)) return;
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {empresasOrdenadas.map(([empresaNome, leads]) => {
+                                        {empresasPagina.map(([empresaNome, leads]) => {
                                             const st         = statusEmpresa(leads);
                                             const responsavel = leads.find(l => l.reservado_por_nome)?.reservado_por_nome || null;
                                             const responsavelId = leads.find(l => l.reservado_por)?.reservado_por || null;
@@ -1924,19 +2002,33 @@ A empresa ficará disponível para a equipe.`)) return;
                                                     <td className="px-3 py-3 text-center">
                                                         {!isRedistribuindo && (
                                                             <div className="flex items-center justify-center gap-1.5 flex-wrap">
-                                                                {/* Prospectar — só se não tem responsável ou é minha */}
+                                                                {/* Ver Leads — abre modal com leads salvos da empresa */}
+                                                                {(!responsavel || ehMinha) && (
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            setModalEmpresa({ nome: empresaNome, leads });
+                                                                            setModalSelecionados(new Set());
+                                                                        }}
+                                                                        className="text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-600 hover:text-white transition-colors whitespace-nowrap font-medium"
+                                                                        title="Ver leads salvos desta empresa"
+                                                                    >
+                                                                        <i className="fa-solid fa-users mr-1 text-[9px]"></i>
+                                                                        Ver Leads ({leads.length})
+                                                                    </button>
+                                                                )}
+                                                                {/* Buscar Mais — nova busca na empresa (comportamento original) */}
                                                                 {(!responsavel || ehMinha) && (
                                                                     <button
                                                                         onClick={() => prospectar(leads[0])}
-                                                                        className="text-[10px] px-2 py-1 rounded-lg bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-600 hover:text-white transition-colors whitespace-nowrap font-medium"
-                                                                        title="Buscar contatos nesta empresa"
+                                                                        className="text-[10px] px-2 py-1 rounded-lg bg-gray-50 text-gray-600 border border-gray-200 hover:bg-gray-600 hover:text-white transition-colors whitespace-nowrap font-medium"
+                                                                        title="Buscar mais contatos nesta empresa"
                                                                     >
                                                                         <i className="fa-solid fa-magnifying-glass mr-1 text-[9px]"></i>
-                                                                        Prospectar
+                                                                        Buscar Mais
                                                                     </button>
                                                                 )}
-                                                                {/* Redistribuir — Admin redistribui qualquer empresa; outros só as suas */}
-                                                                {(currentUser?.tipo_usuario === 'Administrador' || ehMinha) && responsavel && (
+                                                                {/* Redistribuir — Admin/Comercial/SDR redistribuem qualquer; outros só as suas */}
+                                                                {(podeGerenciarProspects() || ehMinha) && responsavel && (
                                                                     <button
                                                                         onClick={() => { setRedistribuindoEmpresa(empresaNome); setNovoResponsavel(''); carregarUsuarios(); }}
                                                                         className="text-[10px] px-2 py-1 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-200 hover:bg-indigo-600 hover:text-white transition-colors whitespace-nowrap font-medium"
@@ -1946,8 +2038,8 @@ A empresa ficará disponível para a equipe.`)) return;
                                                                         Redistribuir
                                                                     </button>
                                                                 )}
-                                                                {/* Liberar — Admin libera qualquer; outros só as suas */}
-                                                                {(currentUser?.tipo_usuario === 'Administrador' || ehMinha) && responsavel && (
+                                                                {/* Liberar — Admin/Comercial/SDR liberam qualquer; outros só as suas */}
+                                                                {(podeGerenciarProspects() || ehMinha) && responsavel && (
                                                                     <button
                                                                         onClick={() => liberarEmpresa(empresaNome)}
                                                                         className="text-[10px] px-2 py-1 rounded-lg bg-red-50 text-red-500 border border-red-200 hover:bg-red-500 hover:text-white transition-colors whitespace-nowrap font-medium"
@@ -1977,6 +2069,54 @@ A empresa ficará disponível para a equipe.`)) return;
                                     </tbody>
                                 </table>
                             </div>
+
+                            {/* Paginação Território */}
+                            {totalPaginasTerritorio > 1 && (
+                                <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50 rounded-b-xl">
+                                    <span className="text-xs text-gray-500">
+                                        {inicioTerritorio + 1}–{Math.min(inicioTerritorio + ITENS_TERRITORIO, empresasOrdenadas.length)} de <strong>{empresasOrdenadas.length}</strong> empresas
+                                    </span>
+                                    <div className="flex items-center gap-1">
+                                        <button onClick={() => setPaginaTerritorio(1)} disabled={paginaTerritorio === 1}
+                                            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                            <i className="fa-solid fa-angles-left"></i>
+                                        </button>
+                                        <button onClick={() => setPaginaTerritorio(p => Math.max(1, p - 1))} disabled={paginaTerritorio === 1}
+                                            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                            <i className="fa-solid fa-angle-left"></i>
+                                        </button>
+                                        {Array.from({ length: totalPaginasTerritorio }, (_, i) => i + 1)
+                                            .filter(p => p === 1 || p === totalPaginasTerritorio || Math.abs(p - paginaTerritorio) <= 1)
+                                            .reduce((acc: (number|string)[], p, i, arr) => {
+                                                if (i > 0 && (p as number) - (arr[i-1] as number) > 1) acc.push('...');
+                                                acc.push(p);
+                                                return acc;
+                                            }, [])
+                                            .map((p, idx) => p === '...'
+                                                ? <span key={`ell-${idx}`} className="px-1 text-xs text-gray-400">…</span>
+                                                : (
+                                                    <button key={p} onClick={() => setPaginaTerritorio(p as number)}
+                                                        className={`px-2.5 py-1 text-xs rounded border transition-colors font-medium ${
+                                                            paginaTerritorio === p
+                                                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                                                : 'border-gray-200 text-gray-600 hover:bg-white hover:border-indigo-300 hover:text-indigo-600'
+                                                        }`}>
+                                                        {p}
+                                                    </button>
+                                                )
+                                            )
+                                        }
+                                        <button onClick={() => setPaginaTerritorio(p => Math.min(totalPaginasTerritorio, p + 1))} disabled={paginaTerritorio === totalPaginasTerritorio}
+                                            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                            <i className="fa-solid fa-angle-right"></i>
+                                        </button>
+                                        <button onClick={() => setPaginaTerritorio(totalPaginasTerritorio)} disabled={paginaTerritorio === totalPaginasTerritorio}
+                                            className="px-2 py-1 text-xs rounded border border-gray-200 text-gray-500 hover:bg-white hover:border-blue-300 hover:text-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                                            <i className="fa-solid fa-angles-right"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     );
                 })()
@@ -2002,10 +2142,7 @@ A empresa ficará disponível para a equipe.`)) return;
                                             title="Selecionar todos"
                                         />
                                     </th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">NOME</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">CARGO</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
-                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">LINKEDIN</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">RESERVADO</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM</th>
                                     <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">GRAVADO POR</th>
@@ -2034,15 +2171,21 @@ A empresa ficará disponível para a equipe.`)) return;
                                                 }}
                                             />
                                         </td>
-                                        <td className="px-3 py-2 font-medium text-gray-800">{lead.nome_completo}</td>
-                                        <td className="px-3 py-2 text-gray-600 text-xs max-w-[180px] truncate" title={lead.cargo || ''}>{lead.cargo || '—'}</td>
-                                        <td className="px-3 py-2 text-gray-600 text-xs">{lead.empresa_nome || '—'}</td>
-                                        <td className="px-3 py-2 text-center">
-                                            {lead.linkedin_url ? (
-                                                <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:text-blue-800">
-                                                    <i className="fa-brands fa-linkedin"></i>
+                                        {/* EMPRESA — nome + cargo como subtítulo */}
+                                        <td className="px-3 py-2">
+                                            <div className="font-medium text-gray-800 text-sm">{lead.empresa_nome || '—'}</div>
+                                            {lead.nome_completo && (
+                                                <div className="text-[10px] text-gray-400 mt-0.5 truncate max-w-[200px]" title={`${lead.nome_completo}${lead.cargo ? ` · ${lead.cargo}` : ''}`}>
+                                                    {lead.nome_completo}
+                                                    {lead.cargo ? <span className="text-gray-300"> · {lead.cargo.substring(0, 30)}{lead.cargo.length > 30 ? '…' : ''}</span> : ''}
+                                                </div>
+                                            )}
+                                            {lead.linkedin_url && (
+                                                <a href={lead.linkedin_url} target="_blank" rel="noopener noreferrer"
+                                                    className="text-[10px] text-blue-400 hover:text-blue-600 mt-0.5 inline-flex items-center gap-0.5">
+                                                    <i className="fa-brands fa-linkedin text-[9px]"></i> LinkedIn
                                                 </a>
-                                            ) : '—'}
+                                            )}
                                         </td>
                                         {/* ── RESERVADO — analista que reservou a empresa ── */}
                                         <td className="px-3 py-2 text-center">
@@ -2135,8 +2278,22 @@ A empresa ficará disponível para a equipe.`)) return;
                                                         Prospectar
                                                     </button>
                                                 )}
-                                                {/* É Consultoria — apenas Administrador */}
-                                                {lead.empresa_nome && currentUser?.tipo_usuario === 'Administrador' && (
+                                                {/* Resolver Domínio via IA — só para leads sem domínio ou com placeholder */}
+                                                {(!lead.empresa_dominio || lead.empresa_dominio === 'pendente.cadastro') && (
+                                                    <button
+                                                        onClick={() => resolverDominioLead(lead)}
+                                                        disabled={resolvendoDominio === lead.id}
+                                                        className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-lg bg-violet-50 text-violet-600 border border-violet-200 hover:bg-violet-600 hover:text-white transition-colors whitespace-nowrap font-medium w-full justify-center disabled:opacity-50"
+                                                        title={`Buscar domínio de "${lead.empresa_nome}" via IA`}
+                                                    >
+                                                        {resolvendoDominio === lead.id
+                                                            ? <><i className="fa-solid fa-spinner fa-spin text-[9px]"></i> Buscando...</>
+                                                            : <><i className="fa-brands fa-google text-[9px]"></i> Resolver domínio</>
+                                                        }
+                                                    </button>
+                                                )}
+                                                {/* É Consultoria — Administrador, Gestão Comercial e SDR */}
+                                                {lead.empresa_nome && podeGerenciarProspects() && (
                                                     <button
                                                         onClick={() => marcarComoConsultoria(lead)}
                                                         disabled={marcandoExclusao === lead.id}
@@ -2355,7 +2512,130 @@ A empresa ficará disponível para a equipe.`)) return;
             )}
         </>
         )}
+
+    {/* ══════════════════════════════════════════════════════════
+        MODAL — LEADS DA EMPRESA (View Território → Ver Leads)
+        ══════════════════════════════════════════════════════════ */}
+    {modalEmpresa && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                    <div>
+                        <h2 className="text-base font-semibold text-gray-800">
+                            <i className="fa-solid fa-building mr-2 text-blue-500"></i>
+                            {modalEmpresa.nome}
+                        </h2>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                            {modalEmpresa.leads.length} lead{modalEmpresa.leads.length !== 1 ? 's' : ''} salvos • selecione para enviar à campanha
+                        </p>
+                    </div>
+                    <button onClick={() => setModalEmpresa(null)}
+                        className="text-gray-400 hover:text-gray-600 transition-colors">
+                        <i className="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                </div>
+
+                {/* Toolbar */}
+                <div className="flex items-center gap-2 px-6 py-3 border-b border-gray-50 bg-gray-50/50">
+                    <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer select-none">
+                        <input type="checkbox"
+                            checked={modalSelecionados.size === modalEmpresa.leads.length && modalEmpresa.leads.length > 0}
+                            onChange={e => setModalSelecionados(e.target.checked
+                                ? new Set(modalEmpresa.leads.map(l => l.id))
+                                : new Set()
+                            )}
+                            className="rounded"
+                        />
+                        Selecionar todos
+                    </label>
+                    <span className="text-gray-300">|</span>
+                    <span className="text-xs text-gray-400">{modalSelecionados.size} selecionado{modalSelecionados.size !== 1 ? 's' : ''}</span>
+                </div>
+
+                {/* Lista de leads */}
+                <div className="flex-1 overflow-y-auto px-6 py-3 space-y-2">
+                    {modalEmpresa.leads.map(lead => (
+                        <div key={lead.id}
+                            onClick={() => setModalSelecionados(prev => {
+                                const next = new Set(prev);
+                                next.has(lead.id) ? next.delete(lead.id) : next.add(lead.id);
+                                return next;
+                            })}
+                            className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
+                                modalSelecionados.has(lead.id)
+                                    ? 'border-blue-300 bg-blue-50'
+                                    : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50'
+                            }`}
+                        >
+                            <input type="checkbox" readOnly
+                                checked={modalSelecionados.has(lead.id)}
+                                className="rounded pointer-events-none"
+                            />
+                            <div className="flex-1 min-w-0">
+                                <div className="font-medium text-sm text-gray-800 truncate">{lead.nome_completo || '—'}</div>
+                                <div className="text-xs text-gray-400 truncate">{lead.cargo || '—'}</div>
+                            </div>
+                            <div className="text-right shrink-0">
+                                {lead.email ? (
+                                    <div className="text-xs text-green-600 font-medium truncate max-w-[180px]">{lead.email}</div>
+                                ) : (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">sem email</span>
+                                )}
+                                {lead.exportado_em && (
+                                    <div className="text-[10px] text-green-500 mt-0.5">✓ exportado</div>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Footer actions */}
+                <div className="flex items-center justify-between px-6 py-4 border-t border-gray-100 gap-3">
+                    <button
+                        onClick={() => prospectar(modalEmpresa.leads[0])}
+                        className="text-sm px-4 py-2 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors flex items-center gap-2"
+                    >
+                        <i className="fa-solid fa-magnifying-glass text-xs"></i>
+                        Buscar Mais Contatos
+                    </button>
+                    <div className="flex gap-2">
+                        <button onClick={() => setModalEmpresa(null)}
+                            className="text-sm px-4 py-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors">
+                            Fechar
+                        </button>
+                        <button
+                            disabled={modalSelecionados.size === 0 || enriquecendoModal}
+                            onClick={async () => {
+                                const leadsParaCampanha = modalEmpresa.leads.filter(l => modalSelecionados.has(l.id));
+                                // Reservar para o analista logado
+                                await reservarEmpresas(leadsParaCampanha.map(l => l.id));
+                                // Marcar exportado
+                                for (const lead of leadsParaCampanha) {
+                                    await fetch('/api/prospect-cv-extract', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ modo: 'marcar_exportado', lead_id: lead.id, user_id: currentUser?.id }),
+                                    });
+                                }
+                                setModalEmpresa(null);
+                                setToastMsg({ tipo: 'ok', msg: `${leadsParaCampanha.length} lead${leadsParaCampanha.length !== 1 ? 's' : ''} enviado${leadsParaCampanha.length !== 1 ? 's' : ''} para Preparar Campanha` });
+                                setTimeout(() => setToastMsg(null), 4000);
+                                carregarLeadsSalvos();
+                            }}
+                            className="text-sm px-5 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-2 font-medium"
+                        >
+                            <i className="fa-solid fa-paper-plane text-xs"></i>
+                            Preparar Campanha ({modalSelecionados.size})
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    )}
     </div>
+    </>
     );
 };
 
