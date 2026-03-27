@@ -1,12 +1,14 @@
 // src/components/atividades/AtividadesInserir.tsx
-// 🔧 v2.8: Fix email — campo real é email_usuario (app_users); helper getEmailUsuario() normaliza leitura
+// 🔧 v2.9: Notificação filtrada por cliente — Gestão Comercial e Gestão Pessoas associados ao cliente selecionado
+//          Gestão R&S: todos os usuários do perfil (sem filtro por cliente)
+//          email_usuario normalizado via getEmailUsuario()
 import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Consultant, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '@/types';
 import { User, Phone, Mail, Briefcase, Clock, Calendar, Bell, CheckCircle } from 'lucide-react';
 import HistoricoAtividadesModal from '../HistoricoAtividadesModal';
 
 // Tipo mínimo do usuário interno (app_users)
-// 🔧 v2.8: email_usuario é o campo real na tabela app_users; email mantido por compatibilidade
+// 🔧 v2.9: email_usuario é o campo real na tabela app_users; email mantido por compatibilidade
 interface AppUser {
     id: number;
     nome_usuario: string;
@@ -259,6 +261,29 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
         return null;
     }, [selectedConsultantData, usuariosCliente, coordenadoresCliente]);
 
+    // 🔧 v2.9: Destinatários de notificação filtrados pelo cliente selecionado
+    // Gestão Comercial e Gestão Pessoas: apenas o usuário associado ao cliente (id_gestao_comercial / id_gestao_de_pessoas)
+    // Gestão R&S: todos os usuários do perfil (sem filtro por cliente — são transversais)
+    const destinatariosDoCliente = useMemo(() => {
+        const clienteAtual = clients.find(c => c.razao_social_cliente === selectedClient);
+        if (!clienteAtual) return { comercial: [] as AppUser[], pessoas: [] as AppUser[], rs: [] as AppUser[] };
+
+        // Gestão Comercial: apenas o usuário com id === id_gestao_comercial do cliente
+        const comercial = clienteAtual.id_gestao_comercial
+            ? usuariosRMS.filter(u => u.id === clienteAtual.id_gestao_comercial && getEmailUsuario(u))
+            : [];
+
+        // Gestão Pessoas: apenas o usuário com id === id_gestao_de_pessoas do cliente
+        const pessoas = clienteAtual.id_gestao_de_pessoas
+            ? usuariosRMS.filter(u => u.id === clienteAtual.id_gestao_de_pessoas && getEmailUsuario(u))
+            : [];
+
+        // Gestão R&S: todos do perfil com email (transversal, não filtrado por cliente)
+        const rs = usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de R&S' && getEmailUsuario(u));
+
+        return { comercial, pessoas, rs };
+    }, [selectedClient, clients, usuariosRMS]);
+
     // Handler para abrir histórico
     const handleOpenHistorico = async () => {
         if (!selectedConsultantData || !loadConsultantReports) return;
@@ -373,20 +398,23 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     ) => {
         const destinatarios: { email: string; nome: string; perfil: string }[] = [];
 
-        // Gestão Comercial — pode haver mais de um, envia para todos
+        // 🔧 v2.9: Usar destinatários filtrados por cliente
+        // Gestão Comercial e Gestão Pessoas: apenas o associado ao cliente
+        // Gestão R&S: todos do perfil
         if (notifComercial) {
-            const comerciais = usuariosRMS.filter(u => u.tipo_usuario === 'Gestão Comercial' && getEmailUsuario(u));
-            comerciais.forEach(u => destinatarios.push({ email: getEmailUsuario(u)!, nome: u.nome_usuario, perfil: 'Gestão Comercial' }));
+            destinatariosDoCliente.comercial.forEach(u =>
+                destinatarios.push({ email: getEmailUsuario(u)!, nome: u.nome_usuario, perfil: 'Gestão Comercial' })
+            );
         }
-        // Gestão R&S
         if (notifRS) {
-            const rs = usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de R&S' && getEmailUsuario(u));
-            rs.forEach(u => destinatarios.push({ email: getEmailUsuario(u)!, nome: u.nome_usuario, perfil: 'Gestão de R&S' }));
+            destinatariosDoCliente.rs.forEach(u =>
+                destinatarios.push({ email: getEmailUsuario(u)!, nome: u.nome_usuario, perfil: 'Gestão de R&S' })
+            );
         }
-        // Gestão de Pessoas
         if (notifPessoas) {
-            const gp = usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de Pessoas' && getEmailUsuario(u));
-            gp.forEach(u => destinatarios.push({ email: getEmailUsuario(u)!, nome: u.nome_usuario, perfil: 'Gestão de Pessoas' }));
+            destinatariosDoCliente.pessoas.forEach(u =>
+                destinatarios.push({ email: getEmailUsuario(u)!, nome: u.nome_usuario, perfil: 'Gestão de Pessoas' })
+            );
         }
 
         if (destinatarios.length === 0) return;
@@ -653,7 +681,7 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
                                 <span className="text-sm text-gray-700 group-hover:text-gray-900 font-medium">Gestão Comercial</span>
                                 {notifComercial && (
                                     <span className="text-xs text-blue-600 font-medium">
-                                        ({usuariosRMS.filter(u => u.tipo_usuario === 'Gestão Comercial' && getEmailUsuario(u)).length} destinatário(s))
+                                        ({destinatariosDoCliente.comercial.length} destinatário(s))
                                     </span>
                                 )}
                             </label>
@@ -669,7 +697,7 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
                                 <span className="text-sm text-gray-700 group-hover:text-gray-900 font-medium">Gestão R&S</span>
                                 {notifRS && (
                                     <span className="text-xs text-blue-600 font-medium">
-                                        ({usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de R&S' && getEmailUsuario(u)).length} destinatário(s))
+                                        ({destinatariosDoCliente.rs.length} destinatário(s))
                                     </span>
                                 )}
                             </label>
@@ -685,21 +713,21 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
                                 <span className="text-sm text-gray-700 group-hover:text-gray-900 font-medium">Gestão Pessoas</span>
                                 {notifPessoas && (
                                     <span className="text-xs text-blue-600 font-medium">
-                                        ({usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de Pessoas' && getEmailUsuario(u)).length} destinatário(s))
+                                        ({destinatariosDoCliente.pessoas.length} destinatário(s))
                                     </span>
                                 )}
                             </label>
                         </div>
 
                         {/* Aviso quando nenhum usuário do perfil tem email */}
-                        {(notifComercial && usuariosRMS.filter(u => u.tipo_usuario === 'Gestão Comercial' && getEmailUsuario(u)).length === 0) && (
-                            <p className="text-xs text-red-500 mt-2">⚠️ Nenhum usuário de Gestão Comercial com e-mail cadastrado.</p>
+                        {(notifComercial && destinatariosDoCliente.comercial.length === 0) && (
+                            <p className="text-xs text-red-500 mt-2">⚠️ Nenhum usuário de Gestão Comercial associado a este cliente com e-mail cadastrado.</p>
                         )}
-                        {(notifRS && usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de R&S' && getEmailUsuario(u)).length === 0) && (
+                        {(notifRS && destinatariosDoCliente.rs.length === 0) && (
                             <p className="text-xs text-red-500 mt-2">⚠️ Nenhum usuário de Gestão R&S com e-mail cadastrado.</p>
                         )}
-                        {(notifPessoas && usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de Pessoas' && getEmailUsuario(u)).length === 0) && (
-                            <p className="text-xs text-red-500 mt-2">⚠️ Nenhum usuário de Gestão de Pessoas com e-mail cadastrado.</p>
+                        {(notifPessoas && destinatariosDoCliente.pessoas.length === 0) && (
+                            <p className="text-xs text-red-500 mt-2">⚠️ Nenhum usuário de Gestão de Pessoas associado a este cliente com e-mail cadastrado.</p>
                         )}
 
                         {enviandoEmails && (
