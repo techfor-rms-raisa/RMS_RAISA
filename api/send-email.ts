@@ -1,7 +1,10 @@
 /**
  * API Route: Send Email via Resend
- * RMS-RAISA v52.2
+ * RMS-RAISA v52.3
  * 
+ * v52.3: Resend instanciado dentro do handler (não no escopo global)
+ *        Evita crash "exit status 1" quando RESEND_API_KEY está ausente no ambiente
+ *
  * Endpoint para envio de emails de alerta de risco crítico
  * Usa Resend como provedor de email (funciona em serverless)
  * 
@@ -15,11 +18,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { Resend } from 'resend';
 
-// Inicializar Resend com API Key do ambiente
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 // Configuração do remetente
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'RMS-RAISA <notificacoes@techfortirms.online>';
+
+// 🔧 v52.3: Resend instanciado dentro do handler para evitar crash no load do módulo
+// quando RESEND_API_KEY não está configurada no ambiente
 
 interface EmailRequest {
   to: string;
@@ -48,6 +51,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       details: 'RESEND_API_KEY environment variable is missing'
     });
   }
+
+  // 🔧 v52.3: Instanciar Resend aqui dentro, após validar que a key existe
+  const resend = new Resend(process.env.RESEND_API_KEY);
 
   try {
     const body: EmailRequest = req.body;
