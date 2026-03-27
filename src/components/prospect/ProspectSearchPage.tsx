@@ -490,7 +490,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     // PERMISSÕES DE VISIBILIDADE
     // ============================================
     const podeVerTodosLeads     = currentUser?.tipo_usuario === 'Administrador';
-    const podeVerTodoTerritorio = ['Administrador', 'Gestão Comercial'].includes(currentUser?.tipo_usuario || '');
+    const podeVerTodoTerritorio = ['Administrador', 'Gestão Comercial', 'SDR'].includes(currentUser?.tipo_usuario || '');
 
     // ============================================
     // LEADS SALVOS
