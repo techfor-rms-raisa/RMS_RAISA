@@ -414,6 +414,23 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
   // ============================================
   // ETAPA 4: Exportar CSV Leads2B
   // ============================================
+  // Formata telefone para o padrão Leads2B: 99-99999-0000
+  const formatarTelefone = (tel?: string | null): string => {
+    if (!tel) return '';
+    // Remove tudo que não for dígito
+    const digits = tel.replace(/\D/g, '');
+    if (digits.length === 11) {
+      // Celular: DDD (2) + 9 dígitos → 99-99999-0000
+      return `${digits.slice(0, 2)}-${digits.slice(2, 7)}-${digits.slice(7)}`;
+    }
+    if (digits.length === 10) {
+      // Fixo: DDD (2) + 8 dígitos → 99-9999-0000
+      return `${digits.slice(0, 2)}-${digits.slice(2, 6)}-${digits.slice(6)}`;
+    }
+    // Retorna o valor original se não reconhecer o padrão
+    return tel;
+  };
+
   const exportarCSV = async (filtroScore?: EmailScore[]) => {
     const leadsExport = selecionados.filter(l =>
       !filtroScore || filtroScore.includes(l.email_score)
@@ -441,8 +458,8 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
       l.razao_social || '',               // 1: razão social
       l.nome_fantasia || '',              // 2: nome fantasia
       '',                                 // 3: título do negócio
-      '',                                 // 4: telefone empresa
-      '',                                 // 5: e-mail empresa
+      formatarTelefone(l.telefone),       // 4: telefone empresa → 99-99999-0000
+      l.email || '',                      // 5: e-mail empresa = mesmo valor do responsável (e-mail)
       l.logradouro || '',                 // 6: logradouro
       l.numero || '',                     // 7: número
       l.complemento || '',                // 8: complemento
@@ -463,7 +480,7 @@ const CampanhaPrep: React.FC<CampanhaPrepProps> = ({ currentUser }) => {
       '',                                 // 26: motivo perda
       'Frio',                             // 27: temperatura (FIXO)
       l.nome || '',                       // 28: nome contato 1
-      l.departamento || '',               // 29: departamento contato 1
+      '',                                 // 29: departamento contato 1 (sempre vazio)
       '', '', '', '',                     // 30-33: contato 2
       '', '', '', '',                     // 34-37: contato 3
       '', '', '', '', '', '', '', '', '', '' // 38-47: campos customizados
