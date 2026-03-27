@@ -390,6 +390,7 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     };
 
     // 🆕 v2.7: Envia emails de notificação para os perfis selecionados
+    // 🔧 v3.0: fetch com verificação de resposta HTTP + log detalhado do erro real
     const enviarEmailsNotificacao = async (
         reportText: string,
         consultantData: Consultant,
@@ -419,29 +420,55 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
 
         if (destinatarios.length === 0) return;
 
+        console.log(`[notificacao] Enviando para ${destinatarios.length} destinatário(s):`, destinatarios.map(d => d.email));
+
         setEnviandoEmails(true);
+        const erros: string[] = [];
+
         try {
+            // 🔧 v3.0: Uma chamada por destinatário — cada um recebe seu próprio email
             await Promise.all(
-                destinatarios.map(dest =>
-                    fetch('/api/send-email', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            to: dest.email,
-                            toName: dest.nome,
-                            subject: `Relatório de Atividade — ${consultantData.nome_consultores} | ${clientName} — ${monthName}`,
-                            consultantName: consultantData.nome_consultores,
-                            consultantCargo: consultantData.cargo_consultores || '',
-                            clientName,
-                            inclusionDate: new Date().toLocaleDateString('pt-BR'),
-                            summary: reportText,
-                            type: 'activity_report' as any,
-                        })
-                    })
-                )
+                destinatarios.map(async (dest) => {
+                    try {
+                        const response = await fetch('/api/send-email', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                to: dest.email,
+                                toName: dest.nome,
+                                subject: `Relatório de Atividade — ${consultantData.nome_consultores} | ${clientName} — ${monthName}`,
+                                consultantName: consultantData.nome_consultores,
+                                consultantCargo: consultantData.cargo_consultores || '',
+                                clientName,
+                                inclusionDate: new Date().toLocaleDateString('pt-BR'),
+                                summary: reportText,
+                                type: 'activity_report' as const,
+                            })
+                        });
+
+                        // 🔧 v3.0: Verificar HTTP status antes de assumir sucesso
+                        if (!response.ok) {
+                            const errorBody = await response.json().catch(() => ({ details: 'Sem detalhes' }));
+                            const msg = `[${dest.perfil}] ${dest.email} → HTTP ${response.status}: ${errorBody.details || errorBody.error || 'Erro desconhecido'}${errorBody.hint ? ` | Dica: ${errorBody.hint}` : ''}`;
+                            console.error('[notificacao] ❌', msg);
+                            erros.push(msg);
+                        } else {
+                            const okBody = await response.json().catch(() => ({}));
+                            console.log(`[notificacao] ✅ Email enviado para ${dest.email} — ID: ${okBody.messageId || 'n/a'}`);
+                        }
+                    } catch (fetchErr: any) {
+                        const msg = `[${dest.perfil}] ${dest.email} → Falha de rede: ${fetchErr.message}`;
+                        console.error('[notificacao] ❌', msg);
+                        erros.push(msg);
+                    }
+                })
             );
-        } catch (err) {
-            console.error('Erro ao enviar emails de notificação:', err);
+
+            if (erros.length > 0) {
+                alert(`⚠️ Relatório salvo, mas ${erros.length} notificação(ões) falharam:\n\n${erros.join('\n')}\n\nConsulte o console para detalhes.`);
+            }
+        } catch (err: any) {
+            console.error('[notificacao] Erro inesperado:', err);
         } finally {
             setEnviandoEmails(false);
         }

@@ -1,18 +1,14 @@
 /**
  * API Route: Send Email via Resend
- * RMS-RAISA v52.3
- * 
+ * RMS-RAISA v52.4
+ *
+ * v52.4: Logs detalhados do erro Resend (código + mensagem completa)
+ *        Diagnóstico explícito de RESEND_API_KEY ausente/inválida
+ *        Campo `hint` na resposta JSON para orientar o frontend
+ *        Prefixo [send-email] em todos os console.log/error para rastrear no Vercel
+ *
  * v52.3: Resend instanciado dentro do handler (não no escopo global)
  *        Evita crash "exit status 1" quando RESEND_API_KEY está ausente no ambiente
- *
- * Endpoint para envio de emails de alerta de risco crítico
- * Usa Resend como provedor de email (funciona em serverless)
- * 
- * OTIMIZADO v52.1: Template ajustado para evitar filtros de SPAM
- * - Removidos emojis do assunto
- * - Tom mais profissional e menos alarmista
- * - Melhor proporção texto/HTML
- * - Headers de entregabilidade
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -43,31 +39,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // Verificar se API Key está configurada
-  if (!process.env.RESEND_API_KEY) {
-    console.error('RESEND_API_KEY não configurada');
-    return res.status(500).json({ 
+  // 🔧 v52.4: Diagnóstico explícito da API Key
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.error('[send-email] ❌ RESEND_API_KEY não encontrada nas variáveis de ambiente');
+    return res.status(500).json({
       error: 'Email service not configured',
-      details: 'RESEND_API_KEY environment variable is missing'
+      details: 'RESEND_API_KEY environment variable is missing',
+      hint: 'Execute: npx vercel env add RESEND_API_KEY preview — e cole a chave no prompt interativo'
     });
   }
 
+  console.log('[send-email] ✅ RESEND_API_KEY presente:', apiKey.substring(0, 8) + '...');
+
   // 🔧 v52.3: Instanciar Resend aqui dentro, após validar que a key existe
-  const resend = new Resend(process.env.RESEND_API_KEY);
+  const resend = new Resend(apiKey);
 
   try {
     const body: EmailRequest = req.body;
 
     // Validar campos obrigatórios
     if (!body.to || !body.subject) {
-      return res.status(400).json({ 
+      return res.status(400).json({
         error: 'Missing required fields',
         details: 'to and subject are required'
       });
     }
 
-    console.log(`Enviando email para: ${body.to}`);
-    console.log(`Tipo: ${body.type}`);
+    console.log(`[send-email] Destinatário: ${body.to}`);
+    console.log(`[send-email] Tipo: ${body.type}`);
+    console.log(`[send-email] FROM: ${FROM_EMAIL}`);
 
     let htmlContent: string;
     let textContent: string;
@@ -75,7 +76,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Gerar conteúdo baseado no tipo de email
     if (body.type === 'critical_risk') {
-      // Assunto otimizado - sem emojis, profissional
       subject = `RMS-RAISA: Atenção Necessária - ${body.consultantName} - Avaliação de Risco`;
       htmlContent = generateCriticalRiskEmailHTML(body);
       textContent = generateCriticalRiskEmailText(body);
@@ -107,24 +107,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     if (error) {
-      console.error('Erro Resend:', error);
-      return res.status(500).json({ 
+      // 🔧 v52.4: Log completo do erro Resend — expõe o código e mensagem reais
+      console.error('[send-email] ❌ Erro retornado pelo Resend:');
+      console.error('[send-email] name:', (error as any).name);
+      console.error('[send-email] message:', (error as any).message);
+      console.error('[send-email] statusCode:', (error as any).statusCode);
+      console.error('[send-email] JSON completo:', JSON.stringify(error, null, 2));
+
+      const statusCode = (error as any).statusCode;
+      const hint =
+        statusCode === 403
+          ? 'API Key inválida ou sem permissão — verifique em resend.com/api-keys e confirme que a key tem permissão de envio'
+          : statusCode === 422
+          ? 'Domínio do remetente não verificado — acesse resend.com/domains e verifique techfortirms.online'
+          : (error as any).name === 'validation_error'
+          ? 'Erro de validação — verifique o campo "from" e se o domínio está verificado no Resend'
+          : 'Consulte os logs do Vercel para detalhes completos';
+
+      return res.status(500).json({
         error: 'Failed to send email',
-        details: error.message
+        details: (error as any).message || 'Erro desconhecido do Resend',
+        resendStatusCode: statusCode,
+        hint
       });
     }
 
-    console.log(`Email enviado com sucesso! ID: ${data?.id}`);
-    
-    return res.status(200).json({ 
+    console.log(`[send-email] ✅ Enviado com sucesso! ID: ${data?.id} → ${body.to}`);
+
+    return res.status(200).json({
       success: true,
       messageId: data?.id,
       to: body.to
     });
 
   } catch (error: any) {
-    console.error('Erro ao enviar email:', error);
-    return res.status(500).json({ 
+    console.error('[send-email] ❌ Exceção inesperada:', error?.message);
+    console.error('[send-email] Stack:', error?.stack);
+    return res.status(500).json({
       error: 'Internal server error',
       details: error.message
     });
