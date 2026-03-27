@@ -31,7 +31,7 @@ interface EmailRequest {
   inclusionDate?: string;
   summary: string;
   gestaoPessoasName?: string; // Nome do Gestão de Pessoas do cliente
-  type: 'critical_risk' | 'password_recovery' | 'general';
+  type: 'critical_risk' | 'password_recovery' | 'activity_report' | 'general';
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -73,6 +73,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       subject = `RMS-RAISA: Atenção Necessária - ${body.consultantName} - Avaliação de Risco`;
       htmlContent = generateCriticalRiskEmailHTML(body);
       textContent = generateCriticalRiskEmailText(body);
+    } else if (body.type === 'activity_report') {
+      subject = body.subject || `RMS-RAISA: Relatório de Atividade — ${body.consultantName}`;
+      htmlContent = generateActivityReportHTML(body);
+      textContent = generateActivityReportText(body);
     } else if (body.type === 'password_recovery') {
       subject = `RMS-RAISA: Recuperação de Senha`;
       htmlContent = generatePasswordRecoveryHTML(body);
@@ -366,5 +370,129 @@ Risk Management Systems - RMS-RAISA
 https://techfortirms.online
 
 Se você não solicitou esta recuperação de senha, por favor ignore este email.
+  `.trim();
+}
+
+/**
+ * 🆕 v2.7: Gera HTML do email de Relatório de Atividade
+ */
+function generateActivityReportHTML(data: EmailRequest): string {
+  return `
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Relatório de Atividade - RMS-RAISA</title>
+</head>
+<body style="font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.6; color: #333333; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
+
+  <div style="background-color: #1e40af; padding: 25px; border-radius: 8px 8px 0 0; text-align: center;">
+    <h1 style="color: #ffffff; margin: 0; font-size: 22px; font-weight: 600;">RMS-RAISA</h1>
+    <p style="color: #93c5fd; margin: 5px 0 0 0; font-size: 14px;">Relatório de Atividade do Consultor</p>
+  </div>
+
+  <div style="background-color: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none;">
+
+    <p style="font-size: 16px; margin-bottom: 20px;">Prezado(a) <strong>${data.toName}</strong>,</p>
+
+    <p style="font-size: 15px; margin-bottom: 20px;">
+      Segue abaixo o relatório de atividade registrado no sistema RMS-RAISA.
+    </p>
+
+    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 20px; margin: 20px 0; border-radius: 6px;">
+      <h3 style="margin: 0 0 15px 0; color: #1e40af; font-size: 16px; border-bottom: 2px solid #1e40af; padding-bottom: 8px;">
+        Dados do Consultor
+      </h3>
+      <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+        <tr>
+          <td style="padding: 8px 0; font-weight: 600; color: #64748b; width: 140px;">Consultor:</td>
+          <td style="padding: 8px 0; color: #1e293b;">${data.consultantName || 'Não informado'}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; font-weight: 600; color: #64748b;">Cargo:</td>
+          <td style="padding: 8px 0; color: #1e293b;">${data.consultantCargo || 'Não informado'}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; font-weight: 600; color: #64748b;">Cliente:</td>
+          <td style="padding: 8px 0; color: #1e293b;">${data.clientName || 'Não informado'}</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 0; font-weight: 600; color: #64748b;">Data de Registro:</td>
+          <td style="padding: 8px 0; color: #1e293b;">${data.inclusionDate || 'Não informada'}</td>
+        </tr>
+      </table>
+    </div>
+
+    <div style="background-color: #f0f9ff; border: 1px solid #bae6fd; padding: 20px; margin: 20px 0; border-radius: 6px;">
+      <h3 style="margin: 0 0 12px 0; color: #0369a1; font-size: 16px;">
+        Atividades e Observações
+      </h3>
+      <p style="margin: 0; font-size: 14px; color: #0c4a6e; white-space: pre-line;">${data.summary}</p>
+    </div>
+
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="https://techfortirms.online"
+         style="background-color: #1e40af; color: #ffffff; padding: 14px 35px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 15px;">
+        Acessar Sistema RMS-RAISA
+      </a>
+    </div>
+
+    <p style="font-size: 14px; color: #64748b; margin-top: 25px;">
+      Atenciosamente,<br>
+      <strong>Equipe RMS-RAISA</strong><br>
+      <span style="font-size: 12px;">Sistema de Gestão de Consultores</span>
+    </p>
+
+  </div>
+
+  <div style="background-color: #f1f5f9; padding: 20px; border-radius: 0 0 8px 8px; text-align: center; border: 1px solid #e5e7eb; border-top: none;">
+    <p style="font-size: 12px; color: #64748b; margin: 0;">
+      <strong>TECHFOR TI</strong><br>
+      Risk Management Systems - RMS-RAISA<br>
+      <a href="https://techfortirms.online" style="color: #1e40af; text-decoration: none;">techfortirms.online</a>
+    </p>
+    <p style="font-size: 11px; color: #94a3b8; margin: 10px 0 0 0;">
+      Este é um email automático do sistema RMS-RAISA. Por favor, não responda diretamente a este email.
+    </p>
+  </div>
+
+</body>
+</html>
+  `.trim();
+}
+
+/**
+ * 🆕 v2.7: Gera texto plano do email de Relatório de Atividade
+ */
+function generateActivityReportText(data: EmailRequest): string {
+  return `
+RMS-RAISA - Relatório de Atividade do Consultor
+
+Prezado(a) ${data.toName},
+
+Segue abaixo o relatório de atividade registrado no sistema RMS-RAISA.
+
+DADOS DO CONSULTOR:
+- Consultor: ${data.consultantName || 'Não informado'}
+- Cargo: ${data.consultantCargo || 'Não informado'}
+- Cliente: ${data.clientName || 'Não informado'}
+- Data de Registro: ${data.inclusionDate || 'Não informada'}
+
+ATIVIDADES E OBSERVAÇÕES:
+${data.summary}
+
+Acesse: https://techfortirms.online
+
+Atenciosamente,
+Equipe RMS-RAISA
+Sistema de Gestão de Consultores
+
+---
+TECHFOR TI
+Risk Management Systems - RMS-RAISA
+https://techfortirms.online
+
+Este é um email automático do sistema RMS-RAISA.
   `.trim();
 }

@@ -1,9 +1,17 @@
 // src/components/atividades/AtividadesInserir.tsx
-// ✅ VERSÃO CORRIGIDA - BUG FIX: Extração de data do relatório
+// 🆕 v2.7: Frame Notificar — checkboxes Gestão Comercial / R&S / Pessoas + envio de email
 import React, { useState, useMemo, useEffect } from 'react';
 import { Client, Consultant, UsuarioCliente, CoordenadorCliente, ConsultantReport } from '@/types';
-import { User, Phone, Mail, Briefcase, Clock, Calendar } from 'lucide-react';
+import { User, Phone, Mail, Briefcase, Clock, Calendar, Bell, CheckCircle } from 'lucide-react';
 import HistoricoAtividadesModal from '../HistoricoAtividadesModal';
+
+// Tipo mínimo do usuário interno (app_users)
+interface AppUser {
+    id: number;
+    nome_usuario: string;
+    email?: string;
+    tipo_usuario: string;
+}
 
 interface AtividadesInserirProps {
     clients: Client[];
@@ -15,6 +23,8 @@ interface AtividadesInserirProps {
     onManualReport: (text: string, gestorName?: string, extractedMonth?: number, extractedYear?: number, selectedConsultantName?: string) => Promise<void>;
     preSelectedClient?: string;
     preSelectedConsultant?: string;
+    // 🆕 v2.7: Usuários internos RMS para notificação
+    usuariosRMS?: AppUser[];
 }
 
 // ✅ FUNÇÃO PARA EXTRAIR DATA DO RELATÓRIO - CORREÇÃO DO BUG
@@ -138,7 +148,8 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     loadConsultantReports,
     onManualReport,
     preSelectedClient = '',
-    preSelectedConsultant = ''
+    preSelectedConsultant = '',
+    usuariosRMS = []
 }) => {
     // Estados do formulário manual
     const [selectedClient, setSelectedClient] = useState<string>('');
@@ -162,6 +173,12 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     const [showHistoricoModal, setShowHistoricoModal] = useState(false);
     const [consultantReports, setConsultantReports] = useState<ConsultantReport[]>([]);
     const [loadingReports, setLoadingReports] = useState(false);
+
+    // 🆕 v2.7: Estados de notificação
+    const [notifComercial, setNotifComercial] = useState(false);
+    const [notifRS, setNotifRS]               = useState(false);
+    const [notifPessoas, setNotifPessoas]     = useState(false);
+    const [enviandoEmails, setEnviandoEmails] = useState(false);
 
     // Navegação contextual
     useEffect(() => {
@@ -341,6 +358,61 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
         }
     };
 
+    // 🆕 v2.7: Envia emails de notificação para os perfis selecionados
+    const enviarEmailsNotificacao = async (
+        reportText: string,
+        consultantData: Consultant,
+        clientName: string,
+        monthName: string
+    ) => {
+        const destinatarios: { email: string; nome: string; perfil: string }[] = [];
+
+        // Gestão Comercial — pode haver mais de um, envia para todos
+        if (notifComercial) {
+            const comerciais = usuariosRMS.filter(u => u.tipo_usuario === 'Gestão Comercial' && u.email);
+            comerciais.forEach(u => destinatarios.push({ email: u.email!, nome: u.nome_usuario, perfil: 'Gestão Comercial' }));
+        }
+        // Gestão R&S
+        if (notifRS) {
+            const rs = usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de R&S' && u.email);
+            rs.forEach(u => destinatarios.push({ email: u.email!, nome: u.nome_usuario, perfil: 'Gestão de R&S' }));
+        }
+        // Gestão de Pessoas
+        if (notifPessoas) {
+            const gp = usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de Pessoas' && u.email);
+            gp.forEach(u => destinatarios.push({ email: u.email!, nome: u.nome_usuario, perfil: 'Gestão de Pessoas' }));
+        }
+
+        if (destinatarios.length === 0) return;
+
+        setEnviandoEmails(true);
+        try {
+            await Promise.all(
+                destinatarios.map(dest =>
+                    fetch('/api/send-email', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            to: dest.email,
+                            toName: dest.nome,
+                            subject: `Relatório de Atividade — ${consultantData.nome_consultores} | ${clientName} — ${monthName}`,
+                            consultantName: consultantData.nome_consultores,
+                            consultantCargo: consultantData.cargo_consultores || '',
+                            clientName,
+                            inclusionDate: new Date().toLocaleDateString('pt-BR'),
+                            summary: reportText,
+                            type: 'activity_report' as any,
+                        })
+                    })
+                )
+            );
+        } catch (err) {
+            console.error('Erro ao enviar emails de notificação:', err);
+        } finally {
+            setEnviandoEmails(false);
+        }
+    };
+
     const handleManualSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!selectedConsultant || !activities.trim()) return;
@@ -350,15 +422,24 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
             const consultant = consultants.find(c => c.nome_consultores === selectedConsultant);
             const manager = consultant ? usuariosCliente.find(u => u.id === consultant.gestor_imediato_id) : null;
             const client = clients.find(c => c.razao_social_cliente === selectedClient);
-            
+
             const reportText = activities;
             const gestorName = manager?.nome_gestor_cliente || 'Não especificado';
 
             // 🔧 v2.6: Passa o nome do consultor selecionado para evitar busca da IA
             await onManualReport(reportText, gestorName, month, new Date().getFullYear(), selectedConsultant);
 
+            // 🆕 v2.7: Envia emails de notificação se algum checkbox estiver marcado
+            if ((notifComercial || notifRS || notifPessoas) && consultant) {
+                const monthName = months.find(m => m.value === month)?.label || String(month);
+                await enviarEmailsNotificacao(reportText, consultant, selectedClient, monthName);
+            }
+
             setActivities('');
             setSelectedConsultant('');
+            setNotifComercial(false);
+            setNotifRS(false);
+            setNotifPessoas(false);
             alert('Relatório de atividades processado com sucesso!');
         } catch (error) {
             console.error('Erro ao enviar relatório:', error);
@@ -547,11 +628,86 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
                         />
                     </div>
 
+                    {/* 🆕 v2.7: Frame Notificar */}
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                        <div className="flex items-center gap-2 mb-3">
+                            <Bell className="w-4 h-4 text-amber-600" />
+                            <h3 className="text-sm font-semibold text-amber-900">Notificar</h3>
+                            <span className="text-xs text-amber-600 ml-1">— Enviar cópia deste relatório por e-mail</span>
+                        </div>
+                        <div className="flex flex-wrap gap-4">
+                            {/* Gestão Comercial */}
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={notifComercial}
+                                    onChange={(e) => setNotifComercial(e.target.checked)}
+                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-sm text-gray-700 group-hover:text-gray-900 font-medium">Gestão Comercial</span>
+                                {notifComercial && (
+                                    <span className="text-xs text-blue-600 font-medium">
+                                        ({usuariosRMS.filter(u => u.tipo_usuario === 'Gestão Comercial' && u.email).length} destinatário(s))
+                                    </span>
+                                )}
+                            </label>
+
+                            {/* Gestão R&S */}
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={notifRS}
+                                    onChange={(e) => setNotifRS(e.target.checked)}
+                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-sm text-gray-700 group-hover:text-gray-900 font-medium">Gestão R&S</span>
+                                {notifRS && (
+                                    <span className="text-xs text-blue-600 font-medium">
+                                        ({usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de R&S' && u.email).length} destinatário(s))
+                                    </span>
+                                )}
+                            </label>
+
+                            {/* Gestão de Pessoas */}
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <input
+                                    type="checkbox"
+                                    checked={notifPessoas}
+                                    onChange={(e) => setNotifPessoas(e.target.checked)}
+                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-sm text-gray-700 group-hover:text-gray-900 font-medium">Gestão Pessoas</span>
+                                {notifPessoas && (
+                                    <span className="text-xs text-blue-600 font-medium">
+                                        ({usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de Pessoas' && u.email).length} destinatário(s))
+                                    </span>
+                                )}
+                            </label>
+                        </div>
+
+                        {/* Aviso quando nenhum usuário do perfil tem email */}
+                        {(notifComercial && usuariosRMS.filter(u => u.tipo_usuario === 'Gestão Comercial' && u.email).length === 0) && (
+                            <p className="text-xs text-red-500 mt-2">⚠️ Nenhum usuário de Gestão Comercial com e-mail cadastrado.</p>
+                        )}
+                        {(notifRS && usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de R&S' && u.email).length === 0) && (
+                            <p className="text-xs text-red-500 mt-2">⚠️ Nenhum usuário de Gestão R&S com e-mail cadastrado.</p>
+                        )}
+                        {(notifPessoas && usuariosRMS.filter(u => u.tipo_usuario === 'Gestão de Pessoas' && u.email).length === 0) && (
+                            <p className="text-xs text-red-500 mt-2">⚠️ Nenhum usuário de Gestão de Pessoas com e-mail cadastrado.</p>
+                        )}
+
+                        {enviandoEmails && (
+                            <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
+                                <span className="animate-spin">⏳</span> Enviando notificações...
+                            </p>
+                        )}
+                    </div>
+
                     {/* Botões */}
                     <div className="flex justify-end gap-3">
                         <button 
                             type="button" 
-                            onClick={() => { setSelectedClient(''); setSelectedConsultant(''); setMonth(new Date().getMonth() + 1); setActivities(''); }} 
+                            onClick={() => { setSelectedClient(''); setSelectedConsultant(''); setMonth(new Date().getMonth() + 1); setActivities(''); setNotifComercial(false); setNotifRS(false); setNotifPessoas(false); }} 
                             className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition text-sm font-medium"
                         >
                             Limpar
