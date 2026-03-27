@@ -596,3 +596,60 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 ### Resumo
 > **"CONTEXT.md + 1 ou 2 arquivos do módulo + 1 tema por chat"**
 > = máximo aproveitamento, mínimo desperdício de contexto.
+---
+
+## 10. Métricas do Repositório
+> Gerado automaticamente pelo script update-context.js
+
+| Módulo | Arquivos | Tamanho | Última modificação |
+|---|---|---|---|
+| `api/` | 50 arquivos | 582.2 KB | 27/03/2026 |
+| `src/components/` | 110 arquivos | 898.8 KB | 27/03/2026 |
+| `src/pages/` | 0 arquivos | 0 KB | N/A |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 27/03/2026 |
+| `src/types/` | 6 arquivos | 29.9 KB | 27/03/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 27/03/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 27/03/2026 |
+
+### Endpoints API ativos
+- `api/analise-adequacao-perfil.ts`
+- `api/analyze-activity-report.ts`
+- `api/apollo-prospect-test.ts`
+- `api/claude-analyze.ts`
+- `api/cv-generator-docx-bg.ts`
+- `api/cv-generator-docx.ts`
+- `api/debug-env.ts`
+- `api/entrevista-docx.ts`
+- `api/extract-cv-text.ts`
+- `api/gemini-analyze.ts`
+- `api/gemini-audio-transcription.ts`
+- `api/gemini-cv-generator-v2.ts`
+- `api/gemini-cv.ts`
+- `api/predicao-riscos.ts`
+- `api/prospect-apollo-search.ts`
+- `api/prospect-capture.ts`
+- `api/prospect-cv-extract.ts`
+- `api/prospect-email-finder.ts`
+- `api/prospect-enrich-company.ts`
+- `api/prospect-exclusoes.ts`
+- `api/prospect-gemini-search.ts`
+- `api/prospect-hunter-enrich.ts`
+- `api/prospect-infer-emails.ts`
+- `api/prospect-leads.ts`
+- `api/prospect-resolve-domain.ts`
+- `api/prospect-save.ts`
+- `api/prospect-snovio-search.ts`
+- `api/prospect-stats.ts`
+- `api/prospect-validate-emails.ts`
+- `api/questoes-inteligentes.ts`
+- `api/recomendacao-analista.ts`
+- `api/send-email.ts`
+- `api/talent-finder-log.ts`
+- `api/talent-finder-search.ts`
+- `api/talent-finder-stats.ts`
+- `api/upload-audio.ts`
+- `api/vaga-analistas-recomendados.ts`
+- `api/vaga-prioridade.ts`
+- `api/version.ts`
+
+---
