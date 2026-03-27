@@ -371,6 +371,7 @@ const App: React.FC = () => {
             onManualReport={handleManualAnalysis}
             preSelectedClient={contextualClient}
             preSelectedConsultant={contextualConsultant}
+            usuariosRMS={users}
           />;
       case 'atividades_consultar':
           return <AtividadesConsultar 

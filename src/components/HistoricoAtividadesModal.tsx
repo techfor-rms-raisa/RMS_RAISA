@@ -2,7 +2,7 @@
 // ✅ VERSÃO CORRIGIDA - Exibe conteúdo original do relatório (não apenas resumo)
 
 import React, { useMemo } from 'react';
-import { X, Calendar, FileText, AlertCircle, TrendingUp, Bot } from 'lucide-react';
+import { X, Calendar, FileText, AlertCircle, TrendingUp, Bot, Bell } from 'lucide-react';
 import { Consultant, ConsultantReport } from '@/types';
 
 interface HistoricoAtividadesModalProps {
@@ -224,6 +224,31 @@ const HistoricoAtividadesModal: React.FC<HistoricoAtividadesModalProps> = ({
                           <p className="text-sm text-blue-800">{report.summary}</p>
                         </div>
                       )}
+
+                      {/* 🆕 v2.7: Frame de notificados */}
+                      {(() => {
+                        const notificados: string[] = [];
+                        const n = (report as any).notificados;
+                        if (n?.gestao_comercial) notificados.push('Gestão Comercial');
+                        if (n?.gestao_rs)        notificados.push('Gestão R&S');
+                        if (n?.gestao_pessoas)   notificados.push('Gestão Pessoas');
+                        if (notificados.length === 0) return null;
+                        return (
+                          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                            <h4 className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2 flex items-center gap-1">
+                              <Bell className="w-3.5 h-3.5" />
+                              Notificados
+                            </h4>
+                            <div className="flex flex-wrap gap-2">
+                              {notificados.map(n => (
+                                <span key={n} className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium border border-amber-300">
+                                  ✉ {n}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Recommendations - Mais Compactas */}
                       {report.recommendations && Array.isArray(report.recommendations) && report.recommendations.length > 0 && (
