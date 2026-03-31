@@ -4,8 +4,11 @@
  * Gerencia análise de currículo do candidato com contexto da vaga
  * Salva resultados na tabela ia_recomendacoes_candidato
  * 
- * Versão: 1.0
- * Data: 06/01/2026
+ * Versão: 1.1
+ * Data: 31/03/2026
+ * Alterações v1.1:
+ *   - Cache por candidatura_id: verifica análise existente antes de chamar a IA
+ *   - Mesmo CV + mesma Vaga = resultado consistente (sem divergências entre cliques)
  */
 
 import { useState, useCallback } from 'react';
@@ -140,7 +143,18 @@ export function useCandidaturaAnaliseIA() {
         throw new Error('Currículo não disponível ou muito curto para análise.');
       }
 
-      console.log('🤖 Chamando API para análise de CV...');
+      // ================================================
+      // 🆕 v1.1: Verificar cache antes de chamar a IA
+      // Chave: candidatura_id (já identifica candidato + vaga de forma única)
+      // Mesmo CV + mesma Vaga = mesmo resultado sempre
+      // ================================================
+      const analiseExistente = await carregarAnalise(parseInt(candidatura.id));
+      if (analiseExistente) {
+        console.log(`✅ [Cache] Análise existente para candidatura ${candidatura.id} — exibindo sem chamar a IA`);
+        return analiseExistente;
+      }
+
+      console.log('🆕 [Cache] Nenhuma análise encontrada — chamando API...');
 
       // Chamar backend
       const response = await fetch('/api/gemini-analyze', {
