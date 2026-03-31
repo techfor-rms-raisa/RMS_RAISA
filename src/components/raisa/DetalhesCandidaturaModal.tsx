@@ -17,7 +17,7 @@
  * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
  * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
  * 
- * Versão: 2.3 - Removida "Análise de CV com IA" (Gemini) — mantida apenas "Análise de Adequação" (Claude)
+ * Versão: 2.4 - Corrigido duplo spinner "Analisando" + removido botão Reanalisar
  * Data: 31/03/2026
  */
 
@@ -817,15 +817,15 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                     </div>
                     
                     <div className="flex items-center gap-3">
-                      {/* Badge de status */}
-                      {analiseAdequacao && (
+                      {/* Badge de status — só exibe quando há análise concluída */}
+                      {analiseAdequacao && !loadingAdequacao && (
                         <AnaliseAdequacaoBadge
                           analise={analiseAdequacao}
-                          loading={loadingAdequacao}
+                          loading={false}
                         />
                       )}
                       
-                      {/* Botão analisar */}
+                      {/* Botão analisar — só quando não há análise e não está carregando */}
                       {!analiseAdequacao && !loadingAdequacao && vaga && (
                         <button
                           onClick={handleAnalisarAdequacao}
@@ -837,7 +837,7 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                         </button>
                       )}
                       
-                      {/* Loading */}
+                      {/* Loading — único spinner, exibido apenas durante análise */}
                       {loadingAdequacao && (
                         <div className="flex items-center gap-2 text-indigo-600">
                           <Loader2 className="w-5 h-5 animate-spin" />
@@ -845,17 +845,7 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                         </div>
                       )}
                       
-                      {/* Botão reanalisar */}
-                      {analiseAdequacao && !loadingAdequacao && (
-                        <button
-                          onClick={handleAnalisarAdequacao}
-                          disabled={loadingAdequacao}
-                          className="px-3 py-2 bg-white text-gray-700 rounded-lg hover:bg-gray-100 transition text-sm flex items-center gap-1 border"
-                        >
-                          <RefreshCw className="w-4 h-4" />
-                          Reanalisar
-                        </button>
-                      )}
+                      {/* Botão Reanalisar removido — candidatura sempre tem o mesmo CV e vaga */}
                     </div>
                   </div>
 
