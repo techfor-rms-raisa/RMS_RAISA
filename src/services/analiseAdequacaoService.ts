@@ -239,7 +239,12 @@ export function calcularEstatisticas(analise: AnaliseAdequacaoPerfil): {
 
   const atende = todosRequisitos.filter(r => r.nivel_adequacao === 'ATENDE').length;
   const atendeParcialmente = todosRequisitos.filter(r => r.nivel_adequacao === 'ATENDE_PARCIALMENTE').length;
-  const gaps = todosRequisitos.filter(r => r.nivel_adequacao === 'GAP_IDENTIFICADO').length;
+
+  // 🆕 Fix: gaps_criticos é a fonte autoritativa da IA para o contador de Gaps.
+  // Usar apenas GAP_IDENTIFICADO causava inconsistência: a IA marcava requisitos
+  // como ATENDE_PARCIALMENTE mas listava os mesmos como gaps_criticos no resumo.
+  const gapsPorRequisito = todosRequisitos.filter(r => r.nivel_adequacao === 'GAP_IDENTIFICADO').length;
+  const gaps = Math.max(gapsPorRequisito, analise.resumo_executivo?.gaps_criticos?.length ?? 0);
 
   const imprescindiveisAtendidos = analise.requisitos_imprescindiveis
     .filter(r => r.nivel_adequacao === 'ATENDE' || r.nivel_adequacao === 'ATENDE_PARCIALMENTE')
