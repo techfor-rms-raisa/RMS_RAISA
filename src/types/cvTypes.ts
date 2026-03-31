@@ -147,7 +147,9 @@ export interface DadosCandidatoTechfor {
   
   // === Formação ===
   formacao_academica?: FormacaoCV[];
-  formacao_complementar?: CertificacaoCV[];
+  // 🆕 v3.2: formacao_complementar usa FormacaoCV[] (mesmo tipo de formacao_academica)
+  // para reaproveit ar o form de edição e exibir certificações/cursos na seção própria
+  formacao_complementar?: FormacaoCV[];
   
   // === Skills ===
   habilidades?: HabilidadeCV[];

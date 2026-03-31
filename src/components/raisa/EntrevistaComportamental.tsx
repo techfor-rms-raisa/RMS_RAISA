@@ -347,25 +347,29 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             motivo_saida: e.motivo_saida || ''
           }));
 
-          // 2c. Separar formação acadêmica de complementar
-          // 🆕 Fix: certificacao, pos_graduacao e curso_livre incluídos em formacao_academica
-          // pois o form usa FormacaoCV (tipo + curso + instituicao + data_conclusao)
-          // e o select TIPOS_FORMACAO já contém todas essas opções
-          const TIPOS_ACADEMICOS = ['graduacao', 'tecnico', 'mba', 'mestrado', 'doutorado', 'pos_graduacao', 'certificacao', 'curso_livre'];
+          // 2c. Separar formação em dois grupos:
+          // - formacao_academica: graus acadêmicos (graduacao, pos_graduacao, mba, mestrado, doutorado, tecnico)
+          // - formacao_complementar: certificacoes e cursos livres (seção própria no form)
+          const TIPOS_ACADEMICOS    = ['graduacao', 'tecnico', 'mba', 'mestrado', 'doutorado', 'pos_graduacao'];
+          const TIPOS_CERTIFICACOES = ['certificacao', 'curso_livre'];
+
           const formacaoAcademicaMapeada: FormacaoCV[] = (formacaoDB || [])
             .filter(f => TIPOS_ACADEMICOS.includes(f.tipo))
             .map(f => ({
-              tipo: f.tipo || '',
+              tipo: f.tipo as FormacaoCV['tipo'],
               curso: f.curso || '',
               instituicao: f.instituicao || '',
               data_conclusao: f.em_andamento ? 'Em andamento' : f.ano_conclusao ? String(f.ano_conclusao) : ''
             }));
-          const formacaoComplementarMapeada = (formacaoDB || [])
-            .filter(f => !TIPOS_ACADEMICOS.includes(f.tipo))
+
+          // 🆕 v1.2: Certificações mapeadas como FormacaoCV para aproveitar o form existente
+          const formacaoComplementarMapeada: FormacaoCV[] = (formacaoDB || [])
+            .filter(f => TIPOS_CERTIFICACOES.includes(f.tipo))
             .map(f => ({
-              nome: f.curso || '',
+              tipo: f.tipo as FormacaoCV['tipo'],
+              curso: f.curso || '',
               instituicao: f.instituicao || '',
-              ano_conclusao: f.em_andamento ? 'Em andamento' : f.ano_conclusao ? String(f.ano_conclusao) : ''
+              data_conclusao: f.em_andamento ? 'Em andamento' : f.ano_conclusao ? String(f.ano_conclusao) : ''
             }));
 
           // 2d. Mapear idiomas
@@ -1371,6 +1375,88 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
                     }}
                     className="border rounded p-2 text-sm"
                     placeholder="Ano conclusão"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Certificações e Cursos */}
+          <div>
+            <div className="flex justify-between items-center mb-2">
+              <label className="text-sm font-medium text-gray-700">Certificações e Cursos</label>
+              <button
+                onClick={() => updateDados('formacao_complementar', [...(dados.formacao_complementar || []), {
+                  tipo: 'certificacao', curso: '', instituicao: '', data_conclusao: '', em_andamento: false
+                } as FormacaoCV])}
+                className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
+              >
+                <Plus size={14} /> Adicionar
+              </button>
+            </div>
+            {(dados.formacao_complementar || []).length === 0 && (
+              <p className="text-xs text-gray-400 italic">Nenhuma certificação cadastrada.</p>
+            )}
+            {(dados.formacao_complementar || []).map((cert, idx) => (
+              <div key={idx} className="border rounded-lg p-3 mb-2 bg-amber-50">
+                <div className="flex justify-between items-start mb-2">
+                  <span className="text-xs font-medium text-gray-500">Certificação {idx + 1}</span>
+                  <button
+                    onClick={() => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas.splice(idx, 1);
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="text-red-400 hover:text-red-600"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={cert.tipo || 'certificacao'}
+                    onChange={e => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas[idx] = { ...novas[idx], tipo: e.target.value as FormacaoCV['tipo'] };
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="border rounded p-2 text-sm"
+                  >
+                    <option value="certificacao">Certificação</option>
+                    <option value="curso_livre">Curso Livre</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={cert.curso || ''}
+                    onChange={e => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas[idx] = { ...novas[idx], curso: e.target.value };
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="border rounded p-2 text-sm"
+                    placeholder="Nome da certificação / curso"
+                  />
+                  <input
+                    type="text"
+                    value={cert.instituicao || ''}
+                    onChange={e => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas[idx] = { ...novas[idx], instituicao: e.target.value };
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="border rounded p-2 text-sm"
+                    placeholder="Instituição / Emissor"
+                  />
+                  <input
+                    type="text"
+                    value={cert.data_conclusao || ''}
+                    onChange={e => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas[idx] = { ...novas[idx], data_conclusao: e.target.value };
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="border rounded p-2 text-sm"
+                    placeholder="Ano de obtenção"
                   />
                 </div>
               </div>
