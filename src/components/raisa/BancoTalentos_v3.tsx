@@ -38,7 +38,7 @@ import {
 interface TalentosProps {
     pessoas: Pessoa[];
     addPessoa: (p: any) => void;
-    updatePessoa: (p: Pessoa) => void;
+    updatePessoa: (id: string, updates: Partial<Pessoa>) => void;
     deletePessoa?: (id: string) => void;
     onRefresh?: () => void;
 }
@@ -334,9 +334,20 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
     // Salvar pessoa
     const handleSave = (e: React.FormEvent) => {
         e.preventDefault();
+
         if (editingPessoa) {
-            updatePessoa({ ...editingPessoa, ...formData } as Pessoa);
+            // 🆕 Fix: updatePessoa(id, updates, analistaId?) — não recebe objeto Pessoa inteiro
+            // Antes: updatePessoa({ ...editingPessoa, ...formData }) → id recebia o objeto → parseInt(objeto) = NaN
+            if (!formData.nome?.trim()) {
+                alert('O nome do candidato é obrigatório.');
+                return;
+            }
+            updatePessoa(editingPessoa.id, { ...formData });
         } else {
+            if (!formData.nome?.trim()) {
+                alert('O nome do candidato é obrigatório.');
+                return;
+            }
             addPessoa(formData);
         }
         setIsModalOpen(false);
