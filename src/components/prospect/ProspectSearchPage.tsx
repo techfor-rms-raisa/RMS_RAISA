@@ -174,6 +174,11 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     // ── VIEW TERRITÓRIO ──────────────────────────────────────────────────────
     const [viewTerritorio, setViewTerritorio]           = useState(false);
     const viewTerritorioRef = useRef(false); // ref espelho — evita dependência cíclica no useCallback
+    // 🆕 Refs espelho para carregarLeadsSalvos e carregarMeusLeads
+    // Permitem chamá-las no useEffect da extensão (linha ~255) sem TDZ,
+    // pois o useEffect é declarado antes das funções no arquivo.
+    const carregarLeadsSalvosRef = useRef<() => void>(() => {});
+    const carregarMeusLeadsRef   = useRef<() => void>(() => {});
     const [usuariosDisponiveis, setUsuariosDisponiveis] = useState<{id: number; nome_usuario: string; tipo_usuario: string}[]>([]);
     const [redistribuindoEmpresa, setRedistribuindoEmpresa] = useState<string | null>(null);
     const [novoResponsavel, setNovoResponsavel]         = useState<string>('');
@@ -276,13 +281,17 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             setToastMsg({ tipo: 'ok', msg: `${leads.length} lead${leads.length > 1 ? 's' : ''} capturado${leads.length > 1 ? 's' : ''} pela Extension!` });
             setTimeout(() => setToastMsg(null), 4000);
 
-            // Auto-refresh: recarregar Leads Salvos para exibir os novos leads
-            setTimeout(() => carregarLeadsSalvos(), 1500);
+            // 🆕 Fix: refresh explícito e independente do WebSocket/Realtime
+            // Usa refs espelho para evitar TDZ (useEffect declarado antes das funções)
+            setTimeout(() => {
+                carregarLeadsSalvosRef.current();
+                carregarMeusLeadsRef.current();
+            }, 1500);
         };
 
         window.addEventListener('message', handleExtensionMessage);
         return () => window.removeEventListener('message', handleExtensionMessage);
-    }, []);
+    }, []); // deps vazias: refs são estáveis, não causam TDZ nem re-subscriptions
 
 
     const buscarGemini = useCallback(async () => {
@@ -553,6 +562,13 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             setLoadingMeusLeads(false);
         }
     }, [filtroLeadsEmpresa, filtroLeadsStatus, currentUser, podeVerTodosLeads]);
+
+    // 🆕 Atualizar refs espelho — permite que o useEffect da extensão (acima no arquivo)
+    // chame estas funções sem TDZ e sem dependências circulares
+    // (refs são mutáveis e não causam re-render)
+    carregarLeadsSalvosRef.current = carregarLeadsSalvos;
+    carregarMeusLeadsRef.current   = carregarMeusLeads;
+
     // Chamado: ao clicar Prospectar OU ao exportar XLS com seleção
     // ============================================
     const reservarEmpresas = useCallback(async (ids: number[]) => {
