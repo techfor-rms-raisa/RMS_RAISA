@@ -33,11 +33,12 @@ const Dashboard: React.FC<DashboardProps> = ({
   rhActions = []  // 🆕 v57.0: Lista de ações para verificar existência
 }) => {
   
+  const [selectedGestaoPessoas, setSelectedGestaoPessoas] = useState<string>('all');
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [selectedManager, setSelectedManager] = useState<string>('all');
   const [selectedConsultant, setSelectedConsultant] = useState<string>('all');
   const [selectedScore, setSelectedScore] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<string>('ativo'); // ✅ NOVO: Filtro de status (ativo/inativo/todos)
+  const [selectedStatus, setSelectedStatus] = useState<string>('ativo');
   const [viewingReport, setViewingReport] = useState<ConsultantReport | null>(null);
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [yearInitialized, setYearInitialized] = useState<boolean>(false);
@@ -109,6 +110,22 @@ const Dashboard: React.FC<DashboardProps> = ({
   }, [consultants]);
 
   // ============================================================================
+  // EFEITO 0: Auto-selecionar Gestão de Pessoas se o usuário logado for do perfil
+  // ============================================================================
+  useEffect(() => {
+    if (currentUser?.tipo_usuario === 'Gestão de Pessoas') {
+      setSelectedGestaoPessoas(String(currentUser.id));
+    }
+  }, [currentUser]);
+
+  // Reset em cascata ao trocar Gestão de Pessoas
+  useEffect(() => {
+    setSelectedClient('all');
+    setSelectedManager('all');
+    setSelectedConsultant('all');
+  }, [selectedGestaoPessoas]);
+
+  // ============================================================================
   // EFEITO 1: Inicializar o ano selecionado apenas uma vez
   // ============================================================================
   useEffect(() => {
@@ -174,11 +191,27 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   // ============================================================================
+  // LISTA DE GESTORAS DE PESSOAS (para o filtro)
+  // ============================================================================
+  const gestaoPessoasList = useMemo(() =>
+    users
+      .filter(u => u.tipo_usuario === 'Gestão de Pessoas' && u.ativo_usuario)
+      .sort((a, b) => a.nome_usuario.localeCompare(b.nome_usuario))
+  , [users]);
+
+  // ============================================================================
   // LÓGICA DE ESTRUTURA DE DADOS
   // ============================================================================
 
   const structuredData = useMemo(() => {
     let relevantClients = clients.filter(c => c.ativo_cliente);
+
+    // ── Filtro por Gestão de Pessoas (via id_gestao_de_pessoas no cliente)
+    if (selectedGestaoPessoas !== 'all') {
+      const gpId = parseInt(selectedGestaoPessoas, 10);
+      relevantClients = relevantClients.filter(c => Number((c as any).id_gestao_de_pessoas) === gpId);
+    }
+
     if (selectedClient !== 'all') {
       relevantClients = relevantClients.filter(c => c.razao_social_cliente === selectedClient);
     }
@@ -234,7 +267,7 @@ const Dashboard: React.FC<DashboardProps> = ({
 
       return { ...client, managers };
     }).sort((a, b) => a.razao_social_cliente.localeCompare(b.razao_social_cliente));
-  }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedManager, selectedConsultant, selectedYear, selectedScore, selectedStatus]);
+  }, [clients, consultants, usuariosCliente, coordenadoresCliente, selectedClient, selectedManager, selectedConsultant, selectedYear, selectedScore, selectedStatus, selectedGestaoPessoas]);
 
   // ============================================================================
   // CÁLCULO DE ESTATÍSTICAS (NOVO)
@@ -389,40 +422,66 @@ const Dashboard: React.FC<DashboardProps> = ({
       </div>
       
       {/* Filtros */}
-      <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-6 p-4 bg-gray-50 rounded-lg">
+      <div className="grid grid-cols-2 md:grid-cols-7 gap-2 mb-6 p-3 bg-gray-50 rounded-lg">
+
+        {/* ── 1. Gestão de Pessoas (NOVO — primeiro filtro) */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-1">Ano:</label>
-          <select 
-            value={selectedYear} 
-            onChange={e => setSelectedYear(parseInt(e.target.value))} 
-            className="w-full p-2 border border-gray-300 rounded-lg"
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Gestão de Pessoas:</label>
+          <select
+            value={selectedGestaoPessoas}
+            onChange={e => setSelectedGestaoPessoas(e.target.value)}
+            className="w-full p-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+          >
+            <option value="all">Todas</option>
+            {gestaoPessoasList.map(u => (
+              <option key={u.id} value={String(u.id)}>{u.nome_usuario}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* ── 2. Ano */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Ano:</label>
+          <select
+            value={selectedYear}
+            onChange={e => setSelectedYear(parseInt(e.target.value))}
+            className="w-full p-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
           >
             {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
         </div>
 
+        {/* ── 3. Cliente */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-1">Cliente:</label>
-          <select 
-            value={selectedClient} 
-            onChange={e => setSelectedClient(e.target.value)} 
-            className="w-full p-2 border border-gray-300 rounded-lg"
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Cliente:</label>
+          <select
+            value={selectedClient}
+            onChange={e => setSelectedClient(e.target.value)}
+            className="w-full p-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
           >
-            <option value="all">Todos os Clientes</option>
-            {[...new Set(clients.map(c => c.razao_social_cliente))].sort().map(n => (
+            <option value="all">Todos</option>
+            {[...new Set(
+              clients
+                .filter(c => {
+                  if (selectedGestaoPessoas === 'all') return true;
+                  return Number((c as any).id_gestao_de_pessoas) === parseInt(selectedGestaoPessoas, 10);
+                })
+                .map(c => c.razao_social_cliente)
+            )].sort().map(n => (
               <option key={n} value={n}>{n}</option>
             ))}
           </select>
         </div>
 
+        {/* ── 4. Gestor */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-1">Gestor:</label>
-          <select 
-            value={selectedManager} 
-            onChange={e => setSelectedManager(e.target.value)} 
-            className="w-full p-2 border border-gray-300 rounded-lg"
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Gestor:</label>
+          <select
+            value={selectedManager}
+            onChange={e => setSelectedManager(e.target.value)}
+            className="w-full p-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
           >
-            <option value="all">Todos os Gestores</option>
+            <option value="all">Todos</option>
             {selectedClient !== 'all' && (
               usuariosCliente
                 .filter(uc => clients.find(c => c.id === uc.id_cliente && c.razao_social_cliente === selectedClient))
@@ -431,13 +490,13 @@ const Dashboard: React.FC<DashboardProps> = ({
           </select>
         </div>
 
-        {/* ✅ NOVO: Filtro de Status */}
+        {/* ── 5. Status */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-1">Status:</label>
-          <select 
-            value={selectedStatus} 
-            onChange={e => setSelectedStatus(e.target.value)} 
-            className="w-full p-2 border border-gray-300 rounded-lg"
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Status:</label>
+          <select
+            value={selectedStatus}
+            onChange={e => setSelectedStatus(e.target.value)}
+            className="w-full p-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
           >
             <option value="ativo">✅ Ativos</option>
             <option value="inativo">❌ Inativos</option>
@@ -445,45 +504,49 @@ const Dashboard: React.FC<DashboardProps> = ({
           </select>
         </div>
 
-        {/* Filtro de Score */}
+        {/* ── 6. Score */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-1">Score:</label>
-          <select 
-            value={selectedScore} 
-            onChange={e => setSelectedScore(e.target.value)} 
-            className="w-full p-2 border border-gray-300 rounded-lg"
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Score:</label>
+          <select
+            value={selectedScore}
+            onChange={e => setSelectedScore(e.target.value)}
+            className="w-full p-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
           >
-            <option value="all">Todos os Scores</option>
-            <option value="5">Score 5 - CRÍTICO</option>
-            <option value="4">Score 4 - ALTO</option>
-            <option value="3">Score 3 - MODERADO</option>
-            <option value="2">Score 2 - BAIXO</option>
-            <option value="1">Score 1 - MÍNIMO</option>
+            <option value="all">Todos</option>
+            <option value="5">5 — CRÍTICO</option>
+            <option value="4">4 — ALTO</option>
+            <option value="3">3 — MODERADO</option>
+            <option value="2">2 — BAIXO</option>
+            <option value="1">1 — MÍNIMO</option>
           </select>
         </div>
 
+        {/* ── 7. Consultor */}
         <div>
-          <label className="block text-sm font-bold text-gray-700 mb-1">Consultor:</label>
-          <select 
-            value={selectedConsultant} 
-            onChange={e => setSelectedConsultant(e.target.value)} 
-            className="w-full p-2 border border-gray-300 rounded-lg"
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Consultor:</label>
+          <select
+            value={selectedConsultant}
+            onChange={e => setSelectedConsultant(e.target.value)}
+            className="w-full p-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
           >
-            <option value="all">Todos os Consultores</option>
+            <option value="all">Todos</option>
             {consultants
               .filter(c => {
-                // Filtro por ano
                 if (c.ano_vigencia !== null && c.ano_vigencia !== undefined && c.ano_vigencia !== selectedYear) return false;
-                // Filtro por gestor (se selecionado)
                 if (selectedManager !== 'all' && c.gestor_imediato_id !== parseInt(selectedManager)) return false;
-                // Filtro por cliente (via gestor_imediato_id → usuariosCliente → cliente)
                 if (selectedClient !== 'all') {
                   const gestor = usuariosCliente.find(uc => uc.id === c.gestor_imediato_id);
                   if (!gestor) return false;
                   const clienteDoConsultor = clients.find(cl => cl.id === gestor.id_cliente);
                   if (!clienteDoConsultor || clienteDoConsultor.razao_social_cliente !== selectedClient) return false;
                 }
-                // Filtro por status
+                if (selectedGestaoPessoas !== 'all') {
+                  const gestor = usuariosCliente.find(uc => uc.id === c.gestor_imediato_id);
+                  if (!gestor) return false;
+                  const clienteDoConsultor = clients.find(cl => cl.id === gestor.id_cliente);
+                  if (!clienteDoConsultor) return false;
+                  if (Number((clienteDoConsultor as any).id_gestao_de_pessoas) !== parseInt(selectedGestaoPessoas, 10)) return false;
+                }
                 if (selectedStatus === 'ativo') return c.status === 'Ativo';
                 if (selectedStatus === 'inativo') return c.status === 'Perdido' || c.status === 'Encerrado';
                 return true;
