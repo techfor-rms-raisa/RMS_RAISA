@@ -17,8 +17,8 @@
  * Entrevista Cliente → Aprovado Cliente/Reprovado Cliente
  * Aprovado Cliente → Contratado → (Consultor Ativo após Ficha)
  * 
- * Versão: 2.2 - Status 'Sem Interesse' com modal de motivos
- * Data: 16/03/2026
+ * Versão: 2.3 - Removida "Análise de CV com IA" (Gemini) — mantida apenas "Análise de Adequação" (Claude)
+ * Data: 31/03/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -31,9 +31,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/config/supabase';
 import { Candidatura, Vaga, Pessoa } from '@/types';
-import { useCandidaturaAnaliseIA } from '@/hooks/supabase/useCandidaturaAnaliseIA';
 import { useAnaliseAdequacao } from '@/hooks/supabase/useAnaliseAdequacao';
-import AnaliseCVPanel from './AnaliseCVPanel';
 import { AnaliseAdequacaoPanel } from './AnaliseAdequacaoPanel';
 import { AnaliseAdequacaoBadge } from './AnaliseAdequacaoBadge';
 import CVGeneratorV2 from './CVGeneratorV2';  // 🆕 v57.2: Gerador de CV Padronizado
@@ -279,18 +277,7 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
   // Estado para expandir/recolher análise de adequação
   const [mostrarAnaliseAdequacao, setMostrarAnaliseAdequacao] = useState(false);
 
-  // Hook para Análise de CV com IA (existente)
-  const {
-    loading: loadingAnaliseIA,
-    error: errorAnaliseIA,
-    analiseAtual,
-    carregarAnalise,
-    analisarCV,
-    registrarFeedback,
-    limparAnalise
-  } = useCandidaturaAnaliseIA();
-
-  // 🆕 Hook para Análise de Adequação de Perfil (NOVO)
+  // 🆕 Hook para Análise de Adequação de Perfil
   const {
     analise: analiseAdequacao,
     loading: loadingAdequacao,
@@ -312,10 +299,6 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
   // Verificar se é sem interesse
   const isSemInteresse = (status: string) => status === 'sem_interesse';
   
-  // Verificar se currículo está disponível
-  const curriculoDisponivel = !!(candidatura as any).curriculo_texto && 
-    (candidatura as any).curriculo_texto.trim().length > 50;
-  
   // Obter motivos corretos baseado no tipo de reprovação
   const getMotivosReprovacao = () => {
     if (novoStatus === 'reprovado_cliente') {
@@ -332,13 +315,10 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
     if (isOpen && candidatura) {
       carregarHistorico();
       carregarDadosExtras();
-      // Carregar análise de CV existente
-      carregarAnalise(parseInt(candidatura.id));
       // 🆕 Carregar análise de adequação existente
       carregarAnaliseAdequacao(parseInt(candidatura.id));
     } else {
       // Limpar análises ao fechar modal
-      limparAnalise();
       setMostrarAnaliseAdequacao(false);
     }
   }, [isOpen, candidatura]);
@@ -433,23 +413,7 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
   // ============================================
 
   // Handler para analisar CV com IA (existente)
-  const handleAnalisarCV = async () => {
-    if (!vaga) {
-      alert('Dados da vaga não disponíveis para análise.');
-      return;
-    }
-    
-    await analisarCV(candidatura, vaga, currentUserId);
-  };
-
-  // Handler para feedback da análise
-  const handleFeedbackAnalise = async (util: boolean, texto?: string) => {
-    if (analiseAtual?.id) {
-      await registrarFeedback(analiseAtual.id, util, texto, currentUserId);
-    }
-  };
-
-  // 🆕 Handler para Análise de Adequação de Perfil (NOVO)
+  // 🆕 Handler para Análise de Adequação de Perfil
   const handleAnalisarAdequacao = async () => {
     if (!vaga) {
       alert('Dados da vaga não disponíveis para análise de adequação.');
@@ -976,16 +940,6 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
                   </div>
                 )}
               </div>
-
-              {/* Análise de CV com IA (existente) */}
-              <AnaliseCVPanel
-                analise={analiseAtual}
-                loading={loadingAnaliseIA}
-                error={errorAnaliseIA}
-                onAnalisar={handleAnalisarCV}
-                onFeedback={handleFeedbackAnalise}
-                curriculoDisponivel={curriculoDisponivel}
-              />
 
               {/* Skills */}
               {dadosExtras.skills && dadosExtras.skills.length > 0 && (
