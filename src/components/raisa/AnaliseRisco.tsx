@@ -34,6 +34,14 @@
  *   • Vinculação por pessoa_id + vaga_id (candidatura_id atualizado depois)
  *   • Perguntas de entrevista ficam disponíveis para Entrevista Técnica
  *   • Upsert: se já existe análise para pessoa+vaga, atualiza em vez de duplicar
+ * - v4.6 (31/03/2026): Cache determinístico — mesmo CV + mesma Vaga = mesmo resultado
+ *   • Hash do texto do CV (gerarHashCV) + vaga_id como chave de cache
+ *   • PASSO 0: busca em analise_adequacao antes de chamar a IA
+ *   • Se cache encontrado: exibe resultado salvo sem consumir créditos de IA
+ *   • Se cache não encontrado: chama IA normalmente e salva com cv_hash para uso futuro
+ *   • Badge informativo "Resultado em cache" no painel de resultado
+ *   • Nova análise acontece automaticamente apenas quando CV ou Vaga mudam
+ *   • Análise sempre salva (independente do score) para garantir cache futuro
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -201,6 +209,9 @@ const AnaliseRisco: React.FC = () => {
   const [analiseAdequacao, setAnaliseAdequacao] = useState<AnaliseAdequacaoResultado | null>(null);
   const [isAnalisandoAdequacao, setIsAnalisandoAdequacao] = useState(false);
   const [abaResultado, setAbaResultado] = useState<'resumo' | 'requisitos' | 'gaps' | 'perguntas'>('resumo');
+
+  // 🆕 v4.6: Cache determinístico — mesmo CV + mesma Vaga = mesmo resultado sempre
+  const [analiseDoCache, setAnaliseDoCache] = useState(false);
   
   // 🆕 v4.1: Estados para filtro por cliente
   const [clientes, setClientes] = useState<ClienteSimples[]>([]);
@@ -1105,14 +1116,26 @@ const AnaliseRisco: React.FC = () => {
     }
   };
 
-  // 🆕 v4.0: Análise de adequação (CV vs Vaga)
-  // Segue o padrão testado do CVImportIA.tsx
+  // 🆕 v4.6: Gera hash determinístico do texto do CV (sem dependência externa)
+  const gerarHashCV = (texto: string): string => {
+    const normalizado = texto.trim().toLowerCase().replace(/\s+/g, ' ').substring(0, 5000);
+    let hash = 0;
+    for (let i = 0; i < normalizado.length; i++) {
+      const char = normalizado.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // 32-bit integer
+    }
+    return Math.abs(hash).toString(36);
+  };
+
+  // 🆕 v4.6: Análise de adequação com cache determinístico
+  // Regra: mesmo CV + mesma Vaga → sempre mesmo resultado (sem chamar IA de novo)
+  //        CV diferente OU Vaga diferente → nova análise automática
   const handleAnalisarAdequacao = async () => {
     if (!textoExtraido || textoExtraido.length < 50) {
       setErro('Texto do currículo muito curto para análise.');
       return;
     }
-
     if (!vagaSelecionada) {
       setErro('Selecione uma vaga para análise de adequação.');
       return;
@@ -1122,47 +1145,76 @@ const AnaliseRisco: React.FC = () => {
     setErro(null);
     setAnalise(null);
     setAnaliseAdequacao(null);
+    setAnaliseDoCache(false);
 
     try {
       // ========================================
-      // PASSO 1: Extrair dados do CV via Gemini
-      // (Mesmo padrão do CVImportIA.tsx)
-      // 🆕 v4.4: Envia base64PDF original para extração precisa de tabelas
+      // PASSO 0 (v4.6): Verificar cache no banco
+      // Chave: hash do texto do CV + vaga_id
+      // Se existir → exibir diretamente, sem chamar a IA
       // ========================================
-      console.log('🤖 Extraindo dados do CV via Gemini...');
-      
+      const cvHash = gerarHashCV(textoExtraido);
+
+      const { data: cacheExistente } = await supabase
+        .from('analise_adequacao')
+        .select('*')
+        .eq('cv_hash', cvHash)
+        .eq('vaga_id', vagaSelecionada.id)
+        .eq('status', 'concluida')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (cacheExistente?.resultado_completo) {
+        console.log(`✅ [Cache] Análise encontrada (ID: ${cacheExistente.id}) — exibindo sem chamar a IA`);
+        const d = cacheExistente.resultado_completo;
+
+        setAnaliseAdequacao({
+          score_geral: cacheExistente.score_geral || 0,
+          nivel_confianca: cacheExistente.confianca_analise || 0,
+          recomendacao: mapearRecomendacao(d.avaliacao_final?.recomendacao),
+          justificativa_recomendacao: d.avaliacao_final?.justificativa || '',
+          requisitos_analisados: [
+            ...(d.requisitos_imprescindiveis || []).map((r: any) => formatarRequisito(r, 'obrigatorio')),
+            ...(d.requisitos_muito_desejaveis || []).map((r: any) => formatarRequisito(r, 'desejavel')),
+            ...(d.requisitos_desejaveis || []).map((r: any) => formatarRequisito(r, 'desejavel'))
+          ],
+          perguntas_entrevista: formatarPerguntas(d.perguntas_entrevista || []),
+          gaps_identificados: formatarGaps(d),
+          pontos_fortes: d.resumo_executivo?.principais_pontos_fortes || [],
+          pontos_atencao: [
+            ...(d.resumo_executivo?.gaps_criticos || []),
+            ...(d.avaliacao_final?.pontos_atencao_entrevista || [])
+          ],
+          resumo_executivo: d.avaliacao_final?.justificativa || ''
+        });
+        setAnaliseDoCache(true);
+        setAbaResultado('resumo');
+        if (cacheExistente.pessoa_id) setSalvouBanco(true);
+        return; // ← sai sem chamar a IA
+      }
+
+      console.log('🆕 [Cache] Nenhuma análise encontrada — chamando a IA...');
+
+      // ========================================
+      // PASSO 1: Extrair dados do CV via Gemini
+      // ========================================
       const extractResponse = await fetch('/api/gemini-analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'extrair_cv',
-          payload: {
-            textoCV: textoExtraido,
-            base64PDF: '' // ✅ Texto já extraído no upload, não reenviar PDF (evita timeout)
-          }
+          payload: { textoCV: textoExtraido, base64PDF: '' }
         })
       });
 
-      if (!extractResponse.ok) {
-        throw new Error('Erro ao extrair dados do CV');
-      }
-
+      if (!extractResponse.ok) throw new Error('Erro ao extrair dados do CV');
       const extractResult = await extractResponse.json();
+      if (!extractResult.success || !extractResult.data) throw new Error('Resposta inválida da API de extração');
 
-      if (!extractResult.success || !extractResult.data) {
-        throw new Error('Resposta inválida da API de extração');
-      }
-
-      // Estrutura EXATA do CVImportIA.tsx
       const dados = extractResult.data.dados;
       const textoOriginal = extractResult.data.texto_original || textoExtraido;
 
-      console.log('📊 Dados extraídos:');
-      console.log('   - Nome:', dados.dados_pessoais?.nome);
-      console.log('   - Skills:', dados.skills?.length || 0);
-      console.log('   - Experiências:', dados.experiencias?.length || 0);
-
-      // Montar objeto candidato (padrão CVImportIA)
       const candidato = {
         nome: dados.dados_pessoais?.nome || 'Candidato',
         email: dados.dados_pessoais?.email || '',
@@ -1183,10 +1235,7 @@ const AnaliseRisco: React.FC = () => {
 
       // ========================================
       // PASSO 2: Análise de Adequação via Claude
-      // (Analisamos PRIMEIRO para saber o score)
       // ========================================
-      console.log('🎯 Analisando adequação via Claude...');
-
       const vaga = {
         titulo: vagaSelecionada.titulo,
         senioridade: vagaSelecionada.senioridade,
@@ -1208,10 +1257,7 @@ const AnaliseRisco: React.FC = () => {
       }
 
       const result = await response.json();
-
-      if (!result.success || !result.data) {
-        throw new Error(result.error || 'Resposta inválida da API de adequação');
-      }
+      if (!result.success || !result.data) throw new Error(result.error || 'Resposta inválida da API de adequação');
 
       // ========================================
       // PASSO 3: Mapear resposta para o componente
@@ -1244,16 +1290,13 @@ const AnaliseRisco: React.FC = () => {
       setAbaResultado('resumo');
 
       // ========================================
-      // PASSO 4: PERSISTIR NO BANCO (SE SCORE >= 40%)
-      // 🆕 v4.1: Só salva automaticamente se score for adequado
+      // PASSO 4: Salvar candidato no banco se score >= 40%
       // ========================================
       let pessoaSalvaId: number | null = null;
 
       if (scoreGeral >= SCORE_MINIMO_SALVAR) {
         console.log(`💾 Score ${scoreGeral}% >= ${SCORE_MINIMO_SALVAR}% - Salvando candidato...`);
-        
         const pessoaSalva = await salvarCandidatoNoBanco(candidato, dados, textoOriginal);
-        
         if (pessoaSalva) {
           pessoaSalvaId = pessoaSalva.id;
           console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
@@ -1261,84 +1304,45 @@ const AnaliseRisco: React.FC = () => {
         }
       } else {
         console.log(`⚠️ Score ${scoreGeral}% < ${SCORE_MINIMO_SALVAR}% - Candidato NÃO salvo automaticamente`);
-        // Guardar dados para salvamento manual opcional
         setDadosParaSalvarManual({ candidato, dados, textoOriginal, analiseResult: data });
       }
 
       // ========================================
-      // PASSO 5: PERSISTIR ANÁLISE DE ADEQUAÇÃO
-      // 🆕 v4.5: Salvar score, requisitos, gaps, perguntas na tabela analise_adequacao
-      // Vinculado por pessoa_id + vaga_id (candidatura_id será preenchido quando candidatura for criada)
+      // PASSO 5 (v4.6): Persistir análise com cv_hash como chave de cache
+      // Sempre persiste (independente do score) para garantir cache em consultas futuras
       // ========================================
-      if (pessoaSalvaId && vagaSelecionada?.id) {
-        try {
-          console.log('💾 Persistindo análise de adequação na tabela analise_adequacao...');
+      try {
+        const dadosAnalise: Record<string, any> = {
+          vaga_id: vagaSelecionada.id,
+          cv_hash: cvHash,
+          candidatura_id: null,
+          score_geral: scoreGeral,
+          nivel_adequacao: data.nivel_adequacao_geral || 'PARCIALMENTE_COMPATIVEL',
+          confianca_analise: data.confianca_analise || 0,
+          recomendacao: data.avaliacao_final?.recomendacao || 'ENTREVISTAR',
+          perguntas_entrevista: data.perguntas_entrevista || [],
+          requisitos_analisados: [
+            ...(data.requisitos_imprescindiveis || []),
+            ...(data.requisitos_muito_desejaveis || []),
+            ...(data.requisitos_desejaveis || [])
+          ],
+          resumo_executivo: data.resumo_executivo || {},
+          avaliacao_final: data.avaliacao_final || {},
+          resultado_completo: data,
+          modelo_ia: 'claude-sonnet',
+          status: 'concluida',
+          updated_at: new Date().toISOString()
+        };
 
-          // Verificar se já existe análise para este par pessoa+vaga (upsert)
-          const { data: analiseExistente } = await supabase
-            .from('analise_adequacao')
-            .select('id')
-            .eq('pessoa_id', pessoaSalvaId)
-            .eq('vaga_id', vagaSelecionada.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+        if (pessoaSalvaId) dadosAnalise.pessoa_id = pessoaSalvaId;
 
-          const dadosAnalise = {
-            pessoa_id: pessoaSalvaId,
-            vaga_id: vagaSelecionada.id,
-            candidatura_id: null, // Será preenchido quando a candidatura for criada
-            score_geral: scoreGeral,
-            nivel_adequacao: data.nivel_adequacao_geral || 'PARCIALMENTE_COMPATIVEL',
-            confianca_analise: data.confianca_analise || 0,
-            recomendacao: data.avaliacao_final?.recomendacao || 'ENTREVISTAR',
-            perguntas_entrevista: data.perguntas_entrevista || [],
-            requisitos_analisados: [
-              ...(data.requisitos_imprescindiveis || []),
-              ...(data.requisitos_muito_desejaveis || []),
-              ...(data.requisitos_desejaveis || [])
-            ],
-            resumo_executivo: data.resumo_executivo || {},
-            avaliacao_final: data.avaliacao_final || {},
-            resultado_completo: data,
-            modelo_ia: 'claude-sonnet',
-            status: 'concluida',
-            updated_at: new Date().toISOString()
-          };
+        await supabase
+          .from('analise_adequacao')
+          .insert({ ...dadosAnalise, created_by: user?.id || null });
 
-          if (analiseExistente?.id) {
-            // UPDATE - análise já existe para este par pessoa+vaga
-            const { error: updateErr } = await supabase
-              .from('analise_adequacao')
-              .update(dadosAnalise)
-              .eq('id', analiseExistente.id);
-
-            if (updateErr) {
-              console.warn('⚠️ Erro ao atualizar analise_adequacao:', updateErr.message);
-            } else {
-              console.log(`✅ Análise de adequação ATUALIZADA (ID: ${analiseExistente.id}) - pessoa_id: ${pessoaSalvaId}, vaga_id: ${vagaSelecionada.id}`);
-            }
-          } else {
-            // INSERT - nova análise
-            const { data: novaAnalise, error: insertErr } = await supabase
-              .from('analise_adequacao')
-              .insert({
-                ...dadosAnalise,
-                created_by: user?.id || null
-              })
-              .select('id')
-              .single();
-
-            if (insertErr) {
-              console.warn('⚠️ Erro ao inserir analise_adequacao:', insertErr.message);
-            } else {
-              console.log(`✅ Análise de adequação CRIADA (ID: ${novaAnalise?.id}) - pessoa_id: ${pessoaSalvaId}, vaga_id: ${vagaSelecionada.id}`);
-            }
-          }
-        } catch (errAnalise: any) {
-          // Não bloqueia o fluxo principal se falhar
-          console.warn('⚠️ Erro ao persistir análise de adequação:', errAnalise.message);
-        }
+        console.log(`✅ [Cache] Análise salva — cv_hash: ${cvHash}, vaga_id: ${vagaSelecionada.id}`);
+      } catch (errCache: any) {
+        console.warn('⚠️ Erro ao salvar análise no cache:', errCache.message);
       }
 
     } catch (err: any) {
@@ -1708,6 +1712,7 @@ const AnaliseRisco: React.FC = () => {
     setVagaSelecionada(null);
     setClienteSelecionadoId(null);
     setDadosParaSalvarManual(null);
+    setAnaliseDoCache(false); // 🆕 v4.6
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -2431,6 +2436,14 @@ const AnaliseRisco: React.FC = () => {
             {/* ============ 🆕 RESULTADO ANÁLISE DE ADEQUAÇÃO ============ */}
             {analiseAdequacao && (
               <div className="space-y-4">
+                {/* 🆕 v4.6: Badge informativo — resultado veio do cache */}
+                {analiseDoCache && (
+                  <div className="flex items-center gap-2 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-xs">
+                    <Database className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>Resultado em cache — este CV já foi analisado para esta vaga. Para nova análise, troque o CV ou a vaga.</span>
+                  </div>
+                )}
+
                 {/* Header com Score e Recomendação */}
                 <div className={`p-4 rounded-xl border ${getRecomendacaoStyle(analiseAdequacao.recomendacao).bg} ${getRecomendacaoStyle(analiseAdequacao.recomendacao).border}`}>
                   <div className="flex items-center justify-between">
