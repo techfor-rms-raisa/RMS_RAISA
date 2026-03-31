@@ -437,8 +437,10 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
           const formCvTemConteudo = (cvDados.formacao_academica || [])
             .some((f: any) => f.curso?.trim() || f.instituicao?.trim());
 
+          // 🆕 Fix duplicação: verificação usa f.curso (novo formato FormacaoCV)
+          // Antes usava f.nome que nunca existe → sempre false → banco + CV = duplicatas
           const formCompCvTemConteudo = (cvDados.formacao_complementar || [])
-            .some((f: any) => f.nome?.trim() || f.instituicao?.trim());
+            .some((f: any) => f.curso?.trim() || f.nome?.trim() || f.instituicao?.trim());
 
           const idiomasCvTemConteudo = (cvDados.idiomas || [])
             .some((i: any) => i.idioma?.trim());
@@ -1303,8 +1305,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 
           {/* Formação */}
           <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium text-gray-700">Formação Acadêmica</label>
+            <div className="flex justify-between items-center mb-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+              <label className="text-sm font-semibold text-blue-800">🎓 Formação Acadêmica</label>
               <button
                 onClick={() => updateDados('formacao_academica', [...(dados.formacao_academica || []), {
                   tipo: 'graduacao', curso: '', instituicao: '', data_conclusao: '', em_andamento: false
@@ -1383,8 +1385,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 
           {/* Certificações e Cursos */}
           <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium text-gray-700">Certificações e Cursos</label>
+            <div className="flex justify-between items-center mb-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <label className="text-sm font-semibold text-amber-800">📜 Certificações e Cursos</label>
               <button
                 onClick={() => updateDados('formacao_complementar', [...(dados.formacao_complementar || []), {
                   tipo: 'certificacao', curso: '', instituicao: '', data_conclusao: '', em_andamento: false
@@ -1398,7 +1400,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
               <p className="text-xs text-gray-400 italic">Nenhuma certificação cadastrada.</p>
             )}
             {(dados.formacao_complementar || []).map((cert, idx) => (
-              <div key={idx} className="border rounded-lg p-3 mb-2 bg-amber-50">
+              <div key={idx} className="border rounded-lg p-3 mb-2 bg-white">
                 <div className="flex justify-between items-start mb-2">
                   <span className="text-xs font-medium text-gray-500">Certificação {idx + 1}</span>
                   <button
@@ -1465,8 +1467,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 
           {/* Idiomas */}
           <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium text-gray-700">Idiomas</label>
+            <div className="flex justify-between items-center mb-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              <label className="text-sm font-semibold text-green-800">🌍 Idiomas</label>
               <button
                 onClick={() => updateDados('idiomas', [...(dados.idiomas || []), {
                   idioma: '', nivel: 'intermediario'
