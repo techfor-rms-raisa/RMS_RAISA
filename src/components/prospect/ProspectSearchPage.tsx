@@ -276,13 +276,18 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             setToastMsg({ tipo: 'ok', msg: `${leads.length} lead${leads.length > 1 ? 's' : ''} capturado${leads.length > 1 ? 's' : ''} pela Extension!` });
             setTimeout(() => setToastMsg(null), 4000);
 
-            // Auto-refresh: recarregar Leads Salvos para exibir os novos leads
-            setTimeout(() => carregarLeadsSalvos(), 1500);
+            // 🆕 Fix: refresh explícito e independente do WebSocket/Realtime
+            // O Realtime pode falhar se REPLICA IDENTITY não estiver configurado em produção
+            // Este setTimeout garante que os leads apareçam em Leads Salvos mesmo assim
+            setTimeout(() => {
+                carregarLeadsSalvos();
+                carregarMeusLeads();
+            }, 1500);
         };
 
         window.addEventListener('message', handleExtensionMessage);
         return () => window.removeEventListener('message', handleExtensionMessage);
-    }, []);
+    }, [carregarLeadsSalvos, carregarMeusLeads]);
 
 
     const buscarGemini = useCallback(async () => {
