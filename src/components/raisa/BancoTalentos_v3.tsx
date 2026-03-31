@@ -38,7 +38,7 @@ import {
 interface TalentosProps {
     pessoas: Pessoa[];
     addPessoa: (p: any) => void;
-    updatePessoa: (id: string, updates: Partial<Pessoa>, analistaId?: number, renovarExclusividade?: boolean) => void;
+    updatePessoa: (id: string, updates: Partial<Pessoa>) => void;
     deletePessoa?: (id: string) => void;
     onRefresh?: () => void;
 }
@@ -342,10 +342,7 @@ const BancoTalentos_v3: React.FC<TalentosProps> = ({
                 alert('O nome do candidato é obrigatório.');
                 return;
             }
-            // 🆕 Passa id_analista_rs como 3º arg para que o hook o atualize no banco
-            const analistaId = formData.id_analista_rs ?? editingPessoa.id_analista_rs;
-            // renovarExclusividadeFlag=false: editar dados do candidato não deve renovar exclusividade
-            updatePessoa(editingPessoa.id, { ...formData }, analistaId ?? undefined, false);
+            updatePessoa(editingPessoa.id, { ...formData });
         } else {
             if (!formData.nome?.trim()) {
                 alert('O nome do candidato é obrigatório.');
