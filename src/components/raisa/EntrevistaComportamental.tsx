@@ -457,9 +457,11 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             formacao_academica: formCvTemConteudo
               ? cvDados.formacao_academica
               : prev.formacao_academica,
-            formacao_complementar: formCompCvTemConteudo
-              ? cvDados.formacao_complementar
-              : prev.formacao_complementar,
+            // 🆕 Fix definitivo: formacao_complementar (certificações) SEMPRE vem do banco
+            // pessoa_formacao é a fonte da verdade — cv_gerado pode ter dados legados/duplicados
+            formacao_complementar: prev.formacao_complementar?.length
+              ? prev.formacao_complementar
+              : cvDados.formacao_complementar,
             idiomas: idiomasCvTemConteudo
               ? cvDados.idiomas
               : prev.idiomas,
