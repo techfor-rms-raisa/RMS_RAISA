@@ -533,10 +533,10 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
     <p style="font-size: 9pt; margin-bottom: 5px;"><strong>Disponibilidade:</strong> ${dados.disponibilidade || 'A combinar'}</p>
     <p style="font-size: 9pt; margin-bottom: 15px;">Não está participando de processo na empresa ${dados.cliente_destino || 'cliente'} e/ou através de seu R&S ou de outra consultoria.</p>
 
-    <!-- Requisitos Mandatórios -->
+    <!-- Skills Técnicas -->
     ${dados.requisitos_match && dados.requisitos_match.filter((r: any) => r.tipo === 'mandatorio' || !r.tipo).length > 0 ? `
     <div class="secao">
-      <div class="secao-titulo">Requisitos Mandatórios</div>
+      <div class="secao-titulo">Skills Técnicas</div>
       <table class="tabela-requisitos">
         <thead>
           <tr>

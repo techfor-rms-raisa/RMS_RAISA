@@ -1527,15 +1527,15 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       {/* ============================================ */}
       {etapa === 'requisitos' && (
         <div className="space-y-4">
-          <h3 className="text-lg font-bold">Requisitos Match</h3>
+          <h3 className="text-lg font-bold">Skills Técnicas</h3>
           <p className="text-sm text-gray-500">
-            Valide os requisitos mandatórios e desejáveis com o candidato durante a entrevista.
+            Valide as skills técnicas com o candidato durante a entrevista.
           </p>
 
-          {/* Requisitos Mandatórios */}
+          {/* Skills Técnicas */}
           <div>
             <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium text-gray-700">Requisitos Mandatórios</label>
+              <label className="text-sm font-medium text-gray-700">Skills Técnicas</label>
               <button
                 onClick={() => updateDados('requisitos_match', [...(dados.requisitos_match || []), {
                   tecnologia: '', tempo_experiencia: '', requerido: true, atendido: false, observacao: ''
@@ -1766,7 +1766,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
         <div className="space-y-4">
           <h3 className="text-lg font-bold">Detalhes e Observações</h3>
           <p className="text-sm text-gray-500">
-            Adicione observações validadas durante a entrevista para cada requisito mandatório.
+            Adicione observações validadas durante a entrevista para cada skill técnica.
           </p>
 
           {(dados.requisitos_match || []).map((req, idx) => (
@@ -1791,7 +1791,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 
           {(dados.requisitos_match || []).length === 0 && (
             <div className="text-center text-gray-400 py-8">
-              Nenhum requisito mandatório cadastrado. Volte à etapa anterior para adicionar.
+              Nenhuma skill técnica cadastrada. Volte à etapa anterior para adicionar.
             </div>
           )}
         </div>
