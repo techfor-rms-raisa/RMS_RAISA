@@ -13,7 +13,7 @@
  * - Botão verde: "Encerrar Entrevista"
  * - Salva CV parcial no Supabase
  * 
- * Versão: 1.1 - Campo "Comentário Analista R&S" (uso interno, não aparece no CV)
+ * Versão: 1.2 - Fix certificações aparecem no form (TIPOS_ACADEMICOS expandido)
  * Data: 31/03/2026
  */
 
@@ -347,8 +347,11 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             motivo_saida: e.motivo_saida || ''
           }));
 
-          // 2c. Separar formação acadêmica (graduacao/tecnico/mba/mestrado/doutorado) de complementar
-          const TIPOS_ACADEMICOS = ['graduacao', 'tecnico', 'mba', 'mestrado', 'doutorado'];
+          // 2c. Separar formação acadêmica de complementar
+          // 🆕 Fix: certificacao, pos_graduacao e curso_livre incluídos em formacao_academica
+          // pois o form usa FormacaoCV (tipo + curso + instituicao + data_conclusao)
+          // e o select TIPOS_FORMACAO já contém todas essas opções
+          const TIPOS_ACADEMICOS = ['graduacao', 'tecnico', 'mba', 'mestrado', 'doutorado', 'pos_graduacao', 'certificacao', 'curso_livre'];
           const formacaoAcademicaMapeada: FormacaoCV[] = (formacaoDB || [])
             .filter(f => TIPOS_ACADEMICOS.includes(f.tipo))
             .map(f => ({

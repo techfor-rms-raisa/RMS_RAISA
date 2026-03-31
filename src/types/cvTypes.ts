@@ -12,11 +12,9 @@
  * - ja_trabalhou_pj, aceita_pj, possui_empresa, aceita_abrir_empresa
  * - observacao em hard_skills_tabela
  * 
- * 🆕 v3.1 (31/03/2026): Campo comentario_analista + comentario_analista_nome
- * - Comentário interno do analista R&S (não aparece no CV/Parecer)
- * - Persiste em dados_processados (JSONB) na tabela cv_gerado
+ * 🆕 v3.2 (31/03/2026): certificacao adicionado ao FormacaoCV.tipo e TIPOS_FORMACAO
  *
- * Versão: 3.1
+ * Versão: 3.2
  * Data: 31/03/2026
  */
 
@@ -38,7 +36,7 @@ export interface ExperienciaCV {
 }
 
 export interface FormacaoCV {
-  tipo: 'tecnico' | 'graduacao' | 'pos_graduacao' | 'mba' | 'mestrado' | 'doutorado' | 'curso_livre';
+  tipo: 'tecnico' | 'graduacao' | 'pos_graduacao' | 'mba' | 'mestrado' | 'doutorado' | 'curso_livre' | 'certificacao';
   curso: string;
   instituicao: string;
   data_inicio?: string;
@@ -139,10 +137,6 @@ export interface DadosCandidatoTechfor {
   recomendacao_final?: string;
   participando_outros_processos?: boolean;
   participando_processo_cliente?: boolean;
-
-  // === Comentário Interno do Analista R&S (não aparece no CV/Parecer) ===
-  comentario_analista?: string;
-  comentario_analista_nome?: string; // Nome do analista que registrou o comentário
   
   // === Requisitos Match ===
   requisitos_match?: RequisitoMatch[];
@@ -280,7 +274,8 @@ export const TIPOS_FORMACAO = [
   { value: 'mba', label: 'MBA' },
   { value: 'mestrado', label: 'Mestrado' },
   { value: 'doutorado', label: 'Doutorado' },
-  { value: 'curso_livre', label: 'Curso Livre' }
+  { value: 'curso_livre', label: 'Curso Livre' },
+  { value: 'certificacao', label: 'Certificação' } // 🆕 v3.2: adicionado para exibir certificações no form
 ];
 
 export const NIVEIS_IDIOMA = [
