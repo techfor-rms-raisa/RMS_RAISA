@@ -13,8 +13,8 @@
  * - Botão verde: "Encerrar Entrevista"
  * - Salva CV parcial no Supabase
  * 
- * Versão: 1.0
- * Data: 25/02/2026
+ * Versão: 1.1 - Campo "Comentário Analista R&S" (uso interno, não aparece no CV)
+ * Data: 31/03/2026
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -31,6 +31,7 @@ import {
   MODALIDADES_TRABALHO
 } from '@/types/cvTypes';
 import { supabase } from '@/config/supabase';
+import { useAuth } from '../../contexts/AuthContext';
 import { useCVGenerator } from '@/hooks/supabase/useCVGenerator';
 import { useCVTemplates } from '@/hooks/supabase/useCVTemplates';
 import {
@@ -78,6 +79,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
   onEntrevistaFinalizada
 }) => {
   // Hooks Supabase
+  const { user } = useAuth(); // 🆕 Para identificar nome do analista no comentário
   const { 
     cvAtual, 
     saveCV, 
@@ -689,10 +691,18 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       }
 
       // Salvar CV parcial no Supabase
+      // 🆕 Garantir que o nome do analista fique gravado junto ao comentário
+      const dadosParaSalvar = {
+        ...dados,
+        ...(dados.comentario_analista && user?.nome_usuario
+          ? { comentario_analista_nome: user.nome_usuario }
+          : {})
+      };
+
       const cvSalvo = await saveCV({
         candidatura_id: candidaturaId,
         template_id: templateId,
-        dados_processados: dados,
+        dados_processados: dadosParaSalvar,
         cv_html: htmlPreview,
         gerado_por: currentUserId,
         metadados: {
@@ -1729,6 +1739,29 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
               onChange={e => updateDados('recomendacao_final', e.target.value)}
               className="w-full border rounded p-3 h-20 text-sm"
               placeholder="Recomendamos o(a) candidato(a) pois..."
+            />
+          </div>
+
+          {/* 🆕 Comentário interno do Analista R&S — não aparece no Parecer/CV */}
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-bold text-amber-800 text-sm">
+                Comentário Analista R&amp;S
+              </h4>
+              {user?.nome_usuario && (
+                <span className="text-xs text-amber-600 bg-amber-100 px-2 py-1 rounded-full font-medium">
+                  {user.nome_usuario}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-amber-600 mb-2">
+              📌 Uso interno — este comentário <strong>não aparece</strong> no parecer nem no CV gerado.
+            </p>
+            <textarea
+              value={dados.comentario_analista || ''}
+              onChange={e => updateDados('comentario_analista', e.target.value)}
+              className="w-full border border-amber-200 rounded p-3 h-24 text-sm bg-white"
+              placeholder="Anotações da entrevista, impressões, pontos de atenção internos..."
             />
           </div>
         </div>

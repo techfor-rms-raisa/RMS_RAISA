@@ -12,8 +12,12 @@
  * - ja_trabalhou_pj, aceita_pj, possui_empresa, aceita_abrir_empresa
  * - observacao em hard_skills_tabela
  * 
- * Versão: 3.0
- * Data: 25/02/2026
+ * 🆕 v3.1 (31/03/2026): Campo comentario_analista + comentario_analista_nome
+ * - Comentário interno do analista R&S (não aparece no CV/Parecer)
+ * - Persiste em dados_processados (JSONB) na tabela cv_gerado
+ *
+ * Versão: 3.1
+ * Data: 31/03/2026
  */
 
 // ============================================
@@ -135,6 +139,10 @@ export interface DadosCandidatoTechfor {
   recomendacao_final?: string;
   participando_outros_processos?: boolean;
   participando_processo_cliente?: boolean;
+
+  // === Comentário Interno do Analista R&S (não aparece no CV/Parecer) ===
+  comentario_analista?: string;
+  comentario_analista_nome?: string; // Nome do analista que registrou o comentário
   
   // === Requisitos Match ===
   requisitos_match?: RequisitoMatch[];
