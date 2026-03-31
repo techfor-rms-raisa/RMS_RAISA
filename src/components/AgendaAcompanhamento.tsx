@@ -140,6 +140,9 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
   // ✅ [2] Filtro de status na aba Consultores desktop
   const [consultoresStatusFilter, setConsultoresStatusFilter] = useState<'todos' | 'atrasado' | 'pendente' | 'realizado' | 'semanal'>('todos');
 
+  // Filtro do painel lateral do dia (desktop calendário)
+  const [painelDiaFilter, setPainelDiaFilter] = useState<'todos' | 'atrasado' | 'pendente' | 'realizado' | 'semanal'>('todos');
+
   const isCurrentMonth = viewYear === today.getFullYear() && viewMonth === today.getMonth() + 1;
   const todayDay = today.getDate();
 
@@ -1224,11 +1227,53 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
                 {selectedDaySchedule.consultants.length} consultor(es) agendado(s)
               </p>
             </div>
-            <div className="bg-white rounded-b-2xl border border-indigo-100 divide-y divide-gray-50 max-h-[520px] overflow-y-auto">
+
+            {/* ── Filtro de status do painel lateral (desktop only) */}
+            <div className="bg-white border-x border-t border-indigo-100 px-2 py-2 flex gap-1 flex-wrap">
+              {([
+                ['todos',     'Todos'],
+                ['atrasado',  '🔴 Atrasado'],
+                ['pendente',  '🔵 Pendente'],
+                ['realizado', '🟢 Realizado'],
+                ['semanal',   '⚡ Semanal'],
+              ] as const).map(([val, label]) => (
+                <button
+                  key={val}
+                  onClick={() => setPainelDiaFilter(val)}
+                  className={`text-xs px-2 py-1 rounded-full font-medium transition whitespace-nowrap
+                    ${painelDiaFilter === val
+                      ? val === 'atrasado'  ? 'bg-red-500 text-white'
+                      : val === 'pendente'  ? 'bg-blue-500 text-white'
+                      : val === 'realizado' ? 'bg-green-500 text-white'
+                      : val === 'semanal'   ? 'bg-orange-500 text-white'
+                      : 'bg-indigo-600 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="bg-white rounded-b-2xl border border-indigo-100 divide-y divide-gray-50 max-h-[480px] overflow-y-auto">
               {selectedDaySchedule.consultants.length === 0 ? (
                 <p className="p-4 text-sm text-gray-400 text-center">Nenhum consultor agendado.</p>
-              ) : (
-                selectedDaySchedule.consultants.map(sc => {
+              ) : (() => {
+                const filteredDayConsultants = selectedDaySchedule.consultants.filter(sc => {
+                  if (painelDiaFilter === 'todos')     return true;
+                  if (painelDiaFilter === 'semanal')   return sc.isWeekly;
+                  if (painelDiaFilter === 'atrasado')  return getActivityStatus(sc.consultant.id) === 'overdue';
+                  if (painelDiaFilter === 'pendente')  return getActivityStatus(sc.consultant.id) === 'pending';
+                  if (painelDiaFilter === 'realizado') return getActivityStatus(sc.consultant.id) === 'done';
+                  return true;
+                });
+                if (filteredDayConsultants.length === 0) {
+                  return (
+                    <p className="p-4 text-sm text-gray-400 text-center">
+                      Nenhum consultor com este status hoje.
+                    </p>
+                  );
+                }
+                return filteredDayConsultants.map(sc => {
                   const score = getValidFinalScore(sc.consultant);
                   const isNew = isNewConsultant(sc.consultant);
                   const status = getActivityStatus(sc.consultant.id);
@@ -1321,8 +1366,8 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
                       )}
                     </div>
                   );
-                })
-              )}
+                });
+              })()}
             </div>
           </div>
         ) : (
