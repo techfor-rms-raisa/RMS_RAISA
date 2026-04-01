@@ -24,6 +24,10 @@ export const config = { maxDuration: 15 };
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET.' });
 
+    // Desabilitar cache do Vercel — dados devem ser sempre frescos
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+
     try {
         // ── 1. Totais por usuário (todos os períodos) ─────────────────────────
         // FIX v1.1: select sem JOIN por FK — busca nomes separadamente
@@ -44,6 +48,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .limit(10000); // FIX: default Supabase limit é 1000 — aumentar para não cortar usuários
 
         if (e1) throw new Error(e1.message);
+
+        // DEBUG temporário — confirmar quantos registros o Supabase retornou
+        console.log(`📊 [prospect-stats] Supabase retornou: ${(porUsuario || []).length} leads (limit=10000)`);
 
         // Buscar nomes de TODOS os usuários ativos independentemente de FK
         const { data: appUsers, error: e2 } = await supabase
