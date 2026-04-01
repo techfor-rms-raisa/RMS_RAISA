@@ -195,6 +195,11 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [loadingExclusoes, setLoadingExclusoes]       = useState(false);
     const [buscaExclusao, setBuscaExclusao]             = useState('');
 
+    // KPI Cards — Total Empresas + Importados Hoje RAISA
+    const [kpiEmpresas, setKpiEmpresas]                 = useState<number | null>(null);
+    const [kpiImportadosHoje, setKpiImportadosHoje]     = useState<number | null>(null);
+    const [kpiLoading, setKpiLoading]                   = useState(false);
+
     // Seleção
     const [todosSelecionados, setTodosSelecionados]     = useState(false);
 
@@ -251,6 +256,30 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         setAbaAtiva('busca');
         setQueriesExecutadas(new Set());
     }, []);
+
+    // ============================================
+    // KPI CARDS — busca totais para os cards do topo
+    // ============================================
+    const carregarKpis = useCallback(async () => {
+        setKpiLoading(true);
+        try {
+            const res  = await fetch('/api/prospect-leads?kpis=true');
+            const data = await res.json();
+            if (data.success) {
+                setKpiEmpresas(data.total_empresas ?? 0);
+                setKpiImportadosHoje(data.importados_hoje ?? 0);
+            }
+        } catch (e) {
+            console.error('Erro ao carregar KPIs:', e);
+        } finally {
+            setKpiLoading(false);
+        }
+    }, []);
+
+    // Carregar KPIs ao montar o componente
+    useEffect(() => {
+        carregarKpis();
+    }, [carregarKpis]);
 
     // ============================================
     // RECEBER LEADS DA PROSPECT EXTENSION
@@ -1284,6 +1313,48 @@ A empresa ficará disponível para a equipe.`)) return;
                 </span>
                 <span className="text-gray-400 text-xs">— Busca de leads B2B via dados públicos</span>
             </p>
+        </div>
+
+        {/* KPI Cards — Total Empresas + Importados Hoje RAISA */}
+        <div className="flex items-center gap-3 mb-5">
+            {/* Total de Empresas na Base */}
+            <div className="flex items-center gap-2.5 px-4 py-2.5 bg-white border border-gray-200 rounded-xl shadow-sm">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                    <i className="fa-solid fa-building text-blue-500 text-sm"></i>
+                </div>
+                <div>
+                    <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide leading-none mb-0.5">Total de Empresas</p>
+                    <p className="text-lg font-bold text-gray-800 leading-none">
+                        {kpiLoading ? <span className="text-gray-300 text-sm">...</span>
+                            : kpiEmpresas !== null ? kpiEmpresas.toLocaleString('pt-BR') : '—'}
+                    </p>
+                </div>
+            </div>
+
+            {/* Importados Hoje RAISA */}
+            <div className="flex items-center gap-2.5 px-4 py-2.5 bg-white border border-gray-200 rounded-xl shadow-sm">
+                <div className="w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center shrink-0">
+                    <i className="fa-solid fa-file-import text-emerald-500 text-sm"></i>
+                </div>
+                <div>
+                    <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide leading-none mb-0.5">Importados Hoje RAISA</p>
+                    <p className="text-lg font-bold text-gray-800 leading-none">
+                        {kpiLoading ? <span className="text-gray-300 text-sm">...</span>
+                            : kpiImportadosHoje !== null
+                                ? <>{kpiImportadosHoje.toLocaleString('pt-BR')}
+                                    {kpiImportadosHoje === 0 && <span className="ml-1.5 text-[10px] font-medium text-amber-500 bg-amber-50 px-1.5 py-0.5 rounded-full">verificar</span>}
+                                  </>
+                                : '—'}
+                    </p>
+                </div>
+            </div>
+
+            {/* Botão refresh discreto */}
+            <button onClick={carregarKpis} disabled={kpiLoading}
+                className="text-gray-300 hover:text-gray-500 transition-colors disabled:opacity-30"
+                title="Atualizar contadores">
+                <i className={`fa-solid fa-rotate text-xs ${kpiLoading ? 'fa-spin' : ''}`}></i>
+            </button>
         </div>
 
         {/* Abas */}

@@ -18,8 +18,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'GET') {
         const {
             status, empresa, motor, origem, reservado_por,
-            excluir_status, usuarios,
+            excluir_status, usuarios, kpis,
         } = req.query as Record<string, string>;
+
+        // ── KPI Cards: Total Empresas + Importados Hoje RAISA ────────────
+        if (kpis === 'true') {
+            // Total de Empresas = leads com motor cv_% (excluindo pesquisas manuais)
+            const { count: totalEmpresas, error: e1 } = await supabase
+                .from('prospect_leads')
+                .select('id', { count: 'exact', head: true })
+                .like('motor', 'cv_%');
+
+            if (e1) return res.status(500).json({ success: false, error: e1.message });
+
+            // Importados Hoje RAISA = registros em pessoa_experiencias criados hoje
+            const hoje = new Date();
+            const inicioDia = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate()).toISOString();
+            const fimDia    = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate() + 1).toISOString();
+
+            const { count: importadosHoje, error: e2 } = await supabase
+                .from('pessoa_experiencias')
+                .select('id', { count: 'exact', head: true })
+                .gte('created_at', inicioDia)
+                .lt('created_at', fimDia);
+
+            if (e2) return res.status(500).json({ success: false, error: e2.message });
+
+            return res.status(200).json({
+                success:          true,
+                total_empresas:   totalEmpresas ?? 0,
+                importados_hoje:  importadosHoje ?? 0,
+            });
+        }
 
         // Subquery de usuários para dropdown de redistribuição
         if (usuarios === 'true') {
