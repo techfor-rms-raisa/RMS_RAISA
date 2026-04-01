@@ -30,27 +30,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         // ── 1. Totais por usuário (todos os períodos) ─────────────────────────
-        // FIX v1.1: select sem JOIN por FK — busca nomes separadamente
-        // Garante que todos os perfis (incluindo SDR) apareçam no dashboard
-        const { data: porUsuario, error: e1 } = await supabase
-            .from('prospect_leads')
-            .select(`
-                buscado_por,
-                motor,
-                email,
-                enriquecido,
-                senioridade,
-                empresa_nome,
-                empresa_dominio,
-                criado_em
-            `)
-            .order('criado_em', { ascending: false })
-            .limit(10000); // FIX: default Supabase limit é 1000 — aumentar para não cortar usuários
+        // FIX v1.2: paginação — Supabase limita 1000 por request independente do limit()
+        // Busca em páginas de 1000 até esgotar todos os registros
+        const FIELDS = 'buscado_por,motor,email,enriquecido,senioridade,empresa_nome,empresa_dominio,criado_em';
+        let allLeads: any[] = [];
+        let pageFrom = 0;
+        const PAGE_SIZE = 1000;
 
-        if (e1) throw new Error(e1.message);
+        while (true) {
+            const { data: page, error: eP } = await supabase
+                .from('prospect_leads')
+                .select(FIELDS)
+                .order('criado_em', { ascending: false })
+                .range(pageFrom, pageFrom + PAGE_SIZE - 1);
 
-        // DEBUG temporário — confirmar quantos registros o Supabase retornou
-        console.log(`📊 [prospect-stats] Supabase retornou: ${(porUsuario || []).length} leads (limit=10000)`);
+            if (eP) throw new Error(eP.message);
+            if (!page || page.length === 0) break;
+
+            allLeads = allLeads.concat(page);
+            console.log(`📄 [prospect-stats] Página ${pageFrom/PAGE_SIZE + 1}: ${page.length} leads (total: ${allLeads.length})`);
+            if (page.length < PAGE_SIZE) break;
+            pageFrom += PAGE_SIZE;
+        }
+
+        const porUsuario = allLeads;
+
 
         // Buscar nomes de TODOS os usuários ativos independentemente de FK
         const { data: appUsers, error: e2 } = await supabase
