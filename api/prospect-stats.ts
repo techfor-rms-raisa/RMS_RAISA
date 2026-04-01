@@ -40,7 +40,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 empresa_dominio,
                 criado_em
             `)
-            .order('criado_em', { ascending: false });
+            .order('criado_em', { ascending: false })
+            .limit(10000); // FIX: default Supabase limit é 1000 — aumentar para não cortar usuários
 
         if (e1) throw new Error(e1.message);
 
