@@ -237,28 +237,36 @@ const AgendaAcompanhamento: React.FC<AgendaAcompanhamentoProps> = ({
     });
   }, [selectedDay, activeConsultants]); // eslint-disable-line
 
-  // ── Calcular status de atividade do consultor hoje
+  // ── Calcular status de atividade do consultor
+  // Regras:
+  //   'done'    → tem pelo menos 1 relatório no mês/ano visualizado (viewMonth/viewYear)
+  //   'overdue' → sem relatório no mês atual E último relatório há mais de 1 dia
+  //   'pending' → sem relatório no mês, ainda dentro do prazo
   const getActivityStatus = useCallback((consultantId: number): ActivityStatus => {
     const reports = activityCache[consultantId];
     if (!reports) return 'pending';
 
-    const todayStr = today.toISOString().split('T')[0];
-    const hasToday = reports.some(r => {
-      const d = (r.created_at || '').split('T')[0];
-      return d === todayStr;
+    // Verificar se tem relatório no mês/ano sendo visualizado
+    const hasReportThisMonth = reports.some(r => {
+      const rYear = (r as any).year ?? new Date(r.created_at || '').getFullYear();
+      const rMonth = (r as any).month ?? (new Date(r.created_at || '').getMonth() + 1);
+      return rYear === viewYear && rMonth === viewMonth;
     });
-    if (hasToday) return 'done';
 
-    if (reports.length === 0) return 'pending';
-    const lastReport = reports.sort((a, b) =>
-      new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime()
-    )[0];
-    const lastDate = new Date(lastReport.created_at || '');
-    const diffDays = Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+    if (hasReportThisMonth) return 'done';
 
-    if (diffDays > 1 && isCurrentMonth) return 'overdue';
+    // Sem relatório no mês: verificar atraso (só no mês atual)
+    if (isCurrentMonth && reports.length > 0) {
+      const lastReport = [...reports].sort((a, b) =>
+        new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime()
+      )[0];
+      const lastDate = new Date(lastReport.created_at || '');
+      const diffDays = Math.floor((today.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+      if (diffDays > 1) return 'overdue';
+    }
+
     return 'pending';
-  }, [activityCache, today, isCurrentMonth]);
+  }, [activityCache, today, isCurrentMonth, viewYear, viewMonth]);
 
   const getLastActivityDate = useCallback((consultantId: number): string | null => {
     const reports = activityCache[consultantId];
