@@ -6,7 +6,7 @@
  * - Logo TechFor, faixa vermelha lateral, rodapé institucional
  * - Tabelas de dados pessoais, requisitos, formação
  * - Atividades em bullets, motivo de saída em itálico
- * - Requisitos Mandatórios (3 colunas) e Diferenciais (2 colunas)
+ * - Skills Técnicas (3 colunas) e Diferenciais (2 colunas)
  * 
  * Dependência: npm install docx (já instalado via package.json)
  * 
@@ -294,7 +294,7 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
   // --- REQUISITOS MANDATÓRIOS ---
   const reqsMandatorios = (dados.requisitos_match || []).filter((r: any) => r.tipo === 'mandatorio' || !r.tipo);
   if (reqsMandatorios.length > 0) {
-    children.push(sectionBoldTitle('Requisitos Mandatórios'));
+    children.push(sectionBoldTitle('Skills Técnicas'));
     
     const colWidths = [3500, 1526, 4000];
     children.push(new Table({

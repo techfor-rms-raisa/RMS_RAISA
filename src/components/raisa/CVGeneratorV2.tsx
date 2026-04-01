@@ -886,13 +886,13 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
             </div>
           )}
 
-          {/* Etapa 3: Requisitos Match */}
+          {/* Etapa 3: Skills Técnicas */}
           {etapa === 'requisitos' && (
             <div className="space-y-6">
               <div className="flex justify-between items-center">
-                <h3 className="text-xl font-bold">Requisitos x Experiência</h3>
+                <h3 className="text-xl font-bold">Skills Técnicas</h3>
                 <button onClick={addRequisito} className="bg-blue-600 text-white px-3 py-1 rounded text-sm">
-                  + Adicionar Requisito
+                  + Adicionar Skill
                 </button>
               </div>
               
@@ -970,7 +970,7 @@ const CVGeneratorV2: React.FC<CVGeneratorV2Props> = ({
 
               {(!dados.requisitos_match || dados.requisitos_match.length === 0) && (
                 <div className="text-center py-8 text-gray-400">
-                  Nenhum requisito adicionado. Clique em "+ Adicionar Requisito" para começar.
+                  Nenhum requisito adicionado. Clique em "+ Adicionar Skill" para começar.
                 </div>
               )}
             </div>

@@ -13,7 +13,7 @@
  * - Botão verde: "Encerrar Entrevista"
  * - Salva CV parcial no Supabase
  * 
- * Versão: 1.1 - Campo "Comentário Analista R&S" (uso interno, não aparece no CV)
+ * Versão: 1.2 - Fix certificações aparecem no form (TIPOS_ACADEMICOS expandido)
  * Data: 31/03/2026
  */
 
@@ -347,22 +347,29 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             motivo_saida: e.motivo_saida || ''
           }));
 
-          // 2c. Separar formação acadêmica (graduacao/tecnico/mba/mestrado/doutorado) de complementar
-          const TIPOS_ACADEMICOS = ['graduacao', 'tecnico', 'mba', 'mestrado', 'doutorado'];
+          // 2c. Separar formação em dois grupos:
+          // - formacao_academica: graus acadêmicos (graduacao, pos_graduacao, mba, mestrado, doutorado, tecnico)
+          // - formacao_complementar: certificacoes e cursos livres (seção própria no form)
+          const TIPOS_ACADEMICOS    = ['graduacao', 'tecnico', 'mba', 'mestrado', 'doutorado', 'pos_graduacao'];
+          const TIPOS_CERTIFICACOES = ['certificacao', 'curso_livre'];
+
           const formacaoAcademicaMapeada: FormacaoCV[] = (formacaoDB || [])
             .filter(f => TIPOS_ACADEMICOS.includes(f.tipo))
             .map(f => ({
-              tipo: f.tipo || '',
+              tipo: f.tipo as FormacaoCV['tipo'],
               curso: f.curso || '',
               instituicao: f.instituicao || '',
               data_conclusao: f.em_andamento ? 'Em andamento' : f.ano_conclusao ? String(f.ano_conclusao) : ''
             }));
-          const formacaoComplementarMapeada = (formacaoDB || [])
-            .filter(f => !TIPOS_ACADEMICOS.includes(f.tipo))
+
+          // 🆕 v1.2: Certificações mapeadas como FormacaoCV para aproveitar o form existente
+          const formacaoComplementarMapeada: FormacaoCV[] = (formacaoDB || [])
+            .filter(f => TIPOS_CERTIFICACOES.includes(f.tipo))
             .map(f => ({
-              nome: f.curso || '',
+              tipo: f.tipo as FormacaoCV['tipo'],
+              curso: f.curso || '',
               instituicao: f.instituicao || '',
-              ano_conclusao: f.em_andamento ? 'Em andamento' : f.ano_conclusao ? String(f.ano_conclusao) : ''
+              data_conclusao: f.em_andamento ? 'Em andamento' : f.ano_conclusao ? String(f.ano_conclusao) : ''
             }));
 
           // 2d. Mapear idiomas
@@ -430,8 +437,10 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
           const formCvTemConteudo = (cvDados.formacao_academica || [])
             .some((f: any) => f.curso?.trim() || f.instituicao?.trim());
 
+          // 🆕 Fix duplicação: verificação usa f.curso (novo formato FormacaoCV)
+          // Antes usava f.nome que nunca existe → sempre false → banco + CV = duplicatas
           const formCompCvTemConteudo = (cvDados.formacao_complementar || [])
-            .some((f: any) => f.nome?.trim() || f.instituicao?.trim());
+            .some((f: any) => f.curso?.trim() || f.nome?.trim() || f.instituicao?.trim());
 
           const idiomasCvTemConteudo = (cvDados.idiomas || [])
             .some((i: any) => i.idioma?.trim());
@@ -1298,8 +1307,8 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 
           {/* Formação */}
           <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium text-gray-700">Formação Acadêmica</label>
+            <div className="flex justify-between items-center mb-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+              <label className="text-sm font-semibold text-blue-800">🎓 Formação Acadêmica</label>
               <button
                 onClick={() => updateDados('formacao_academica', [...(dados.formacao_academica || []), {
                   tipo: 'graduacao', curso: '', instituicao: '', data_conclusao: '', em_andamento: false
@@ -1376,10 +1385,92 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             ))}
           </div>
 
+          {/* Certificações e Cursos */}
+          <div>
+            <div className="flex justify-between items-center mb-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              <label className="text-sm font-semibold text-amber-800">📜 Certificações e Cursos</label>
+              <button
+                onClick={() => updateDados('formacao_complementar', [...(dados.formacao_complementar || []), {
+                  tipo: 'certificacao', curso: '', instituicao: '', data_conclusao: '', em_andamento: false
+                } as FormacaoCV])}
+                className="text-sm text-blue-600 hover:text-blue-800 flex items-center gap-1"
+              >
+                <Plus size={14} /> Adicionar
+              </button>
+            </div>
+            {(dados.formacao_complementar || []).length === 0 && (
+              <p className="text-xs text-gray-400 italic">Nenhuma certificação cadastrada.</p>
+            )}
+            {(dados.formacao_complementar || []).map((cert, idx) => (
+              <div key={idx} className="border rounded-lg p-3 mb-2 bg-white">
+                <div className="flex justify-between items-start mb-2">
+                  <span className="text-xs font-medium text-gray-500">Certificação {idx + 1}</span>
+                  <button
+                    onClick={() => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas.splice(idx, 1);
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="text-red-400 hover:text-red-600"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={cert.tipo || 'certificacao'}
+                    onChange={e => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas[idx] = { ...novas[idx], tipo: e.target.value as FormacaoCV['tipo'] };
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="border rounded p-2 text-sm"
+                  >
+                    <option value="certificacao">Certificação</option>
+                    <option value="curso_livre">Curso Livre</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={cert.curso || ''}
+                    onChange={e => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas[idx] = { ...novas[idx], curso: e.target.value };
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="border rounded p-2 text-sm"
+                    placeholder="Nome da certificação / curso"
+                  />
+                  <input
+                    type="text"
+                    value={cert.instituicao || ''}
+                    onChange={e => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas[idx] = { ...novas[idx], instituicao: e.target.value };
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="border rounded p-2 text-sm"
+                    placeholder="Instituição / Emissor"
+                  />
+                  <input
+                    type="text"
+                    value={cert.data_conclusao || ''}
+                    onChange={e => {
+                      const novas = [...(dados.formacao_complementar || [])];
+                      novas[idx] = { ...novas[idx], data_conclusao: e.target.value };
+                      updateDados('formacao_complementar', novas);
+                    }}
+                    className="border rounded p-2 text-sm"
+                    placeholder="Ano de obtenção"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
           {/* Idiomas */}
           <div>
-            <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium text-gray-700">Idiomas</label>
+            <div className="flex justify-between items-center mb-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              <label className="text-sm font-semibold text-green-800">🌍 Idiomas</label>
               <button
                 onClick={() => updateDados('idiomas', [...(dados.idiomas || []), {
                   idioma: '', nivel: 'intermediario'
@@ -1436,15 +1527,15 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
       {/* ============================================ */}
       {etapa === 'requisitos' && (
         <div className="space-y-4">
-          <h3 className="text-lg font-bold">Requisitos Match</h3>
+          <h3 className="text-lg font-bold">Skills Técnicas</h3>
           <p className="text-sm text-gray-500">
-            Valide os requisitos mandatórios e desejáveis com o candidato durante a entrevista.
+            Valide as skills técnicas com o candidato durante a entrevista.
           </p>
 
-          {/* Requisitos Mandatórios */}
+          {/* Skills Técnicas */}
           <div>
             <div className="flex justify-between items-center mb-2">
-              <label className="text-sm font-medium text-gray-700">Requisitos Mandatórios</label>
+              <label className="text-sm font-medium text-gray-700">Skills Técnicas</label>
               <button
                 onClick={() => updateDados('requisitos_match', [...(dados.requisitos_match || []), {
                   tecnologia: '', tempo_experiencia: '', requerido: true, atendido: false, observacao: ''
@@ -1675,7 +1766,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
         <div className="space-y-4">
           <h3 className="text-lg font-bold">Detalhes e Observações</h3>
           <p className="text-sm text-gray-500">
-            Adicione observações validadas durante a entrevista para cada requisito mandatório.
+            Adicione observações validadas durante a entrevista para cada skill técnica.
           </p>
 
           {(dados.requisitos_match || []).map((req, idx) => (
@@ -1700,7 +1791,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
 
           {(dados.requisitos_match || []).length === 0 && (
             <div className="text-center text-gray-400 py-8">
-              Nenhum requisito mandatório cadastrado. Volte à etapa anterior para adicionar.
+              Nenhuma skill técnica cadastrada. Volte à etapa anterior para adicionar.
             </div>
           )}
         </div>
