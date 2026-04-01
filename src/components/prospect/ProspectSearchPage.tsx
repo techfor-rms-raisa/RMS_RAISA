@@ -564,10 +564,13 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     }, [filtroLeadsEmpresa, filtroLeadsStatus, currentUser, podeVerTodosLeads]);
 
     // 🆕 Atualizar refs espelho — permite que o useEffect da extensão (acima no arquivo)
-    // chame estas funções sem TDZ e sem dependências circulares
-    // (refs são mutáveis e não causam re-render)
-    carregarLeadsSalvosRef.current = carregarLeadsSalvos;
-    carregarMeusLeadsRef.current   = carregarMeusLeads;
+    // chame estas funções sem TDZ e sem dependências circulares.
+    // IMPORTANTE: mantido dentro de useEffect para garantir ordem de inicialização
+    // correta no bundle de produção (evita TDZ com esbuild/Rollup em modo minificado).
+    useEffect(() => {
+        carregarLeadsSalvosRef.current = carregarLeadsSalvos;
+        carregarMeusLeadsRef.current   = carregarMeusLeads;
+    }, [carregarLeadsSalvos, carregarMeusLeads]);
 
     // Chamado: ao clicar Prospectar OU ao exportar XLS com seleção
     // ============================================
