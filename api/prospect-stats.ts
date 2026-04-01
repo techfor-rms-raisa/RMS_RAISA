@@ -26,6 +26,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         // ── 1. Totais por usuário (todos os períodos) ─────────────────────────
+        // FIX v1.1: select sem JOIN por FK — busca nomes separadamente
+        // Garante que todos os perfis (incluindo SDR) apareçam no dashboard
         const { data: porUsuario, error: e1 } = await supabase
             .from('prospect_leads')
             .select(`
@@ -34,12 +36,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 email,
                 enriquecido,
                 senioridade,
-                criado_em,
-                app_users!prospect_leads_buscado_por_fkey ( nome_usuario )
+                empresa_nome,
+                empresa_dominio,
+                criado_em
             `)
             .order('criado_em', { ascending: false });
 
         if (e1) throw new Error(e1.message);
+
+        // Buscar nomes de TODOS os usuários ativos independentemente de FK
+        const { data: appUsers, error: e2 } = await supabase
+            .from('app_users')
+            .select('id, nome_usuario')
+            .eq('ativo_usuario', true);
+
+        if (e2) throw new Error(e2.message);
+
+        // Mapa id → nome para lookup O(1)
+        const nomesMap = new Map<number, string>(
+            (appUsers || []).map((u: any) => [u.id, u.nome_usuario])
+        );
 
         const leads = porUsuario || [];
 
@@ -63,7 +79,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (!usuariosMap.has(uid)) {
                 usuariosMap.set(uid, {
                     usuario_id:   uid,
-                    nome_usuario: (lead.app_users as any)?.nome_usuario || `Usuário ${uid}`,
+                    nome_usuario: nomesMap.get(uid) || `Usuário ${uid}`,
                     diario:   { pesquisas: 0, perfis: 0, emails: 0, creditos: 0 },
                     mensal:   { pesquisas: 0, perfis: 0, emails: 0, creditos: 0 },
                     anual:    { pesquisas: 0, perfis: 0, emails: 0, creditos: 0 },
