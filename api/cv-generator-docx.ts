@@ -337,6 +337,32 @@ async function gerarDocxTechfor(dados: any): Promise<Buffer> {
     }));
   }
 
+  // --- REQUISITOS DESEJÁVEIS ---
+  const reqsDesejaveis = dados.requisitos_desejaveis || [];
+  if (reqsDesejaveis.length > 0) {
+    children.push(sectionBoldTitle('Requisitos Desejáveis'));
+
+    const colWidthsDesej = [3200, 1526, 3300, 1000];
+    children.push(new Table({
+      width: { size: CONTENT_WIDTH, type: WidthType.DXA },
+      columnWidths: colWidthsDesej,
+      rows: [
+        new TableRow({ children: [
+          makeHeaderCell('Tecnologia', colWidthsDesej[0]),
+          makeHeaderCell('Tempo de Experiência', colWidthsDesej[1]),
+          makeHeaderCell('Observação', colWidthsDesej[2]),
+          makeHeaderCell('Atende', colWidthsDesej[3])
+        ]}),
+        ...reqsDesejaveis.map((r: any) => new TableRow({ children: [
+          makeDataCell(r.tecnologia || '', colWidthsDesej[0], 18),
+          makeDataCell(r.tempo_experiencia || '', colWidthsDesej[1], 18),
+          makeDataCell(r.observacao || '', colWidthsDesej[2], 18),
+          makeDataCell(r.atendido ? '✓' : '✗', colWidthsDesej[3], 18)
+        ]}))
+      ]
+    }));
+  }
+
   // --- HARD SKILLS (sempre exibida se houver dados) ---
   const hardSkills = dados.hard_skills_tabela || [];
   if (hardSkills.length > 0) {

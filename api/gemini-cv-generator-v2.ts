@@ -581,6 +581,33 @@ async function gerarHTMLTechfor(req: VercelRequest, res: VercelResponse) {
     </div>
     ` : ''}
     
+    <!-- Requisitos Desejáveis -->
+    ${dados.requisitos_desejaveis && dados.requisitos_desejaveis.length > 0 ? `
+    <div class="secao">
+      <div class="secao-titulo">Requisitos Desejáveis</div>
+      <table class="tabela-requisitos">
+        <thead>
+          <tr>
+            <th style="width: 40%">Tecnologia</th>
+            <th style="width: 15%">Tempo de Experiência/Anos</th>
+            <th style="width: 35%">Observação</th>
+            <th style="width: 10%">Atende</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dados.requisitos_desejaveis.map((r: any) => `
+          <tr>
+            <td>${r.tecnologia || ''}</td>
+            <td>${r.tempo_experiencia || ''}</td>
+            <td>${r.observacao || ''}</td>
+            <td style="text-align:center">${r.atendido ? '✓' : '✗'}</td>
+          </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+    ` : ''}
+
     <!-- Hard Skills Tabela -->
     ${dados.hard_skills_tabela && dados.hard_skills_tabela.length > 0 ? `
     <div class="secao">
