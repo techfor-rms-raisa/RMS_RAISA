@@ -9,8 +9,13 @@
  * e devolve para o frontend do Prospect Engine exibir na lista.
  * user_id vem da Extension via localStorage rms_user.
  *
- * Versão: 2.0
- * Data: 15/03/2026
+ * Versão: 2.1
+ * Data: 09/04/2026
+ *
+ * v2.1 — FIX CRÍTICO: leads sem empresa_nome não são mais descartados.
+ *         empresa_nome vazia é legítima — Google nem sempre exibe a empresa
+ *         no snippet. Rejeitar o lead inteiro causava resultados zerados e
+ *         o background.js não disparava postMessage para o React.
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -175,8 +180,9 @@ function normalizarLead(lead: LeadCapturado, index: number): ProspectNormalizado
   const empresa = sanitizarEmpresaExt(lead.empresa_nome || '');
   const { cidade, estado, pais } = parsearLocalizacao(lead.localizacao);
 
-  // Rejeitar lead se empresa for inválida após sanitização
-  if (!empresa) return null;
+  // NOTA: empresa vazia é permitida — Google nem sempre exibe empresa no snippet.
+  // Rejeitar por empresa vazia causava descarte de leads válidos e impedia o
+  // background.js de disparar o postMessage para o React (bug corrigido em v2.1).
 
   // Gerar ID único baseado no URL do LinkedIn (mais estável que nome)
   const linkedinSlug = lead.linkedin_url.split('/in/')[1]?.replace(/\/$/, '') || '';
