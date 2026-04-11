@@ -82,15 +82,11 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
     return !analistasSelecionados.every(id => topSugeridos.includes(id));
   };
 
-  // Toggle seleção de analista (máximo 3 para seleção manual)
+  // Toggle seleção de analista — sem limite máximo (exibe todos os analistas cadastrados)
   const toggleAnalista = (analistaId: number) => {
     setAnalistasSelecionados(prev => {
       if (prev.includes(analistaId)) {
         return prev.filter(id => id !== analistaId);
-      }
-      // Limite máximo de 3 analistas
-      if (prev.length >= 3) {
-        return [...prev.slice(1), analistaId];
       }
       return [...prev, analistaId];
     });
