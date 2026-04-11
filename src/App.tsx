@@ -277,6 +277,75 @@ const App: React.FC = () => {
       }
   };
   
+  // ============================================
+  // 🆕 v3.0 (11/04/2026): DirectSave — salva com risco eleito pelo analista
+  // Chamado pelo AtividadesInserir após o analista confirmar a análise bifásica
+  // ============================================
+  const handleDirectSave = async (
+    aiResult: Record<string, any>,
+    rawText: string,
+    confidencial: boolean,
+    riscoAnalista: number,
+    consultantName: string,
+    gestorName: string,
+    month: number,
+    year: number
+  ) => {
+    try {
+      console.log(
+        `💾 [DirectSave] ${consultantName} | Risco analista: ${riscoAnalista} | Confidencial: ${confidencial}`
+      );
+
+      // Montar AIAnalysisResult com risco eleito pelo analista (sobrescreve a IA)
+      const finalResult: AIAnalysisResult = {
+        consultantName,
+        managerName: gestorName,
+        reportMonth: month,
+        reportYear: year,
+        riskScore: riscoAnalista, // ← Risco do analista, não da IA
+        summary:
+          aiResult.summary ||
+          `Relatório manual: ${rawText.substring(0, 150)}${rawText.length > 150 ? '...' : ''}`,
+        negativePattern: aiResult.negativePattern || null,
+        predictiveAlert: aiResult.predictiveAlert || null,
+        recommendations: aiResult.recommendations || [],
+        details: rawText,
+      };
+
+      // Salvar via mecanismo existente (updateConsultantScore)
+      await updateConsultantScore(finalResult, rawText, currentUser?.nome_usuario);
+
+      // Atualizar campos meta (confidencial + risco_analista) via endpoint dedicado
+      // Não-bloqueante: falha aqui não impede o save principal
+      const consultant = consultants.find(c => c.nome_consultores === consultantName);
+      if (consultant?.id) {
+        try {
+          const metaRes = await fetch('/api/update-report-meta', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              consultant_id: consultant.id,
+              month,
+              year,
+              confidencial,
+              risco_analista: riscoAnalista,
+            }),
+          });
+          if (metaRes.ok) {
+            console.log(`[DirectSave] ✅ Meta atualizada para ${consultantName}`);
+          }
+        } catch (metaErr) {
+          console.warn('[DirectSave] Meta update não-crítica falhou:', metaErr);
+        }
+      }
+
+      console.log(`✅ [DirectSave] Concluído — ${consultantName}`);
+    } catch (error) {
+      console.error('❌ [DirectSave] Erro ao salvar:', error);
+      throw error;
+    }
+  };
+
   const handleSimulateLink = (token: string) => {
       setSimulatedToken(token);
       setCurrentView('feedback_portal');
@@ -369,9 +438,11 @@ const App: React.FC = () => {
             allReports={consultants.flatMap(c => c.consultant_reports || [])}
             loadConsultantReports={loadConsultantReports}
             onManualReport={handleManualAnalysis}
+            onDirectSave={handleDirectSave}
             preSelectedClient={contextualClient}
             preSelectedConsultant={contextualConsultant}
             usuariosRMS={users}
+            currentUserName={currentUser?.nome_usuario}
           />;
       case 'atividades_consultar':
           return <AtividadesConsultar 
@@ -379,7 +450,8 @@ const App: React.FC = () => {
             consultants={consultants} 
             usuariosCliente={usuariosCliente} 
             loadConsultantReports={memoizedLoadConsultantReports}
-            deleteConsultantReport={deleteConsultantReport} // 🆕 v2.5
+            deleteConsultantReport={deleteConsultantReport}
+            currentUserTipo={currentUser?.tipo_usuario}
           />;
       case 'atividades_exportar':
           return <AtividadesExportar clients={clients} consultants={consultants} usuariosCliente={usuariosCliente} users={users} loadConsultantReports={memoizedLoadConsultantReports} />;
