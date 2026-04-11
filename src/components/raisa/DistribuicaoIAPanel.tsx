@@ -609,3 +609,4 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
 };
 
 export default DistribuicaoIAPanel;
+
