@@ -68,7 +68,6 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
     gerarRankingAnalistas(vagaId);
   }, [vagaId, gerarRankingAnalistas]);
 
-  );
 
   // Verificar se é override (seleção manual ou analistas diferentes dos sugeridos)
   const isOverride = () => {
