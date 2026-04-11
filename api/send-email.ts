@@ -30,6 +30,7 @@ interface EmailRequest {
   inclusionDate?: string;
   summary: string;
   gestaoPessoasName?: string; // Nome do Gestão de Pessoas do cliente
+  confidencial?: boolean;     // 🆕 v52.5: Flag de relatório confidencial
   type: 'critical_risk' | 'password_recovery' | 'activity_report' | 'general';
 }
 
@@ -417,6 +418,14 @@ function generateActivityReportHTML(data: EmailRequest): string {
     <p style="color: #93c5fd; margin: 5px 0 0 0; font-size: 14px;">Relatório de Atividade do Consultor</p>
   </div>
 
+  ${data.confidencial ? `
+  <div style="background-color: #7c3aed; padding: 10px 25px; border-left: 4px solid #5b21b6; border-right: 4px solid #5b21b6; text-align: center;">
+    <span style="color: #ffffff; font-size: 13px; font-weight: 700; letter-spacing: 1px;">
+      &#128274; RELATÓRIO CONFIDENCIAL — Restrinja a circulação desta informação
+    </span>
+  </div>
+  ` : ''}
+
   <div style="background-color: #ffffff; padding: 30px; border: 1px solid #e5e7eb; border-top: none;">
 
     <p style="font-size: 16px; margin-bottom: 20px;">Prezado(a) <strong>${data.toName}</strong>,</p>
@@ -496,7 +505,7 @@ RMS-RAISA - Relatório de Atividade do Consultor
 
 Prezado(a) ${data.toName},
 
-Segue abaixo o relatório de atividade registrado no sistema RMS-RAISA.
+${data.confidencial ? '⚠ RELATÓRIO CONFIDENCIAL — Restrinja a circulação desta informação.\n\n' : ''}Segue abaixo o relatório de atividade registrado no sistema RMS-RAISA.
 
 DADOS DO CONSULTOR:
 - Consultor: ${data.consultantName || 'Não informado'}

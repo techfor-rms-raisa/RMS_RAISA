@@ -441,7 +441,8 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
     reportText: string,
     consultantData: Consultant,
     clientName: string,
-    monthName: string
+    monthName: string,
+    isConfidencial: boolean
   ) => {
     const destinatarios: { email: string; nome: string; perfil: string }[] = [];
 
@@ -482,6 +483,7 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
                 clientName,
                 inclusionDate: new Date().toLocaleDateString('pt-BR'),
                 summary: reportText,
+                confidencial: isConfidencial,
                 type: 'activity_report' as const,
               }),
             });
@@ -608,7 +610,7 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
       if ((notifComercial || notifRS || notifPessoas) && consultant) {
         const monthName =
           new Date(currentYear, currentMonth - 1, 1).toLocaleString('pt-BR', { month: 'long' });
-        await enviarEmailsNotificacao(activities, consultant, selectedClient, monthName);
+        await enviarEmailsNotificacao(activities, consultant, selectedClient, monthName, confidencial);
       }
 
       // Reset completo
