@@ -81,10 +81,10 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
       setLoadingAnalistas(true);
       try {
         const { data, error } = await supabase
-          .from('app_users')
+          .from('users')
           .select('id, nome_usuario')
-          .eq('tipo_usuario', 'Analista de R&S')
-          .eq('ativo', true)
+          .in('tipo_usuario', ['Analista de R&S', 'Gestão de R&S'])
+          .eq('ativo_usuario', true)
           .order('nome_usuario');
 
         if (error) throw error;
