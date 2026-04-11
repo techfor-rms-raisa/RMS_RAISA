@@ -184,7 +184,7 @@ async function recommendAnalyst(ai: GoogleGenAI, dados: any): Promise<any[]> {
         - Score 40-59: "Regular"
         - Score 0-39: "Baixo"
         
-        Retorne APENAS um array JSON válido (sem markdown) com até 3 analistas recomendados:
+        Retorne APENAS um array JSON válido (sem markdown) com TODOS os analistas disponíveis rankeados do melhor ao pior:
         [
             {
                 "analista_id": número,
