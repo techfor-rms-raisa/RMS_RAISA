@@ -12,9 +12,10 @@
  * Data: 26/12/2024
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useDistribuicaoIA, AnalistaScore, PESOS_SCORING } from '@/hooks/supabase/useDistribuicaoIA';
 import { useDistribuicaoVagas } from '@/hooks/supabase/useDistribuicaoVagas';
+import { supabase } from '@/config/supabase';
 
 interface DistribuicaoIAPanelProps {
   vagaId: number;
@@ -63,10 +64,67 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
   const [showDetalhesScore, setShowDetalhesScore] = useState<number | null>(null);
   const [modoSelecao, setModoSelecao] = useState<'ia' | 'manual'>('ia');
 
+  // v1.1 — Todos os analistas cadastrados (para seleção manual irrestrita)
+  const [todosAnalistas, setTodosAnalistas] = useState<{ id: number; nome: string; carga_atual: number }[]>([]);
+  const [loadingAnalistas, setLoadingAnalistas] = useState(false);
+
   // Carregar ranking ao montar
   useEffect(() => {
     gerarRankingAnalistas(vagaId);
   }, [vagaId, gerarRankingAnalistas]);
+
+  // v1.1 — Carregar todos os analistas do Supabase ao entrar em modo manual
+  useEffect(() => {
+    if (modoSelecao !== 'manual' || todosAnalistas.length > 0) return;
+
+    const carregarTodosAnalistas = async () => {
+      setLoadingAnalistas(true);
+      try {
+        const { data, error } = await supabase
+          .from('app_users')
+          .select('id, nome_usuario')
+          .eq('tipo_usuario', 'Analista de R&S')
+          .eq('ativo', true)
+          .order('nome_usuario');
+
+        if (error) throw error;
+
+        // Buscar carga atual (vagas ativas por analista)
+        const analistasComCarga = await Promise.all(
+          (data || []).map(async (a: any) => {
+            const { count } = await supabase
+              .from('vagas')
+              .select('*', { count: 'exact', head: true })
+              .eq('analista_id', a.id)
+              .eq('status', 'aberta');
+            return { id: a.id, nome: a.nome_usuario, carga_atual: count || 0 };
+          })
+        );
+
+        setTodosAnalistas(analistasComCarga);
+      } catch (err) {
+        console.error('[DistribuicaoIA] Erro ao carregar analistas:', err);
+      } finally {
+        setLoadingAnalistas(false);
+      }
+    };
+
+    carregarTodosAnalistas();
+  }, [modoSelecao, todosAnalistas.length]);
+
+  // v1.1 — Helper: busca nome do analista em qualquer fonte
+  const getNomeAnalista = useMemo(() => (analistaId: number): string => {
+    const doRanking = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === analistaId);
+    if (doRanking) return doRanking.nome;
+    const doCadastro = todosAnalistas.find(a => a.id === analistaId);
+    return doCadastro?.nome || `ID ${analistaId}`;
+  }, [sugestaoAtual, todosAnalistas]);
+
+  // v1.1 — IDs sugeridos pela IA para exibir badge
+  const idsSugeridosIA = useMemo(
+    () => new Set(sugestaoAtual?.ranking_analistas.slice(0, 2).map(a => a.analista_id) || []),
+    [sugestaoAtual]
+  );
 
   // Verificar se é override (seleção manual ou analistas diferentes dos sugeridos)
   const isOverride = () => {
@@ -150,14 +208,12 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
       for (const analistaId of analistasSelecionados) {
         const resultado = await adicionarAnalista(vagaId, analistaId, {}, currentUserId);
         if (!resultado) {
-          const analista = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === analistaId);
-          const nomeAnalista = analista?.nome || `ID ${analistaId}`;
+          const nomeAnalista = getNomeAnalista(analistaId);
           // Verificar se o erro é porque já está atribuído
           // (o hook retorna null mas não sabemos exatamente o motivo aqui)
           errosAnalistas.push(nomeAnalista);
         } else {
-          const analista = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === analistaId);
-          analistasAdicionados.push(analista?.nome || `ID ${analistaId}`);
+          analistasAdicionados.push(getNomeAnalista(analistaId));
         }
       }
 
@@ -408,7 +464,7 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
               <div>
                 <h3 className="font-bold text-yellow-800">Seleção Manual</h3>
                 <p className="text-sm text-yellow-600 mt-1">
-                  Selecione de 1 a 3 analistas para conduzir esta vaga. 
+                  Selecione quantos analistas desejar para conduzir esta vaga. 
                   {isOverride() && (
                     <span className="text-yellow-700 font-medium">
                       {' '}Sua escolha difere da sugestão da IA - será necessário justificar.
@@ -418,45 +474,56 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
               </div>
             </div>
 
-            {/* Lista de seleção */}
-            <div className="space-y-2">
-              {sugestaoAtual.ranking_analistas.map((analista, index) => (
-                <div 
-                  key={analista.analista_id}
-                  onClick={() => toggleAnalista(analista.analista_id)}
-                  className={`border rounded-lg p-4 cursor-pointer transition-all ${
-                    analistasSelecionados.includes(analista.analista_id)
-                      ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-200'
-                      : 'border-gray-200 hover:border-purple-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-6 h-6 rounded border-2 flex items-center justify-center ${
-                        analistasSelecionados.includes(analista.analista_id)
-                          ? 'border-purple-500 bg-purple-500 text-white'
-                          : 'border-gray-300'
-                      }`}>
-                        {analistasSelecionados.includes(analista.analista_id) && '✓'}
-                      </div>
-                      <div>
-                        <div className="font-medium text-gray-800">
-                          {analista.nome}
-                          {index < 2 && (
-                            <span className="ml-2 text-xs text-purple-600">
-                              (Sugerido pela IA)
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          Score: {analista.score_total} • Carga atual: {analista.carga_atual} vagas
+            {/* Lista de seleção — v1.1: exibe TODOS os analistas cadastrados */}
+            {loadingAnalistas ? (
+              <div className="text-center py-6 text-gray-500">
+                <div className="animate-spin inline-block w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full mb-2"></div>
+                <p className="text-sm">Carregando analistas...</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {todosAnalistas.map((analista) => {
+                  const rankingInfo = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === analista.id);
+                  const isSugerido = idsSugeridosIA.has(analista.id);
+                  return (
+                    <div
+                      key={analista.id}
+                      onClick={() => toggleAnalista(analista.id)}
+                      className={`border rounded-lg p-4 cursor-pointer transition-all ${
+                        analistasSelecionados.includes(analista.id)
+                          ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-200'
+                          : 'border-gray-200 hover:border-purple-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-6 h-6 rounded border-2 flex items-center justify-center ${
+                            analistasSelecionados.includes(analista.id)
+                              ? 'border-purple-500 bg-purple-500 text-white'
+                              : 'border-gray-300'
+                          }`}>
+                            {analistasSelecionados.includes(analista.id) && '✓'}
+                          </div>
+                          <div>
+                            <div className="font-medium text-gray-800">
+                              {analista.nome}
+                              {isSugerido && (
+                                <span className="ml-2 text-xs text-purple-600">
+                                  (Sugerido pela IA)
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {rankingInfo ? `Score: ${rankingInfo.score_total} • ` : ''}Carga atual: {analista.carga_atual} vagas
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            )}
 
             {/* Selecionados */}
             {analistasSelecionados.length > 0 && (
@@ -465,17 +532,14 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
                   Selecionados ({analistasSelecionados.length}):
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                  {analistasSelecionados.map(id => {
-                    const analista = sugestaoAtual.ranking_analistas.find(a => a.analista_id === id);
-                    return analista && (
-                      <span 
-                        key={id}
-                        className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm"
-                      >
-                        {analista.nome}
-                      </span>
-                    );
-                  })}
+                  {analistasSelecionados.map(id => (
+                    <span
+                      key={id}
+                      className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm"
+                    >
+                      {getNomeAnalista(id)}
+                    </span>
+                  ))}
                 </div>
               </div>
             )}
@@ -522,18 +586,20 @@ const DistribuicaoIAPanel: React.FC<DistribuicaoIAPanelProps> = ({
               <div className="text-sm text-gray-600 mb-3">Analistas que irão conduzir a vaga:</div>
               <div className="space-y-2">
                 {analistasSelecionados.map((id, index) => {
-                  const analista = sugestaoAtual.ranking_analistas.find(a => a.analista_id === id);
-                  const posicaoOriginal = sugestaoAtual.ranking_analistas.findIndex(a => a.analista_id === id) + 1;
-                  return analista && (
+                  const posicaoRanking = (sugestaoAtual?.ranking_analistas.findIndex(a => a.analista_id === id) ?? -1) + 1;
+                  const rankingInfo = sugestaoAtual?.ranking_analistas.find(a => a.analista_id === id);
+                  return (
                     <div key={id} className="flex items-center justify-between p-3 bg-white rounded border">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
                           {index + 1}
                         </div>
                         <div>
-                          <div className="font-medium">{analista.nome}</div>
+                          <div className="font-medium">{getNomeAnalista(id)}</div>
                           <div className="text-xs text-gray-500">
-                            {posicaoOriginal}º no ranking IA • Score: {analista.score_total}
+                            {posicaoRanking > 0
+                              ? `${posicaoRanking}º no ranking IA • Score: ${rankingInfo?.score_total}`
+                              : 'Fora do ranking IA'}
                           </div>
                         </div>
                       </div>
