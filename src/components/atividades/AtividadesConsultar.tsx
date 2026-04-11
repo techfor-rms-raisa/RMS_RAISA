@@ -19,6 +19,8 @@ interface AtividadesConsultarProps {
     loadConsultantReports?: (consultantId: number) => Promise<ConsultantReport[]>;
     deleteConsultantReport?: (reportId: string) => Promise<void>; // 🆕 v2.5
     currentUserName?: string;
+    /** 🆕 v3.0: Tipo do usuário logado — controla visibilidade de conteúdo confidencial */
+    currentUserTipo?: string;
 }
 
 const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
@@ -28,6 +30,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
     loadConsultantReports,
     deleteConsultantReport, // 🆕 v2.5
     currentUserName,
+    currentUserTipo, // 🆕 v3.0
 }) => {
     const [selectedClient, setSelectedClient] = useState<string>('all');
     const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
@@ -475,6 +478,7 @@ const AtividadesConsultar: React.FC<AtividadesConsultarProps> = ({
                     onClose={() => setShowModal(false)}
                     onDelete={deleteConsultantReport ? handleDeleteReport : undefined} // 🆕 v2.5
                     currentUserName={currentUserName}
+                    tipoUsuario={currentUserTipo}
                 />
             )}
         </>
