@@ -881,17 +881,29 @@ const AtividadesInserir: React.FC<AtividadesInserirProps> = ({
               📊 Percepção de Risco de Gestão de Pessoas
             </p>
 
-            {/* Slider */}
-            <input
-              type="range"
-              min={1}
-              max={5}
-              step={1}
-              value={riscoAnalista}
-              onChange={e => setRiscoAnalista(parseInt(e.target.value))}
-              className="w-full h-2 rounded-lg appearance-none cursor-pointer"
-              style={{ accentColor: riscoAnalista <= 2 ? '#2563eb' : riscoAnalista === 3 ? '#ca8a04' : riscoAnalista === 4 ? '#ea580c' : '#dc2626' }}
-            />
+            {/* Slider com trilha e thumb visíveis */}
+            <div className="relative pt-1 pb-2">
+              <input
+                type="range"
+                min={1}
+                max={5}
+                step={1}
+                value={riscoAnalista}
+                onChange={e => setRiscoAnalista(parseInt(e.target.value))}
+                className="w-full cursor-pointer"
+                style={{
+                  accentColor:
+                    riscoAnalista === 1 ? '#2563eb'
+                    : riscoAnalista === 2 ? '#16a34a'
+                    : riscoAnalista === 3 ? '#ca8a04'
+                    : riscoAnalista === 4 ? '#ea580c'
+                    : '#dc2626',
+                  height: '6px',
+                  WebkitAppearance: 'auto',
+                  appearance: 'auto',
+                }}
+              />
+            </div>
 
             {/* Labels dos marcadores */}
             <div className="flex justify-between mt-3">
