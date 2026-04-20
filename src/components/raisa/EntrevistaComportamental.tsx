@@ -286,7 +286,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             .from('pessoas')
             .select('nome, email, telefone, cidade, estado, bairro, cep, cpf, rg, data_nascimento, estado_civil, pretensao_salarial, valor_hora_atual, pretensao_valor_hora, disponibilidade, modalidade_preferida, ja_trabalhou_pj, aceita_pj, possui_empresa, aceita_abrir_empresa, nome_anoni_parcial, nome_anoni_total, cv_texto_original')
             .eq('id', pessoaId)
-            .single(),
+            .limit(1),
           supabase
             .from('pessoa_experiencias')
             .select('empresa, cargo, data_inicio, data_fim, atual, descricao, motivo_saida')
@@ -308,21 +308,22 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             .order('anos_experiencia', { ascending: false })
         ]);
 
-        if (pessoa) {
+        if (pessoa && pessoa[0]) {
+          const p = pessoa[0];
           setPessoaDados({
-            nome_anoni_parcial: pessoa.nome_anoni_parcial,
-            nome_anoni_total: pessoa.nome_anoni_total,
-            email: pessoa.email,
-            telefone: pessoa.telefone,
-            cidade: pessoa.cidade,
-            estado: pessoa.estado
+            nome_anoni_parcial: p.nome_anoni_parcial,
+            nome_anoni_total: p.nome_anoni_total,
+            email: p.email,
+            telefone: p.telefone,
+            cidade: p.cidade,
+            estado: p.estado
           });
-          setCvOriginalTexto(pessoa.cv_texto_original || '');
+          setCvOriginalTexto(p.cv_texto_original || '');
           
           // Calcular idade a partir da data de nascimento
           let idadeCalculada: number | undefined;
-          if (pessoa.data_nascimento) {
-            const nascimento = new Date(pessoa.data_nascimento);
+          if (p.data_nascimento) {
+            const nascimento = new Date(p.data_nascimento);
             const hoje = new Date();
             idadeCalculada = hoje.getFullYear() - nascimento.getFullYear();
             const m = hoje.getMonth() - nascimento.getMonth();
@@ -392,27 +393,27 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
           // Atualizar dados iniciais com info da pessoa + dados relacionados
           setDados(prev => ({
             ...prev,
-            nome: pessoa.nome || candidatoNome,
-            email: pessoa.email || '',
-            telefone: pessoa.telefone || '',
-            cidade: pessoa.cidade || '',
-            estado: pessoa.estado || '',
-            bairro: pessoa.bairro || '',
-            cep: pessoa.cep || '',
-            cpf: pessoa.cpf || '',
-            rg: pessoa.rg || '',
-            data_nascimento: pessoa.data_nascimento || '',
-            estado_civil: pessoa.estado_civil || '',
+            nome: p.nome || candidatoNome,
+            email: p.email || '',
+            telefone: p.telefone || '',
+            cidade: p.cidade || '',
+            estado: p.estado || '',
+            bairro: p.bairro || '',
+            cep: p.cep || '',
+            cpf: p.cpf || '',
+            rg: p.rg || '',
+            data_nascimento: p.data_nascimento || '',
+            estado_civil: p.estado_civil || '',
             idade: idadeCalculada,
-            pretensao_salarial: pessoa.pretensao_salarial ? String(pessoa.pretensao_salarial) : '',
-            valor_hora_atual: pessoa.valor_hora_atual ? String(pessoa.valor_hora_atual) : '',
-            pretensao_valor_hora: pessoa.pretensao_valor_hora ? String(pessoa.pretensao_valor_hora) : '',
-            disponibilidade: pessoa.disponibilidade || '',
-            modalidade_trabalho: pessoa.modalidade_preferida || '',
-            ja_trabalhou_pj: pessoa.ja_trabalhou_pj || false,
-            aceita_pj: pessoa.aceita_pj || false,
-            possui_empresa: pessoa.possui_empresa || false,
-            aceita_abrir_empresa: pessoa.aceita_abrir_empresa || false,
+            pretensao_salarial: p.pretensao_salarial ? String(p.pretensao_salarial) : '',
+            valor_hora_atual: p.valor_hora_atual ? String(p.valor_hora_atual) : '',
+            pretensao_valor_hora: p.pretensao_valor_hora ? String(p.pretensao_valor_hora) : '',
+            disponibilidade: p.disponibilidade || '',
+            modalidade_trabalho: p.modalidade_preferida || '',
+            ja_trabalhou_pj: p.ja_trabalhou_pj || false,
+            aceita_pj: p.aceita_pj || false,
+            possui_empresa: p.possui_empresa || false,
+            aceita_abrir_empresa: p.aceita_abrir_empresa || false,
             experiencias: experienciasMapeadas.length > 0 ? experienciasMapeadas : prev.experiencias,
             formacao_academica: formacaoAcademicaMapeada.length > 0 ? formacaoAcademicaMapeada : prev.formacao_academica,
             formacao_complementar: formacaoComplementarMapeada.length > 0 ? formacaoComplementarMapeada : prev.formacao_complementar,
