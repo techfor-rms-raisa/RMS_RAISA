@@ -3,7 +3,7 @@
  * Usa Gemini AI para análise de riscos de consultores
  * 
  * v54.2 (28/01/2026) - CORREÇÃO:
- * - Modelo atualizado: gemini-2.5-flash-exp → gemini-2.5-flash
+ * - Modelo atualizado: gemini-2.0-flash-exp → gemini-2.0-flash
  * - O modelo 'exp' foi descontinuado pela Google (404 Not Found)
  * 
  * v54.1 - CORRIGIDO: 
@@ -32,8 +32,8 @@ if (!apiKey) {
 // Inicializar cliente no top-level
 const ai = new GoogleGenAI({ apiKey });
 
-// 🔧 v54.2 (28/01/2026): CORREÇÃO - Modelo atualizado (gemini-2.5-flash-exp foi descontinuado)
-const AI_MODEL = 'gemini-2.5-flash';
+// 🔧 v54.2 (28/01/2026): CORREÇÃO - Modelo atualizado (gemini-2.0-flash-exp foi descontinuado)
+const AI_MODEL = 'gemini-2.0-flash';
 
 // Versão da API
 const API_VERSION = 'v54.2';
@@ -260,7 +260,13 @@ ${reportText}
     }
   }
   
+  // ✅ Tratar array vazio [] como resposta válida (nenhum consultor identificado no texto)
   if (!jsonText) {
+    const trimmed = text.trim();
+    if (trimmed === '[]') {
+      console.log('ℹ️ Gemini retornou array vazio — nenhum consultor identificado no relatório.');
+      return [];
+    }
     console.error('❌ Falha ao extrair JSON da resposta');
     console.log('📄 Resposta bruta (primeiros 500 chars):', text.substring(0, 500));
     throw new Error('Failed to extract JSON from AI response.');
