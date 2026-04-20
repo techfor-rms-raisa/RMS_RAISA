@@ -32,6 +32,10 @@ function getAI(): GoogleGenAI {
 
 const GEMINI_MODEL = 'gemini-2.5-flash';
 
+export const config = {
+  maxDuration: 60 // 60 segundos — necessário para extração de CV via Gemini
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');

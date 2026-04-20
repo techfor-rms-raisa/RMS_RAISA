@@ -286,7 +286,7 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
             .from('pessoas')
             .select('nome, email, telefone, cidade, estado, bairro, cep, cpf, rg, data_nascimento, estado_civil, pretensao_salarial, valor_hora_atual, pretensao_valor_hora, disponibilidade, modalidade_preferida, ja_trabalhou_pj, aceita_pj, possui_empresa, aceita_abrir_empresa, nome_anoni_parcial, nome_anoni_total, cv_texto_original')
             .eq('id', pessoaId)
-            .single(),
+            .maybeSingle(),
           supabase
             .from('pessoa_experiencias')
             .select('empresa, cargo, data_inicio, data_fim, atual, descricao, motivo_saida')
@@ -515,6 +515,18 @@ const EntrevistaComportamental: React.FC<EntrevistaComportamentalProps> = ({
     // Se CV já foi carregado do banco (versão existente), pular extração IA
     if (cvAtual && cvAtual.dados_processados) {
       console.log('📋 CV já carregado do banco, pulando extração IA');
+      setEtapa('dados');
+      return;
+    }
+
+    // ✅ Se já temos dados do banco (experiências, skills, etc.), pular extração IA
+    // Evita timeout 504 em CVs longos quando os dados já estão populados no Supabase
+    const temDadosBanco = (dados.experiencias?.length ?? 0) > 0 ||
+                          (dados.hard_skills_tabela?.length ?? 0) > 0 ||
+                          (dados.idiomas?.length ?? 0) > 0;
+
+    if (temDadosBanco) {
+      console.log(`📋 Dados do banco já carregados (${dados.experiencias?.length ?? 0} exp, ${dados.hard_skills_tabela?.length ?? 0} skills, ${dados.idiomas?.length ?? 0} idiomas) — pulando extração IA`);
       setEtapa('dados');
       return;
     }
