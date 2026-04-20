@@ -3,7 +3,7 @@
  * Usa Gemini AI para análise de riscos de consultores
  * 
  * v54.2 (28/01/2026) - CORREÇÃO:
- * - Modelo atualizado: gemini-2.0-flash-exp → gemini-2.0-flash
+ * - Modelo atualizado: gemini-2.5-flash-exp → gemini-2.5-flash
  * - O modelo 'exp' foi descontinuado pela Google (404 Not Found)
  * 
  * v54.1 - CORRIGIDO: 
@@ -32,8 +32,8 @@ if (!apiKey) {
 // Inicializar cliente no top-level
 const ai = new GoogleGenAI({ apiKey });
 
-// 🔧 v54.2 (28/01/2026): CORREÇÃO - Modelo atualizado (gemini-2.0-flash-exp foi descontinuado)
-const AI_MODEL = 'gemini-2.0-flash';
+// 🔧 v54.2 (28/01/2026): CORREÇÃO - Modelo atualizado (gemini-2.5-flash-exp foi descontinuado)
+const AI_MODEL = 'gemini-2.5-flash';
 
 // Versão da API
 const API_VERSION = 'v54.2';

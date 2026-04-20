@@ -13,7 +13,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 // CONFIGURAÇÃO
 // ============================================
 
-const AI_MODEL_NAME = 'gemini-2.0-flash';
+const AI_MODEL_NAME = 'gemini-2.5-flash';
 
 // Função para obter clientes (lazy initialization)
 function getApiKey(): string {
@@ -184,7 +184,7 @@ async function recommendAnalyst(ai: GoogleGenAI, dados: any): Promise<any[]> {
         - Score 40-59: "Regular"
         - Score 0-39: "Baixo"
         
-        Retorne APENAS um array JSON válido (sem markdown) com TODOS os analistas disponíveis rankeados do melhor ao pior:
+        Retorne APENAS um array JSON válido (sem markdown) com até 3 analistas recomendados:
         [
             {
                 "analista_id": número,

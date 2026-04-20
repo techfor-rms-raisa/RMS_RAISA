@@ -110,7 +110,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`🤖 [extract-cv-text] Enviando PDF ao Gemini (${tamanhoMB.toFixed(2)} MB em base64)...`);
 
       const result = await getAI().models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         contents: [{
           role: 'user',
           parts: [

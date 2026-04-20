@@ -18,7 +18,7 @@ import { GoogleGenAI } from '@google/genai';
 // CONFIGURAÇÃO - Lazy Initialization
 // ============================================================
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 
 // Lazy initialization para garantir que a variável de ambiente esteja disponível
 let aiInstance: GoogleGenAI | null = null;

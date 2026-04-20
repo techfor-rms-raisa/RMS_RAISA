@@ -182,7 +182,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -237,7 +237,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -251,7 +251,7 @@ ${reportText}
 }
 
 async function generateContent(model: string, prompt: string) {
-  const result = await getAI().models.generateContent({ model: model || 'gemini-2.0-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: model || 'gemini-2.5-flash', contents: prompt });
   const text = result.text || '';
 
   return { text };
@@ -291,7 +291,7 @@ Analise a seguinte vaga e sugira melhorias para torná-la mais atrativa e eficaz
 }
 `;
 
-  const result = await getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -343,7 +343,7 @@ RESPONDA EM JSON:
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.0-flash', 
+      model: 'gemini-2.5-flash', 
       contents: prompt 
     });
     
@@ -444,7 +444,7 @@ async function extrairTextoPDF(base64PDF: string) {
 
   try {
     const result = await getAI().models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: [{
         role: 'user',
         parts: [
@@ -515,7 +515,7 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
       
       try {
         const resultTexto = await getAI().models.generateContent({
-          model: 'gemini-2.0-flash',
+          model: 'gemini-2.5-flash',
           contents: [{
             role: 'user',
             parts: [
@@ -664,9 +664,9 @@ Retorne APENAS este JSON:
 
     // Executar em PARALELO
     const [resultPessoais, resultSkills, resultExperiencias] = await Promise.all([
-      getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptPessoais) }),
-      getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptSkills) }),
-      getAI().models.generateContent({ model: 'gemini-2.0-flash', contents: criarConteudo(promptExperiencias) })
+      getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: criarConteudo(promptPessoais) }),
+      getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: criarConteudo(promptSkills) }),
+      getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: criarConteudo(promptExperiencias) })
     ]);
 
     const tempoProcessamento = Date.now() - startTime;
@@ -782,7 +782,7 @@ RESPONDA EM JSON:
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.0-flash', 
+      model: 'gemini-2.5-flash', 
       contents: prompt 
     });
     
@@ -859,7 +859,7 @@ RESPONDA APENAS com este JSON válido (sem markdown, sem backticks, sem comentá
 
   try {
     const result = await getAI().models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
         temperature: 0.2,
@@ -937,7 +937,7 @@ RESPONDA EM JSON (sem markdown, sem backticks):
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.0-flash', 
+      model: 'gemini-2.5-flash', 
       contents: prompt 
     });
     
@@ -1010,7 +1010,7 @@ RESPONDA APENAS EM JSON (sem markdown):
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.0-flash', 
+      model: 'gemini-2.5-flash', 
       contents: prompt 
     });
     
@@ -1106,7 +1106,7 @@ RESPONDA APENAS EM JSON (sem markdown):
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.0-flash', 
+      model: 'gemini-2.5-flash', 
       contents: prompt 
     });
     
@@ -1275,7 +1275,7 @@ Responda APENAS com o JSON, sem texto adicional.`;
 
   try {
     const result = await getAI().models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt
     });
 
@@ -1441,7 +1441,7 @@ RESPONDA EXCLUSIVAMENTE em JSON válido (sem markdown, sem backticks):
 
   try {
     const result = await ai.models.generateContent({
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
         temperature: 0.3,

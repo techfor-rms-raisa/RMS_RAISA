@@ -30,7 +30,7 @@ function getAI(): GoogleGenAI {
   return aiInstance;
 }
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS headers
