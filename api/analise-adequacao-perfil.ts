@@ -23,7 +23,7 @@ if (!apiKey) {
 
 const ai = new GoogleGenAI({ apiKey });
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 
 // ============================================================
 // TIPOS
@@ -137,7 +137,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!apiKey) {
     console.error('❌ API Key (Gemini) não disponível');
     return res.status(500).json({ 
-      error: '❌ Erro na API Gemini (gemini-2.0-flash): API_KEY não configurada',
+      error: '❌ Erro na API Gemini (gemini-2.5-flash): API_KEY não configurada',
       tipo: 'CONFIG_ERROR',
       acao: 'Configure a variável API_KEY no Vercel com a chave do Google AI Studio'
     });
@@ -198,7 +198,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!responseText || responseText.trim().length < 50) {
       console.error('❌ Resposta vazia ou muito curta da API Gemini');
       return res.status(500).json({ 
-        error: '❌ Erro na API Gemini (gemini-2.0-flash): Resposta vazia',
+        error: '❌ Erro na API Gemini (gemini-2.5-flash): Resposta vazia',
         tipo: 'EMPTY_RESPONSE',
         acao: 'A API não retornou dados. Tente novamente em alguns segundos.',
         raw: responseText
@@ -339,7 +339,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // API Key inválida ou revogada
     if (errorStatus === 401 || errorStatus === 403 || errorMessage.includes('API key')) {
       return res.status(500).json({ 
-        error: '❌ Erro na API Gemini (gemini-2.0-flash): Chave de API inválida ou revogada',
+        error: '❌ Erro na API Gemini (gemini-2.5-flash): Chave de API inválida ou revogada',
         tipo: 'AUTH_ERROR',
         acao: 'Atualize a API_KEY no Vercel com uma chave válida do Google AI Studio',
         codigo: errorStatus
@@ -349,7 +349,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Créditos/Quota esgotada
     if (errorStatus === 429 || errorMessage.includes('quota') || errorMessage.includes('rate')) {
       return res.status(500).json({ 
-        error: '❌ Erro na API Gemini (gemini-2.0-flash): Limite de requisições ou créditos esgotados',
+        error: '❌ Erro na API Gemini (gemini-2.5-flash): Limite de requisições ou créditos esgotados',
         tipo: 'QUOTA_ERROR',
         acao: 'Aguarde alguns minutos ou verifique os créditos no Google Cloud Console',
         codigo: errorStatus
@@ -358,7 +358,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     // Erro genérico
     return res.status(500).json({ 
-      error: `❌ Erro na API Gemini (gemini-2.0-flash): ${errorMessage || 'Erro interno'}`,
+      error: `❌ Erro na API Gemini (gemini-2.5-flash): ${errorMessage || 'Erro interno'}`,
       tipo: 'SERVER_ERROR',
       acao: 'Tente novamente. Se persistir, contate o suporte.',
       codigo: errorStatus

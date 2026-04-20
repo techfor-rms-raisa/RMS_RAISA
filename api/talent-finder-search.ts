@@ -113,7 +113,7 @@ Retorne SOMENTE este JSON sem markdown:
     console.log(`🧠 [TalentFinder v4.0] Gerando queries para: ${requisitos.substring(0, 80)}...`);
 
     const result = await ai.models.generateContent({
-        model: 'gemini-2.0-flash',
+        model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
             temperature: 0.2,

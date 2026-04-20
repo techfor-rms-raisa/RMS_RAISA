@@ -13,7 +13,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 // CONFIGURAÇÃO
 // ============================================
 
-const AI_MODEL_NAME = 'gemini-2.0-flash';
+const AI_MODEL_NAME = 'gemini-2.5-flash';
 
 // Função para obter clientes (lazy initialization)
 function getApiKey(): string {
