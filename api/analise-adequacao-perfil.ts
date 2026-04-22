@@ -10,18 +10,35 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
 
 // ============================================================
-// CONFIGURAÇÃO
+// CONFIGURAÇÃO VERCEL
 // ============================================================
+export const config = {
+  maxDuration: 60,
+  api: {
+    bodyParser: {
+      sizeLimit: '4mb',
+    },
+  },
+};
 
-const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+// ============================================================
+// AI — Lazy Initialization (NUNCA instanciar em escopo de módulo em serverless)
+// Env vars podem estar indisponíveis no cold-start → causa 403/500
+// Padrão idêntico ao gemini-analyze.ts
+// ============================================================
+let _aiInstance: GoogleGenAI | null = null;
 
-if (!apiKey) {
-  console.error('❌ API_KEY (Gemini) não encontrada no ambiente Vercel!');
-} else {
-  console.log('✅ API_KEY (Gemini) carregada com sucesso');
+function getAI(): GoogleGenAI {
+  if (!_aiInstance) {
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY || '';
+    if (!apiKey) {
+      throw new Error('API_KEY não configurada. Configure a variável de ambiente API_KEY no Vercel.');
+    }
+    console.log('✅ API_KEY (Gemini) carregada com sucesso');
+    _aiInstance = new GoogleGenAI({ apiKey });
+  }
+  return _aiInstance;
 }
-
-const ai = new GoogleGenAI({ apiKey });
 
 const GEMINI_MODEL = 'gemini-2.5-flash';
 
@@ -134,15 +151,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  if (!apiKey) {
-    console.error('❌ API Key (Gemini) não disponível');
-    return res.status(500).json({ 
-      error: '❌ Erro na API Gemini (gemini-2.5-flash): API_KEY não configurada',
-      tipo: 'CONFIG_ERROR',
-      acao: 'Configure a variável API_KEY no Vercel com a chave do Google AI Studio'
-    });
-  }
-
   try {
     const { candidato, vaga, opcoes } = req.body;
 
@@ -166,7 +174,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         tentativas++;
         console.log(`🔄 [Gemini] Tentativa ${tentativas}/${maxTentativas}...`);
         
-        response = await ai.models.generateContent({
+        response = await getAI().models.generateContent({
           model: GEMINI_MODEL,
           contents: [
             {
@@ -176,7 +184,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ],
           config: {
             temperature: 0.3,
-            maxOutputTokens: 16384,  // 🔧 v2.1: Aumentado de 8192 para 16384
+            maxOutputTokens: 8192,  // 🔧 v2.2: Reduzido de 16384 → 8192 para evitar timeout 504
           }
         });
         
@@ -451,7 +459,8 @@ ${i + 1}. **${exp.cargo}** na **${exp.empresa}**
     .join(', ');
 
   // 🆕 v2.1: Incluir texto completo do CV se disponível
-  const textoCV = candidato.curriculo_texto || '';
+  // Aceita tanto curriculo_texto (AnaliseRisco v5.0) quanto curriculo_texto_original (legado)
+  const textoCV = candidato.curriculo_texto || candidato.curriculo_texto_original || '';
   const secaoCV = textoCV ? `
 **📄 TEXTO COMPLETO DO CURRÍCULO:**
 \`\`\`

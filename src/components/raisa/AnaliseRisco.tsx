@@ -1197,45 +1197,29 @@ const AnaliseRisco: React.FC = () => {
       console.log('🆕 [Cache] Nenhuma análise encontrada — chamando a IA...');
 
       // ========================================
-      // PASSO 1: Extrair dados do CV via Gemini
+      // PASSO 1 (v5.0): Análise de Adequação direta — SEM extração prévia
+      // Elimina a chamada intermediária extrair_cv (~35s economizados)
+      // O endpoint /api/analise-adequacao-perfil lê curriculo_texto nativamente
+      // via buildAnalysisPrompt → secaoCV, fazendo a análise com o texto bruto
       // ========================================
-      const extractResponse = await fetch('/api/gemini-analyze', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'extrair_cv',
-          payload: { textoCV: textoExtraido, base64PDF: '' }
-        })
-      });
-
-      if (!extractResponse.ok) throw new Error('Erro ao extrair dados do CV');
-      const extractResult = await extractResponse.json();
-      if (!extractResult.success || !extractResult.data) throw new Error('Resposta inválida da API de extração');
-
-      const dados = extractResult.data.dados;
-      const textoOriginal = extractResult.data.texto_original || textoExtraido;
-
       const candidato = {
-        nome: dados.dados_pessoais?.nome || 'Candidato',
-        email: dados.dados_pessoais?.email || '',
-        telefone: dados.dados_pessoais?.telefone || '',
-        linkedin_url: dados.dados_pessoais?.linkedin_url || '',
-        cidade: dados.dados_pessoais?.cidade || '',
-        estado: dados.dados_pessoais?.estado || '',
-        titulo_profissional: dados.dados_profissionais?.titulo_profissional || '',
-        senioridade: dados.dados_profissionais?.senioridade || 'pleno',
-        resumo_profissional: dados.dados_profissionais?.resumo_profissional || '',
-        skills: dados.skills || [],
-        experiencias: dados.experiencias || [],
-        formacao: dados.formacao || [],
-        certificacoes: dados.certificacoes || [],
-        idiomas: dados.idiomas || [],
-        cv_texto_original: textoOriginal
+        nome: 'Candidato',
+        email: '',
+        telefone: '',
+        linkedin_url: '',
+        cidade: '',
+        estado: '',
+        titulo_profissional: '',
+        senioridade: 'pleno',
+        resumo_profissional: '',
+        skills: [],
+        experiencias: [],
+        formacao: [],
+        certificacoes: [],
+        idiomas: [],
+        curriculo_texto: textoExtraido   // ← campo lido por buildAnalysisPrompt
       };
 
-      // ========================================
-      // PASSO 2: Análise de Adequação via Claude
-      // ========================================
       const vaga = {
         titulo: vagaSelecionada.titulo,
         senioridade: vagaSelecionada.senioridade,
@@ -1260,7 +1244,7 @@ const AnaliseRisco: React.FC = () => {
       if (!result.success || !result.data) throw new Error(result.error || 'Resposta inválida da API de adequação');
 
       // ========================================
-      // PASSO 3: Mapear resposta para o componente
+      // PASSO 2: Mapear resposta para o componente
       // ========================================
       const data = result.data;
       const scoreGeral = data.score_geral || 0;
@@ -1290,13 +1274,15 @@ const AnaliseRisco: React.FC = () => {
       setAbaResultado('resumo');
 
       // ========================================
-      // PASSO 4: Salvar candidato no banco se score >= 40%
+      // PASSO 3: Salvar candidato no banco se score >= 40%
+      // Nota: skills/experiências não são salvas neste fluxo (sem extração prévia).
+      // O texto completo do CV fica salvo em cv_texto_original para consultas futuras.
       // ========================================
       let pessoaSalvaId: number | null = null;
 
       if (scoreGeral >= SCORE_MINIMO_SALVAR) {
         console.log(`💾 Score ${scoreGeral}% >= ${SCORE_MINIMO_SALVAR}% - Salvando candidato...`);
-        const pessoaSalva = await salvarCandidatoNoBanco(candidato, dados, textoOriginal);
+        const pessoaSalva = await salvarCandidatoNoBanco(candidato, {}, textoExtraido);
         if (pessoaSalva) {
           pessoaSalvaId = pessoaSalva.id;
           console.log('✅ Candidato salvo com ID:', pessoaSalva.id);
@@ -1304,12 +1290,11 @@ const AnaliseRisco: React.FC = () => {
         }
       } else {
         console.log(`⚠️ Score ${scoreGeral}% < ${SCORE_MINIMO_SALVAR}% - Candidato NÃO salvo automaticamente`);
-        setDadosParaSalvarManual({ candidato, dados, textoOriginal, analiseResult: data });
+        setDadosParaSalvarManual({ candidato, dados: {}, textoOriginal: textoExtraido, analiseResult: data });
       }
 
       // ========================================
-      // PASSO 5 (v4.6): Persistir análise com cv_hash como chave de cache
-      // Sempre persiste (independente do score) para garantir cache em consultas futuras
+      // PASSO 4 (v4.6): Persistir análise com cv_hash como chave de cache
       // ========================================
       try {
         const dadosAnalise: Record<string, any> = {
