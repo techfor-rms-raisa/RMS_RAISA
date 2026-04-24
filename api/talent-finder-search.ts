@@ -21,6 +21,7 @@
  * - Mais rápido (~2s vs ~30s)
  *
  * Data: 13/03/2026
+ * Fix 24/04/2026: gemini-2.0-flash → gemini-2.5-flash (modelo bloqueado por RESOURCE_EXHAUSTED)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
