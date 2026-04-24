@@ -21,7 +21,6 @@
  * - Mais rápido (~2s vs ~30s)
  *
  * Data: 13/03/2026
- * Fix 24/04/2026: gemini-2.0-flash → gemini-2.5-flash (modelo bloqueado por RESOURCE_EXHAUSTED)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -118,13 +117,14 @@ Retorne SOMENTE este JSON sem markdown:
         contents: prompt,
         config: {
             temperature: 0.2,
-            maxOutputTokens: 2048,
+            maxOutputTokens: 8192,
             responseMimeType: 'application/json',
         }
     });
 
     const rawText = result.text || '';
     console.log(`✅ [TalentFinder v4.0] Resposta Gemini: ${rawText.length} chars`);
+    console.log(`📄 [TalentFinder v4.0] Raw (primeiros 500):`, rawText.substring(0, 500));
 
     try {
         const cleanText = rawText.replace(/```json\s*/gi, '').replace(/```\s*/gi, '').trim();
