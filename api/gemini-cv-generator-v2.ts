@@ -960,6 +960,14 @@ async function gerarHTMLTSystems(req: VercelRequest, res: VercelResponse) {
     <div class="perfil">
       ${dados.resumo || `Profissional com experiência na área de Tecnologia da Informação.`}
     </div>
+
+    <!-- Parecer de Seleção -->
+    ${dados.parecer_selecao ? `
+    <div class="secao-titulo">Parecer de Seleção</div>
+    <div class="recomendacao">
+      ${dados.parecer_selecao.split('\n').filter((p: string) => p.trim()).map((p: string) => `<p style="margin:0 0 6px 0;">${p}</p>`).join('')}
+    </div>
+    ` : ''}
     
     <!-- Hard Skills -->
     ${dados.hard_skills_tabela && dados.hard_skills_tabela.length > 0 ? `
