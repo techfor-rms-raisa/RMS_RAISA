@@ -775,6 +775,15 @@ async function gerarDocxTSystems(dados: any): Promise<Buffer> {
     });
   }
 
+  // ─── PARECER DE SELEÇÃO ───
+  if (dados.parecer_selecao) {
+    contentChildren.push(tsTitle('Parecer de Seleção'));
+    dados.parecer_selecao.split('\n').filter((p: string) => p.trim()).forEach((p: string) => {
+      contentChildren.push(tsBody(p.trim(), { justified: true, after: 60, shading: MAGENTA_CLARO, indentLeft: 100, indentRight: 100 }));
+    });
+    contentChildren.push(new Paragraph({ spacing: { after: 80 } }));
+  }
+
   // ─── HARD SKILLS ───
   const hardSkills = dados.hard_skills_tabela || [];
   if (hardSkills.length > 0) {
