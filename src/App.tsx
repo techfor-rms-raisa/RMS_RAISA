@@ -54,6 +54,7 @@ import DistribuicaoIAPage from './components/raisa/DistribuicaoIAPage';
 import ProspectSearchPage from './components/prospect/ProspectSearchPage';
 import CreditosTab from './components/prospect/CreditosTab';
 import CampanhaPrep from './components/prospect/CampanhaPrep';
+import CreciPage from './components/creci/CreciPage';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -545,6 +546,12 @@ const App: React.FC = () => {
           return <CampanhaPrep currentUser={currentUser!} />;
       case 'prospect_credits':
           return <CreditosTab />;
+
+      // ============================================
+      // CRECI — Corretores de Imóveis
+      // ============================================
+      case 'creci_page':
+          return <CreciPage currentUser={currentUser!} />;
 
       case 'dashboard':
       default:
