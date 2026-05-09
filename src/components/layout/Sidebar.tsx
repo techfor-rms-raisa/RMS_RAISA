@@ -358,6 +358,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             icon: 'fa-solid fa-chart-column', 
             roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
         },
+        { 
+            view: 'creci_page', 
+            label: 'CRECI', 
+            icon: 'fa-solid fa-building-columns', 
+            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
+        },
     ] as any;
 
     // ============================================
