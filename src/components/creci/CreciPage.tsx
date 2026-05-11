@@ -184,7 +184,7 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
 
       // Fetch page
       const dataQuery = buildQuery('*')
-        .order('capturado_em', { ascending: false })
+        .order('id', { ascending: false })
         .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
       const { data, error } = await dataQuery;
@@ -225,7 +225,7 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
         let query = supabase
           .from('corretores_creci')
           .select('*')
-          .order('capturado_em', { ascending: false })
+          .order('id', { ascending: false })
           .range(from, from + BATCH - 1);
 
         // Filtro de período
@@ -325,7 +325,7 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
 
       while (true) {
         const query = buildQuery('*')
-          .order('capturado_em', { ascending: false })
+          .order('id', { ascending: false })
           .range(from, from + BATCH - 1);
 
         const { data, error } = await query;
