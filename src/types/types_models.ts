@@ -37,6 +37,8 @@ export type View =
   | 'dashboard_ml' | 'dashboard_performance_ia' | 'dashboard_raisa_metrics'
   // PROSPECT Views
   | 'prospect_search' | 'prospect_list' | 'prospect_credits' | 'prospect_campaign'
+  // CRM Campanhas Views
+  | 'crm_empresas_leads'
   // CRECI Views
   | 'creci_page'
   // Movimentações e Posição

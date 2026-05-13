@@ -353,6 +353,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
         },
         { 
+            view: 'crm_empresas_leads', 
+            label: 'CRM Leads', 
+            icon: 'fa-solid fa-building-user', 
+            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
+        },
+        { 
             view: 'prospect_credits', 
             label: 'Consumo Créditos', 
             icon: 'fa-solid fa-chart-column', 
