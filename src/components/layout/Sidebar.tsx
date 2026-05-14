@@ -9,7 +9,9 @@
  * 🆕 v58.0: Reordenação Menu RAISA
  * - Nova sequência: Vagas > Análise CV > LinkedIn > Banco Talentos > Candidaturas > Entrevista > Pipeline > Controle Envios
  * 
- * Data: 25/02/2026
+ * 🆕 v59.0: CRM Leads + Campaign Builder no menu PROSPECT
+ * 
+ * Data: 14/05/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -356,6 +358,12 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             view: 'crm_empresas_leads', 
             label: 'CRM Leads', 
             icon: 'fa-solid fa-building-user', 
+            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
+        },
+        { 
+            view: 'campaign_builder', 
+            label: 'Campaign Builder', 
+            icon: 'fa-solid fa-envelope-open-text', 
             roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
         },
         { 

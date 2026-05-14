@@ -55,6 +55,8 @@ import ProspectSearchPage from './components/prospect/ProspectSearchPage';
 import CreditosTab from './components/prospect/CreditosTab';
 import CampanhaPrep from './components/prospect/CampanhaPrep';
 import EmpresasLeadsCRM from './components/campanhas/EmpresasLeadsCRM';
+import CampaignBuilder from './components/campanhas/CampaignBuilder';
+import CreciPage from './components/creci/CreciPage';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -547,7 +549,11 @@ const App: React.FC = () => {
       case 'prospect_credits':
           return <CreditosTab />;
       case 'crm_empresas_leads':
-          return <EmpresasLeadsCRM currentUser={currentUser!} />;
+          return <EmpresasLeadsCRM />;
+      case 'campaign_builder':
+          return <CampaignBuilder />;
+      case 'creci_page':
+          return <CreciPage currentUser={currentUser!} />;
 
       case 'dashboard':
       default:
