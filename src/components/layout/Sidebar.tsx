@@ -11,7 +11,11 @@
  * 
  * 🆕 v59.0: CRM Leads + Campaign Builder no menu PROSPECT
  * 
- * Data: 14/05/2026
+ * 🆕 v60.0 (Fase 1A — 29/05/2026): Grupo "CRM & CAMPANHAS" promovido a seção própria
+ * - Itens "CRM Leads" e "Campaign Builder" removidos do menu PROSPECT
+ * - Nova seção com item único "CRM & Campanhas" → view 'crm' (sub-nav interna em CRMLayout)
+ * 
+ * Data: 29/05/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -355,18 +359,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
         },
         { 
-            view: 'crm_empresas_leads', 
-            label: 'CRM Leads', 
-            icon: 'fa-solid fa-building-user', 
-            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
-        },
-        { 
-            view: 'campaign_builder', 
-            label: 'Campaign Builder', 
-            icon: 'fa-solid fa-envelope-open-text', 
-            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
-        },
-        { 
             view: 'prospect_credits', 
             label: 'Consumo Créditos', 
             icon: 'fa-solid fa-chart-column', 
@@ -377,6 +369,23 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             label: 'CRECI', 
             icon: 'fa-solid fa-building-columns', 
             roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
+        },
+    ] as any;
+
+    // ============================================
+    // ITENS DO MENU CRM & CAMPANHAS (v60.0 — Fase 1A)
+    // ============================================
+    // Sub-navegação dentro do CRMLayout (Base de Leads, Campanhas,
+    // Copys, Assinaturas, Acompanhamento, Configurações).
+    // Configurações é restrita a Administrador + Gestão de R&S — esse
+    // controle é feito DENTRO do CRMLayout, não aqui.
+
+    const crmItems = [
+        { 
+            view: 'crm', 
+            label: 'CRM & Campanhas', 
+            icon: 'fa-solid fa-paper-plane', 
+            roles: ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Analista de R&S', 'SDR'] 
         },
     ] as any;
 
@@ -395,6 +404,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
         .includes(currentUser.tipo_usuario);
 
     const temAcessoPROSPECT = ['Administrador', 'Gestão Comercial', 'Gestão de R&S', 'SDR']
+        .includes(currentUser.tipo_usuario);
+
+    const temAcessoCRM = ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Analista de R&S', 'SDR']
         .includes(currentUser.tipo_usuario);
 
     return (
@@ -468,6 +480,23 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
                             title="PROSPECT"
                             subtitle="B2B Lead Intelligence"
                             items={prospectItems}
+                            currentUserRole={currentUser.tipo_usuario}
+                            currentView={currentView}
+                            isCollapsed={isCollapsed}
+                            onNavigate={onNavigate}
+                        />
+                    </>
+                )}
+
+                {/* CRM & CAMPANHAS - v60.0 (Fase 1A) — sub-nav interna no CRMLayout */}
+                {temAcessoCRM && (
+                    <>
+                        <div className="my-2 border-t border-gray-700 mx-4 opacity-50"></div>
+
+                        <SidebarSection 
+                            title="CRM & CAMPANHAS"
+                            subtitle="Leads, Sequências, Análise"
+                            items={crmItems}
                             currentUserRole={currentUser.tipo_usuario}
                             currentView={currentView}
                             isCollapsed={isCollapsed}

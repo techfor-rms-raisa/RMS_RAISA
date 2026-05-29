@@ -54,9 +54,13 @@ import DistribuicaoIAPage from './components/raisa/DistribuicaoIAPage';
 import ProspectSearchPage from './components/prospect/ProspectSearchPage';
 import CreditosTab from './components/prospect/CreditosTab';
 import CampanhaPrep from './components/prospect/CampanhaPrep';
-import EmpresasLeadsCRM from './components/campanhas/EmpresasLeadsCRM';
-import CampaignBuilder from './components/campanhas/CampaignBuilder';
-import CreciPage from './components/creci/CreciPage';
+
+// ============================================
+// CRM & CAMPANHAS (v60.0 — Fase 1A, 29/05/2026)
+// Layout container com sub-navegação interna.
+// Sub-páginas serão decompostas nas sub-fases 1B/1C/1D.
+// ============================================
+import CRMLayout from './components/crm/CRMLayout';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -548,12 +552,13 @@ const App: React.FC = () => {
           return <CampanhaPrep currentUser={currentUser!} />;
       case 'prospect_credits':
           return <CreditosTab />;
-      case 'crm_empresas_leads':
-          return <EmpresasLeadsCRM />;
-      case 'campaign_builder':
-          return <CampaignBuilder />;
-      case 'creci_page':
-          return <CreciPage currentUser={currentUser!} />;
+
+      // ============================================
+      // CRM & CAMPANHAS — v60.0 (Fase 1A)
+      // Layout container com sub-navegação interna
+      // ============================================
+      case 'crm':
+          return <CRMLayout currentUser={currentUser!} />;
 
       case 'dashboard':
       default:

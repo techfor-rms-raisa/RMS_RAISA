@@ -37,8 +37,9 @@ export type View =
   | 'dashboard_ml' | 'dashboard_performance_ia' | 'dashboard_raisa_metrics'
   // PROSPECT Views
   | 'prospect_search' | 'prospect_list' | 'prospect_credits' | 'prospect_campaign'
-  // CRM + Campaign Builder Views
-  | 'crm_empresas_leads' | 'campaign_builder'
+  // CRM & Campanhas — view única; sub-navegação interna no CRMLayout (Fase 1A)
+  // 'crm_empresas_leads' e 'campaign_builder' mantidos transitoriamente; remoção planejada na Fase 1C
+  | 'crm' | 'crm_empresas_leads' | 'campaign_builder'
   // CRECI Views
   | 'creci_page'
   // Movimentações e Posição
