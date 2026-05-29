@@ -7,15 +7,25 @@
  * Features:
  * - KPI cards (empresas, leads, prospects, clientes)
  * - Busca global por nome/domínio/email
- * - Abas: Empresas | Leads
+ * - Abas: Empresas (com expandir leads aptos + campanhas) | Leads (apto_campanha=true)
  * - CRUD de empresas e leads
  * - Importação do Prospect Engine
  * - Detalhe do lead com timeline
  * - Mudança de funil com histórico
  * 
+ * Escopo (RBAC):
+ * - Administrador  → vê TODAS as empresas/leads
+ * - Gestão Comercial / SDR → vê apenas as suas (filtro reservado_por = currentUser.id)
+ * 
  * Caminho: src/components/campanhas/EmpresasLeadsCRM.tsx
- * Versão: 1.0
- * Data: 13/05/2026
+ * Versão: 1.1
+ * Data: 28/05/2026
+ * 
+ * Changelog 1.1:
+ *  - Filtro por reservado_por (analista logado) em todas as queries.
+ *  - Aba Empresas: expandir empresa → mostra leads aptos + campanhas vinculadas.
+ *  - Aba Leads: lista apenas leads com apto_campanha=true (promovidos via botão "Campanhas" no Prospect Engine).
+ *  - criar_empresa/criar_lead passam reservado_por do currentUser.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -71,7 +81,22 @@ interface Lead {
   notas: string | null;
   origem: string | null;
   criado_em: string;
+  reservado_por?: number | null;
+  apto_campanha?: boolean;
+  apto_campanha_em?: string | null;
   email_empresas?: { id: number; nome: string; dominio: string | null; setor: string | null } | null;
+}
+
+interface LeadComCampanhas extends Lead {
+  campanhas: Array<{
+    lead_id: number;
+    campanha_id: number;
+    status: string;
+    step_atual: number;
+    adicionado_em: string;
+    email_campanhas?: { id: number; nome: string; status: string; tipo: string; criado_em: string } | null;
+  }>;
+  total_campanhas: number;
 }
 
 interface HistoricoItem {
@@ -165,6 +190,11 @@ const EmpresasLeadsCRM: React.FC<CRMProps> = ({ currentUser }) => {
   const [formEmpresa, setFormEmpresa] = useState<Partial<Empresa>>({});
   const [formLead, setFormLead] = useState<Partial<Lead>>({});
 
+  // ── Expandir empresa (v1.1) ──
+  const [empresasExpandidas, setEmpresasExpandidas] = useState<Set<number>>(new Set());
+  const [leadsAptosPorEmpresa, setLeadsAptosPorEmpresa] = useState<Record<number, LeadComCampanhas[]>>({});
+  const [loadingEmpresaId, setLoadingEmpresaId] = useState<number | null>(null);
+
   // ── Importação ──
   const [modalImportar, setModalImportar] = useState(false);
   const [prospectsDispo, setProspectsDispo] = useState<any[]>([]);
@@ -181,15 +211,22 @@ const EmpresasLeadsCRM: React.FC<CRMProps> = ({ currentUser }) => {
   // DATA FETCHING
   // ════════════════════════════════════════════
 
+  // (v1.1) RBAC: Admin vê tudo; Gestão Comercial e SDR veem só os seus.
+  const podeVerTodos = currentUser?.tipo_usuario === 'Administrador';
+
   const carregarStats = useCallback(async () => {
     try {
-      const resp = await fetch(`${API_URL}?action=stats`);
+      const params = new URLSearchParams({ action: 'stats' });
+      if (!podeVerTodos && currentUser?.id) {
+        params.set('reservado_por', String(currentUser.id));
+      }
+      const resp = await fetch(`${API_URL}?${params}`);
       const data = await resp.json();
       if (data.success) setStats(data.stats);
     } catch (err) {
       console.error('Erro ao carregar stats:', err);
     }
-  }, []);
+  }, [podeVerTodos, currentUser]);
 
   const carregarEmpresas = useCallback(async () => {
     setLoading(true);
@@ -201,19 +238,25 @@ const EmpresasLeadsCRM: React.FC<CRMProps> = ({ currentUser }) => {
       });
       if (buscaEmpresa) params.set('busca', buscaEmpresa);
       if (filtroSetor) params.set('setor', filtroSetor);
+      if (!podeVerTodos && currentUser?.id) {
+        params.set('reservado_por', String(currentUser.id));
+      }
 
       const resp = await fetch(`${API_URL}?${params}`);
       const data = await resp.json();
       if (data.success) {
         setEmpresas(data.empresas);
         setTotalEmpresas(data.total);
+        // Resetar expansão ao recarregar lista
+        setEmpresasExpandidas(new Set());
+        setLeadsAptosPorEmpresa({});
       }
     } catch (err) {
       console.error('Erro ao carregar empresas:', err);
     } finally {
       setLoading(false);
     }
-  }, [paginaEmpresas, buscaEmpresa, filtroSetor]);
+  }, [paginaEmpresas, buscaEmpresa, filtroSetor, podeVerTodos, currentUser]);
 
   const carregarLeads = useCallback(async () => {
     setLoading(true);
@@ -225,6 +268,9 @@ const EmpresasLeadsCRM: React.FC<CRMProps> = ({ currentUser }) => {
       });
       if (buscaLead) params.set('busca', buscaLead);
       if (filtroFunil) params.set('funil', filtroFunil);
+      if (!podeVerTodos && currentUser?.id) {
+        params.set('reservado_por', String(currentUser.id));
+      }
 
       const resp = await fetch(`${API_URL}?${params}`);
       const data = await resp.json();
@@ -237,7 +283,47 @@ const EmpresasLeadsCRM: React.FC<CRMProps> = ({ currentUser }) => {
     } finally {
       setLoading(false);
     }
-  }, [paginaLeads, buscaLead, filtroFunil]);
+  }, [paginaLeads, buscaLead, filtroFunil, podeVerTodos, currentUser]);
+
+  // (v1.1) Carrega leads aptos + campanhas de uma empresa específica (para o expandir)
+  const carregarLeadsAptosEmpresa = useCallback(async (empresaId: number) => {
+    setLoadingEmpresaId(empresaId);
+    try {
+      const params = new URLSearchParams({
+        action: 'empresa_leads_aptos',
+        empresa_id: String(empresaId),
+      });
+      if (!podeVerTodos && currentUser?.id) {
+        params.set('reservado_por', String(currentUser.id));
+      }
+      const resp = await fetch(`${API_URL}?${params}`);
+      const data = await resp.json();
+      if (data.success) {
+        setLeadsAptosPorEmpresa(prev => ({ ...prev, [empresaId]: data.leads || [] }));
+      }
+    } catch (err) {
+      console.error('Erro ao carregar leads aptos da empresa:', err);
+    } finally {
+      setLoadingEmpresaId(null);
+    }
+  }, [podeVerTodos, currentUser]);
+
+  // (v1.1) Toggle de expansão da linha da empresa
+  const alternarExpansaoEmpresa = useCallback((empresaId: number) => {
+    setEmpresasExpandidas(prev => {
+      const next = new Set(prev);
+      if (next.has(empresaId)) {
+        next.delete(empresaId);
+      } else {
+        next.add(empresaId);
+        // Carregar sob demanda (1x apenas)
+        if (!leadsAptosPorEmpresa[empresaId]) {
+          carregarLeadsAptosEmpresa(empresaId);
+        }
+      }
+      return next;
+    });
+  }, [leadsAptosPorEmpresa, carregarLeadsAptosEmpresa]);
 
   useEffect(() => { carregarStats(); }, [carregarStats]);
   useEffect(() => { if (abaAtiva === 'empresas') carregarEmpresas(); }, [abaAtiva, carregarEmpresas]);
@@ -254,10 +340,18 @@ const EmpresasLeadsCRM: React.FC<CRMProps> = ({ currentUser }) => {
 
     try {
       setLoading(true);
+      // (v1.1) Ao criar manualmente, o dono é o usuário logado
+      const payload: any = {
+        ...formEmpresa,
+        action,
+        criado_por: currentUser.nome_usuario,
+      };
+      if (!isEdit) payload.reservado_por = currentUser.id;
+
       const resp = await fetch(API_URL, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formEmpresa, action, criado_por: currentUser.nome_usuario }),
+        body: JSON.stringify(payload),
       });
       const data = await resp.json();
       if (!data.success) {
@@ -302,10 +396,18 @@ const EmpresasLeadsCRM: React.FC<CRMProps> = ({ currentUser }) => {
 
     try {
       setLoading(true);
+      // (v1.1) Ao criar manualmente, o dono é o usuário logado
+      const payload: any = {
+        ...formLead,
+        action,
+        criado_por: currentUser.nome_usuario,
+      };
+      if (!isEdit) payload.reservado_por = currentUser.id;
+
       const resp = await fetch(API_URL, {
         method,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...formLead, action, criado_por: currentUser.nome_usuario }),
+        body: JSON.stringify(payload),
       });
       const data = await resp.json();
       if (!data.success) {
@@ -558,6 +660,7 @@ const EmpresasLeadsCRM: React.FC<CRMProps> = ({ currentUser }) => {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-gray-50 text-gray-600 text-xs uppercase">
+                      <th className="px-2 py-2.5 w-8"></th>
                       <th className="px-3 py-2.5 text-left font-semibold">Empresa</th>
                       <th className="px-3 py-2.5 text-left font-semibold hidden md:table-cell">Domínio</th>
                       <th className="px-3 py-2.5 text-left font-semibold hidden lg:table-cell">Setor</th>
@@ -569,25 +672,121 @@ const EmpresasLeadsCRM: React.FC<CRMProps> = ({ currentUser }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {empresas.map(emp => (
-                      <tr key={emp.id} className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => abrirDetalheEmpresa(emp.id)}>
-                        <td className="px-3 py-2.5 font-medium text-gray-800">{emp.nome}</td>
-                        <td className="px-3 py-2.5 text-gray-500 hidden md:table-cell">{emp.dominio || '—'}</td>
-                        <td className="px-3 py-2.5 hidden lg:table-cell">
-                          {emp.setor ? <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs">{emp.setor}</span> : '—'}
-                        </td>
-                        <td className="px-3 py-2.5 text-center">{emp.total_leads}</td>
-                        <td className="px-3 py-2.5 text-center">{emp.total_prospects}</td>
-                        <td className="px-3 py-2.5 text-center">{emp.total_clientes}</td>
-                        <td className="px-3 py-2.5 text-gray-500 hidden lg:table-cell">{emp.cidade ? `${emp.cidade}/${emp.uf}` : '—'}</td>
-                        <td className="px-3 py-2.5 text-center" onClick={e => e.stopPropagation()}>
-                          <button onClick={() => { setFormEmpresa(emp); setModalEmpresa('editar'); }}
-                            className="text-gray-400 hover:text-indigo-600 transition-colors p-1" title="Editar">
-                            <i className="fa-solid fa-pen-to-square"></i>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {empresas.map(emp => {
+                      const expandida = empresasExpandidas.has(emp.id);
+                      const leadsAptos = leadsAptosPorEmpresa[emp.id];
+                      const carregandoLeads = loadingEmpresaId === emp.id;
+                      return (
+                        <React.Fragment key={emp.id}>
+                          <tr className="hover:bg-gray-50 transition-colors cursor-pointer" onClick={() => abrirDetalheEmpresa(emp.id)}>
+                            <td className="px-2 py-2.5 text-center" onClick={e => e.stopPropagation()}>
+                              <button
+                                onClick={() => alternarExpansaoEmpresa(emp.id)}
+                                className="text-gray-400 hover:text-indigo-600 transition-colors p-1"
+                                title={expandida ? 'Recolher leads aptos' : 'Expandir leads aptos a campanhas'}
+                              >
+                                <i className={`fa-solid ${expandida ? 'fa-chevron-down' : 'fa-chevron-right'} text-xs`}></i>
+                              </button>
+                            </td>
+                            <td className="px-3 py-2.5 font-medium text-gray-800">{emp.nome}</td>
+                            <td className="px-3 py-2.5 text-gray-500 hidden md:table-cell">{emp.dominio || '—'}</td>
+                            <td className="px-3 py-2.5 hidden lg:table-cell">
+                              {emp.setor ? <span className="bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded text-xs">{emp.setor}</span> : '—'}
+                            </td>
+                            <td className="px-3 py-2.5 text-center">{emp.total_leads}</td>
+                            <td className="px-3 py-2.5 text-center">{emp.total_prospects}</td>
+                            <td className="px-3 py-2.5 text-center">{emp.total_clientes}</td>
+                            <td className="px-3 py-2.5 text-gray-500 hidden lg:table-cell">{emp.cidade ? `${emp.cidade}/${emp.uf}` : '—'}</td>
+                            <td className="px-3 py-2.5 text-center" onClick={e => e.stopPropagation()}>
+                              <button onClick={() => { setFormEmpresa(emp); setModalEmpresa('editar'); }}
+                                className="text-gray-400 hover:text-indigo-600 transition-colors p-1" title="Editar">
+                                <i className="fa-solid fa-pen-to-square"></i>
+                              </button>
+                            </td>
+                          </tr>
+
+                          {/* (v1.1) Sub-linha: leads aptos + campanhas vinculadas */}
+                          {expandida && (
+                            <tr className="bg-indigo-50/20">
+                              <td></td>
+                              <td colSpan={8} className="px-3 py-3">
+                                {carregandoLeads ? (
+                                  <div className="text-xs text-gray-400 py-2 flex items-center gap-2">
+                                    <i className="fa-solid fa-spinner fa-spin"></i> Carregando leads aptos...
+                                  </div>
+                                ) : !leadsAptos || leadsAptos.length === 0 ? (
+                                  <div className="text-xs text-gray-400 py-2 flex items-center gap-2">
+                                    <i className="fa-solid fa-info-circle"></i>
+                                    Nenhum lead apto a campanhas para esta empresa.
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    <div className="text-[11px] uppercase font-semibold text-indigo-600 tracking-wide mb-2 flex items-center gap-2">
+                                      <i className="fa-solid fa-bullhorn"></i>
+                                      Leads aptos a campanhas ({leadsAptos.length})
+                                    </div>
+                                    <table className="w-full text-xs bg-white rounded-lg border border-indigo-100 overflow-hidden">
+                                      <thead className="bg-indigo-50/60 text-gray-600 text-[10px] uppercase">
+                                        <tr>
+                                          <th className="px-3 py-1.5 text-left font-semibold">Nome</th>
+                                          <th className="px-3 py-1.5 text-left font-semibold">Email</th>
+                                          <th className="px-3 py-1.5 text-left font-semibold">Cargo</th>
+                                          <th className="px-3 py-1.5 text-left font-semibold">Funil</th>
+                                          <th className="px-3 py-1.5 text-left font-semibold">Campanhas</th>
+                                          <th className="px-3 py-1.5 text-center font-semibold">Ações</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-indigo-50">
+                                        {leadsAptos.map(l => {
+                                          const funil = FUNIL_LABELS[l.funil_status] || FUNIL_LABELS.lead;
+                                          return (
+                                            <tr key={l.id} className="hover:bg-indigo-50/30">
+                                              <td className="px-3 py-1.5 font-medium text-gray-800">
+                                                {l.nome}
+                                                {l.opt_out && <span className="ml-1 text-[10px] text-red-500"><i className="fa-solid fa-ban"></i></span>}
+                                              </td>
+                                              <td className="px-3 py-1.5 text-gray-500">{l.email}</td>
+                                              <td className="px-3 py-1.5 text-gray-500">{l.cargo || '—'}</td>
+                                              <td className="px-3 py-1.5">
+                                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${funil.cor}`}>
+                                                  <i className={funil.icon}></i> {funil.label}
+                                                </span>
+                                              </td>
+                                              <td className="px-3 py-1.5">
+                                                {l.total_campanhas === 0 ? (
+                                                  <span className="text-gray-300 italic">Sem campanha ainda</span>
+                                                ) : (
+                                                  <div className="flex flex-wrap gap-1">
+                                                    {l.campanhas.map((c, i) => (
+                                                      <span key={i}
+                                                        className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-[10px] font-medium"
+                                                        title={`Status: ${c.status} • Step ${c.step_atual}`}>
+                                                        <i className="fa-solid fa-bullhorn mr-1"></i>
+                                                        {c.email_campanhas?.nome || `Campanha #${c.campanha_id}`}
+                                                      </span>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                              </td>
+                                              <td className="px-3 py-1.5 text-center">
+                                                <button onClick={() => abrirDetalheLead(l.id)}
+                                                  className="text-gray-400 hover:text-indigo-600 transition-colors p-1" title="Ver detalhes do lead">
+                                                  <i className="fa-solid fa-up-right-from-square"></i>
+                                                </button>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

@@ -86,6 +86,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             query = query.not('motor', 'like', 'cv_%');
         }
 
+        // ── Esconder leads já promovidos ao CRM (status='em_campanha') na aba "Meus Leads Salvos".
+        //    O Admin pode ver passando ?incluir_em_campanha=true se precisar diagnosticar.
+        const incluirEmCampanha = req.query.incluir_em_campanha === 'true';
+        if (origem === 'leads' && !incluirEmCampanha && status !== 'em_campanha') {
+            query = query.neq('status', 'em_campanha');
+        }
+
         if (status)          query = query.eq('status', status);
         if (empresa)         query = query.ilike('empresa_nome', `%${empresa}%`);
         if (motor)           query = query.eq('motor', motor);

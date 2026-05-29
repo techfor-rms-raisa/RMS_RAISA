@@ -592,6 +592,56 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         }
     }, [filtroLeadsEmpresa, filtroLeadsStatus, currentUser, podeVerTodosLeads]);
 
+    // ============================================
+    // PROMOVER PARA CAMPANHA (v1.1) — botão "Campanhas" da aba "Meus Leads Salvos"
+    // Promove o prospect_lead → email_lead (apto_campanha=true) e marca o
+    // prospect_lead com status='em_campanha', fazendo-o sumir desta lista.
+    // ============================================
+    const [promovendoIds, setPromovendoIds] = useState<Set<number>>(new Set());
+
+    const promoverParaCampanha = useCallback(async (leadId: number, leadNome: string) => {
+        if (!currentUser?.id) return;
+        if (promovendoIds.has(leadId)) return;
+
+        setPromovendoIds(prev => new Set(prev).add(leadId));
+        try {
+            const resp = await fetch('/api/campaign-leads', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'promover_para_campanha',
+                    prospect_id: leadId,
+                    criado_por: currentUser.nome_usuario,
+                }),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                setToastMsg({
+                    tipo: 'ok',
+                    msg: `"${leadNome}" enviado ao CRM (apto a campanhas).`,
+                });
+                setTimeout(() => setToastMsg(null), 3500);
+                // Some da lista atual — recarrega para refletir o novo status='em_campanha'
+                await carregarMeusLeads();
+            } else {
+                setToastMsg({
+                    tipo: 'erro',
+                    msg: data.error || 'Erro ao enviar lead para o CRM.',
+                });
+                setTimeout(() => setToastMsg(null), 4000);
+            }
+        } catch (err: any) {
+            setToastMsg({ tipo: 'erro', msg: `Erro: ${err.message}` });
+            setTimeout(() => setToastMsg(null), 4000);
+        } finally {
+            setPromovendoIds(prev => {
+                const next = new Set(prev);
+                next.delete(leadId);
+                return next;
+            });
+        }
+    }, [currentUser, carregarMeusLeads, promovendoIds]);
+
     // 🆕 Atualizar refs espelho — permite que o useEffect da extensão (acima no arquivo)
     // chame estas funções sem TDZ e sem dependências circulares.
     // IMPORTANTE: mantido dentro de useEffect para garantir ordem de inicialização
@@ -2658,7 +2708,7 @@ A empresa ficará disponível para a equipe.`)) return;
                         <thead>
                             <tr className="bg-gray-100 text-left">
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600">NOME</th>
-                                <th className="px-3 py-2 text-xs font-semibold text-gray-600">CARGO</th>
+                                <th className="px-2 py-2 text-xs font-semibold text-gray-600 w-24">CARGO</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMPRESA</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM</th>
@@ -2666,6 +2716,7 @@ A empresa ficará disponível para a equipe.`)) return;
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">EXPORTADO</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÕES</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -2676,7 +2727,9 @@ A empresa ficará disponível para a equipe.`)) return;
                                     <td className="px-3 py-2">
                                         <div className="font-medium text-gray-800 text-sm">{lead.nome_completo || '—'}</div>
                                     </td>
-                                    <td className="px-3 py-2 text-xs text-gray-500">{lead.cargo || '—'}</td>
+                                    <td className="px-2 py-2 text-xs text-gray-500 w-24 max-w-[6rem]">
+                                        <div className="truncate" title={lead.cargo || ''}>{lead.cargo || '—'}</div>
+                                    </td>
                                     <td className="px-3 py-2 text-xs text-gray-700">{lead.empresa_nome || '—'}</td>
                                     <td className="px-3 py-2 text-xs">
                                         {lead.email
@@ -2714,6 +2767,37 @@ A empresa ficará disponível para a equipe.`)) return;
                                     </td>
                                     <td className="px-3 py-2 text-center text-xs text-gray-400 whitespace-nowrap">
                                         {new Date(lead.criado_em).toLocaleDateString('pt-BR')}
+                                    </td>
+                                    {/* (v1.1) Botão Campanhas — promove para o CRM e sai desta lista */}
+                                    <td className="px-3 py-2 text-center">
+                                        {(() => {
+                                            const promovendo = promovendoIds.has(lead.id);
+                                            const semEmail = !lead.email;
+                                            const disabled = promovendo || semEmail;
+                                            return (
+                                                <button
+                                                    onClick={() => promoverParaCampanha(lead.id, lead.nome_completo || lead.email || `#${lead.id}`)}
+                                                    disabled={disabled}
+                                                    title={
+                                                        semEmail
+                                                            ? 'Resolva o email antes de enviar para Campanhas'
+                                                            : promovendo
+                                                                ? 'Enviando...'
+                                                                : 'Marcar como apto a campanhas (envia para o CRM)'
+                                                    }
+                                                    className={`text-[10px] px-2 py-1 rounded-md font-medium inline-flex items-center gap-1 transition-colors ${
+                                                        disabled
+                                                            ? 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                                                            : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                                    }`}
+                                                >
+                                                    {promovendo
+                                                        ? <><i className="fa-solid fa-spinner fa-spin"></i> Enviando</>
+                                                        : <><i className="fa-solid fa-bullhorn"></i> Campanhas</>
+                                                    }
+                                                </button>
+                                            );
+                                        })()}
                                     </td>
                                 </tr>
                             ))}
