@@ -44,6 +44,98 @@ const StepInfo: React.FC<StepInfoProps> = ({
     onChange({ ...campanha, [key]: value });
   };
 
+  // ════════════════════════════════════════════════════════════
+  // 🆕 30/05/2026 — Auto-fill do email_remetente baseado em
+  // nome_remetente + dominio_envio (UX: evita digitação manual)
+  //
+  // Algoritmo: <inicial-primeiro-nome><último-sobrenome>@<dominio>
+  // Exemplos:
+  //   "Tatiana Silva"           + techfor.com.br    → tsilva@techfor.com.br
+  //   "Messias Oliveira"        + techforti.inf.br  → moliveira@techforti.inf.br
+  //   "Marcos Da Silva Souza"   + techfor.com.br    → msouza@techfor.com.br (Da ignorado)
+  //   "Ana Maria Lima Pereira"  + techforti.inf.br  → apereira@techforti.inf.br
+  //
+  // Comportamento: só sobrescreve email_remetente se ele estiver vazio
+  // ou se for um auto-fill anterior (preserva edição manual do usuário).
+  // ════════════════════════════════════════════════════════════
+
+  // Conectivos comuns em nomes BR — ignorados na hora de escolher sobrenome
+  const CONECTIVOS_NOME = new Set([
+    'da', 'de', 'di', 'do', 'du',
+    'das', 'des', 'dos',
+    'e', 'y',
+    'la', 'le', 'lo',
+  ]);
+
+  /** Remove acentos de uma string (NFD + remove diacríticos). */
+  const removerAcentos = (s: string): string =>
+    s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  /**
+   * Gera email a partir de nome + domínio.
+   * Retorna string vazia se o nome não tiver pelo menos 1 palavra utilizável.
+   */
+  const derivarEmailRemetente = (nome: string, dominio: string): string => {
+    if (!nome || !dominio) return '';
+    const partes = removerAcentos(nome.trim())
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((p) => p.length > 0 && !CONECTIVOS_NOME.has(p));
+    if (partes.length === 0) return '';
+
+    const primeiro = partes[0];
+    const sobrenome = partes.length > 1 ? partes[partes.length - 1] : primeiro;
+    // Sanitiza para chars válidos de email (a-z0-9)
+    const sanit = (s: string) => s.replace(/[^a-z0-9]/g, '');
+    const inicial = sanit(primeiro).charAt(0);
+    const ultimoSob = sanit(sobrenome);
+    if (!inicial || !ultimoSob) return '';
+    return `${inicial}${ultimoSob}@${dominio}`;
+  };
+
+  /**
+   * Verifica se o email_remetente atual foi gerado pelo autofill
+   * (com algum domínio válido) — assim sabemos se podemos sobrescrever.
+   */
+  const ehEmailAutoGerado = (email: string | undefined): boolean => {
+    if (!email) return true; // vazio = pode preencher
+    // Se o email atual bate exatamente com o que o algoritmo geraria
+    // para os valores atuais OU para qualquer combinação anterior dos
+    // 2 domínios válidos, consideramos auto-gerado.
+    const nomeAtual = campanha.nome_remetente || '';
+    const candidatos = [
+      derivarEmailRemetente(nomeAtual, 'techfor.com.br'),
+      derivarEmailRemetente(nomeAtual, 'techforti.inf.br'),
+    ];
+    return candidatos.includes(email);
+  };
+
+  /**
+   * Setter customizado para nome_remetente — atualiza nome E recalcula email
+   * (se email estava vazio ou foi auto-gerado anteriormente).
+   */
+  const setNomeRemetente = (nome: string) => {
+    const proximaCampanha: Partial<Campanha> = { ...campanha, nome_remetente: nome };
+    if (campanha.dominio_envio && ehEmailAutoGerado(campanha.email_remetente)) {
+      const novoEmail = derivarEmailRemetente(nome, campanha.dominio_envio);
+      if (novoEmail) proximaCampanha.email_remetente = novoEmail;
+    }
+    onChange(proximaCampanha);
+  };
+
+  /**
+   * Setter customizado para dominio_envio — atualiza domínio E recalcula email
+   * (se email estava vazio ou foi auto-gerado anteriormente).
+   */
+  const setDominioEnvio = (dominio: string) => {
+    const proximaCampanha: Partial<Campanha> = { ...campanha, dominio_envio: dominio };
+    if (campanha.nome_remetente && ehEmailAutoGerado(campanha.email_remetente)) {
+      const novoEmail = derivarEmailRemetente(campanha.nome_remetente, dominio);
+      if (novoEmail) proximaCampanha.email_remetente = novoEmail;
+    }
+    onChange(proximaCampanha);
+  };
+
   return (
     <div className="space-y-5 max-w-2xl">
       {/* Nome */}
@@ -117,7 +209,7 @@ const StepInfo: React.FC<StepInfoProps> = ({
         </label>
         <select
           value={campanha.dominio_envio || ''}
-          onChange={(e) => setField('dominio_envio', e.target.value)}
+          onChange={(e) => setDominioEnvio(e.target.value)}
           className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
         >
           <option value="">Selecionar domínio...</option>
@@ -141,7 +233,7 @@ const StepInfo: React.FC<StepInfoProps> = ({
           <input
             type="text"
             value={campanha.nome_remetente || ''}
-            onChange={(e) => setField('nome_remetente', e.target.value)}
+            onChange={(e) => setNomeRemetente(e.target.value)}
             placeholder="Ex: Tatiana Silva"
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           />
@@ -158,7 +250,7 @@ const StepInfo: React.FC<StepInfoProps> = ({
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           />
           <p className="text-xs text-gray-400 mt-1">
-            Email no domínio secundário (diferente da assinatura)
+            Preenchido automaticamente a partir do nome + domínio. Pode editar livremente.
           </p>
         </div>
       </div>
