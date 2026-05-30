@@ -2,7 +2,12 @@
  * CRMLayout.tsx — Container do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/CRMLayout.tsx
- * Versão: 1.0 (Fase 1A — 29/05/2026)
+ * Versão: 1.1 (Fase 1C — 29/05/2026)
+ *
+ * Histórico:
+ *  - v1.0 (Fase 1A): Esqueleto com placeholders nas 6 sub-páginas.
+ *  - v1.1 (Fase 1C): Aba "Base de Leads" agora aponta para
+ *    BaseLeadsPage (decomposição de EmpresasLeadsCRM.tsx).
  *
  * Responsabilidade:
  *  - Orquestrar a sub-navegação interna do módulo CRM (6 sub-páginas).
@@ -11,13 +16,13 @@
  *    Pre_Projeto_CRM_Campanhas_v3.md).
  *  - Manter UI consistente entre as sub-páginas (header + sub-nav + content).
  *
- * Status das sub-páginas (Fase 1A):
- *  - Todas em PLACEHOLDER. Conteúdo real é entregue nas sub-fases:
- *    • Fase 1C → Base de Leads (decomposição de EmpresasLeadsCRM.tsx)
- *    • Fase 1D → Campanhas (decomposição de CampaignBuilder.tsx)
- *    • Fase 4  → Biblioteca de Copys + Assinaturas
- *    • Fase 8  → Acompanhamento (Dashboard)
- *    • Fases 2/5/6/7 → Sub-páginas de Configurações
+ * Status das sub-páginas:
+ *  - Base de Leads → ✅ implementado (Fase 1C)
+ *  - Campanhas      → placeholder (Fase 1D)
+ *  - Copys          → placeholder (Fase 4)
+ *  - Assinaturas    → placeholder (Fase 4)
+ *  - Acompanhamento → placeholder (Fase 8)
+ *  - Configurações  → placeholder (Fases 2/5/6/7)
  *
  * RBAC do módulo CRM (resumo):
  *  - Acesso ao módulo: Admin, Gestão de R&S, Gestão Comercial,
@@ -27,6 +32,7 @@
 
 import React, { useState } from 'react';
 import { User } from '@/types';
+import BaseLeadsPage from './base-leads/BaseLeadsPage';
 
 // ════════════════════════════════════════════════════════════
 // TIPOS
@@ -166,9 +172,13 @@ const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
           {tabAtual.descricao}
         </div>
 
-        {/* CONTENT — Placeholder por enquanto (Fase 1A) */}
+        {/* CONTENT */}
         <div className="p-6">
-          <PlaceholderConteudo tab={tabAtual} />
+          {tabAtual.id === 'base-leads' ? (
+            <BaseLeadsPage currentUser={currentUser} />
+          ) : (
+            <PlaceholderConteudo tab={tabAtual} />
+          )}
         </div>
       </div>
     </div>
@@ -187,7 +197,7 @@ const PlaceholderConteudo: React.FC<PlaceholderConteudoProps> = ({ tab }) => {
   // Mapa de roadmap por aba — referência ao Pre_Projeto v3.1
   const ROADMAP: Record<CRMTab, { fase: string; descricao: string }> = {
     'base-leads': {
-      fase: 'Fase 1C',
+      fase: 'Fase 1C ✓ concluída',
       descricao: 'Decomposição de EmpresasLeadsCRM.tsx em base-leads/*',
     },
     'campanhas': {
