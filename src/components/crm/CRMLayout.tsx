@@ -2,12 +2,13 @@
  * CRMLayout.tsx — Container do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/CRMLayout.tsx
- * Versão: 1.1 (Fase 1C — 29/05/2026)
+ * Versão: 1.2 (Fase 1D — 30/05/2026)
  *
  * Histórico:
  *  - v1.0 (Fase 1A): Esqueleto com placeholders nas 6 sub-páginas.
- *  - v1.1 (Fase 1C): Aba "Base de Leads" agora aponta para
- *    BaseLeadsPage (decomposição de EmpresasLeadsCRM.tsx).
+ *  - v1.1 (Fase 1C): Aba "Base de Leads" ligada ao BaseLeadsPage.
+ *  - v1.2 (Fase 1D): Aba "Campanhas" ligada ao CampanhasPage
+ *    (decomposição de CampaignBuilder.tsx).
  *
  * Responsabilidade:
  *  - Orquestrar a sub-navegação interna do módulo CRM (6 sub-páginas).
@@ -18,7 +19,7 @@
  *
  * Status das sub-páginas:
  *  - Base de Leads → ✅ implementado (Fase 1C)
- *  - Campanhas      → placeholder (Fase 1D)
+ *  - Campanhas      → ✅ implementado (Fase 1D)
  *  - Copys          → placeholder (Fase 4)
  *  - Assinaturas    → placeholder (Fase 4)
  *  - Acompanhamento → placeholder (Fase 8)
@@ -33,6 +34,7 @@
 import React, { useState } from 'react';
 import { User } from '@/types';
 import BaseLeadsPage from './base-leads/BaseLeadsPage';
+import CampanhasPage from './campanhas/CampanhasPage';
 
 // ════════════════════════════════════════════════════════════
 // TIPOS
@@ -176,6 +178,8 @@ const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
         <div className="p-6">
           {tabAtual.id === 'base-leads' ? (
             <BaseLeadsPage currentUser={currentUser} />
+          ) : tabAtual.id === 'campanhas' ? (
+            <CampanhasPage currentUser={currentUser} />
           ) : (
             <PlaceholderConteudo tab={tabAtual} />
           )}
@@ -201,7 +205,7 @@ const PlaceholderConteudo: React.FC<PlaceholderConteudoProps> = ({ tab }) => {
       descricao: 'Decomposição de EmpresasLeadsCRM.tsx em base-leads/*',
     },
     'campanhas': {
-      fase: 'Fase 1D',
+      fase: 'Fase 1D ✓ concluída',
       descricao: 'Decomposição de CampaignBuilder.tsx em campanhas/*',
     },
     'copys': {

@@ -72,3 +72,41 @@ export function formatDateTime(d: string | null | undefined): string {
     minute: '2-digit',
   });
 }
+
+// ════════════════════════════════════════════════════════════
+// CONSTANTES DE CAMPANHA (Fase 1D — 30/05/2026)
+// ════════════════════════════════════════════════════════════
+
+// URL base do endpoint de Campanhas (rename planejado para crm-campanhas na Fase 1E)
+export const CAMPANHA_API_URL = '/api/campaign-builder';
+
+// Domínios de envio disponíveis (alinhado ao Resend verificado em 28/05)
+export const DOMINIOS_ENVIO: ReadonlyArray<string> = [
+  'grupotechfor.com.br',
+  'grupotechforti.com.br',
+  'techcobbpo.com.br',
+];
+
+// Status de campanha — labels para STATUS BADGE
+export const STATUS_CAMPANHA_LABELS: Record<
+  string,
+  { label: string; bgClass: string; icon: string }
+> = {
+  rascunho:  { label: 'Rascunho',  bgClass: 'bg-gray-100 text-gray-700',     icon: 'fa-solid fa-pen-to-square' },
+  agendada:  { label: 'Agendada',  bgClass: 'bg-blue-100 text-blue-700',     icon: 'fa-solid fa-clock' },
+  ativa:     { label: 'Ativa',     bgClass: 'bg-green-100 text-green-700',   icon: 'fa-solid fa-circle-play' },
+  pausada:   { label: 'Pausada',   bgClass: 'bg-yellow-100 text-yellow-700', icon: 'fa-solid fa-circle-pause' },
+  concluida: { label: 'Concluída', bgClass: 'bg-purple-100 text-purple-700', icon: 'fa-solid fa-circle-check' },
+};
+
+// Condições de envio do step
+export const LABEL_CONDICAO_STEP: Record<string, string> = {
+  sempre:           'Sempre enviar',
+  se_nao_abriu:     'Se não abriu o anterior',
+  se_nao_respondeu: 'Se não respondeu',
+  se_abriu:         'Se abriu o anterior',
+};
+
+// Limites do wizard
+export const MAX_STEPS_POR_CAMPANHA = 5;
+export const DELAY_PADRAO_STEP_SUBSEQUENTE = 3; // dias
