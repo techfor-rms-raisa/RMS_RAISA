@@ -2,32 +2,22 @@
  * api/campaign-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  * 
  * Endpoints:
- * GET  ?action=listar_empresas[&reservado_por=X&busca=Y&setor=Z&page=1&limit=20&incluir_inaptos=false]
+ * GET  ?action=listar_empresas[&busca=X&setor=X&page=1&limit=20]
  * GET  ?action=detalhe_empresa&id=X
- * GET  ?action=empresa_leads_aptos&empresa_id=X[&reservado_por=Y]   ← v1.1
- * GET  ?action=listar_leads[&reservado_por=X&empresa_id=Y&funil=Z&busca=A&page=1&limit=30&incluir_inaptos=false]
+ * GET  ?action=listar_leads[&empresa_id=X&funil=X&busca=X&page=1&limit=30]
  * GET  ?action=detalhe_lead&id=X  (inclui timeline + campanhas)
  * GET  ?action=buscar_global&q=X  (busca por nome empresa/domínio/email lead)
- * GET  ?action=stats[&reservado_por=X]
+ * GET  ?action=stats                (contadores gerais)
  * POST action=criar_empresa
  * POST action=criar_lead
  * POST action=importar_prospects    (importa de prospect_leads → email_leads/email_empresas)
- * POST action=promover_para_campanha (v1.1 — botão "Campanhas" do Prospect Engine)
  * PATCH action=atualizar_empresa
  * PATCH action=atualizar_lead
  * PATCH action=mudar_funil          (muda status funil + registra histórico)
  * 
- * Versão: 1.1
- * Data: 28/05/2026
+ * Versão: 1.0
+ * Data: 13/05/2026
  * Caminho: api/campaign-leads.ts
- * 
- * Changelog 1.1:
- *  - Suporte a reservado_por (dono/analista) em listar_empresas, listar_leads, stats.
- *  - Filtro apto_campanha=true por padrão em listar_leads (override com incluir_inaptos=true).
- *  - listar_empresas restringe a empresas que têm pelo menos 1 lead apto.
- *  - Nova action GET empresa_leads_aptos (lista leads aptos + campanhas vinculadas).
- *  - Nova action POST promover_para_campanha (botão "Campanhas" do Prospect Engine).
- *  - criar_lead e importar_prospects passam a herdar reservado_por.
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -61,53 +51,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── LISTAR EMPRESAS ──────────────────────────
       if (action === 'listar_empresas') {
-        const { busca, setor, porte, page = '1', limit = '20',
-                reservado_por, incluir_inaptos } = req.query as Record<string, string>;
+        const { busca, setor, porte, page = '1', limit = '20' } = req.query as Record<string, string>;
         const offset = (parseInt(page) - 1) * parseInt(limit);
-
-        // (v1.1) Regra: o CRM mostra apenas empresas que tenham pelo menos 1 lead
-        // com apto_campanha=true (e do analista logado, quando não-admin).
-        // O override incluir_inaptos=true mantém o comportamento antigo (todas).
-        let empresaIds: number[] | null = null;
-        if (incluir_inaptos !== 'true') {
-          let leadsQuery = supabase
-            .from('email_leads')
-            .select('empresa_id')
-            .not('empresa_id', 'is', null)
-            .eq('apto_campanha', true);
-
-          if (reservado_por) {
-            leadsQuery = leadsQuery.eq('reservado_por', parseInt(reservado_por));
-          }
-
-          const { data: leadsRows, error: errLeads } = await leadsQuery;
-          if (errLeads) throw errLeads;
-
-          const idSet = new Set<number>();
-          for (const row of (leadsRows || [])) {
-            if (row.empresa_id) idSet.add(row.empresa_id as number);
-          }
-          empresaIds = Array.from(idSet);
-
-          if (empresaIds.length === 0) {
-            return res.status(200).json({
-              success: true,
-              empresas: [],
-              total: 0,
-              page: parseInt(page),
-              limit: parseInt(limit),
-              total_pages: 0,
-            });
-          }
-        }
 
         let query = supabase
           .from('email_empresas')
           .select('*', { count: 'exact' })
           .order('nome', { ascending: true })
           .range(offset, offset + parseInt(limit) - 1);
-
-        if (empresaIds) query = query.in('id', empresaIds);
 
         if (busca) {
           // Busca por nome OU domínio
@@ -174,66 +125,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // ── EMPRESA LEADS APTOS (v1.1) ───────────────
-      // Lista os leads APTOS de uma empresa + as campanhas em que cada um está.
-      // Usado no expandir da aba Empresas do CRM (EmpresasLeadsCRM.tsx).
-      if (action === 'empresa_leads_aptos') {
-        const { empresa_id, reservado_por } = req.query as Record<string, string>;
-        if (!empresa_id) {
-          return res.status(400).json({ success: false, error: 'empresa_id é obrigatório' });
-        }
-
-        let leadsQuery = supabase
-          .from('email_leads')
-          .select('id, nome, email, cargo, telefone, linkedin_url, funil_status, opt_out, score_engajamento, total_emails_recebidos, total_emails_abertos, total_emails_clicados, total_respostas, apto_campanha_em, reservado_por, criado_em, tags')
-          .eq('empresa_id', empresa_id)
-          .eq('apto_campanha', true)
-          .order('apto_campanha_em', { ascending: false, nullsFirst: false });
-
-        if (reservado_por) {
-          leadsQuery = leadsQuery.eq('reservado_por', parseInt(reservado_por));
-        }
-
-        const { data: leads, error: errLeads } = await leadsQuery;
-        if (errLeads) throw errLeads;
-
-        // Buscar campanhas vinculadas a cada lead
-        const leadIds = (leads || []).map(l => l.id);
-        let campanhasPorLead: Record<number, any[]> = {};
-
-        if (leadIds.length > 0) {
-          const { data: vinculos, error: errV } = await supabase
-            .from('email_lead_campanhas')
-            .select('lead_id, campanha_id, status, step_atual, adicionado_em, email_campanhas(id, nome, status, tipo, criado_em)')
-            .in('lead_id', leadIds)
-            .order('adicionado_em', { ascending: false });
-
-          if (errV) throw errV;
-
-          for (const v of (vinculos || [])) {
-            const lid = v.lead_id as number;
-            if (!campanhasPorLead[lid]) campanhasPorLead[lid] = [];
-            campanhasPorLead[lid].push(v);
-          }
-        }
-
-        const leadsComCampanhas = (leads || []).map(l => ({
-          ...l,
-          campanhas: campanhasPorLead[l.id] || [],
-          total_campanhas: (campanhasPorLead[l.id] || []).length,
-        }));
-
-        return res.status(200).json({
-          success: true,
-          leads: leadsComCampanhas,
-          total: leadsComCampanhas.length,
-        });
-      }
-
       // ── LISTAR LEADS ─────────────────────────────
       if (action === 'listar_leads') {
-        const { empresa_id, funil, busca, tags, page = '1', limit = '30',
-                reservado_por, incluir_inaptos } = req.query as Record<string, string>;
+        const { empresa_id, funil, busca, tags, page = '1', limit = '30' } = req.query as Record<string, string>;
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
         let query = supabase
@@ -241,12 +135,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .select('*, email_empresas(id, nome, dominio, setor)', { count: 'exact' })
           .order('criado_em', { ascending: false })
           .range(offset, offset + parseInt(limit) - 1);
-
-        // (v1.1) Por padrão: apenas leads aptos a campanhas (gatilho do botão "Campanhas").
-        if (incluir_inaptos !== 'true') query = query.eq('apto_campanha', true);
-
-        // (v1.1) Filtro por dono/analista
-        if (reservado_por) query = query.eq('reservado_por', parseInt(reservado_por));
 
         if (empresa_id) query = query.eq('empresa_id', empresa_id);
         if (funil) query = query.eq('funil_status', funil);
@@ -360,43 +248,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── STATS (contadores gerais) ────────────────
       if (action === 'stats') {
-        const { reservado_por } = req.query as Record<string, string>;
-        const rpId = reservado_por ? parseInt(reservado_por) : null;
-
-        // Empresas: escopadas pelo dono quando rpId passado
-        let qEmp = supabase
+        const { count: totalEmpresas } = await supabase
           .from('email_empresas').select('id', { count: 'exact', head: true });
-        if (rpId) qEmp = qEmp.eq('reservado_por', rpId);
 
-        // Leads por funil_status — escopo do dono quando rpId passado
-        let qLead = supabase
+        const { count: totalLeads } = await supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
           .eq('funil_status', 'lead');
-        if (rpId) qLead = qLead.eq('reservado_por', rpId);
 
-        let qProspect = supabase
+        const { count: totalProspects } = await supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
           .eq('funil_status', 'prospect');
-        if (rpId) qProspect = qProspect.eq('reservado_por', rpId);
 
-        let qCliente = supabase
+        const { count: totalClientes } = await supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
           .eq('funil_status', 'cliente');
-        if (rpId) qCliente = qCliente.eq('reservado_por', rpId);
 
-        const [
-          { count: totalEmpresas },
-          { count: totalLeads },
-          { count: totalProspects },
-          { count: totalClientes },
-          { count: totalOptOut },
-          { count: totalCampanhas },
-        ] = await Promise.all([
-          qEmp, qLead, qProspect, qCliente,
-          // opt_out e campanhas permanecem globais (não dependem de dono)
-          supabase.from('email_optout').select('id', { count: 'exact', head: true }),
-          supabase.from('email_campanhas').select('id', { count: 'exact', head: true }),
-        ]);
+        const { count: totalOptOut } = await supabase
+          .from('email_optout').select('id', { count: 'exact', head: true });
+
+        const { count: totalCampanhas } = await supabase
+          .from('email_campanhas').select('id', { count: 'exact', head: true });
 
         return res.status(200).json({
           success: true,
@@ -423,7 +294,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ── CRIAR EMPRESA ────────────────────────────
       if (action === 'criar_empresa') {
         const { nome, dominio, cnpj, setor, porte, cidade, uf, website, linkedin_url,
-                telefone_comercial, observacoes, origem, criado_por, reservado_por } = body;
+                telefone_comercial, observacoes, origem, criado_por } = body;
 
         if (!nome || !criado_por) {
           return res.status(400).json({ success: false, error: 'nome e criado_por são obrigatórios' });
@@ -462,8 +333,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             observacoes: observacoes || null,
             origem: origem || 'manual',
             criado_por,
-            reservado_por: reservado_por || null,
-            reservado_em: reservado_por ? new Date().toISOString() : null,
           })
           .select()
           .single();
@@ -477,7 +346,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ── CRIAR LEAD ───────────────────────────────
       if (action === 'criar_lead') {
         const { empresa_id, nome, email, cargo, telefone, linkedin_url,
-                tags, notas, origem, criado_por, prospect_lead_id, reservado_por } = body;
+                tags, notas, origem, criado_por, prospect_lead_id } = body;
 
         if (!nome || !email || !criado_por) {
           return res.status(400).json({ success: false, error: 'nome, email e criado_por são obrigatórios' });
@@ -519,8 +388,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             notas: notas || null,
             origem: origem || 'manual',
             criado_por,
-            reservado_por: reservado_por || null,
-            reservado_em: reservado_por ? new Date().toISOString() : null,
             opt_out: !!optout,
             opt_out_em: optout ? new Date().toISOString() : null,
           })
@@ -597,13 +464,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               uf: p.estado || null,
               website: p.empresa_website || null,
               linkedin_url: p.empresa_linkedin || null,
-              reservado_por: p.reservado_por || null,
               criado_por,
             }, resultados);
           }
 
-          // Criar lead — herda reservado_por do prospect
-          const agora = new Date().toISOString();
+          // Criar lead
           const { error: errInsert } = await supabase
             .from('email_leads')
             .insert({
@@ -613,8 +478,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               email: p.email.toLowerCase().trim(),
               cargo: p.cargo || null,
               linkedin_url: p.linkedin_url || null,
-              reservado_por: p.reservado_por || null,
-              reservado_em: p.reservado_por ? agora : null,
               origem: 'prospect_engine',
               criado_por,
             });
@@ -623,6 +486,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             resultados.erros.push(`${p.nome_completo}: ${errInsert.message}`);
           } else {
             resultados.importados++;
+            // 🆕 30/05/2026 — Marcar prospect como 'no_crm' para sumir do Prospect Engine
+            await supabase
+              .from('prospect_leads')
+              .update({ status: 'no_crm' })
+              .eq('id', p.id);
           }
         }
 
@@ -639,19 +507,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success: true, resultados });
       }
 
-      // ── PROMOVER PARA CAMPANHA (v1.1) ────────────
-      // Gatilho do botão "Campanhas" da aba "Meus Leads Salvos" do Prospect Engine.
-      // Cria/atualiza um email_lead com apto_campanha=true (herdando reservado_por
-      // do prospect_lead) e marca prospect_leads.status='em_campanha' para
-      // sumir da aba "Meus Leads Salvos".
+      // ─────────────────────────────────────────────────────────────────────
+      // 🆕 PROMOVER 1 PROSPECT → CRM (30/05/2026)
+      // ─────────────────────────────────────────────────────────────────────
+      // Action chamada pelo botão "Campanhas" da aba "Meus Leads Salvos" do
+      // ProspectSearchPage. Promove um único prospect_lead para email_leads
+      // (CRM) e marca o prospect com status='no_crm' para sumir da lista.
+      //
+      // Diferenças de 'importar_prospects':
+      //  - Recebe 1 prospect_id (não lista)
+      //  - Resposta tem o lead criado completo (para uso imediato no frontend)
+      //  - Trata caso "já existe no CRM" como sucesso (sincroniza status)
+      // ─────────────────────────────────────────────────────────────────────
       if (action === 'promover_para_campanha') {
         const { prospect_id, criado_por } = body;
 
         if (!prospect_id || !criado_por) {
-          return res.status(400).json({ success: false, error: 'prospect_id e criado_por são obrigatórios' });
+          return res.status(400).json({
+            success: false,
+            error: 'prospect_id e criado_por são obrigatórios',
+          });
         }
 
-        // 1) Buscar prospect_lead
+        // 1. Buscar o prospect
         const { data: prospect, error: errProspect } = await supabase
           .from('prospect_leads')
           .select('*')
@@ -662,19 +540,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!prospect) {
           return res.status(404).json({ success: false, error: 'Prospect não encontrado' });
         }
+
+        // 2. Validar email (sem email não pode virar lead de campanha)
         if (!prospect.email) {
           return res.status(400).json({
             success: false,
-            error: 'Prospect sem email não pode ser promovido para campanha. Resolva o email antes.',
+            error: 'Prospect sem email — resolva o email antes de promover',
           });
         }
 
-        const agora = new Date().toISOString();
-        const emailNorm = String(prospect.email).toLowerCase().trim();
+        const emailNormalizado = prospect.email.toLowerCase().trim();
 
-        // 2) Find/create empresa (carrega o dono também)
+        // 3. Se já existe em email_leads, apenas sincronizar status no prospect
+        const { data: leadExistente } = await supabase
+          .from('email_leads')
+          .select('id, nome')
+          .eq('email', emailNormalizado)
+          .maybeSingle();
+
+        if (leadExistente) {
+          await supabase
+            .from('prospect_leads')
+            .update({ status: 'no_crm' })
+            .eq('id', prospect_id);
+
+          console.log(`ℹ️ [campaign-leads] Lead "${prospect.nome_completo}" já estava no CRM (ID ${leadExistente.id}) — Prospect marcado como 'no_crm'`);
+          return res.status(200).json({
+            success: true,
+            lead: leadExistente,
+            ja_existia: true,
+            mensagem: 'Lead já estava no CRM. Prospect Engine atualizado.',
+          });
+        }
+
+        // 4. Criar ou encontrar empresa pelo domínio
         let empresaId: number | null = null;
-        const tmpRes = { empresas_criadas: 0 };
+        const empresasResult = { empresas_criadas: 0 };
         if (prospect.empresa_dominio || prospect.empresa_nome) {
           empresaId = await findOrCreateEmpresa({
             nome: prospect.empresa_nome || prospect.empresa_dominio || 'Sem nome',
@@ -684,108 +585,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             uf: prospect.estado || null,
             website: prospect.empresa_website || null,
             linkedin_url: prospect.empresa_linkedin || null,
-            reservado_por: prospect.reservado_por || null,
             criado_por,
-          }, tmpRes);
+          }, empresasResult);
         }
 
-        // 3) Verificar se email_lead já existe (por email)
-        const { data: existente, error: errEx } = await supabase
+        // 5. Criar email_lead no CRM
+        const { data: novoLead, error: errInsertLead } = await supabase
           .from('email_leads')
-          .select('id, apto_campanha, reservado_por, prospect_lead_id, empresa_id')
-          .eq('email', emailNorm)
-          .maybeSingle();
+          .insert({
+            empresa_id: empresaId,
+            prospect_lead_id: prospect.id,
+            nome: prospect.nome_completo?.trim() || 'Sem nome',
+            email: emailNormalizado,
+            cargo: prospect.cargo || null,
+            linkedin_url: prospect.linkedin_url || null,
+            origem: 'prospect_engine',
+            criado_por,
+          })
+          .select()
+          .single();
 
-        if (errEx) throw errEx;
-
-        let leadId: number;
-        let acao: 'criado' | 'atualizado';
-
-        if (existente) {
-          // Já existia → atualizar para apto + dono/links se faltarem
-          const updateData: any = {
-            apto_campanha: true,
-            apto_campanha_em: agora,
-            apto_campanha_por: criado_por,
-            atualizado_em: agora,
-          };
-          if (!existente.reservado_por && prospect.reservado_por) {
-            updateData.reservado_por = prospect.reservado_por;
-            updateData.reservado_em  = agora;
-          }
-          if (!existente.prospect_lead_id) updateData.prospect_lead_id = prospect.id;
-          if (!existente.empresa_id && empresaId) updateData.empresa_id = empresaId;
-
-          const { error: errUpd } = await supabase
-            .from('email_leads')
-            .update(updateData)
-            .eq('id', existente.id);
-
-          if (errUpd) throw errUpd;
-          leadId = existente.id;
-          acao = 'atualizado';
-        } else {
-          // Verificar opt-out global antes de criar
-          const { data: optout } = await supabase
-            .from('email_optout').select('id').eq('email', emailNorm).maybeSingle();
-
-          const { data: novo, error: errIns } = await supabase
-            .from('email_leads')
-            .insert({
-              empresa_id: empresaId,
-              prospect_lead_id: prospect.id,
-              nome: prospect.nome_completo?.trim() || 'Sem nome',
-              email: emailNorm,
-              cargo: prospect.cargo || null,
-              linkedin_url: prospect.linkedin_url || null,
-              reservado_por: prospect.reservado_por || null,
-              reservado_em: prospect.reservado_por ? agora : null,
-              apto_campanha: true,
-              apto_campanha_em: agora,
-              apto_campanha_por: criado_por,
-              origem: 'prospect_engine',
-              criado_por,
-              opt_out: !!optout,
-              opt_out_em: optout ? agora : null,
-            })
-            .select('id')
-            .single();
-
-          if (errIns) throw errIns;
-          leadId = novo.id;
-          acao = 'criado';
+        if (errInsertLead) {
+          return res.status(500).json({
+            success: false,
+            error: `Erro ao criar lead no CRM: ${errInsertLead.message}`,
+          });
         }
 
-        // 4) Marcar prospect como 'em_campanha' (some de Meus Leads Salvos)
-        const { error: errStatus } = await supabase
+        // 6. Marcar prospect como 'no_crm'
+        const { error: errUpdate } = await supabase
           .from('prospect_leads')
-          .update({ status: 'em_campanha' })
-          .eq('id', prospect.id);
+          .update({ status: 'no_crm' })
+          .eq('id', prospect_id);
 
-        if (errStatus) throw errStatus;
+        if (errUpdate) {
+          console.error(`⚠️ [campaign-leads] Lead criado mas falhou ao atualizar prospect ${prospect_id}: ${errUpdate.message}`);
+          // Não bloqueia — o lead já está no CRM, apenas o prospect ficará visível ainda
+        }
 
-        // 5) Registrar no histórico
-        await supabase.from('email_lead_historico').insert({
-          lead_id: leadId,
-          tipo: 'campanha_adicionado',
-          descricao: acao === 'criado'
-            ? 'Lead promovido do Prospect Engine (apto a campanhas)'
-            : 'Lead reativado como apto a campanhas',
-          dados: { prospect_lead_id: prospect.id, acao },
-          criado_por,
-        });
-
-        // 6) Atualizar counters da empresa
+        // 7. Atualizar counter cache da empresa
         if (empresaId) {
           await atualizarCountersEmpresa(empresaId);
         }
 
-        console.log(`✅ [campaign-leads] Promoção campanha: prospect ${prospect.id} → lead ${leadId} (${acao})`);
-        return res.status(200).json({
+        // 8. Registrar no histórico do lead
+        await supabase.from('email_lead_historico').insert({
+          lead_id: novoLead.id,
+          tipo: 'lead_criado',
+          descricao: `Lead promovido do Prospect Engine (prospect ID ${prospect.id})`,
+          criado_por,
+        });
+
+        console.log(`✅ [campaign-leads] Lead promovido: ${prospect.nome_completo} <${emailNormalizado}> → CRM ID ${novoLead.id}`);
+        return res.status(201).json({
           success: true,
-          lead_id: leadId,
+          lead: novoLead,
           empresa_id: empresaId,
-          acao,
+          empresa_criada: empresasResult.empresas_criadas > 0,
         });
       }
 
@@ -928,48 +784,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
  * Encontra empresa pelo domínio ou cria nova
  */
 async function findOrCreateEmpresa(
-  dados: { nome: string; dominio: string | null; setor: string | null; cidade: string | null; uf: string | null; website: string | null; linkedin_url: string | null; reservado_por?: number | null; criado_por: string },
+  dados: { nome: string; dominio: string | null; setor: string | null; cidade: string | null; uf: string | null; website: string | null; linkedin_url: string | null; criado_por: string },
   resultados: { empresas_criadas: number }
 ): Promise<number | null> {
   // Tentar encontrar por domínio
   if (dados.dominio) {
     const { data: existente } = await supabase
       .from('email_empresas')
-      .select('id, reservado_por')
+      .select('id')
       .eq('dominio', dados.dominio.toLowerCase().trim())
       .maybeSingle();
 
-    if (existente) {
-      // Se a empresa não tem dono ainda e estamos trazendo um, atribuir
-      if (!existente.reservado_por && dados.reservado_por) {
-        await supabase
-          .from('email_empresas')
-          .update({ reservado_por: dados.reservado_por, reservado_em: new Date().toISOString() })
-          .eq('id', existente.id);
-      }
-      return existente.id;
-    }
+    if (existente) return existente.id;
   }
 
   // Tentar encontrar por nome (case insensitive)
   const { data: porNome } = await supabase
     .from('email_empresas')
-    .select('id, reservado_por')
+    .select('id')
     .ilike('nome', dados.nome.trim())
     .maybeSingle();
 
-  if (porNome) {
-    if (!porNome.reservado_por && dados.reservado_por) {
-      await supabase
-        .from('email_empresas')
-        .update({ reservado_por: dados.reservado_por, reservado_em: new Date().toISOString() })
-        .eq('id', porNome.id);
-    }
-    return porNome.id;
-  }
+  if (porNome) return porNome.id;
 
   // Criar nova empresa
-  const agora = new Date().toISOString();
   const { data: nova, error } = await supabase
     .from('email_empresas')
     .insert({
@@ -982,8 +820,6 @@ async function findOrCreateEmpresa(
       linkedin_url: dados.linkedin_url || null,
       origem: 'prospect_engine',
       criado_por: dados.criado_por,
-      reservado_por: dados.reservado_por || null,
-      reservado_em: dados.reservado_por ? agora : null,
     })
     .select('id')
     .single();

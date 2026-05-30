@@ -86,12 +86,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             query = query.not('motor', 'like', 'cv_%');
         }
 
-        // ── Esconder leads já promovidos ao CRM (status='em_campanha') na aba "Meus Leads Salvos".
-        //    O Admin pode ver passando ?incluir_em_campanha=true se precisar diagnosticar.
-        const incluirEmCampanha = req.query.incluir_em_campanha === 'true';
-        if (origem === 'leads' && !incluirEmCampanha && status !== 'em_campanha') {
-            query = query.neq('status', 'em_campanha');
-        }
+        // 🆕 30/05/2026 — SEMPRE excluir leads promovidos ao CRM (email_leads).
+        // Esses leads viraram lead do CRM via 'promover_para_campanha' ou
+        // 'importar_prospects' e não devem mais aparecer no Prospect Engine.
+        // Status 'no_crm' foi adicionado à constraint prospect_leads_status_check.
+        query = query.neq('status', 'no_crm');
 
         if (status)          query = query.eq('status', status);
         if (empresa)         query = query.ilike('empresa_nome', `%${empresa}%`);
