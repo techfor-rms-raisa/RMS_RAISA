@@ -9,7 +9,7 @@
  *
  * Observação: a busca de prospects disponíveis usa o endpoint
  * /api/prospect-leads (módulo Prospect Engine — não o CRM).
- * A importação chama action=importar_prospects no /api/campaign-leads.
+ * A importação chama action=importar_prospects no /api/crm-leads.
  */
 
 import { useCallback, useState } from 'react';
@@ -50,7 +50,7 @@ interface UseImportProspectsOptions {
 // ════════════════════════════════════════════════════════════
 
 export function useImportProspects(options: UseImportProspectsOptions = {}) {
-  const apiUrl = options.apiUrl ?? '/api/campaign-leads';
+  const apiUrl = options.apiUrl ?? '/api/crm-leads';
   const prospectsApiUrl = options.prospectsApiUrl ?? '/api/prospect-leads';
 
   const api = useCrmApi(apiUrl);

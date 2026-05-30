@@ -605,7 +605,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
         setPromovendoIds(prev => new Set(prev).add(leadId));
         try {
-            const resp = await fetch('/api/campaign-leads', {
+            const resp = await fetch('/api/crm-leads', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

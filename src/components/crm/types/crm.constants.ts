@@ -77,8 +77,8 @@ export function formatDateTime(d: string | null | undefined): string {
 // CONSTANTES DE CAMPANHA (Fase 1D — 30/05/2026)
 // ════════════════════════════════════════════════════════════
 
-// URL base do endpoint de Campanhas (rename planejado para crm-campanhas na Fase 1E)
-export const CAMPANHA_API_URL = '/api/campaign-builder';
+// URL base do endpoint de Campanhas (renomeado na Fase 1E — antes /api/campaign-builder)
+export const CAMPANHA_API_URL = '/api/crm-campanhas';
 
 // Domínios de envio disponíveis (alinhado ao Resend verificado em 28/05)
 export const DOMINIOS_ENVIO: ReadonlyArray<string> = [

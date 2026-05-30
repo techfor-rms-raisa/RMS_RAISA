@@ -57,7 +57,7 @@ interface UseLeadsOptions {
 // ════════════════════════════════════════════════════════════
 
 export function useLeads(options: UseLeadsOptions = {}) {
-  const apiUrl = options.apiUrl ?? '/api/campaign-leads';
+  const apiUrl = options.apiUrl ?? '/api/crm-leads';
   const pageSize = options.pageSize ?? 30;
 
   const api = useCrmApi(apiUrl);

@@ -7,8 +7,8 @@
  * Responsabilidade:
  *  - Encapsular todo o ciclo de Empresas: listagem, filtros (busca,
  *    setor), paginação, criação, edição e abertura de detalhe.
- *  - Consumir o endpoint /api/campaign-leads (renomeado para
- *    /api/crm-leads na Fase 1E).
+ *  - Consumir o endpoint /api/crm-leads (renomeado da Fase 1E,
+ *    antes /api/campaign-leads).
  *
  * Comportamento idêntico ao EmpresasLeadsCRM.tsx original
  * (linhas 194-216 + 250-292) — refatorado, não alterado.
@@ -44,7 +44,7 @@ interface SalvarEmpresaResponse {
 }
 
 interface UseEmpresasOptions {
-  /** URL base do endpoint. Permite trocar de /api/campaign-leads para /api/crm-leads na Fase 1E. */
+  /** URL base do endpoint. Default: /api/crm-leads (renomeado na Fase 1E). */
   apiUrl?: string;
   /** Itens por página (default 20). */
   pageSize?: number;
@@ -55,7 +55,7 @@ interface UseEmpresasOptions {
 // ════════════════════════════════════════════════════════════
 
 export function useEmpresas(options: UseEmpresasOptions = {}) {
-  const apiUrl = options.apiUrl ?? '/api/campaign-leads';
+  const apiUrl = options.apiUrl ?? '/api/crm-leads';
   const pageSize = options.pageSize ?? 20;
 
   const api = useCrmApi(apiUrl);
