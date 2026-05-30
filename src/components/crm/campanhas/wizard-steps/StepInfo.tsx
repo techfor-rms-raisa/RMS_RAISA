@@ -154,7 +154,7 @@ const StepInfo: React.FC<StepInfoProps> = ({
             type="email"
             value={campanha.email_remetente || ''}
             onChange={(e) => setField('email_remetente', e.target.value)}
-            placeholder="Ex: tsilva@grupotechfor.com.br"
+            placeholder="Ex: tsilva@techfor.com.br"
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           />
           <p className="text-xs text-gray-400 mt-1">

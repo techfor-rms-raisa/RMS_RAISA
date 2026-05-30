@@ -81,10 +81,15 @@ export function formatDateTime(d: string | null | undefined): string {
 export const CAMPANHA_API_URL = '/api/crm-campanhas';
 
 // Domínios de envio disponíveis (alinhado ao Resend verificado em 28/05)
+// Domínios de envio verificados no Resend (sa-east-1) — atualizado em 30/05/2026
+// Ambos já processam ~200 e-mails/dia via Leads2b+Nerus. Mantidos em ordem
+// alfabética para consistência no dropdown do StepInfo.
+//
+// ⚠️ Adicionar novo domínio: requer verificação prévia DNS (TXT+DKIM+MX) no
+//    Hostinger + ativação no Resend antes de listar aqui.
 export const DOMINIOS_ENVIO: ReadonlyArray<string> = [
-  'grupotechfor.com.br',
-  'grupotechforti.com.br',
-  'techcobbpo.com.br',
+  'techfor.com.br',
+  'techforti.inf.br',
 ];
 
 // Status de campanha — labels para STATUS BADGE
