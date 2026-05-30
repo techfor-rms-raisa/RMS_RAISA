@@ -56,6 +56,13 @@ import CreditosTab from './components/prospect/CreditosTab';
 import CampanhaPrep from './components/prospect/CampanhaPrep';
 
 // ============================================
+// CRECI — Página de Corretores (BUGFIX 30/05/2026)
+// O Sidebar navegava para 'creci_page' mas faltava o case
+// no switch + import. Resultado: caía no default (Dashboard).
+// ============================================
+import CreciPage from './components/creci/CreciPage';
+
+// ============================================
 // CRM & CAMPANHAS (v60.0 — Fase 1A, 29/05/2026)
 // Layout container com sub-navegação interna.
 // Sub-páginas serão decompostas nas sub-fases 1B/1C/1D.
@@ -559,6 +566,12 @@ const App: React.FC = () => {
       // ============================================
       case 'crm':
           return <CRMLayout currentUser={currentUser!} />;
+
+      // ============================================
+      // CRECI — Corretores de Imóveis (BUGFIX 30/05/2026)
+      // ============================================
+      case 'creci_page':
+          return <CreciPage currentUser={currentUser ?? undefined} />;
 
       case 'dashboard':
       default:
