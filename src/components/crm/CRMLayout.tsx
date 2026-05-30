@@ -2,39 +2,28 @@
  * CRMLayout.tsx — Container do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/CRMLayout.tsx
- * Versão: 1.2 (Fase 1D — 30/05/2026)
+ * Versão: 1.3 (Fase 4B — 30/05/2026)
  *
  * Histórico:
  *  - v1.0 (Fase 1A): Esqueleto com placeholders nas 6 sub-páginas.
  *  - v1.1 (Fase 1C): Aba "Base de Leads" ligada ao BaseLeadsPage.
- *  - v1.2 (Fase 1D): Aba "Campanhas" ligada ao CampanhasPage
- *    (decomposição de CampaignBuilder.tsx).
- *
- * Responsabilidade:
- *  - Orquestrar a sub-navegação interna do módulo CRM (6 sub-páginas).
- *  - Aplicar RBAC nas sub-páginas restritas (aba "Configurações" só
- *    para Administrador + Gestão de R&S — decisão E e §5.3 do
- *    Pre_Projeto_CRM_Campanhas_v3.md).
- *  - Manter UI consistente entre as sub-páginas (header + sub-nav + content).
+ *  - v1.2 (Fase 1D): Aba "Campanhas" ligada ao CampanhasPage.
+ *  - v1.3 (Fase 4B): Aba "Biblioteca de Copys" ligada ao CopysPage.
  *
  * Status das sub-páginas:
  *  - Base de Leads → ✅ implementado (Fase 1C)
  *  - Campanhas      → ✅ implementado (Fase 1D)
- *  - Copys          → placeholder (Fase 4)
- *  - Assinaturas    → placeholder (Fase 4)
+ *  - Copys          → ✅ implementado (Fase 4B)
+ *  - Assinaturas    → placeholder (Fase 4D futura)
  *  - Acompanhamento → placeholder (Fase 8)
  *  - Configurações  → placeholder (Fases 2/5/6/7)
- *
- * RBAC do módulo CRM (resumo):
- *  - Acesso ao módulo: Admin, Gestão de R&S, Gestão Comercial,
- *    Analista de R&S, SDR (controlado no Sidebar.tsx).
- *  - Aba "Configurações CRM": Admin + Gestão de R&S apenas.
  */
 
 import React, { useState } from 'react';
 import { User } from '@/types';
 import BaseLeadsPage from './base-leads/BaseLeadsPage';
 import CampanhasPage from './campanhas/CampanhasPage';
+import CopysPage from './copys/CopysPage';
 
 // ════════════════════════════════════════════════════════════
 // TIPOS
@@ -180,6 +169,8 @@ const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
             <BaseLeadsPage currentUser={currentUser} />
           ) : tabAtual.id === 'campanhas' ? (
             <CampanhasPage currentUser={currentUser} />
+          ) : tabAtual.id === 'copys' ? (
+            <CopysPage currentUser={currentUser} />
           ) : (
             <PlaceholderConteudo tab={tabAtual} />
           )}
@@ -209,8 +200,8 @@ const PlaceholderConteudo: React.FC<PlaceholderConteudoProps> = ({ tab }) => {
       descricao: 'Decomposição de CampaignBuilder.tsx em campanhas/*',
     },
     'copys': {
-      fase: 'Fase 4',
-      descricao: 'Biblioteca central de copys reutilizáveis (Admin: CRUD; demais: visualizar)',
+      fase: 'Fase 4B ✓ concluída',
+      descricao: 'Biblioteca de Copys (CRUD com RBAC, soft-delete, preview)',
     },
     'assinaturas': {
       fase: 'Fase 4',
