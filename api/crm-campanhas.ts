@@ -4,11 +4,13 @@
  * Histórico:
  *  - v1.0 (14/05/2026): criado como api/campaign-builder.ts
  *  - v1.1 (30/05/2026 - Fase 1E): renomeado para api/crm-campanhas.ts
- *    (consistência com o nome do módulo CRM & Campanhas).
+ *  - v1.2 (30/05/2026 - Fase 4A): criar_step aceita copy_id opcional
+ *    (vínculo opcional a uma copy da biblioteca; snapshot do conteúdo
+ *    é sempre preservado — edição posterior da copy não afeta steps).
  *
  * CRUD completo para:
  * - Campanhas (criar, listar, editar, excluir, mudar status)
- * - Steps da sequência (1–5 por campanha)
+ * - Steps da sequência (1–5 por campanha) — agora com copy_id opcional
  * - Vinculação de leads
  * - Assinaturas por usuário
  * - Preview de email com merge de variáveis + assinatura
@@ -340,7 +342,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── Criar step ──────────────────────────────────────────
       if (action === 'criar_step') {
-        const { campanha_id, ordem, assunto, corpo_html, corpo_texto, delay_dias, condicao } = body;
+        const { campanha_id, ordem, assunto, corpo_html, corpo_texto, delay_dias, condicao, copy_id } = body;
 
         if (!campanha_id || !assunto || !corpo_html) {
           return res.status(400).json({ success: false, error: 'campanha_id, assunto e corpo_html obrigatórios' });
@@ -362,6 +364,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ordemFinal = (count || 0) + 1;
         }
 
+        // 🆕 30/05/2026 — Fase 4A: aceita copy_id opcional (snapshot do assunto/corpo
+        // é sempre preservado, mesmo quando vinculado a uma copy da biblioteca).
+        // Edição futura da copy NÃO afeta este step (decisão: snapshot).
         const { data, error } = await supabase
           .from('email_campanha_steps')
           .insert({
@@ -372,7 +377,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             corpo_texto: corpo_texto || '',
             delay_dias: delay_dias || 3,
             condicao: condicao || 'sempre',
-            ativo: true
+            ativo: true,
+            copy_id: copy_id ?? null,
           })
           .select()
           .single();
