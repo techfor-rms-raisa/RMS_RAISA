@@ -2,24 +2,35 @@
  * CampanhaWizard.tsx — Orquestrador do wizard de edição de campanha
  *
  * Caminho: src/components/crm/campanhas/CampanhaWizard.tsx
- * Versão: 1.0 (Fase 1D — 30/05/2026)
+ * Versão: 2.0 (Fase 4C — 31/05/2026)
  *
  * Decomposto de CampaignBuilder.tsx (linhas 651-761 + ações dos passos).
  * Recebe os hooks já instanciados pelo CampanhasPage para evitar
  * duplicar estado e permitir refresh da lista após salvar.
+ *
+ * 🆕 Fase 4C (31/05/2026):
+ *  - Instancia useTiposCampanha (verticais) para o CopySelector.
+ *  - handleAdicionarStep deixou de criar step em branco; agora ABRE o
+ *    CopySelector (seleção de copy da biblioteca).
+ *  - handleSelecionarCopy cria o step via stepsHook.adicionarDeCopy (snapshot).
+ *  - tipoIdInicial mapeia a vertical da campanha (campanha.tipo, por NOME) para
+ *    o id do tipo, usado como filtro inicial do seletor.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import StepInfo from './wizard-steps/StepInfo';
 import StepCopys from './wizard-steps/StepCopys';
 import StepLeads from './wizard-steps/StepLeads';
 import StepRevisao from './wizard-steps/StepRevisao';
+import CopySelector from './wizard-steps/CopySelector';
 import StatusBadge from '../shared/components/StatusBadge';
+import { useTiposCampanha } from '../shared/hooks/useTiposCampanha';
 import type { useCampanhas } from '../shared/hooks/useCampanhas';
 import type { useCampanhaSteps } from '../shared/hooks/useCampanhaSteps';
 import type { useCampanhaLeads } from '../shared/hooks/useCampanhaLeads';
 import type { useCampanhaPreview } from '../shared/hooks/useCampanhaPreview';
 import type { ToastMensagem } from '../shared/components/Toast';
+import type { Copy } from '../types/copy.types';
 
 // ════════════════════════════════════════════════════════════
 // TIPOS
@@ -62,8 +73,18 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
   const [activeTab, setActiveTab] = useState<WizardTab>('info');
   const [saving, setSaving] = useState(false);
 
+  // 🆕 Fase 4C — seletor de copy
+  const [seletorAberto, setSeletorAberto] = useState(false);
+  const tiposHook = useTiposCampanha();
+
   const campanha = campanhasHook.campanhaAtual;
   const podeSalvar = !!campanha.nome;
+
+  // Carrega as verticais (para o filtro do CopySelector)
+  useEffect(() => {
+    tiposHook.carregar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Carrega busca de leads disponíveis quando a busca muda
   useEffect(() => {
@@ -72,6 +93,16 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadsHook.busca]);
+
+  // Vertical da campanha → id do tipo (match por nome). Fallback: null = "Todas".
+  const tipoIdInicial = useMemo(() => {
+    if (!campanha.tipo) return null;
+    const alvo = String(campanha.tipo).trim().toLowerCase();
+    const match = tiposHook.tipos.find(
+      (t) => t.nome.trim().toLowerCase() === alvo
+    );
+    return match ? match.id : null;
+  }, [campanha.tipo, tiposHook.tipos]);
 
   // ════════════════════════════════════════════════════════════
   // HANDLERS — SALVAR CAMPANHA (campanha + steps em sequência)
@@ -163,11 +194,23 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
   };
 
   // ════════════════════════════════════════════════════════════
-  // HANDLERS — STEPS
+  // HANDLERS — STEPS (🆕 Fase 4C: via biblioteca de copys)
   // ════════════════════════════════════════════════════════════
 
   const handleAdicionarStep = () => {
-    const ok = stepsHook.adicionar();
+    if (!stepsHook.podeAdicionar) {
+      onMensagem({
+        tipo: 'error',
+        texto: `Máximo de ${stepsHook.maxSteps} steps por campanha`,
+      });
+      return;
+    }
+    setSeletorAberto(true);
+  };
+
+  const handleSelecionarCopy = (copy: Copy) => {
+    const ok = stepsHook.adicionarDeCopy(copy);
+    setSeletorAberto(false);
     if (!ok) {
       onMensagem({
         tipo: 'error',
@@ -309,7 +352,7 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
             stepEditando={stepsHook.stepEditando}
             podeAdicionar={stepsHook.podeAdicionar}
             setStepEditando={stepsHook.setStepEditando}
-            onAdicionar={handleAdicionarStep}
+            onAbrirSeletor={handleAdicionarStep}
             onAtualizarCampo={stepsHook.atualizarCampo}
             onExcluir={async (idx) => {
               const ok = await stepsHook.excluir(idx);
@@ -368,6 +411,15 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
           />
         )}
       </div>
+
+      {/* 🆕 Fase 4C — Seletor de copy da biblioteca */}
+      <CopySelector
+        aberto={seletorAberto}
+        tipos={tiposHook.tipos}
+        tipoIdInicial={tipoIdInicial}
+        onSelecionar={handleSelecionarCopy}
+        onFechar={() => setSeletorAberto(false)}
+      />
     </div>
   );
 };

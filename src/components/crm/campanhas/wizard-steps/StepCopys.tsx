@@ -1,15 +1,19 @@
 /**
- * StepCopys.tsx — Passo 2 do wizard: Editor de Copys/Emails (até 5 steps)
+ * StepCopys.tsx — Passo 2 do wizard: Steps da sequência (até 5)
  *
  * Caminho: src/components/crm/campanhas/wizard-steps/StepCopys.tsx
- * Versão: 1.0 (Fase 1D — 30/05/2026)
+ * Versão: 2.0 (Fase 4C — 31/05/2026)
  *
- * Decomposto de CampaignBuilder.tsx (linhas 922-1080).
- * Mantém o nome "Step" do original — no UI são "Steps da sequência".
+ * 🔄 Fase 4C — Substituição do editor inline pelo seletor de biblioteca:
+ *  - O conteúdo (assunto/corpo) deixa de ser digitado aqui. Cada step é criado
+ *    selecionando uma copy da Biblioteca (snapshot) via CopySelector.
+ *  - O conteúdo do step é READ-ONLY (fiel à copy selecionada — decisão travada).
+ *  - Permanecem editáveis apenas os campos de TIMING do step: delay e condição.
+ *  - Compatibilidade (modo híbrido): steps legados sem copy_id continuam sendo
+ *    exibidos (read-only), marcados como "Conteúdo manual (legado)".
  *
- * Nota: na Fase 4 do plano (Pré-Projeto v3.1), este passo será reformulado
- * para SELECIONAR copys da Biblioteca (CRUD Admin-only) em vez de editar
- * inline. Por enquanto preserva o comportamento original.
+ * Versão anterior (1.0, Fase 1D) trazia textareas de assunto/corpo inline,
+ * decompostas de CampaignBuilder.tsx (linhas 922-1080). Removidas nesta versão.
  */
 
 import React from 'react';
@@ -26,11 +30,25 @@ export interface StepCopysProps {
   stepEditando: number | null;
   podeAdicionar: boolean;
   setStepEditando: (idx: number | null) => void;
-  onAdicionar: () => void;
+  /** 🆕 Fase 4C — abre o CopySelector (substitui o antigo onAdicionar). */
+  onAbrirSeletor: () => void;
+  /** Atualiza campos de timing do step (delay_dias, condicao). */
   onAtualizarCampo: <K extends keyof Step>(idx: number, campo: K, valor: Step[K]) => void;
   onExcluir: (idx: number) => void;
   onVoltar: () => void;
   onProximo: () => void;
+}
+
+// ════════════════════════════════════════════════════════════
+// HELPERS
+// ════════════════════════════════════════════════════════════
+
+/** Realça {{name}} no corpo para a pré-visualização (mesmo padrão do CopyPreviewModal). */
+function realceName(html: string): string {
+  return (html || '').replace(
+    /\{\{name\}\}/gi,
+    '<span class="bg-yellow-100 text-yellow-800 px-1 rounded">[Primeiro Nome]</span>'
+  );
 }
 
 // ════════════════════════════════════════════════════════════
@@ -42,7 +60,7 @@ const StepCopys: React.FC<StepCopysProps> = ({
   stepEditando,
   podeAdicionar,
   setStepEditando,
-  onAdicionar,
+  onAbrirSeletor,
   onAtualizarCampo,
   onExcluir,
   onVoltar,
@@ -55,57 +73,64 @@ const StepCopys: React.FC<StepCopysProps> = ({
         <div>
           <h3 className="text-lg font-semibold text-gray-900">Steps da sequência</h3>
           <p className="text-sm text-gray-500">
-            Configure de 1 a {MAX_STEPS_POR_CAMPANHA} emails na sequência. Use{' '}
-            <code className="bg-gray-100 px-1 rounded">{'{{name}}'}</code> para inserir o
-            primeiro nome do lead.
+            Configure de 1 a {MAX_STEPS_POR_CAMPANHA} emails na sequência. O conteúdo
+            de cada step vem da{' '}
+            <span className="font-medium">Biblioteca de Copys</span> e é copiado como
+            snapshot (somente leitura aqui).
           </p>
         </div>
         <button
-          onClick={onAdicionar}
+          onClick={onAbrirSeletor}
           disabled={!podeAdicionar}
-          className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50"
+          className="flex items-center gap-2 px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 disabled:opacity-50 whitespace-nowrap"
         >
-          <i className="fa-solid fa-plus"></i>
-          Adicionar Step
+          <i className="fa-solid fa-book-open"></i>
+          Selecionar copy da biblioteca
         </button>
       </div>
 
       {/* Lista de steps */}
       {steps.length === 0 ? (
-        <div className="border-2 border-dashed border-gray-200 rounded-lg">
-          <EmptyState
-            icon="fa-solid fa-envelope"
-            titulo="Nenhum step adicionado"
-            descricao="Comece adicionando o primeiro email da sequência"
-            acaoLabel="+ Adicionar primeiro step"
-            onAcao={onAdicionar}
-          />
-        </div>
+        <EmptyState
+          icon="fa-solid fa-envelope-open-text"
+          titulo="Nenhum step ainda"
+          descricao='Clique em "Selecionar copy da biblioteca" para criar o primeiro email da sequência.'
+        />
       ) : (
         <div className="space-y-3">
           {steps.map((step, index) => {
             const ativo = stepEditando === index;
+            const temCopy = step.copy_id != null;
             return (
               <div
-                key={index}
-                className={`border rounded-lg transition-all ${
-                  ativo ? 'border-blue-300 shadow-sm' : 'border-gray-200'
-                }`}
+                key={step.id ?? `novo-${index}`}
+                className="border border-gray-200 rounded-lg overflow-hidden"
               >
-                {/* Header do step */}
+                {/* Cabeçalho colapsável do step */}
                 <div
-                  className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
                   onClick={() => setStepEditando(ativo ? null : index)}
+                  className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
                 >
-                  <div className="flex items-center gap-3">
-                    <span className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 text-sm font-bold shrink-0">
                       {step.ordem}
                     </span>
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">
-                        {step.assunto || '(sem assunto)'}
-                      </p>
-                      <p className="text-xs text-gray-400">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {step.assunto || '(sem assunto)'}
+                        </p>
+                        {temCopy ? (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 whitespace-nowrap">
+                            <i className="fa-solid fa-book"></i> Biblioteca
+                          </span>
+                        ) : (
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 whitespace-nowrap">
+                            <i className="fa-solid fa-pen"></i> Manual (legado)
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-0.5">
                         {index === 0
                           ? 'Envio imediato'
                           : `${step.delay_dias} dias após step ${step.ordem - 1}`}
@@ -114,7 +139,7 @@ const StepCopys: React.FC<StepCopysProps> = ({
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -133,46 +158,37 @@ const StepCopys: React.FC<StepCopysProps> = ({
                   </div>
                 </div>
 
-                {/* Editor do step (expandido) */}
+                {/* Conteúdo expandido (read-only) + timing editável */}
                 {ativo && (
                   <div className="px-4 pb-4 space-y-4 border-t border-gray-100 pt-4">
-                    {/* Assunto */}
+                    {/* Assunto (read-only) */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Assunto do email *
+                        Assunto do email
                       </label>
-                      <input
-                        type="text"
-                        value={step.assunto}
-                        onChange={(e) => onAtualizarCampo(index, 'assunto', e.target.value)}
-                        placeholder="Ex: Sua equipe de TI está no limite — e o problema pode não ser a equipe"
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                      />
+                      <p className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700">
+                        {step.assunto || '(sem assunto)'}
+                      </p>
                     </div>
 
-                    {/* Corpo HTML */}
+                    {/* Corpo (read-only, com realce de {{name}}) */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Corpo do email (HTML) *
+                        Conteúdo do email
                         <span className="ml-2 text-xs font-normal text-gray-400">
-                          Use <code>{'{{name}}'}</code> para o primeiro nome do lead
+                          Somente leitura — definido pela copy da biblioteca
                         </span>
                       </label>
-                      <textarea
-                        value={step.corpo_html}
-                        onChange={(e) =>
-                          onAtualizarCampo(index, 'corpo_html', e.target.value)
-                        }
-                        rows={12}
-                        placeholder={`Olá {{name}},\n\nDeixa eu te fazer uma pergunta direta.\n\n...`}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm font-mono"
+                      <div
+                        className="w-full max-h-72 overflow-y-auto px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700 prose prose-sm max-w-none"
+                        dangerouslySetInnerHTML={{ __html: realceName(step.corpo_html) }}
                       />
                       <p className="text-xs text-gray-400 mt-1">
                         A assinatura do remetente será adicionada automaticamente ao final.
                       </p>
                     </div>
 
-                    {/* Delay + Condição */}
+                    {/* Timing: Delay + Condição (editáveis) */}
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">

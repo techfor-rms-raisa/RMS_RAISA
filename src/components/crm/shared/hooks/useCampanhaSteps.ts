@@ -2,15 +2,24 @@
  * useCampanhaSteps.ts — Hook de gestão dos Steps da campanha
  *
  * Caminho: src/components/crm/shared/hooks/useCampanhaSteps.ts
- * Versão: 1.0 (Fase 1D — 30/05/2026)
+ * Versão: 2.0 (Fase 4C — 31/05/2026)
  *
  * Responsabilidade:
  *  - Gerenciar a lista de steps em memória durante a edição no wizard
+ *  - Criar step a partir de uma Copy da Biblioteca (SNAPSHOT + copy_id)
  *  - Salvar (cria ou atualiza) cada step na API após "Salvar campanha"
  *  - Excluir step (API + remoção local com reordenação)
  *
- * Comportamento idêntico a CampaignBuilder.tsx (linhas 386-425 + loop de
- * salvamento dentro de salvarCampanha 328-352).
+ * 🆕 Fase 4C (31/05/2026):
+ *  - adicionarDeCopy(copy): cria o step fazendo SNAPSHOT do conteúdo da copy
+ *    (assunto/corpo_html) e gravando copy_id. Edição posterior da copy na
+ *    biblioteca NÃO afeta este step (decisão Fase 4A: snapshot, não referência).
+ *  - salvarTodos agora envia copy_id no POST (criar_step) e no PATCH (atualizar_step).
+ *  - adicionar() (step em branco) foi mantido por compatibilidade, mas o wizard
+ *    passou a usar EXCLUSIVAMENTE adicionarDeCopy (decisão: sem modo manual).
+ *
+ * Comportamento de salvamento idêntico a CampaignBuilder.tsx (linhas 328-352),
+ * acrescido do campo copy_id.
  */
 
 import { useCallback, useState } from 'react';
@@ -21,6 +30,7 @@ import {
   DELAY_PADRAO_STEP_SUBSEQUENTE,
 } from '../../types/crm.constants';
 import type { Step } from '../../types/crm.types';
+import type { Copy } from '../../types/copy.types';
 
 // ════════════════════════════════════════════════════════════
 // TIPOS DE RESPOSTA
@@ -48,10 +58,14 @@ export function useCampanhaSteps(options: UseCampanhaStepsOptions = {}) {
   const [stepEditando, setStepEditando] = useState<number | null>(null);
 
   // ════════════════════════════════════════════════════════════
-  // ADICIONAR (local)
+  // ADICIONAR (step em branco)
   // ════════════════════════════════════════════════════════════
 
   /**
+   * @deprecated (Fase 4C) — Mantido por compatibilidade. O wizard não chama
+   * mais este método; a criação de steps passou a ser feita via
+   * adicionarDeCopy(copy). Não há mais modo de digitação manual na UI.
+   *
    * @returns true se conseguiu adicionar; false se já atingiu o limite.
    */
   const adicionar = useCallback((): boolean => {
@@ -66,6 +80,7 @@ export function useCampanhaSteps(options: UseCampanhaStepsOptions = {}) {
       delay_dias: steps.length === 0 ? 0 : DELAY_PADRAO_STEP_SUBSEQUENTE,
       condicao: 'sempre',
       ativo: true,
+      copy_id: null,
     };
     setSteps((prev) => [...prev, novoStep]);
     setStepEditando(steps.length);
@@ -73,7 +88,44 @@ export function useCampanhaSteps(options: UseCampanhaStepsOptions = {}) {
   }, [steps.length]);
 
   // ════════════════════════════════════════════════════════════
-  // ATUALIZAR campo (local)
+  // 🆕 ADICIONAR A PARTIR DE UMA COPY (snapshot + copy_id)
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Cria um step novo fazendo o SNAPSHOT do conteúdo da copy selecionada.
+   * O conteúdo (assunto/corpo_html) é copiado para o step e NÃO fica vinculado
+   * "ao vivo" à copy — alterações futuras na biblioteca não afetam campanhas
+   * já montadas (decisão Fase 4A). O copy_id é preservado apenas como
+   * referência de origem.
+   *
+   * @returns true se conseguiu adicionar; false se já atingiu o limite.
+   */
+  const adicionarDeCopy = useCallback(
+    (copy: Copy): boolean => {
+      if (steps.length >= MAX_STEPS_POR_CAMPANHA) {
+        return false;
+      }
+      const novoStep: Step = {
+        ordem: steps.length + 1,
+        assunto: copy.assunto,
+        corpo_html: copy.corpo_html,
+        // Copy (copy.types) não possui corpo_texto; o backend usa corpo_html.
+        // Mantemos corpo_texto vazio (o criar_step aplica default '' no servidor).
+        corpo_texto: '',
+        delay_dias: steps.length === 0 ? 0 : DELAY_PADRAO_STEP_SUBSEQUENTE,
+        condicao: 'sempre',
+        ativo: true,
+        copy_id: copy.id,
+      };
+      setSteps((prev) => [...prev, novoStep]);
+      setStepEditando(steps.length);
+      return true;
+    },
+    [steps.length]
+  );
+
+  // ════════════════════════════════════════════════════════════
+  // ATUALIZAR campo (local) — usado para delay_dias e condicao (timing)
   // ════════════════════════════════════════════════════════════
 
   const atualizarCampo = useCallback(
@@ -131,7 +183,9 @@ export function useCampanhaSteps(options: UseCampanhaStepsOptions = {}) {
    * - Se step.id existe → PATCH (atualizar)
    * - Se step.id não existe → POST (criar) e atualiza o id local
    *
-   * Comportamento idêntico a CampaignBuilder.tsx linhas 328-352.
+   * 🆕 Fase 4C: copy_id é enviado em ambos os caminhos. No POST o backend
+   * já persiste (criar_step). No PATCH é defensivo/idempotente — copy_id é
+   * imutável por step (conteúdo read-only), então não muda após a criação.
    */
   const salvarTodos = useCallback(
     async (campanhaId: number): Promise<boolean> => {
@@ -149,6 +203,7 @@ export function useCampanhaSteps(options: UseCampanhaStepsOptions = {}) {
               delay_dias: step.delay_dias,
               condicao: step.condicao,
               ordem: step.ordem,
+              copy_id: step.copy_id ?? null,
             });
             if (!resp.ok || !resp.data?.success) {
               throw new Error(
@@ -166,6 +221,7 @@ export function useCampanhaSteps(options: UseCampanhaStepsOptions = {}) {
               corpo_texto: step.corpo_texto,
               delay_dias: step.delay_dias,
               condicao: step.condicao,
+              copy_id: step.copy_id ?? null,
             });
             if (!resp.ok || !resp.data?.success) {
               throw new Error(
@@ -199,6 +255,7 @@ export function useCampanhaSteps(options: UseCampanhaStepsOptions = {}) {
     stepEditando,
     setStepEditando,
     adicionar,
+    adicionarDeCopy, // 🆕 Fase 4C
     atualizarCampo,
     excluir,
     salvarTodos,
