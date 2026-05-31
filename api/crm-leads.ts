@@ -556,6 +556,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
         }
 
+        // 2b. 🆕 31/05/2026 — Validar vertical (obrigatória para campanhas)
+        if (!prospect.vertical || !String(prospect.vertical).trim()) {
+          return res.status(400).json({
+            success: false,
+            error: 'Setar uma Vertical de Negócios para este Lead',
+          });
+        }
+
         const emailNormalizado = prospect.email.toLowerCase().trim();
 
         // 3. Se já existe em email_leads, apenas sincronizar status no prospect
@@ -606,6 +614,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             email: emailNormalizado,
             cargo: prospect.cargo || null,
             linkedin_url: prospect.linkedin_url || null,
+            vertical: String(prospect.vertical).trim(),
             origem: 'prospect_engine',
             criado_por,
           })

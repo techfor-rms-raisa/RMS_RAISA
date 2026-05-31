@@ -91,6 +91,8 @@ interface ProspectLead {
     reservado_por:      number | null;
     reservado_em:       string | null;
     reservado_por_nome: string | null;
+    // 🆕 31/05/2026 — Vertical de negócio (obrigatória p/ promover a Campanhas)
+    vertical:           string | null;
 }
 
 // ============================================
@@ -164,6 +166,10 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [filtroEmpresa, setFiltroEmpresa]             = useState('');
     const [filtroOrigem, setFiltroOrigem]               = useState(''); // NOVO: filtro por origem CV
     const [marcandoExportado, setMarcandoExportado]     = useState<number | null>(null);
+    // 🆕 31/05/2026 — Vertical de negócio
+    const [verticaisDisponiveis, setVerticaisDisponiveis] = useState<string[]>([]);
+    const [verticalAberta, setVerticalAberta]           = useState<number | null>(null); // id do lead com dropdown aberto
+    const [salvandoVertical, setSalvandoVertical]       = useState<number | null>(null);
     const [marcandoExclusao, setMarcandoExclusao]       = useState<number | null>(null); // NOVO
     const [resolvendoDominio, setResolvendoDominio]     = useState<number | null>(null); // id do lead sendo resolvido
 
@@ -603,9 +609,17 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         if (!currentUser?.id) return;
         if (promovendoIds.has(leadId)) return;
 
+        // 🆕 31/05/2026 — Vertical obrigatória antes de promover
+        const leadAlvo = meusLeads.find(l => l.id === leadId);
+        if (!leadAlvo?.vertical || !leadAlvo.vertical.trim()) {
+            setToastMsg({ tipo: 'erro', msg: 'Setar uma Vertical de Negócios para este Lead' });
+            setTimeout(() => setToastMsg(null), 3500);
+            return;
+        }
+
         setPromovendoIds(prev => new Set(prev).add(leadId));
         try {
-            const resp = await fetch('/api/crm-leads', {
+            const resp = await fetch('/api/campaign-leads', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -640,7 +654,65 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                 return next;
             });
         }
-    }, [currentUser, carregarMeusLeads, promovendoIds]);
+    }, [currentUser, carregarMeusLeads, promovendoIds, meusLeads]);
+
+    // ============================================
+    // 🆕 31/05/2026 — VERTICAIS DE NEGÓCIO
+    // Carrega as verticais ativas de email_tipos_campanha (fonte canônica).
+    // Dropdown dinâmico: novas verticais cadastradas aparecem sem deploy.
+    // ============================================
+    const carregarVerticais = useCallback(async () => {
+        if (verticaisDisponiveis.length > 0) return; // cache — só carrega uma vez
+        try {
+            const { data, error } = await supabase
+                .from('email_tipos_campanha')
+                .select('nome')
+                .eq('ativo', true)
+                .order('nome', { ascending: true });
+            if (error) throw error;
+            setVerticaisDisponiveis((data || []).map((t: any) => t.nome));
+        } catch (e) {
+            console.error('Erro ao carregar verticais:', e);
+        }
+    }, [verticaisDisponiveis]);
+
+    // Carrega as verticais quando a aba "Meus Leads Salvos" abre
+    useEffect(() => {
+        if (abaAtiva === 'leads') carregarVerticais();
+    }, [abaAtiva, carregarVerticais]);
+
+    // Atribui a vertical ao lead (PATCH) e atualiza a linha localmente
+    const setarVertical = useCallback(async (leadId: number, vertical: string) => {
+        setSalvandoVertical(leadId);
+        try {
+            const resp = await fetch('/api/prospect-leads', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids: [leadId],
+                    setar_vertical: true,
+                    vertical,
+                }),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                setMeusLeads(prev => prev.map(l =>
+                    l.id === leadId ? { ...l, vertical } : l
+                ));
+                setVerticalAberta(null);
+                setToastMsg({ tipo: 'ok', msg: `Vertical "${vertical}" atribuída!` });
+                setTimeout(() => setToastMsg(null), 2500);
+            } else {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Erro ao salvar vertical' });
+                setTimeout(() => setToastMsg(null), 3500);
+            }
+        } catch (e: any) {
+            setToastMsg({ tipo: 'erro', msg: `Erro: ${e.message}` });
+            setTimeout(() => setToastMsg(null), 3500);
+        } finally {
+            setSalvandoVertical(null);
+        }
+    }, []);
 
     // 🆕 Atualizar refs espelho — permite que o useEffect da extensão (acima no arquivo)
     // chame estas funções sem TDZ e sem dependências circulares.
@@ -2713,7 +2785,7 @@ A empresa ficará disponível para a equipe.`)) return;
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600">EMAIL</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ORIGEM</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ANALISTA</th>
-                                <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">EXPORTADO</th>
+                                <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">VERTICAL</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÕES</th>
@@ -2752,10 +2824,51 @@ A empresa ficará disponível para a equipe.`)) return;
                                         }
                                     </td>
                                     <td className="px-3 py-2 text-center">
-                                        {lead.exportado_em
-                                            ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-medium">✓ Exportado</span>
-                                            : <span className="text-gray-300 text-xs">—</span>
-                                        }
+                                        {/* 🆕 VERTICAL — badge se setada; senão botão "+ Vertical" com dropdown inline */}
+                                        {verticalAberta === lead.id ? (
+                                            <div className="flex items-center justify-center gap-1">
+                                                <select
+                                                    autoFocus
+                                                    defaultValue={lead.vertical || ''}
+                                                    onChange={(e) => { if (e.target.value) setarVertical(lead.id, e.target.value); }}
+                                                    disabled={salvandoVertical === lead.id}
+                                                    className="text-[11px] px-2 py-1 border border-indigo-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                                >
+                                                    <option value="">Selecionar...</option>
+                                                    {verticaisDisponiveis.map(v => (
+                                                        <option key={v} value={v}>{v}</option>
+                                                    ))}
+                                                </select>
+                                                <button
+                                                    onClick={() => setVerticalAberta(null)}
+                                                    className="px-1.5 py-1 bg-gray-200 text-gray-600 rounded text-xs hover:bg-gray-300"
+                                                    title="Cancelar"
+                                                >
+                                                    <i className="fa-solid fa-xmark"></i>
+                                                </button>
+                                            </div>
+                                        ) : lead.vertical ? (
+                                            <button
+                                                onClick={() => { carregarVerticais(); setVerticalAberta(lead.id); }}
+                                                className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-medium hover:bg-purple-200 transition-colors"
+                                                title="Clique para alterar a vertical"
+                                            >
+                                                <i className="fa-solid fa-layer-group mr-1 text-[9px]"></i>
+                                                {lead.vertical}
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={() => { carregarVerticais(); setVerticalAberta(lead.id); }}
+                                                disabled={salvandoVertical === lead.id}
+                                                className="text-[10px] px-2 py-1 rounded-md font-medium inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100 transition-colors"
+                                                title="Atribuir vertical de negócio"
+                                            >
+                                                {salvandoVertical === lead.id
+                                                    ? <><i className="fa-solid fa-spinner fa-spin"></i></>
+                                                    : <><i className="fa-solid fa-plus text-[9px]"></i> Vertical</>
+                                                }
+                                            </button>
+                                        )}
                                     </td>
                                     <td className="px-3 py-2 text-center">
                                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
@@ -2764,6 +2877,11 @@ A empresa ficará disponível para a equipe.`)) return;
                                             : lead.status === 'descartado' ? 'bg-red-100 text-red-500'
                                             : 'bg-gray-100 text-gray-500'
                                         }`}>{lead.status || 'novo'}</span>
+                                        {lead.exportado_em && (
+                                            <span className="block text-[9px] text-green-600 mt-0.5" title="Já exportado para Leads2B">
+                                                <i className="fa-solid fa-check"></i> exportado
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="px-3 py-2 text-center text-xs text-gray-400 whitespace-nowrap">
                                         {new Date(lead.criado_em).toLocaleDateString('pt-BR')}
@@ -2773,6 +2891,7 @@ A empresa ficará disponível para a equipe.`)) return;
                                         {(() => {
                                             const promovendo = promovendoIds.has(lead.id);
                                             const semEmail = !lead.email;
+                                            const semVertical = !lead.vertical;
                                             const disabled = promovendo || semEmail;
                                             return (
                                                 <button
@@ -2781,9 +2900,11 @@ A empresa ficará disponível para a equipe.`)) return;
                                                     title={
                                                         semEmail
                                                             ? 'Resolva o email antes de enviar para Campanhas'
-                                                            : promovendo
-                                                                ? 'Enviando...'
-                                                                : 'Marcar como apto a campanhas (envia para o CRM)'
+                                                            : semVertical
+                                                                ? 'Defina uma Vertical de Negócios antes de enviar para Campanhas'
+                                                                : promovendo
+                                                                    ? 'Enviando...'
+                                                                    : 'Marcar como apto a campanhas (envia para o CRM)'
                                                     }
                                                     className={`text-[10px] px-2 py-1 rounded-md font-medium inline-flex items-center gap-1 transition-colors ${
                                                         disabled
