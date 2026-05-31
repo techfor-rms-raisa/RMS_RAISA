@@ -111,7 +111,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .from('email_lead_campanhas')
           .select(`
             id, status, step_atual, adicionado_em,
-            email_leads!inner(id, nome, email, cargo, empresa_id, funil,
+            email_leads!inner(id, nome, email, cargo, empresa_id, funil:funil_status,
               email_empresas(nome))
           `, { count: 'exact' })
           .eq('campanha_id', campanha_id)
@@ -140,18 +140,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           idsVinculados = (vinculados || []).map((v: any) => v.lead_id);
         }
 
-        // Leads disponíveis (excluindo opt-out)
+        // 🔧 31/05/2026 (Fase 4C-fix): coluna real é funil_status (não funil);
+        // filtro principal apto_campanha=true (migração 2026-05-28); opt_out via boolean.
+        // Leads disponíveis = aptos a campanha, não opt-out, funil_status != 'perdido'.
         let query = supabase
           .from('email_leads')
-          .select(`id, nome, email, cargo, funil, email_empresas(nome)`)
-          .not('funil', 'eq', 'perdido')
+          .select(`id, nome, email, cargo, funil:funil_status, email_empresas(nome)`)
+          .eq('apto_campanha', true)
+          .or('opt_out.is.null,opt_out.eq.false')
+          .not('funil_status', 'eq', 'perdido')
           .order('nome', { ascending: true })
           .limit(parseInt(limit));
 
         if (busca) {
           query = query.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%`);
         }
-        if (funil) query = query.eq('funil', funil);
+        if (funil) query = query.eq('funil_status', funil);
         if (idsVinculados.length > 0) {
           query = query.not('id', 'in', `(${idsVinculados.join(',')})`);
         }
