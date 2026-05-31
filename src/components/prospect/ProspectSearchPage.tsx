@@ -619,7 +619,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
         setPromovendoIds(prev => new Set(prev).add(leadId));
         try {
-            const resp = await fetch('/api/campaign-leads', {
+            const resp = await fetch('/api/crm-leads', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2914,7 +2914,7 @@ A empresa ficará disponível para a equipe.`)) return;
                                                 >
                                                     {promovendo
                                                         ? <><i className="fa-solid fa-spinner fa-spin"></i> Enviando</>
-                                                        : <><i className="fa-solid fa-bullhorn"></i> Campanhas</>
+                                                        : <><i className="fa-solid fa-plus text-[9px]"></i> Campanhas</>
                                                     }
                                                 </button>
                                             );
