@@ -183,7 +183,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // POST — criar
     // ════════════════════════════════════════════════
     if (req.method === 'POST') {
-      const { action } = req.body as { action?: string };
+      // 🔧 31/05/2026 (Fase 4C-fix): action vem da query (useCrmApi sempre envia ?action=).
+      // Fallback para req.body mantém compatibilidade com chamadas antigas.
+      const action = String(req.query.action || (req.body as { action?: string })?.action || '');
 
       // ──── CRIAR TIPO DE CAMPANHA (Admin only) ────
       if (action === 'criar_tipo') {
@@ -258,7 +260,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // PATCH — atualizar
     // ════════════════════════════════════════════════
     if (req.method === 'PATCH') {
-      const { action } = req.body as { action?: string };
+      // 🔧 31/05/2026 (Fase 4C-fix): action vem da query (useCrmApi sempre envia ?action=).
+      // Fallback para req.body mantém compatibilidade com chamadas antigas.
+      const action = String(req.query.action || (req.body as { action?: string })?.action || '');
 
       // ──── ATUALIZAR TIPO (Admin only) ────
       if (action === 'atualizar_tipo') {

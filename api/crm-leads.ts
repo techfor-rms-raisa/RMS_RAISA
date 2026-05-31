@@ -44,7 +44,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   try {
-    const action = (req.method === 'GET' ? req.query.action : req.body?.action) as string;
+    // 🔧 31/05/2026 (Fase 4C-fix): action sempre da query (useCrmApi); fallback body p/ compat.
+    const action = (req.query.action ?? req.body?.action) as string;
 
     if (!action) {
       return res.status(400).json({ success: false, error: 'Parâmetro "action" é obrigatório' });
