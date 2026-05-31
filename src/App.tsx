@@ -68,6 +68,8 @@ import CreciPage from './components/creci/CreciPage';
 // Sub-páginas serão decompostas nas sub-fases 1B/1C/1D.
 // ============================================
 import CRMLayout from './components/crm/CRMLayout';
+// 🆕 30/05/2026 — Sub-páginas promovidas a views próprias do menu lateral
+import BaseLeadsPage from './components/crm/base-leads/BaseLeadsPage';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -568,6 +570,38 @@ const App: React.FC = () => {
           return <CRMLayout currentUser={currentUser!} />;
 
       // ============================================
+      // 🆕 30/05/2026 — Sub-páginas do CRM promovidas a views próprias
+      // ============================================
+      case 'crm_base_leads':
+          return (
+            <div className="space-y-6">
+              <BaseLeadsPage currentUser={currentUser!} />
+            </div>
+          );
+
+      case 'crm_acompanhamento':
+          return (
+            <CrmPlaceholderPage
+              titulo="Acompanhamento"
+              descricao="Dashboard analítico de campanhas ativas"
+              icon="fa-solid fa-chart-line"
+              fase="Fase 8"
+              previsao="Dashboard analítico — taxas, desempenho por copy/analista/domínio"
+            />
+          );
+
+      case 'crm_config':
+          return (
+            <CrmPlaceholderPage
+              titulo="Configurações"
+              descricao="Domínios, tipos de campanha, e-mails inválidos, opt-out, correspondência"
+              icon="fa-solid fa-gear"
+              fase="Fases 2 / 5 / 6 / 7"
+              previsao="Domínios, tipos de campanha, e-mails inválidos, opt-out, correspondência"
+            />
+          );
+
+      // ============================================
       // CRECI — Corretores de Imóveis (BUGFIX 30/05/2026)
       // ============================================
       case 'creci_page':
@@ -702,5 +736,60 @@ const App: React.FC = () => {
     </AuthProvider>
   );
 };
+
+// ════════════════════════════════════════════════════════════════════════════
+// 🆕 30/05/2026 — CrmPlaceholderPage
+// Componente standalone reutilizado pelas sub-páginas do CRM que ainda
+// estão em backlog (Acompanhamento, Configurações). Mesmo visual do
+// placeholder antigo do CRMLayout, mas como página independente.
+// ════════════════════════════════════════════════════════════════════════════
+
+interface CrmPlaceholderPageProps {
+  titulo: string;
+  descricao: string;
+  icon: string;
+  fase: string;
+  previsao: string;
+}
+
+const CrmPlaceholderPage: React.FC<CrmPlaceholderPageProps> = ({
+  titulo,
+  descricao,
+  icon,
+  fase,
+  previsao,
+}) => (
+  <div className="space-y-6">
+    <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
+      <div className="flex items-center gap-3">
+        <div className="w-12 h-12 rounded-lg bg-blue-100 flex items-center justify-center">
+          <i className={`${icon} text-blue-600 text-xl`}></i>
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">{titulo}</h1>
+          <p className="text-sm text-gray-500">{descricao}</p>
+        </div>
+      </div>
+    </div>
+
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-12 text-center">
+      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-4">
+        <i className={`${icon} text-gray-400 text-2xl`}></i>
+      </div>
+      <h2 className="text-lg font-semibold text-gray-700 mb-1">{titulo}</h2>
+      <p className="text-sm text-gray-500 mb-6 max-w-md mx-auto">{descricao}</p>
+
+      <div className="inline-block px-4 py-3 rounded-lg bg-blue-50 border border-blue-100 text-left max-w-md">
+        <div className="flex items-center gap-2 mb-1">
+          <i className="fa-solid fa-clock-rotate-left text-blue-500 text-sm"></i>
+          <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+            Entrega prevista — {fase}
+          </span>
+        </div>
+        <p className="text-sm text-blue-900">{previsao}</p>
+      </div>
+    </div>
+  </div>
+);
 
 export default App;

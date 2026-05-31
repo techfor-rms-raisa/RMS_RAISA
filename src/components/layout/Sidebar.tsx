@@ -15,7 +15,13 @@
  * - Itens "CRM Leads" e "Campaign Builder" removidos do menu PROSPECT
  * - Nova seção com item único "CRM & Campanhas" → view 'crm' (sub-nav interna em CRMLayout)
  * 
- * Data: 29/05/2026
+ * 🆕 v61.0 (30/05/2026): Reorganização do menu lateral
+ * - PROSPECT: removidos "Meus Prospects" e "Preparar Campanha"
+ * - CRM & CAMPANHAS: 4 itens (Base de Leads, CRM & Campanhas, Acompanhamento, Configurações)
+ *   - "Configurações" restrito a Administrador + Gestão de R&S
+ * - CRMLayout passa a conter apenas 3 abas internas (Campanhas, Copys, Assinaturas)
+ * 
+ * Data: 30/05/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -347,18 +353,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
         },
         { 
-            view: 'prospect_list', 
-            label: 'Meus Prospects', 
-            icon: 'fa-solid fa-address-book', 
-            roles: ['Administrador', 'Gestão Comercial', 'Gestão de R&S', 'SDR'] 
-        },
-        { 
-            view: 'prospect_campaign', 
-            label: 'Preparar Campanha', 
-            icon: 'fa-solid fa-paper-plane', 
-            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
-        },
-        { 
             view: 'prospect_credits', 
             label: 'Consumo Créditos', 
             icon: 'fa-solid fa-chart-column', 
@@ -373,19 +367,38 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
     ] as any;
 
     // ============================================
-    // ITENS DO MENU CRM & CAMPANHAS (v60.0 — Fase 1A)
+    // ITENS DO MENU CRM & CAMPANHAS
     // ============================================
-    // Sub-navegação dentro do CRMLayout (Base de Leads, Campanhas,
-    // Copys, Assinaturas, Acompanhamento, Configurações).
-    // Configurações é restrita a Administrador + Gestão de R&S — esse
-    // controle é feito DENTRO do CRMLayout, não aqui.
+    // v60.0 (Fase 1A): Grupo CRM & CAMPANHAS criado com item único
+    // v61.0 (30/05/2026): "Base de Leads", "Acompanhamento" e "Configurações"
+    //                     promovidos a itens próprios do menu lateral.
+    //                     CRMLayout passa a conter apenas 3 abas (Campanhas,
+    //                     Biblioteca de Copys, Assinaturas).
 
     const crmItems = [
+        { 
+            view: 'crm_base_leads', 
+            label: 'Base de Leads', 
+            icon: 'fa-solid fa-building-user', 
+            roles: ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Analista de R&S', 'SDR'] 
+        },
         { 
             view: 'crm', 
             label: 'CRM & Campanhas', 
             icon: 'fa-solid fa-paper-plane', 
             roles: ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Analista de R&S', 'SDR'] 
+        },
+        { 
+            view: 'crm_acompanhamento', 
+            label: 'Acompanhamento', 
+            icon: 'fa-solid fa-chart-line', 
+            roles: ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Analista de R&S', 'SDR'] 
+        },
+        { 
+            view: 'crm_config', 
+            label: 'Configurações', 
+            icon: 'fa-solid fa-gear', 
+            roles: ['Administrador', 'Gestão de R&S'] 
         },
     ] as any;
 

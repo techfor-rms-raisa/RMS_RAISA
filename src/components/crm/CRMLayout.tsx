@@ -2,26 +2,25 @@
  * CRMLayout.tsx — Container do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/CRMLayout.tsx
- * Versão: 1.3 (Fase 4B — 30/05/2026)
+ * Versão: 1.4 (30/05/2026)
  *
  * Histórico:
  *  - v1.0 (Fase 1A): Esqueleto com placeholders nas 6 sub-páginas.
  *  - v1.1 (Fase 1C): Aba "Base de Leads" ligada ao BaseLeadsPage.
  *  - v1.2 (Fase 1D): Aba "Campanhas" ligada ao CampanhasPage.
  *  - v1.3 (Fase 4B): Aba "Biblioteca de Copys" ligada ao CopysPage.
+ *  - v1.4 (30/05/2026): Sub-páginas "Base de Leads", "Acompanhamento"
+ *    e "Configurações" promovidas a views próprias do menu lateral.
+ *    CRMLayout agora exibe apenas 3 abas: Campanhas, Copys e Assinaturas.
  *
- * Status das sub-páginas:
- *  - Base de Leads → ✅ implementado (Fase 1C)
+ * Status das sub-páginas (que ainda estão aqui):
  *  - Campanhas      → ✅ implementado (Fase 1D)
  *  - Copys          → ✅ implementado (Fase 4B)
  *  - Assinaturas    → placeholder (Fase 4D futura)
- *  - Acompanhamento → placeholder (Fase 8)
- *  - Configurações  → placeholder (Fases 2/5/6/7)
  */
 
 import React, { useState } from 'react';
 import { User } from '@/types';
-import BaseLeadsPage from './base-leads/BaseLeadsPage';
 import CampanhasPage from './campanhas/CampanhasPage';
 import CopysPage from './copys/CopysPage';
 
@@ -29,20 +28,13 @@ import CopysPage from './copys/CopysPage';
 // TIPOS
 // ════════════════════════════════════════════════════════════
 
-type CRMTab =
-  | 'base-leads'
-  | 'campanhas'
-  | 'copys'
-  | 'assinaturas'
-  | 'acompanhamento'
-  | 'config';
+type CRMTab = 'campanhas' | 'copys' | 'assinaturas';
 
 interface CRMTabDef {
   id: CRMTab;
   label: string;
   icon: string;
   descricao: string;
-  restrita?: boolean;
 }
 
 interface CRMLayoutProps {
@@ -54,12 +46,6 @@ interface CRMLayoutProps {
 // ════════════════════════════════════════════════════════════
 
 const TABS: CRMTabDef[] = [
-  {
-    id: 'base-leads',
-    label: 'Base de Leads',
-    icon: 'fa-solid fa-building-user',
-    descricao: 'Empresas e Leads — CRUD, funil, importação do Prospect Engine',
-  },
   {
     id: 'campanhas',
     label: 'Campanhas',
@@ -78,22 +64,7 @@ const TABS: CRMTabDef[] = [
     icon: 'fa-solid fa-signature',
     descricao: 'Assinaturas pessoais para campanhas',
   },
-  {
-    id: 'acompanhamento',
-    label: 'Acompanhamento',
-    icon: 'fa-solid fa-chart-line',
-    descricao: 'Dashboard analítico de campanhas ativas',
-  },
-  {
-    id: 'config',
-    label: 'Configurações',
-    icon: 'fa-solid fa-gear',
-    descricao: 'Domínios, tipos de campanha, e-mails inválidos, opt-out, correspondência',
-    restrita: true,
-  },
 ];
-
-const PERFIS_CONFIG: string[] = ['Administrador', 'Gestão de R&S'];
 
 // ════════════════════════════════════════════════════════════
 // COMPONENTE
@@ -102,13 +73,13 @@ const PERFIS_CONFIG: string[] = ['Administrador', 'Gestão de R&S'];
 const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
   // Aba ativa — estado local. Persistência ou deep-link via query string
   // pode ser adicionada em fase posterior se houver demanda.
-  const [activeTab, setActiveTab] = useState<CRMTab>('base-leads');
+  const [activeTab, setActiveTab] = useState<CRMTab>('campanhas');
 
-  // RBAC — aba "Configurações" só para perfis autorizados
-  const podeAcessarConfig = PERFIS_CONFIG.includes(currentUser.tipo_usuario);
-  const tabsVisiveis = TABS.filter((t) => !t.restrita || podeAcessarConfig);
+  // Todas as abas atuais são visíveis para todos os perfis com acesso ao módulo.
+  // O RBAC fino acontece DENTRO de cada sub-página (ex: CopysPage decide quem
+  // pode criar/editar; CampanhasPage idem).
+  const tabsVisiveis = TABS;
 
-  // Definição da aba ativa (com fallback se o usuário perder permissão)
   const tabAtual: CRMTabDef =
     tabsVisiveis.find((t) => t.id === activeTab) || tabsVisiveis[0];
 
@@ -126,7 +97,7 @@ const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">CRM & Campanhas</h1>
             <p className="text-sm text-gray-500">
-              Gestão integrada de leads, sequenciador de e-mails e acompanhamento de resultados
+              Sequenciador de e-mails, biblioteca de copys e assinaturas
             </p>
           </div>
         </div>
@@ -165,9 +136,7 @@ const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
 
         {/* CONTENT */}
         <div className="p-6">
-          {tabAtual.id === 'base-leads' ? (
-            <BaseLeadsPage currentUser={currentUser} />
-          ) : tabAtual.id === 'campanhas' ? (
+          {tabAtual.id === 'campanhas' ? (
             <CampanhasPage currentUser={currentUser} />
           ) : tabAtual.id === 'copys' ? (
             <CopysPage currentUser={currentUser} />
@@ -181,67 +150,33 @@ const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
 };
 
 // ════════════════════════════════════════════════════════════
-// PLACEHOLDER — sub-páginas serão entregues nas fases seguintes
+// PLACEHOLDER — Assinaturas (única aba restante em backlog)
 // ════════════════════════════════════════════════════════════
 
 interface PlaceholderConteudoProps {
   tab: CRMTabDef;
 }
 
-const PlaceholderConteudo: React.FC<PlaceholderConteudoProps> = ({ tab }) => {
-  // Mapa de roadmap por aba — referência ao Pre_Projeto v3.1
-  const ROADMAP: Record<CRMTab, { fase: string; descricao: string }> = {
-    'base-leads': {
-      fase: 'Fase 1C ✓ concluída',
-      descricao: 'Decomposição de EmpresasLeadsCRM.tsx em base-leads/*',
-    },
-    'campanhas': {
-      fase: 'Fase 1D ✓ concluída',
-      descricao: 'Decomposição de CampaignBuilder.tsx em campanhas/*',
-    },
-    'copys': {
-      fase: 'Fase 4B ✓ concluída',
-      descricao: 'Biblioteca de Copys (CRUD com RBAC, soft-delete, preview)',
-    },
-    'assinaturas': {
-      fase: 'Fase 4',
-      descricao: 'CRUD de assinaturas por usuário, com assinatura padrão',
-    },
-    'acompanhamento': {
-      fase: 'Fase 8',
-      descricao: 'Dashboard analítico — taxas, desempenho por copy/analista/domínio',
-    },
-    'config': {
-      fase: 'Fases 2 / 5 / 6 / 7',
-      descricao: 'Domínios, tipos de campanha, e-mails inválidos, opt-out, correspondência',
-    },
-  };
+const PlaceholderConteudo: React.FC<PlaceholderConteudoProps> = ({ tab }) => (
+  <div className="text-center py-12 px-4">
+    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-4">
+      <i className={`${tab.icon} text-gray-400 text-2xl`}></i>
+    </div>
+    <h2 className="text-lg font-semibold text-gray-700 mb-1">{tab.label}</h2>
+    <p className="text-sm text-gray-500 mb-6 max-w-md mx-auto">{tab.descricao}</p>
 
-  const info = ROADMAP[tab.id];
-
-  return (
-    <div className="text-center py-12 px-4">
-      <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-100 mb-4">
-        <i className={`${tab.icon} text-gray-400 text-2xl`}></i>
+    <div className="inline-block px-4 py-3 rounded-lg bg-blue-50 border border-blue-100 text-left max-w-md">
+      <div className="flex items-center gap-2 mb-1">
+        <i className="fa-solid fa-clock-rotate-left text-blue-500 text-sm"></i>
+        <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+          Entrega prevista — Fase 4D
+        </span>
       </div>
-      <h2 className="text-lg font-semibold text-gray-700 mb-1">{tab.label}</h2>
-      <p className="text-sm text-gray-500 mb-6 max-w-md mx-auto">{tab.descricao}</p>
-
-      <div className="inline-block px-4 py-3 rounded-lg bg-blue-50 border border-blue-100 text-left max-w-md">
-        <div className="flex items-center gap-2 mb-1">
-          <i className="fa-solid fa-clock-rotate-left text-blue-500 text-sm"></i>
-          <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
-            Entrega prevista — {info.fase}
-          </span>
-        </div>
-        <p className="text-sm text-blue-900">{info.descricao}</p>
-      </div>
-
-      <p className="text-xs text-gray-400 mt-6">
-        Esqueleto criado na Fase 1A (29/05/2026). Sub-páginas decompostas em entregas posteriores.
+      <p className="text-sm text-blue-900">
+        CRUD de assinaturas por usuário, com assinatura padrão
       </p>
     </div>
-  );
-};
+  </div>
+);
 
 export default CRMLayout;
