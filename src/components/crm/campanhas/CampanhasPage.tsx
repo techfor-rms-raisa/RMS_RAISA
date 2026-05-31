@@ -322,7 +322,12 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
         renderLista()
       ) : (
         <CampanhaWizard
-          user={{ email: user?.email || '', nome: user?.nome || '' }}
+          user={{
+            // 🔧 31/05/2026 (Fase 4C-fix): o modelo de usuário usa nome_usuario.
+            // email/nome podem vir vazios → fallback para nome_usuario garante criado_por.
+            email: user?.email || user?.nome_usuario || '',
+            nome: user?.nome || user?.nome_usuario || '',
+          }}
           campanhasHook={campanhasH}
           stepsHook={stepsH}
           leadsHook={leadsH}
