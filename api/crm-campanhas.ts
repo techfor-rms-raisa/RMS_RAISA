@@ -7,10 +7,25 @@
  *  - v1.2 (30/05/2026 - Fase 4A): criar_step aceita copy_id opcional
  *    (vínculo opcional a uma copy da biblioteca; snapshot do conteúdo
  *    é sempre preservado — edição posterior da copy não afeta steps).
+ *  - v1.3 (01/06/2026 - Fase B): Responsável + Assinatura travada no responsável.
+ *      • criar_campanha: RBAC (só Administrador e Gestão Comercial criam; SDR
+ *        bloqueado). GC trava o responsável nele mesmo; Admin escolhe o
+ *        responsável (Gestão Comercial ou SDR). A assinatura é SEMPRE a do
+ *        responsável (resolvida no backend; nunca vem do cliente).
+ *      • atualizar_campanha: aceita responsavel_id; deriva a assinatura_id.
+ *      • leads_disponiveis: filtra por reservado_por = responsável + vertical
+ *        = tipo da campanha + apto_campanha.
+ *      • vincular_leads: valida que cada lead é do responsável, da mesma
+ *        vertical e apto a campanha.
+ *      • mudar_status (ativa/agendada): trava de segurança — exige responsável
+ *        e assinatura, e valida que a assinatura PERTENCE ao responsável
+ *        (email_assinaturas.user_email == app_users.email_usuario).
+ *      • OBS: RBAC do CRUD de assinaturas (só Admin) fica para a Fase D,
+ *        junto com a aba Assinaturas, para não quebrar o modal do wizard.
  *
  * CRUD completo para:
  * - Campanhas (criar, listar, editar, excluir, mudar status)
- * - Steps da sequência (1–5 por campanha) — agora com copy_id opcional
+ * - Steps da sequência (1–5 por campanha) — com copy_id opcional
  * - Vinculação de leads
  * - Assinaturas por usuário
  * - Preview de email com merge de variáveis + assinatura
@@ -22,6 +37,23 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
 export const config = { maxDuration: 60 };
+
+// ════════════════════════════════════════════════════════════════
+// RBAC — Fase B (01/06/2026)
+// ════════════════════════════════════════════════════════════════
+
+/** Perfis que podem CRIAR campanhas. */
+const PERFIS_CRIAM_CAMPANHA = ['Administrador', 'Gestão Comercial'];
+
+/** Perfis que podem ser RESPONSÁVEIS por uma campanha (recebem a atribuição). */
+const PERFIS_RESPONSAVEL = ['Gestão Comercial', 'SDR'];
+
+interface AppUserLite {
+  id: number;
+  nome_usuario: string;
+  email_usuario: string;
+  tipo_usuario: string;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Supabase client dentro do handler (cold start safe)
@@ -140,6 +172,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           idsVinculados = (vinculados || []).map((v: any) => v.lead_id);
         }
 
+        // 🆕 Fase B (01/06/2026) — leads elegíveis = do responsável da campanha
+        // E da mesma vertical (email_leads.vertical == email_campanhas.tipo).
+        let responsavelCampanha: number | null = null;
+        let verticalCampanha: string | null = null;
+        if (campanha_id) {
+          const { data: camp } = await supabase
+            .from('email_campanhas')
+            .select('responsavel_id, tipo')
+            .eq('id', campanha_id)
+            .maybeSingle();
+          responsavelCampanha = camp?.responsavel_id ?? null;
+          verticalCampanha = camp?.tipo ?? null;
+        }
+
+        // Sem responsável definido ainda → não há leads elegíveis
+        if (campanha_id && !responsavelCampanha) {
+          return res.status(200).json({
+            success: true,
+            leads: [],
+            aviso: 'Defina o responsável da campanha para listar os leads elegíveis.'
+          });
+        }
+
         // 🔧 31/05/2026 (Fase 4C-fix): coluna real é funil_status (não funil);
         // filtro principal apto_campanha=true (migração 2026-05-28); opt_out via boolean.
         // Leads disponíveis = aptos a campanha, não opt-out, funil_status != 'perdido'.
@@ -151,6 +206,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .not('funil_status', 'eq', 'perdido')
           .order('nome', { ascending: true })
           .limit(parseInt(limit));
+
+        // 🆕 Fase B — trava por responsável + vertical
+        if (responsavelCampanha) query = query.eq('reservado_por', responsavelCampanha);
+        if (verticalCampanha) query = query.eq('vertical', verticalCampanha);
 
         if (busca) {
           query = query.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%`);
@@ -235,17 +294,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
-        // Buscar assinatura
+        // 🆕 Fase B — a assinatura do preview é a do RESPONSÁVEL da campanha
+        // (via assinatura_id). Mantém compatibilidade: se a campanha ainda não
+        // tem assinatura_id, cai no comportamento legado (por user_email).
         let assinaturaHtml = '';
-        if (user_email) {
+        const { data: campPrev } = await supabase
+          .from('email_campanhas')
+          .select('assinatura_id')
+          .eq('id', campanha_id)
+          .maybeSingle();
+
+        if (campPrev?.assinatura_id) {
+          const { data: assinatura } = await supabase
+            .from('email_assinaturas')
+            .select('*')
+            .eq('id', campPrev.assinatura_id)
+            .maybeSingle();
+          if (assinatura) assinaturaHtml = renderAssinatura(assinatura);
+        } else if (user_email) {
           const { data: assinatura } = await supabase
             .from('email_assinaturas')
             .select('*')
             .eq('user_email', user_email)
             .maybeSingle();
-          if (assinatura) {
-            assinaturaHtml = renderAssinatura(assinatura);
-          }
+          if (assinatura) assinaturaHtml = renderAssinatura(assinatura);
         }
 
         // Merge: substituir {{name}} no corpo
@@ -318,11 +390,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ── Criar campanha ──────────────────────────────────────
       if (action === 'criar_campanha') {
         const { nome, tipo, dominio_envio, email_remetente, nome_remetente,
-                horario_inicio, horario_fim, criado_por } = body;
+                horario_inicio, horario_fim, criado_por,
+                responsavel_id: responsavelIdBody } = body;
 
         if (!nome || !criado_por) {
           return res.status(400).json({ success: false, error: 'nome e criado_por obrigatórios' });
         }
+
+        // 🆕 Fase B (01/06/2026) — RBAC + atribuição de responsável/assinatura
+        const ator = await resolverUsuarioPorEmail(supabase, criado_por);
+        if (!ator) {
+          return res.status(403).json({ success: false, error: 'Criador não encontrado em app_users' });
+        }
+        if (!PERFIS_CRIAM_CAMPANHA.includes(ator.tipo_usuario)) {
+          return res.status(403).json({
+            success: false,
+            error: 'Seu perfil não pode criar campanhas (somente Administrador ou Gestão Comercial)'
+          });
+        }
+
+        // Define o responsável conforme o perfil de quem cria:
+        //  - Gestão Comercial: travado nele mesmo (ignora responsavel_id enviado).
+        //  - Administrador: escolhe um responsável (GC ou SDR). Opcional na criação,
+        //    obrigatório na ativação.
+        let responsavelUser: AppUserLite | null = null;
+        if (ator.tipo_usuario === 'Gestão Comercial') {
+          responsavelUser = ator;
+        } else if (ator.tipo_usuario === 'Administrador' && responsavelIdBody) {
+          responsavelUser = await resolverUsuarioPorId(supabase, Number(responsavelIdBody));
+          if (!responsavelUser) {
+            return res.status(400).json({ success: false, error: 'Responsável informado não existe' });
+          }
+          if (!PERFIS_RESPONSAVEL.includes(responsavelUser.tipo_usuario)) {
+            return res.status(400).json({ success: false, error: 'Responsável deve ser Gestão Comercial ou SDR' });
+          }
+        }
+
+        const responsavelId = responsavelUser?.id ?? null;
+        // Assinatura é SEMPRE a do responsável (trava de segurança). Nunca vem do cliente.
+        const assinaturaId = responsavelUser
+          ? await resolverAssinaturaIdPorEmail(supabase, responsavelUser.email_usuario)
+          : null;
 
         const { data, error } = await supabase
           .from('email_campanhas')
@@ -335,7 +443,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             nome_remetente: nome_remetente || '',
             horario_inicio: horario_inicio || '08:00',
             horario_fim: horario_fim || '18:00',
-            criado_por
+            criado_por,
+            responsavel_id: responsavelId,
+            assinatura_id: assinaturaId,
           })
           .select()
           .single();
@@ -398,23 +508,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(400).json({ success: false, error: 'campanha_id e lead_ids obrigatórios' });
         }
 
+        // 🆕 Fase B — só vincula leads do responsável + mesma vertical + apto
+        const { data: camp } = await supabase
+          .from('email_campanhas')
+          .select('responsavel_id, tipo')
+          .eq('id', campanha_id)
+          .maybeSingle();
+        if (!camp) return res.status(404).json({ success: false, error: 'Campanha não encontrada' });
+        if (!camp.responsavel_id) {
+          return res.status(400).json({ success: false, error: 'Defina o responsável da campanha antes de vincular leads' });
+        }
+
         // Verificar opt-out
         const { data: optouts } = await supabase
           .from('email_optout')
           .select('email');
         const emailsOptout = new Set((optouts || []).map((o: any) => o.email));
 
-        // Buscar emails dos leads
+        // Buscar leads com dados para validação
         const { data: leads } = await supabase
           .from('email_leads')
-          .select('id, email')
+          .select('id, email, reservado_por, vertical, apto_campanha')
           .in('id', lead_ids);
 
-        // Filtrar opt-outs
-        const leadsValidos = (leads || []).filter((l: any) => !emailsOptout.has(l.email));
+        // Filtrar: não opt-out, apto, do responsável e da mesma vertical
+        const leadsValidos = (leads || []).filter((l: any) =>
+          !emailsOptout.has(l.email) &&
+          l.apto_campanha === true &&
+          l.reservado_por === camp.responsavel_id &&
+          l.vertical === camp.tipo
+        );
 
         if (leadsValidos.length === 0) {
-          return res.status(400).json({ success: false, error: 'Todos os leads selecionados estão em opt-out' });
+          return res.status(400).json({
+            success: false,
+            error: 'Nenhum lead elegível: precisa ser do responsável, da mesma vertical e apto a campanha (e não em opt-out)'
+          });
         }
 
         // Inserir vínculos (ignorar duplicados via ON CONFLICT)
@@ -446,11 +575,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(201).json({
           success: true,
           vinculados: data?.length || 0,
-          optout_ignorados: lead_ids.length - leadsValidos.length
+          inelegiveis_ignorados: lead_ids.length - leadsValidos.length
         });
       }
 
       // ── Salvar/Atualizar assinatura ─────────────────────────
+      // OBS: RBAC (só Admin) será aplicado na Fase D, junto com a aba Assinaturas.
       if (action === 'salvar_assinatura') {
         const { user_email, nome_completo, cargo, email_assinatura,
                 telefone_fixo, telefone_celular, websites, politica_privacidade_url, optout_texto } = body;
@@ -502,6 +632,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (campos[key] !== undefined) updateData[key] = campos[key];
         }
 
+        // 🆕 Fase B — responsável (e, derivada, a assinatura). A assinatura_id
+        // NUNCA vem do cliente: é sempre resolvida a partir do responsável.
+        if (campos.responsavel_id !== undefined) {
+          if (campos.responsavel_id === null) {
+            updateData.responsavel_id = null;
+            updateData.assinatura_id = null;
+          } else {
+            const respUser = await resolverUsuarioPorId(supabase, Number(campos.responsavel_id));
+            if (!respUser) {
+              return res.status(400).json({ success: false, error: 'Responsável informado não existe' });
+            }
+            if (!PERFIS_RESPONSAVEL.includes(respUser.tipo_usuario)) {
+              return res.status(400).json({ success: false, error: 'Responsável deve ser Gestão Comercial ou SDR' });
+            }
+            updateData.responsavel_id = respUser.id;
+            updateData.assinatura_id = await resolverAssinaturaIdPorEmail(supabase, respUser.email_usuario);
+          }
+        }
+
         const { data, error } = await supabase
           .from('email_campanhas')
           .update(updateData)
@@ -548,13 +697,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Validações de transição
         const { data: campanha } = await supabase
           .from('email_campanhas')
-          .select('status')
+          .select('status, responsavel_id, assinatura_id')
           .eq('id', id)
           .maybeSingle();
 
         if (!campanha) return res.status(404).json({ success: false, error: 'Campanha não encontrada' });
 
-        // Validar: para ativar, precisa ter ao menos 1 step e 1 lead
+        // Validar: para ativar/agendar, precisa ter ao menos 1 step e 1 lead
         if (status === 'ativa' || status === 'agendada') {
           const { count: stepsCount } = await supabase
             .from('email_campanha_steps')
@@ -572,6 +721,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
           if ((leadsCount || 0) === 0) {
             return res.status(400).json({ success: false, error: 'Campanha precisa ter ao menos 1 lead vinculado para ser ativada' });
+          }
+
+          // 🆕 Fase B — TRAVA DE SEGURANÇA: assinatura tem que pertencer ao responsável.
+          if (!campanha.responsavel_id) {
+            return res.status(400).json({ success: false, error: 'Defina o responsável antes de ativar/agendar a campanha' });
+          }
+          if (!campanha.assinatura_id) {
+            return res.status(400).json({ success: false, error: 'O responsável não tem assinatura cadastrada. Peça ao Administrador para criar.' });
+          }
+          const { data: respUser } = await supabase
+            .from('app_users').select('email_usuario').eq('id', campanha.responsavel_id).maybeSingle();
+          const { data: ass } = await supabase
+            .from('email_assinaturas').select('user_email').eq('id', campanha.assinatura_id).maybeSingle();
+          if (!respUser || !ass || respUser.email_usuario !== ass.user_email) {
+            return res.status(400).json({ success: false, error: 'A assinatura não pertence ao responsável da campanha — operação bloqueada.' });
           }
         }
 
@@ -697,7 +861,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         await supabase
           .from('email_campanhas')
           .update({ total_destinatarios: totalDest || 0, atualizado_em: new Date().toISOString() })
-          .eq('id', campanha_id);
+          .eq('campanha_id', campanha_id);
 
         return res.status(200).json({ success: true, desvinculados: ids.length });
       }
@@ -710,6 +874,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.error('[crm-campanhas] Erro:', err);
     return res.status(500).json({ success: false, error: err.message || 'Erro interno' });
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+// HELPERS — resolução de usuário e assinatura (Fase B — 01/06/2026)
+// ════════════════════════════════════════════════════════════════
+
+/** Resolve um app_user pelo e-mail de login (email_usuario). */
+async function resolverUsuarioPorEmail(supabase: any, email?: string): Promise<AppUserLite | null> {
+  if (!email) return null;
+  const { data } = await supabase
+    .from('app_users')
+    .select('id, nome_usuario, email_usuario, tipo_usuario')
+    .eq('email_usuario', email)
+    .maybeSingle();
+  return (data as AppUserLite) ?? null;
+}
+
+/** Resolve um app_user pelo id. */
+async function resolverUsuarioPorId(supabase: any, id?: number | null): Promise<AppUserLite | null> {
+  if (!id) return null;
+  const { data } = await supabase
+    .from('app_users')
+    .select('id, nome_usuario, email_usuario, tipo_usuario')
+    .eq('id', id)
+    .maybeSingle();
+  return (data as AppUserLite) ?? null;
+}
+
+/** Resolve o id da assinatura ATIVA de uma pessoa, pelo e-mail dela. */
+async function resolverAssinaturaIdPorEmail(supabase: any, email?: string): Promise<number | null> {
+  if (!email) return null;
+  const { data } = await supabase
+    .from('email_assinaturas')
+    .select('id')
+    .eq('user_email', email)
+    .eq('ativo', true)
+    .maybeSingle();
+  return data?.id ?? null;
 }
 
 // ════════════════════════════════════════════════════════════════
