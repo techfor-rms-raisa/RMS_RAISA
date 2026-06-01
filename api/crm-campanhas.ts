@@ -7,6 +7,28 @@
  *  - v1.2 (30/05/2026 - Fase 4A): criar_step aceita copy_id opcional
  *    (vínculo opcional a uma copy da biblioteca; snapshot do conteúdo
  *    é sempre preservado — edição posterior da copy não afeta steps).
+ *  - v1.7 (01/06/2026 - Fase E-1): Múltiplas assinaturas por pessoa
+ *    (uma por unidade do grupo).
+ *      • O grupo TechFor TI passa a operar 3 unidades comerciais
+ *        (TechFor TI, TechCob BPO, TechBoat). Cada vendedor pode ter
+ *        uma assinatura por unidade — o link comercial muda por
+ *        unidade, mantendo a identidade de marca em cada campanha.
+ *      • email_assinaturas: chave única agora é (user_email, unidade);
+ *        upsert usa onConflict composto.
+ *      • email_campanhas: ganhou coluna `unidade`. Toda campanha
+ *        pertence a UMA unidade; a assinatura é a do responsável NA
+ *        UNIDADE da campanha.
+ *      • Trava de segurança da Fase B estendida: além do e-mail bater
+ *        responsável↔assinatura, a UNIDADE da assinatura tem que
+ *        bater com a unidade da campanha.
+ *      • resolverAssinaturaIdPorEmail ganhou parâmetro `unidade`.
+ *      • Backwards compatibility: requisições antigas (sem `unidade`)
+ *        recebem default 'TechFor TI'. Todas as assinaturas e
+ *        campanhas existentes herdam 'TechFor TI' via DEFAULT na
+ *        migração `sql/2026-06-01_crm_assinatura_unidade.sql`.
+ *      • Ações alteradas: minha_assinatura, render_assinatura, preview,
+ *        criar_campanha, atualizar_campanha, mudar_status,
+ *        salvar_assinatura, listar_usuarios_assinatura.
  *  - v1.6 (01/06/2026 - Fase 5A): Enfileiramento da email_fila ao ativar.
  *      • mudar_status → 'ativa' (primeira ativação): popula email_fila com
  *        1 linha por (lead × step). agendado_para[ordem=1] = inicio_envio;
@@ -78,6 +100,41 @@ const PERFIS_RESPONSAVEL = ['Gestão Comercial', 'SDR'];
 
 /** Perfis elegíveis a ter assinatura (aparecem na aba Assinaturas e no seletor). */
 const PERFIS_COM_ASSINATURA = ['Administrador', 'Gestão Comercial', 'SDR'];
+
+// ════════════════════════════════════════════════════════════════
+// UNIDADES DO GRUPO — Fase E-1 (01/06/2026)
+// ════════════════════════════════════════════════════════════════
+//
+// Cada campanha pertence a uma unidade de negócio do grupo, e a
+// assinatura usada herda essa unidade. Assim a mesma pessoa pode
+// prospectar para múltiplas unidades com identidades comerciais
+// distintas (link/marca diferentes por unidade).
+//
+// ⚠️ Adicionar nova unidade: atualizar a lista aqui E em
+//    src/components/crm/types/crm.constants.ts (UNIDADES_GRUPO).
+//    A coluna `unidade` é TEXT livre no banco — não exige migração.
+
+const UNIDADES_GRUPO = ['TechFor TI', 'TechCob BPO', 'TechBoat'] as const;
+type Unidade = typeof UNIDADES_GRUPO[number];
+const UNIDADE_PADRAO: Unidade = 'TechFor TI';
+
+/**
+ * Valida o valor de `unidade` recebido do cliente.
+ * - vazio/undefined → retorna a UNIDADE_PADRAO (backwards compat)
+ * - valor válido    → retorna a unidade
+ * - valor inválido  → erro estruturado para o handler responder 400
+ */
+function validarUnidade(u: string | undefined | null):
+  { ok: true; unidade: Unidade } | { ok: false; erro: string } {
+  if (!u) return { ok: true, unidade: UNIDADE_PADRAO };
+  if (!(UNIDADES_GRUPO as readonly string[]).includes(u)) {
+    return {
+      ok: false,
+      erro: `Unidade inválida: "${u}". Permitidas: ${UNIDADES_GRUPO.join(', ')}.`,
+    };
+  }
+  return { ok: true, unidade: u as Unidade };
+}
 
 interface AppUserLite {
   id: number;
@@ -268,12 +325,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ── Assinatura do usuário logado ────────────────────────
       if (action === 'minha_assinatura') {
         const user_email = req.query.user_email as string;
+        const unidadeQuery = req.query.unidade as string | undefined;
         if (!user_email) return res.status(400).json({ success: false, error: 'user_email obrigatório' });
+
+        // 🆕 Fase E-1 — agora há N assinaturas por user_email (uma por unidade).
+        // Default 'TechFor TI' preserva o comportamento histórico para chamadas
+        // legadas que não enviam `unidade`.
+        const valU = validarUnidade(unidadeQuery);
+        if (!valU.ok) return res.status(400).json({ success: false, error: valU.erro });
 
         const { data, error } = await supabase
           .from('email_assinaturas')
           .select('*')
           .eq('user_email', user_email)
+          .eq('unidade', valU.unidade)
           .maybeSingle();
 
         if (error) return res.status(500).json({ success: false, error: error.message });
@@ -293,10 +358,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success: true, assinaturas: data });
       }
 
-      // ── Usuários elegíveis + assinatura vinculada (Fase D) ──
-      // Lista Admin/GC/SDR ativos e, para cada um, a assinatura (se houver),
-      // casando email_assinaturas.user_email == app_users.email_usuario.
-      // Alimenta a aba Assinaturas e o seletor de pessoa do modal.
+      // ── Usuários elegíveis + assinatura vinculada (Fase D, atualizado E-1) ──
+      // 🔄 Fase E-1: agora retorna o produto cartesiano (pessoa × unidade do grupo).
+      // Cada linha representa um par (usuário, unidade) — com `assinatura: {...}`
+      // se já cadastrada para essa combinação, ou `assinatura: null` se ainda não.
+      // Esta forma alimenta diretamente a tabela da aba Assinaturas, onde cada
+      // linha vira uma combinação distinta com seu próprio "Criar" ou "Editar".
       if (action === 'listar_usuarios_assinatura') {
         const { data: usuarios, error: eU } = await supabase
           .from('app_users')
@@ -313,31 +380,50 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (eA) return res.status(500).json({ success: false, error: eA.message });
 
-        const porEmail = new Map<string, any>();
-        (assinaturas || []).forEach((a: any) => porEmail.set(a.user_email, a));
+        // Map de assinaturas por (email::unidade) — chave composta da v1.7
+        const porChave = new Map<string, any>();
+        (assinaturas || []).forEach((a: any) => {
+          porChave.set(`${a.user_email}::${a.unidade}`, a);
+        });
 
-        const lista = (usuarios || []).map((u: any) => ({
-          id: u.id,
-          nome_usuario: u.nome_usuario,
-          email_usuario: u.email_usuario,
-          tipo_usuario: u.tipo_usuario,
-          assinatura: porEmail.get(u.email_usuario) || null,
-        }));
+        const lista: any[] = [];
+        for (const u of (usuarios || []) as any[]) {
+          for (const unidade of UNIDADES_GRUPO) {
+            lista.push({
+              id: u.id,
+              nome_usuario: u.nome_usuario,
+              email_usuario: u.email_usuario,
+              tipo_usuario: u.tipo_usuario,
+              unidade,
+              assinatura: porChave.get(`${u.email_usuario}::${unidade}`) || null,
+            });
+          }
+        }
 
         return res.status(200).json({ success: true, usuarios: lista });
       }
 
       // ── Render HTML de uma assinatura (preview fiel) — Fase D ─
       // Reusa o MESMO renderAssinatura do envio (fonte única da verdade).
+      // 🔄 Fase E-1: quando a busca é por user_email (não por id), exige
+      // `unidade` (default 'TechFor TI' se ausente) pois há agora N
+      // assinaturas por user_email.
       if (action === 'render_assinatura') {
         const id = req.query.id as string;
         const user_email = req.query.user_email as string;
+        const unidadeQuery = req.query.unidade as string | undefined;
         if (!id && !user_email) {
           return res.status(400).json({ success: false, error: 'id ou user_email obrigatório' });
         }
 
         let q = supabase.from('email_assinaturas').select('*');
-        q = id ? q.eq('id', id) : q.eq('user_email', user_email);
+        if (id) {
+          q = q.eq('id', id);
+        } else {
+          const valU = validarUnidade(unidadeQuery);
+          if (!valU.ok) return res.status(400).json({ success: false, error: valU.erro });
+          q = q.eq('user_email', user_email).eq('unidade', valU.unidade);
+        }
         const { data: assinatura, error } = await q.maybeSingle();
 
         if (error) return res.status(500).json({ success: false, error: error.message });
@@ -381,10 +467,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 🆕 Fase B — a assinatura do preview é a do RESPONSÁVEL da campanha
         // (via assinatura_id). Mantém compatibilidade: se a campanha ainda não
         // tem assinatura_id, cai no comportamento legado (por user_email).
+        // 🔄 Fase E-1 — fallback por user_email agora exige a UNIDADE da
+        // campanha (default 'TechFor TI' para campanhas pré-migração).
         let assinaturaHtml = '';
         const { data: campPrev } = await supabase
           .from('email_campanhas')
-          .select('assinatura_id')
+          .select('assinatura_id, unidade')
           .eq('id', campanha_id)
           .maybeSingle();
 
@@ -400,6 +488,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .from('email_assinaturas')
             .select('*')
             .eq('user_email', user_email)
+            .eq('unidade', campPrev?.unidade || UNIDADE_PADRAO)
             .maybeSingle();
           if (assinatura) assinaturaHtml = renderAssinatura(assinatura);
         }
@@ -474,12 +563,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ── Criar campanha ──────────────────────────────────────
       if (action === 'criar_campanha') {
         const { nome, tipo, dominio_envio, email_remetente, nome_remetente,
-                horario_inicio, horario_fim, criado_por,
+                horario_inicio, horario_fim, criado_por, unidade,
                 responsavel_id: responsavelIdBody } = body;
 
         if (!nome || !criado_por) {
           return res.status(400).json({ success: false, error: 'nome e criado_por obrigatórios' });
         }
+
+        // 🆕 Fase E-1 — valida a unidade do grupo. Default 'TechFor TI' quando
+        // ausente preserva compatibilidade com clientes pré-migração.
+        const valU = validarUnidade(unidade);
+        if (!valU.ok) return res.status(400).json({ success: false, error: valU.erro });
 
         // 🆕 Fase B (01/06/2026) — RBAC + atribuição de responsável/assinatura
         const ator = await resolverUsuarioPorEmail(supabase, criado_por);
@@ -511,9 +605,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const responsavelId = responsavelUser?.id ?? null;
-        // Assinatura é SEMPRE a do responsável (trava de segurança). Nunca vem do cliente.
+        // 🔄 Fase E-1 — assinatura resolvida por (e-mail do responsável, unidade
+        // da campanha). Pode retornar null se a pessoa ainda não tem assinatura
+        // cadastrada para essa unidade — o `mudar_status` bloqueia a ativação
+        // nesse caso, mas a criação em rascunho continua permitida.
         const assinaturaId = responsavelUser
-          ? await resolverAssinaturaIdPorEmail(supabase, responsavelUser.email_usuario)
+          ? await resolverAssinaturaIdPorEmail(supabase, responsavelUser.email_usuario, valU.unidade)
           : null;
 
         const { data, error } = await supabase
@@ -521,6 +618,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .insert({
             nome,
             tipo: tipo || 'Outsourcing',
+            unidade: valU.unidade,
             status: 'rascunho',
             dominio_envio: dominio_envio || '',
             email_remetente: email_remetente || '',
@@ -668,13 +766,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // `ator_email` identifica quem está chamando; `user_email` é a pessoa-alvo
       // da assinatura (pode ser outra pessoa, não só "o meu").
       if (action === 'salvar_assinatura') {
-        const { ator_email, user_email, nome_completo, cargo, email_assinatura,
+        const { ator_email, user_email, unidade, nome_completo, cargo, email_assinatura,
                 telefone_fixo, telefone_celular, websites, politica_privacidade_url,
                 optout_texto, ativo } = body;
 
         if (!user_email || !nome_completo || !email_assinatura) {
           return res.status(400).json({ success: false, error: 'user_email, nome_completo e email_assinatura obrigatórios' });
         }
+
+        // 🆕 Fase E-1 — valida a unidade do grupo. Default 'TechFor TI' quando
+        // ausente preserva compatibilidade com clientes pré-migração.
+        const valU = validarUnidade(unidade);
+        if (!valU.ok) return res.status(400).json({ success: false, error: valU.erro });
 
         // RBAC: apenas Administrador
         const ator = await resolverUsuarioPorEmail(supabase, ator_email);
@@ -686,6 +789,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .from('email_assinaturas')
           .upsert({
             user_email,
+            unidade: valU.unidade,
             nome_completo,
             cargo: cargo || '',
             email_assinatura,
@@ -696,7 +800,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             optout_texto: optout_texto || 'Caso não queira receber nossos comunicados, responda SAIR',
             ativo: ativo === undefined ? true : ativo,
             atualizado_em: new Date().toISOString()
-          }, { onConflict: 'user_email' })
+          }, { onConflict: 'user_email,unidade' })
           .select()
           .single();
 
@@ -718,7 +822,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { id, ...campos } = body;
         if (!id) return res.status(400).json({ success: false, error: 'id obrigatório' });
 
-        // Campos permitidos para update
+        // Campos permitidos para update via loop genérico.
+        // NOTA: `unidade` NÃO entra aqui — é tratada separadamente abaixo
+        // (validação + recálculo de assinatura).
         const permitidos = ['nome', 'tipo', 'dominio_envio', 'email_remetente',
           'nome_remetente', 'horario_inicio', 'horario_fim', 'inicio_envio', 'fim_envio'];
         const updateData: any = { atualizado_em: new Date().toISOString() };
@@ -726,22 +832,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (campos[key] !== undefined) updateData[key] = campos[key];
         }
 
-        // 🆕 Fase B — responsável (e, derivada, a assinatura). A assinatura_id
-        // NUNCA vem do cliente: é sempre resolvida a partir do responsável.
-        if (campos.responsavel_id !== undefined) {
-          if (campos.responsavel_id === null) {
+        // 🆕 Fase E-1 — validar a unidade (se enviada). Aplicada ao updateData
+        // antes do recálculo de assinatura para que esse use o valor novo.
+        if (campos.unidade !== undefined) {
+          const valU = validarUnidade(campos.unidade);
+          if (!valU.ok) return res.status(400).json({ success: false, error: valU.erro });
+          updateData.unidade = valU.unidade;
+        }
+
+        // 🆕 Fase B + 🔄 Fase E-1 — responsável e/ou unidade mudaram → recalcular
+        // assinatura. A assinatura_id NUNCA vem do cliente: é sempre derivada
+        // de (responsável, unidade). Por isso o recálculo dispara se QUALQUER um
+        // dos dois for alterado nesta requisição.
+        const mudouResp = campos.responsavel_id !== undefined;
+        const mudouUnidade = campos.unidade !== undefined;
+
+        if (mudouResp || mudouUnidade) {
+          // Buscar estado atual para preencher o lado que não veio na requisição
+          const { data: campAtual } = await supabase
+            .from('email_campanhas')
+            .select('responsavel_id, unidade')
+            .eq('id', id)
+            .maybeSingle();
+          if (!campAtual) {
+            return res.status(404).json({ success: false, error: 'Campanha não encontrada' });
+          }
+
+          // Responsável final = o enviado (se enviado) ou o atual
+          const respIdFinal = mudouResp ? campos.responsavel_id : campAtual.responsavel_id;
+
+          if (respIdFinal === null) {
+            // Removeu o responsável: limpa também a assinatura
             updateData.responsavel_id = null;
             updateData.assinatura_id = null;
-          } else {
-            const respUser = await resolverUsuarioPorId(supabase, Number(campos.responsavel_id));
+          } else if (respIdFinal !== undefined && respIdFinal !== null) {
+            const respUser = await resolverUsuarioPorId(supabase, Number(respIdFinal));
             if (!respUser) {
               return res.status(400).json({ success: false, error: 'Responsável informado não existe' });
             }
             if (!PERFIS_RESPONSAVEL.includes(respUser.tipo_usuario)) {
               return res.status(400).json({ success: false, error: 'Responsável deve ser Gestão Comercial ou SDR' });
             }
-            updateData.responsavel_id = respUser.id;
-            updateData.assinatura_id = await resolverAssinaturaIdPorEmail(supabase, respUser.email_usuario);
+            if (mudouResp) updateData.responsavel_id = respUser.id;
+
+            // Unidade final = a enviada (já validada acima) ou a atual ou o default
+            const unidadeFinal = (updateData.unidade as string) || campAtual.unidade || UNIDADE_PADRAO;
+            updateData.assinatura_id = await resolverAssinaturaIdPorEmail(
+              supabase,
+              respUser.email_usuario,
+              unidadeFinal
+            );
           }
         }
 
@@ -791,7 +931,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Validações de transição
         const { data: campanha } = await supabase
           .from('email_campanhas')
-          .select('status, responsavel_id, assinatura_id, inicio_envio, dominio_envio')
+          .select('status, responsavel_id, assinatura_id, inicio_envio, dominio_envio, unidade')
           .eq('id', id)
           .maybeSingle();
 
@@ -817,19 +957,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(400).json({ success: false, error: 'Campanha precisa ter ao menos 1 lead vinculado para ser ativada' });
           }
 
-          // 🆕 Fase B — TRAVA DE SEGURANÇA: assinatura tem que pertencer ao responsável.
+          // 🆕 Fase B + 🔄 Fase E-1 — TRAVA DE SEGURANÇA: a assinatura tem que
+          // pertencer ao responsável E ser da MESMA unidade da campanha.
           if (!campanha.responsavel_id) {
             return res.status(400).json({ success: false, error: 'Defina o responsável antes de ativar/agendar a campanha' });
           }
           if (!campanha.assinatura_id) {
-            return res.status(400).json({ success: false, error: 'O responsável não tem assinatura cadastrada. Peça ao Administrador para criar.' });
+            return res.status(400).json({ success: false, error: `O responsável não tem assinatura cadastrada para a unidade "${campanha.unidade || UNIDADE_PADRAO}". Peça ao Administrador para criar.` });
           }
           const { data: respUser } = await supabase
             .from('app_users').select('email_usuario').eq('id', campanha.responsavel_id).maybeSingle();
           const { data: ass } = await supabase
-            .from('email_assinaturas').select('user_email').eq('id', campanha.assinatura_id).maybeSingle();
-          if (!respUser || !ass || respUser.email_usuario !== ass.user_email) {
-            return res.status(400).json({ success: false, error: 'A assinatura não pertence ao responsável da campanha — operação bloqueada.' });
+            .from('email_assinaturas').select('user_email, unidade').eq('id', campanha.assinatura_id).maybeSingle();
+          if (
+            !respUser ||
+            !ass ||
+            respUser.email_usuario !== ass.user_email ||
+            ass.unidade !== (campanha.unidade || UNIDADE_PADRAO)
+          ) {
+            return res.status(400).json({
+              success: false,
+              error: 'A assinatura não pertence ao responsável na unidade da campanha — operação bloqueada.'
+            });
           }
         }
 
@@ -1158,13 +1307,22 @@ async function resolverUsuarioPorId(supabase: any, id?: number | null): Promise<
   return (data as AppUserLite) ?? null;
 }
 
-/** Resolve o id da assinatura ATIVA de uma pessoa, pelo e-mail dela. */
-async function resolverAssinaturaIdPorEmail(supabase: any, email?: string): Promise<number | null> {
+/** Resolve o id da assinatura ATIVA de uma pessoa, pelo e-mail dela
+ *  e pela unidade do grupo. Combinação única (user_email, unidade)
+ *  desde a Fase E-1 (01/06/2026). Quando `unidade` é omitida, usa a
+ *  UNIDADE_PADRAO ('TechFor TI'). */
+async function resolverAssinaturaIdPorEmail(
+  supabase: any,
+  email?: string,
+  unidade?: string
+): Promise<number | null> {
   if (!email) return null;
+  const unidadeFinal = unidade || UNIDADE_PADRAO;
   const { data } = await supabase
     .from('email_assinaturas')
     .select('id')
     .eq('user_email', email)
+    .eq('unidade', unidadeFinal)
     .eq('ativo', true)
     .maybeSingle();
   return data?.id ?? null;
