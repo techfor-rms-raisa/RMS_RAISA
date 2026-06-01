@@ -72,6 +72,8 @@ import CRMLayout from './components/crm/CRMLayout';
 import BaseLeadsPage from './components/crm/base-leads/BaseLeadsPage';
 // 🆕 01/06/2026 — Fase 8 — Dashboard de Acompanhamento
 import AcompanhamentoPage from './components/crm/acompanhamento/AcompanhamentoPage';
+// 🆕 01/06/2026 — Configurações CRM (Tipos + Opt-out + placeholders Fase 5/6/7)
+import ConfiguracoesPage from './components/crm/configuracoes/ConfiguracoesPage';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -590,14 +592,11 @@ const App: React.FC = () => {
           );
 
       case 'crm_config':
+          // 🆕 01/06/2026 — substitui o placeholder pela página real.
           return (
-            <CrmPlaceholderPage
-              titulo="Configurações"
-              descricao="Domínios, tipos de campanha, e-mails inválidos, opt-out, correspondência"
-              icon="fa-solid fa-gear"
-              fase="Fases 2 / 5 / 6 / 7"
-              previsao="Domínios, tipos de campanha, e-mails inválidos, opt-out, correspondência"
-            />
+            <div className="space-y-6">
+              <ConfiguracoesPage currentUser={currentUser!} />
+            </div>
           );
 
       // ============================================
