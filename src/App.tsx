@@ -70,6 +70,8 @@ import CreciPage from './components/creci/CreciPage';
 import CRMLayout from './components/crm/CRMLayout';
 // 🆕 30/05/2026 — Sub-páginas promovidas a views próprias do menu lateral
 import BaseLeadsPage from './components/crm/base-leads/BaseLeadsPage';
+// 🆕 01/06/2026 — Fase 8 — Dashboard de Acompanhamento
+import AcompanhamentoPage from './components/crm/acompanhamento/AcompanhamentoPage';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -580,14 +582,11 @@ const App: React.FC = () => {
           );
 
       case 'crm_acompanhamento':
+          // 🆕 01/06/2026 — Fase 8: substitui o placeholder pela página real.
           return (
-            <CrmPlaceholderPage
-              titulo="Acompanhamento"
-              descricao="Dashboard analítico de campanhas ativas"
-              icon="fa-solid fa-chart-line"
-              fase="Fase 8"
-              previsao="Dashboard analítico — taxas, desempenho por copy/analista/domínio"
-            />
+            <div className="space-y-6">
+              <AcompanhamentoPage currentUser={currentUser!} />
+            </div>
           );
 
       case 'crm_config':
