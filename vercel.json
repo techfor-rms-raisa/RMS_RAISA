@@ -28,6 +28,10 @@
     {
       "path": "/api/cron/limpeza-notificacoes",
       "schedule": "0 0 * * 0"
+    },
+    {
+      "path": "/api/cron/disparar-fila",
+      "schedule": "*/15 * * * *"
     }
   ],
   "buildCommand": "npm run build",
