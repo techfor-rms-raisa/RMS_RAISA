@@ -2,12 +2,20 @@
  * CampanhasPage.tsx — Container principal do módulo de Campanhas
  *
  * Caminho: src/components/crm/campanhas/CampanhasPage.tsx
- * Versão: 1.0 (Fase 1D — 30/05/2026)
+ * Versão: 1.1 (Fase 5B-fix — 01/06/2026)
  *
- * Substitui o componente monolítico CampaignBuilder.tsx (1483 linhas).
- * Orquestra os 5 hooks (campanhas, steps, leads, assinatura, preview),
- * alterna entre VISTA LISTA e VISTA WIZARD, e exibe modal de assinatura
- * e toast de mensagens.
+ * Histórico:
+ *  - v1.0 (30/05/2026 — Fase 1D): substitui o CampaignBuilder.tsx monolítico
+ *    (1483 linhas). Orquestra os 5 hooks (campanhas, steps, leads, assinatura,
+ *    preview), alterna entre VISTA LISTA e VISTA WIZARD, exibe modal de
+ *    assinatura e toast de mensagens.
+ *  - v1.1 (01/06/2026 — Fase 5B-fix): corrige bug crítico do envio do
+ *    `criado_por` para o backend de Campanhas. A "Fase 4C-fix" (31/05) tinha
+ *    usado `user.nome_usuario` como fallback de email, mas `nome_usuario`
+ *    é o nome de EXIBIÇÃO ("Messias Oliveira") em app_users — NÃO um email.
+ *    O backend rejeitava com "Criador não encontrado em app_users". Agora
+ *    usa o padrão correto da casa: `user.email` ?? `user.email_usuario` ??
+ *    fail (visto no AssinaturasPage que funciona em produção).
  */
 
 import React, { useEffect, useState } from 'react';
@@ -43,6 +51,20 @@ export interface CampanhasPageProps {
 const CampanhasPage: React.FC<CampanhasPageProps> = () => {
   const { user } = useAuth();
 
+  // 🔧 Fase 5B-fix (01/06/2026): leitura defensiva do email do usuário
+  // logado. O AuthContext pode expor `email` OU `email_usuario` (campo de
+  // app_users) — depende do contexto e da sessão. NUNCA usar `nome_usuario`
+  // como fallback: é nome de exibição, não email. O backend resolve o
+  // criado_por procurando em app_users.email_usuario.
+  const userEmail =
+    ((user as any)?.email as string | undefined) ||
+    ((user as any)?.email_usuario as string | undefined) ||
+    '';
+  const userNome =
+    ((user as any)?.nome as string | undefined) ||
+    ((user as any)?.nome_usuario as string | undefined) ||
+    '';
+
   // ── View atual ──
   const [view, setView] = useState<'list' | 'editor'>('list');
 
@@ -68,8 +90,8 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
     campanhasH.carregar();
     campanhasH.carregarStats();
     campanhasH.carregarTipos();
-    if (user?.email) {
-      assinaturaH.carregar(user.email);
+    if (userEmail) {
+      assinaturaH.carregar(userEmail);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -90,8 +112,8 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
       tipo: 'Outsourcing',
       status: 'rascunho',
       dominio_envio: '',
-      email_remetente: user?.email || '',
-      nome_remetente: user?.nome || '',
+      email_remetente: userEmail,
+      nome_remetente: userNome,
       horario_inicio: '08:00',
       horario_fim: '18:00',
     });
@@ -128,8 +150,8 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
   };
 
   const handleSalvarAssinatura = async () => {
-    if (!user?.email) return;
-    const ok = await assinaturaH.salvar(user.email);
+    if (!userEmail) return;
+    const ok = await assinaturaH.salvar(userEmail);
     if (ok) {
       setShowAssinatura(false);
       setMensagem({ tipo: 'success', texto: 'Assinatura salva!' });
@@ -323,10 +345,11 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
       ) : (
         <CampanhaWizard
           user={{
-            // 🔧 31/05/2026 (Fase 4C-fix): o modelo de usuário usa nome_usuario.
-            // email/nome podem vir vazios → fallback para nome_usuario garante criado_por.
-            email: user?.email || user?.nome_usuario || '',
-            nome: user?.nome || user?.nome_usuario || '',
+            // 🔧 Fase 5B-fix (01/06/2026): substitui a "Fase 4C-fix" que
+            // erroneamente usava `nome_usuario` como fallback de email.
+            // Agora usa o padrão correto da casa: email → email_usuario.
+            email: userEmail,
+            nome: userNome,
           }}
           campanhasHook={campanhasH}
           stepsHook={stepsH}
