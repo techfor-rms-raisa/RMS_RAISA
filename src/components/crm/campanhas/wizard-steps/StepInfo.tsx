@@ -2,14 +2,18 @@
  * StepInfo.tsx — Passo 1 do wizard: Dados gerais da campanha
  *
  * Caminho: src/components/crm/campanhas/wizard-steps/StepInfo.tsx
- * Versão: 1.0 (Fase 1D — 30/05/2026)
+ * Versão: 1.1 (Fase E-1/E-2 — 01/06/2026)
  *
- * Decomposto de CampaignBuilder.tsx (linhas 767-916).
- * Comportamento e visual preservados integralmente.
+ * Histórico:
+ *  - v1.0 (30/05/2026 — Fase 1D): decomposto de CampaignBuilder.tsx.
+ *  - v1.1 (01/06/2026 — Fase E-1/E-2): novo campo "Unidade do grupo"
+ *    (entre Tipo e Domínio). Default 'TechFor TI'. Toda campanha
+ *    pertence a uma unidade, e a assinatura usada herda essa unidade
+ *    (regra travada no backend desde a v1.7 de crm-campanhas.ts).
  */
 
 import React from 'react';
-import { DOMINIOS_ENVIO } from '../../types/crm.constants';
+import { DOMINIOS_ENVIO, UNIDADES_GRUPO, UNIDADE_PADRAO } from '../../types/crm.constants';
 import type { Campanha } from '../../types/crm.types';
 
 // ════════════════════════════════════════════════════════════
@@ -200,6 +204,27 @@ const StepInfo: React.FC<StepInfoProps> = ({
             </button>
           </div>
         )}
+      </div>
+
+      {/* 🆕 Fase E-1: Unidade do grupo */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Unidade do grupo *
+        </label>
+        <select
+          value={campanha.unidade || UNIDADE_PADRAO}
+          onChange={(e) => setField('unidade', e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+        >
+          {UNIDADES_GRUPO.map((u) => (
+            <option key={u} value={u}>
+              {u}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-400 mt-1">
+          Define qual a identidade comercial dos e-mails (assinatura, link da empresa). A assinatura usada será a do responsável NA UNIDADE escolhida.
+        </p>
       </div>
 
       {/* Domínio de envio */}

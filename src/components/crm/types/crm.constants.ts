@@ -2,10 +2,16 @@
  * crm.constants.ts — Constantes do módulo CRM
  *
  * Caminho: src/components/crm/types/crm.constants.ts
- * Versão: 1.0 (Fase 1C — 29/05/2026)
+ * Versão: 1.1 (Fase E-1/E-2 — 01/06/2026)
  *
- * Constantes que eram inline em EmpresasLeadsCRM.tsx,
- * agora centralizadas para reúso.
+ * Histórico:
+ *  - v1.0 (29/05/2026 — Fase 1C): constantes que eram inline em
+ *    EmpresasLeadsCRM.tsx, centralizadas para reúso.
+ *  - v1.1 (01/06/2026 — Fase E-1/E-2): adicionadas UNIDADES_GRUPO e
+ *    UNIDADE_PADRAO. Espelham as constantes da API (crm-campanhas.ts
+ *    v1.7) — fonte única do nome das unidades comerciais do grupo
+ *    (TechFor TI, TechCob BPO, TechBoat). Toda nova unidade precisa
+ *    ser adicionada AQUI E no backend (linhas 117 de crm-campanhas.ts).
  */
 
 // ════════════════════════════════════════════════════════════
@@ -91,6 +97,28 @@ export const DOMINIOS_ENVIO: ReadonlyArray<string> = [
   'techfor.com.br',
   'techforti.inf.br',
 ];
+
+// ════════════════════════════════════════════════════════════
+// UNIDADES DO GRUPO (Fase E-1 — 01/06/2026)
+// ════════════════════════════════════════════════════════════
+//
+// O grupo TechFor TI opera 3 unidades comerciais. Cada campanha
+// pertence a UMA unidade, e a assinatura usada herda essa unidade —
+// assim a mesma pessoa pode prospectar para múltiplas unidades com
+// identidades comerciais distintas (link/marca diferentes por
+// unidade), mantendo a coerência de marca em cada envio.
+//
+// ⚠️ Adicionar nova unidade: atualizar AQUI E em api/crm-campanhas.ts
+//    (constante UNIDADES_GRUPO da v1.7+). A coluna é TEXT livre no
+//    banco — não exige migração para adicionar uma nova unidade.
+
+export const UNIDADES_GRUPO: ReadonlyArray<string> = [
+  'TechFor TI',
+  'TechCob BPO',
+  'TechBoat',
+];
+
+export const UNIDADE_PADRAO = 'TechFor TI';
 
 // Status de campanha — labels para STATUS BADGE
 export const STATUS_CAMPANHA_LABELS: Record<

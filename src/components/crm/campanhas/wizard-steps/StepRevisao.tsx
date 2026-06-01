@@ -2,9 +2,12 @@
  * StepRevisao.tsx — Passo 4 do wizard: Preview/Revisão do email
  *
  * Caminho: src/components/crm/campanhas/wizard-steps/StepRevisao.tsx
- * Versão: 1.0 (Fase 1D — 30/05/2026)
+ * Versão: 1.1 (Fase E-1/E-2 — 01/06/2026)
  *
- * Decomposto de CampaignBuilder.tsx (linhas 1232-1329).
+ * Histórico:
+ *  - v1.0 (30/05/2026 — Fase 1D): decomposto de CampaignBuilder.tsx.
+ *  - v1.1 (01/06/2026 — Fase E-1/E-2): exibe a Unidade do grupo no
+ *    resumo da campanha (ao lado das outras infos contextuais).
  */
 
 import React from 'react';
@@ -128,6 +131,10 @@ const StepRevisao: React.FC<StepRevisaoProps> = ({
           </p>
           <p>
             <span className="text-gray-500">Tipo:</span> {campanha.tipo}
+          </p>
+          <p>
+            <span className="text-gray-500">Unidade:</span>{' '}
+            <span className="font-medium">{campanha.unidade || '—'}</span>
           </p>
           <p>
             <span className="text-gray-500">Steps:</span> {steps.length}

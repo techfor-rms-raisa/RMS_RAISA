@@ -2,23 +2,23 @@
  * useAssinatura.ts — Hook de assinatura do usuário (remetente)
  *
  * Caminho: src/components/crm/shared/hooks/useAssinatura.ts
- * Versão: 1.0 (Fase 1D — 30/05/2026)
+ * Versão: 1.1 (Fase E-1/E-2 — 01/06/2026)
+ *
+ * Histórico:
+ *  - v1.0 (30/05/2026 — Fase 1D): hook inicial, 1 assinatura por user_email.
+ *  - v1.1 (01/06/2026 — Fase E-1/E-2): aceita `unidade` em carregar e
+ *    salvar (default 'TechFor TI' quando omitida — preserva comportamento
+ *    da chamada legada do CampanhasPage). Para gerenciar outras unidades
+ *    de uma pessoa, usar a aba Assinaturas (Admin).
  *
  * Responsabilidade:
- *  - Carregar a assinatura do usuário logado (por email)
+ *  - Carregar a assinatura do usuário logado (por email + unidade)
  *  - Salvar (criar/atualizar) assinatura
- *
- * Comportamento idêntico a CampaignBuilder.tsx (linhas 219-226 + 461-476).
- *
- * NOTA: Na Fase 4 do plano (Pré-Projeto v3.1) este hook será substituído
- * por uma versão integrada com tabela `email_assinaturas` (CRUD completo
- * com múltiplas assinaturas por usuário). Por enquanto reproduz o
- * comportamento legado: 1 assinatura por user_email.
  */
 
 import { useCallback, useState } from 'react';
 import { useCrmApi } from './useCrmApi';
-import { CAMPANHA_API_URL } from '../../types/crm.constants';
+import { CAMPANHA_API_URL, UNIDADE_PADRAO } from '../../types/crm.constants';
 import type { Assinatura } from '../../types/crm.types';
 
 // ════════════════════════════════════════════════════════════
@@ -57,13 +57,21 @@ export function useAssinatura(options: UseAssinaturaOptions = {}) {
   // CARREGAR
   // ════════════════════════════════════════════════════════════
 
+  /**
+   * Carrega a assinatura da pessoa (por email) na unidade do grupo
+   * informada. Quando `unidade` é omitida, usa a UNIDADE_PADRAO
+   * (TechFor TI) — preserva o comportamento da chamada legada do
+   * CampanhasPage (botão "Minha Assinatura" da lista de campanhas).
+   * Para gerenciar outras unidades, usar a aba Assinaturas (Admin).
+   */
   const carregar = useCallback(
-    async (userEmail: string): Promise<void> => {
+    async (userEmail: string, unidade: string = UNIDADE_PADRAO): Promise<void> => {
       if (!userEmail) return;
       setLoading(true);
       try {
         const resp = await api.get<MinhaAssinaturaResponse>('minha_assinatura', {
           user_email: userEmail,
+          unidade,
         });
         if (resp.ok && resp.data?.success && resp.data.assinatura) {
           setAssinatura(resp.data.assinatura);
@@ -81,6 +89,9 @@ export function useAssinatura(options: UseAssinaturaOptions = {}) {
   // ════════════════════════════════════════════════════════════
 
   /**
+   * Salva a assinatura no servidor. A unidade vai junto no payload —
+   * a do state (preenchida pelo carregar) ou UNIDADE_PADRAO se vazia.
+   *
    * @returns true em caso de sucesso, false caso contrário (alerta exibido).
    */
   const salvar = useCallback(
@@ -96,6 +107,7 @@ export function useAssinatura(options: UseAssinaturaOptions = {}) {
           {
             ...assinatura,
             user_email: userEmail,
+            unidade: assinatura.unidade || UNIDADE_PADRAO,
           }
         );
         if (!resp.ok || !resp.data?.success) {

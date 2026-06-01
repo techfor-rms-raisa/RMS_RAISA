@@ -2,34 +2,42 @@
  * AssinaturasPage.tsx — Aba "Assinaturas" do módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/assinaturas/AssinaturasPage.tsx
- * Versão: 1.2 (Fase D — 01/06/2026)
+ * Versão: 1.3 (Fase E-1/E-2 — 01/06/2026)
  *
  * Histórico:
- *  - v1.0 (01/06/2026): versão inicial da aba.
- *  - v1.1 (01/06/2026): correção de loop — depende de `get` (referência
- *    estável), não do objeto `api` (recriado a cada render).
- *  - v1.2 (01/06/2026): botão Excluir (Admin) com ConfirmDialog reaproveitado.
- *    Backend valida e bloqueia exclusão se em uso por campanha em andamento.
+ *  - v1.0 (01/06/2026 — Fase D): versão inicial da aba.
+ *  - v1.1 (01/06/2026 — Fase D): correção de loop — depende de `get`/`del`
+ *    (referências estáveis), não do objeto `api`.
+ *  - v1.2 (01/06/2026 — Fase D): botão Excluir (Admin) com ConfirmDialog.
+ *  - v1.3 (01/06/2026 — Fase E-1/E-2): adaptado ao novo retorno do backend
+ *    (`listar_usuarios_assinatura` v1.7 → produto cartesiano pessoa×unidade).
+ *    Cada linha agora representa uma combinação (pessoa, unidade do grupo),
+ *    com assinatura cadastrada ou ainda em aberto. Tabela ganha coluna
+ *    "Unidade", filtro por unidade no topo, e botão "Nova Assinatura"
+ *    do header foi removido (criação sempre pelo "+ Criar" na linha
+ *    específica, com pessoa e unidade travadas — mais claro do que
+ *    abrir o modal genérico e fazer 2 seleções).
  *
  * Conceito:
  *  - Administrador: CRUD completo das assinaturas do time (criar/editar,
- *    ativar/inativar). A assinatura fica vinculada a uma PESSOA (user_email).
+ *    excluir). A assinatura fica vinculada a uma PESSOA + UNIDADE.
  *  - Demais perfis (Gestão Comercial, SDR, ...): somente leitura — consultam
  *    e pré-visualizam, sem criar/editar.
- *  - A regra "assinatura travada no responsável" (Fase B) usa exatamente estas
- *    assinaturas: cada campanha herda a assinatura da pessoa responsável.
+ *  - A regra "assinatura travada no responsável + unidade da campanha"
+ *    (Fase B + E-1) usa exatamente estas linhas.
  *
- * Backend (api/crm-campanhas.ts v1.4):
- *  - GET  listar_usuarios_assinatura → usuários elegíveis + assinatura vinculada
+ * Backend (api/crm-campanhas.ts v1.7):
+ *  - GET  listar_usuarios_assinatura → linhas {pessoa, unidade, assinatura|null}
  *  - GET  render_assinatura          → HTML fiel do rodapé (mesma render do envio)
- *  - POST salvar_assinatura          → cria/edita (RBAC: só Administrador)
+ *  - POST salvar_assinatura          → cria/edita por (user_email, unidade) — RBAC Admin
+ *  - DEL  excluir_assinatura         → por id da assinatura — RBAC Admin
  *
- * Reusa o AssinaturaModal (v2.0) de ../campanhas/AssinaturaModal.
+ * Reusa o AssinaturaModal v3.0 (../campanhas/AssinaturaModal).
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useCrmApi } from '../shared/hooks/useCrmApi';
-import { CAMPANHA_API_URL } from '../types/crm.constants';
+import { CAMPANHA_API_URL, UNIDADES_GRUPO } from '../types/crm.constants';
 import type { Assinatura, CurrentUserLite } from '../types/crm.types';
 import AssinaturaModal, { PessoaAssinatura } from '../campanhas/AssinaturaModal';
 import ConfirmDialog from '../shared/components/ConfirmDialog';
@@ -40,17 +48,23 @@ import Toast, { ToastMensagem } from '../shared/components/Toast';
 // TIPOS
 // ════════════════════════════════════════════════════════════
 
-interface UsuarioComAssinatura {
+/**
+ * Uma linha da tabela = um par (pessoa, unidade do grupo).
+ * Backend retorna o produto cartesiano (todas as combinações), com
+ * `assinatura: {...}` quando já cadastrada ou `null` quando em aberto.
+ */
+interface LinhaAssinatura {
   id: number;
   nome_usuario: string;
   email_usuario: string;
   tipo_usuario: string;
+  unidade: string;
   assinatura: Assinatura | null;
 }
 
 interface ListarUsuariosResponse {
   success: boolean;
-  usuarios: UsuarioComAssinatura[];
+  usuarios: LinhaAssinatura[];
   error?: string;
 }
 
@@ -88,9 +102,12 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
     (currentUser as CurrentUserLite & { email?: string; email_usuario?: string })?.email_usuario ??
     '';
 
-  const [usuarios, setUsuarios] = useState<UsuarioComAssinatura[]>([]);
+  const [linhas, setLinhas] = useState<LinhaAssinatura[]>([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<ToastMensagem | null>(null);
+
+  // 🆕 Fase E-2: filtro por unidade (default 'Todas')
+  const [filtroUnidade, setFiltroUnidade] = useState<string>('');
 
   // Modal (criar/editar/consultar)
   const [modalAberto, setModalAberto] = useState(false);
@@ -104,7 +121,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
 
   // Confirmação de exclusão (Fase D v1.2)
-  const [alvoExcluir, setAlvoExcluir] = useState<UsuarioComAssinatura | null>(null);
+  const [alvoExcluir, setAlvoExcluir] = useState<LinhaAssinatura | null>(null);
   const [excluindo, setExcluindo] = useState(false);
 
   // ── Carregar ──────────────────────────────────────────────
@@ -112,7 +129,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
     setLoading(true);
     const resp = await get<ListarUsuariosResponse>('listar_usuarios_assinatura');
     if (resp.ok && resp.data?.success) {
-      setUsuarios(resp.data.usuarios || []);
+      setLinhas(resp.data.usuarios || []);
     } else {
       setToast({ tipo: 'error', texto: resp.error || 'Falha ao carregar assinaturas' });
     }
@@ -123,71 +140,72 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
     carregar();
   }, [carregar]);
 
-  // ── Abrir: Nova (Admin) — escolhe a pessoa (só quem não tem assinatura) ─
-  const abrirNova = () => {
-    const semAssinatura: PessoaAssinatura[] = usuarios
-      .filter((u) => !u.assinatura)
-      .map((u) => ({
-        id: u.id,
-        nome_usuario: u.nome_usuario,
-        email_usuario: u.email_usuario,
-        tipo_usuario: u.tipo_usuario,
-      }));
+  // 🆕 Fase E-2: linhas após filtro de unidade
+  const linhasFiltradas = useMemo(() => {
+    if (!filtroUnidade) return linhas;
+    return linhas.filter((l) => l.unidade === filtroUnidade);
+  }, [linhas, filtroUnidade]);
 
-    if (semAssinatura.length === 0) {
-      setToast({ tipo: 'info', texto: 'Todos os usuários elegíveis já possuem assinatura.' });
-      return;
-    }
-
-    setEditValue({ websites: [] });
-    setPessoasSeletor(semAssinatura);
-    setPessoaBloqueada(false);
-    setModalReadOnly(false);
-    setModalAberto(true);
-  };
-
-  // ── Abrir: Criar para uma pessoa específica (Admin) ───────
-  const abrirCriarPara = (u: UsuarioComAssinatura) => {
+  // ── Abrir: Criar para uma linha específica (Admin) ────────
+  //         Pessoa e unidade vêm travadas pela linha clicada.
+  const abrirCriarPara = (l: LinhaAssinatura) => {
+    const pessoa: PessoaAssinatura = {
+      id: l.id,
+      nome_usuario: l.nome_usuario,
+      email_usuario: l.email_usuario,
+      tipo_usuario: l.tipo_usuario,
+    };
     setEditValue({
-      user_email: u.email_usuario,
-      nome_completo: u.nome_usuario,
-      email_assinatura: u.email_usuario,
+      user_email: l.email_usuario,
+      unidade: l.unidade,
+      nome_completo: l.nome_usuario,
+      email_assinatura: l.email_usuario,
       websites: [],
     });
-    setPessoasSeletor([
-      { id: u.id, nome_usuario: u.nome_usuario, email_usuario: u.email_usuario, tipo_usuario: u.tipo_usuario },
-    ]);
+    setPessoasSeletor([pessoa]);
     setPessoaBloqueada(true);
     setModalReadOnly(false);
     setModalAberto(true);
   };
 
-  // ── Abrir: Editar (Admin) — pessoa travada ────────────────
-  const abrirEditar = (u: UsuarioComAssinatura) => {
-    if (!u.assinatura) return;
-    setEditValue({ ...u.assinatura });
-    setPessoasSeletor([
-      { id: u.id, nome_usuario: u.nome_usuario, email_usuario: u.email_usuario, tipo_usuario: u.tipo_usuario },
-    ]);
+  // ── Abrir: Editar (Admin) — pessoa e unidade travadas ─────
+  const abrirEditar = (l: LinhaAssinatura) => {
+    if (!l.assinatura) return;
+    const pessoa: PessoaAssinatura = {
+      id: l.id,
+      nome_usuario: l.nome_usuario,
+      email_usuario: l.email_usuario,
+      tipo_usuario: l.tipo_usuario,
+    };
+    // Garante que `unidade` está no editValue (mesmo se o registro
+    // antigo viesse sem o campo — defensivo, não deve acontecer pós-migração).
+    setEditValue({ ...l.assinatura, unidade: l.assinatura.unidade || l.unidade });
+    setPessoasSeletor([pessoa]);
     setPessoaBloqueada(true);
     setModalReadOnly(false);
     setModalAberto(true);
   };
 
   // ── Abrir: Consultar (qualquer perfil) — somente leitura ──
-  const abrirConsulta = (u: UsuarioComAssinatura) => {
-    if (!u.assinatura) return;
-    setEditValue({ ...u.assinatura });
-    setPessoasSeletor(undefined);
-    setPessoaBloqueada(false);
+  const abrirConsulta = (l: LinhaAssinatura) => {
+    if (!l.assinatura) return;
+    const pessoa: PessoaAssinatura = {
+      id: l.id,
+      nome_usuario: l.nome_usuario,
+      email_usuario: l.email_usuario,
+      tipo_usuario: l.tipo_usuario,
+    };
+    setEditValue({ ...l.assinatura, unidade: l.assinatura.unidade || l.unidade });
+    setPessoasSeletor([pessoa]);
+    setPessoaBloqueada(true);
     setModalReadOnly(true);
     setModalAberto(true);
   };
 
   // ── Pré-visualizar (HTML renderizado) ─────────────────────
-  const abrirPreview = async (u: UsuarioComAssinatura) => {
-    if (!u.assinatura?.id) return;
-    const resp = await get<RenderResponse>('render_assinatura', { id: u.assinatura.id });
+  const abrirPreview = async (l: LinhaAssinatura) => {
+    if (!l.assinatura?.id) return;
+    const resp = await get<RenderResponse>('render_assinatura', { id: l.assinatura.id });
     if (resp.ok && resp.data?.success) {
       setPreviewHtml(resp.data.html);
     } else {
@@ -239,7 +257,6 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
       setToast({ tipo: 'error', texto: resp.error || 'Falha ao excluir assinatura' });
     }
   };
-
   // ────────────────────────────────────────────────────────────
   // RENDER
   // ────────────────────────────────────────────────────────────
@@ -248,24 +265,32 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
       <Toast mensagem={toast} onDismiss={() => setToast(null)} />
 
       {/* Cabeçalho */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-base font-semibold text-gray-900">Assinaturas</h2>
           <p className="text-xs text-gray-500">
             {isAdmin
-              ? 'Crie e edite as assinaturas do time. Cada campanha herda a assinatura da pessoa responsável.'
-              : 'Consulte as assinaturas do time. Apenas o Administrador pode criar ou editar.'}
+              ? 'Crie e edite as assinaturas do time por pessoa e unidade. Cada campanha herda a assinatura do responsável NA UNIDADE da campanha.'
+              : 'Consulte as assinaturas do time por pessoa e unidade. Apenas o Administrador pode criar ou editar.'}
           </p>
         </div>
-        {isAdmin && (
-          <button
-            onClick={abrirNova}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
+
+        {/* 🆕 Fase E-2: filtro por unidade do grupo */}
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500">Unidade:</label>
+          <select
+            value={filtroUnidade}
+            onChange={(e) => setFiltroUnidade(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
           >
-            <i className="fa-solid fa-plus"></i>
-            Nova Assinatura
-          </button>
-        )}
+            <option value="">Todas</option>
+            {UNIDADES_GRUPO.map((u) => (
+              <option key={u} value={u}>
+                {u}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Conteúdo */}
@@ -274,11 +299,15 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
           <i className="fa-solid fa-spinner fa-spin text-2xl"></i>
           <p className="text-sm mt-2">Carregando assinaturas…</p>
         </div>
-      ) : usuarios.length === 0 ? (
+      ) : linhasFiltradas.length === 0 ? (
         <EmptyState
           icon="fa-solid fa-signature"
-          titulo="Nenhum usuário elegível"
-          descricao="Não há usuários (Administrador, Gestão Comercial ou SDR) ativos para vincular assinaturas."
+          titulo={filtroUnidade ? `Sem combinações para a unidade ${filtroUnidade}` : 'Nenhum usuário elegível'}
+          descricao={
+            filtroUnidade
+              ? 'Limpe o filtro para ver outras unidades.'
+              : 'Não há usuários (Administrador, Gestão Comercial ou SDR) ativos para vincular assinaturas.'
+          }
         />
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -286,6 +315,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
             <thead className="bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wide">
               <tr>
                 <th className="px-4 py-3 font-medium">Pessoa</th>
+                <th className="px-4 py-3 font-medium">Unidade</th>
                 <th className="px-4 py-3 font-medium">Assinatura</th>
                 <th className="px-4 py-3 font-medium">E-mail</th>
                 <th className="px-4 py-3 font-medium">Status</th>
@@ -293,21 +323,28 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {usuarios.map((u) => {
-                const temAssinatura = !!u.assinatura;
-                const ativa = u.assinatura?.ativo !== false; // default ativo
+              {linhasFiltradas.map((l) => {
+                const temAssinatura = !!l.assinatura;
+                const ativa = l.assinatura?.ativo !== false; // default ativo
+                // Chave composta — a mesma pessoa aparece N vezes (uma por unidade)
+                const rowKey = `${l.id}::${l.unidade}`;
                 return (
-                  <tr key={u.id} className="hover:bg-gray-50">
+                  <tr key={rowKey} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">{u.nome_usuario}</div>
-                      <div className="text-xs text-gray-500">{u.tipo_usuario}</div>
+                      <div className="font-medium text-gray-900">{l.nome_usuario}</div>
+                      <div className="text-xs text-gray-500">{l.tipo_usuario}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-blue-50 text-blue-700 font-medium">
+                        {l.unidade}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-gray-700">
                       {temAssinatura ? (
                         <>
-                          <div>{u.assinatura!.nome_completo}</div>
-                          {u.assinatura!.cargo && (
-                            <div className="text-xs text-gray-500">{u.assinatura!.cargo}</div>
+                          <div>{l.assinatura!.nome_completo}</div>
+                          {l.assinatura!.cargo && (
+                            <div className="text-xs text-gray-500">{l.assinatura!.cargo}</div>
                           )}
                         </>
                       ) : (
@@ -315,7 +352,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-600">
-                      {temAssinatura ? u.assinatura!.email_assinatura : '—'}
+                      {temAssinatura ? l.assinatura!.email_assinatura : '—'}
                     </td>
                     <td className="px-4 py-3">
                       {!temAssinatura ? (
@@ -336,7 +373,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
                       <div className="flex items-center justify-end gap-2">
                         {temAssinatura && (
                           <button
-                            onClick={() => abrirPreview(u)}
+                            onClick={() => abrirPreview(l)}
                             className="px-2 py-1 text-xs text-gray-600 hover:text-blue-600"
                             title="Pré-visualizar"
                           >
@@ -345,7 +382,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
                         )}
                         {temAssinatura && (
                           <button
-                            onClick={() => abrirConsulta(u)}
+                            onClick={() => abrirConsulta(l)}
                             className="px-2 py-1 text-xs text-gray-600 hover:text-blue-600"
                             title="Consultar dados"
                           >
@@ -354,7 +391,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
                         )}
                         {isAdmin && temAssinatura && (
                           <button
-                            onClick={() => abrirEditar(u)}
+                            onClick={() => abrirEditar(l)}
                             className="px-3 py-1 text-xs border border-gray-300 rounded hover:bg-gray-100"
                           >
                             <i className="fa-solid fa-pen mr-1"></i> Editar
@@ -362,7 +399,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
                         )}
                         {isAdmin && temAssinatura && (
                           <button
-                            onClick={() => setAlvoExcluir(u)}
+                            onClick={() => setAlvoExcluir(l)}
                             className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded"
                             title="Excluir assinatura"
                           >
@@ -371,7 +408,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
                         )}
                         {isAdmin && !temAssinatura && (
                           <button
-                            onClick={() => abrirCriarPara(u)}
+                            onClick={() => abrirCriarPara(l)}
                             className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
                           >
                             <i className="fa-solid fa-plus mr-1"></i> Criar
@@ -445,7 +482,8 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
           alvoExcluir?.assinatura ? (
             <>
               Tem certeza que deseja excluir a assinatura de{' '}
-              <strong>{alvoExcluir.assinatura.nome_completo}</strong> ({alvoExcluir.email_usuario})?
+              <strong>{alvoExcluir.assinatura.nome_completo}</strong> na unidade{' '}
+              <strong>{alvoExcluir.unidade}</strong> ({alvoExcluir.email_usuario})?
               <br />
               <span className="text-xs text-gray-500">
                 Campanhas em rascunho ou concluídas que usavam esta assinatura ficarão sem

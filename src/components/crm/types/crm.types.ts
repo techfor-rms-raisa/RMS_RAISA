@@ -2,19 +2,16 @@
  * crm.types.ts — Tipos compartilhados do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/types/crm.types.ts
- * Versão: 1.0 (Fase 1B — 29/05/2026)
+ * Versão: 1.1 (Fase E-1/E-2 — 01/06/2026)
  *
- * Fonte única de verdade para tipos usados em todo o módulo CRM.
- * Os tipos refletem fielmente as estruturas atualmente em uso em
- * EmpresasLeadsCRM.tsx (v1.0) e CampaignBuilder.tsx (v1.0), com
- * ampliação para os novos campos previstos no Pre_Projeto v3.1:
- *   - tipos_campanha_ids (Lead)
- *   - ultima_campanha_em (Lead)
- *   - tipo_campanha_id, delay_minimo_dias, data_inicio_envios,
- *     data_fim_envios, cargos_alvo (Campanha)
- *
- * Esses novos campos são opcionais aqui (?) — viram obrigatórios
- * apenas após as Fases 2 e 3, quando o banco passa a tê-los.
+ * Histórico:
+ *  - v1.0 (29/05/2026 — Fase 1B): fonte única de verdade dos tipos.
+ *  - v1.1 (01/06/2026 — Fase E-1/E-2): adicionados campos que o
+ *    backend já tinha desde as Fases B/5A mas o tipo estava defasado
+ *    (`responsavel_id`, `assinatura_id`, `inicio_envio` em Campanha;
+ *    `ativo`, `criado_em`, `atualizado_em` em Assinatura). Adicionado
+ *    o campo `unidade` em Assinatura e Campanha (Fase E-1). Novos
+ *    tipos: `Unidade` e `PessoaAssinatura` (consumido pelo modal).
  *
  * Convenção:
  *   - Tipos de domínio (Empresa, Lead, Campanha, etc.) representam
@@ -159,6 +156,8 @@ export interface Campanha {
   nome: string;
   tipo: string;                    // texto livre legado; será substituído por tipo_campanha_id
   status: string;
+  // 🆕 Fase E-1 (01/06/2026): unidade comercial do grupo (TechFor TI / TechCob BPO / TechBoat)
+  unidade: string;
   dominio_envio: string;
   email_remetente: string;
   nome_remetente: string;
@@ -175,6 +174,14 @@ export interface Campanha {
   criado_por: string;
   criado_em: string;
   atualizado_em: string;
+
+  // 🆕 Fase B (01/06/2026): responsável + assinatura (deriva do responsável)
+  responsavel_id?: number | null;
+  assinatura_id?: number | null;
+
+  // 🆕 Fase 5A (01/06/2026): timestamps de envio
+  inicio_envio?: string | null;
+  fim_envio?: string | null;
 
   // ── Novos campos (Fase 3) — opcionais até a migração ──
   tipo_campanha_id?: number | null;
@@ -235,9 +242,18 @@ export interface LeadDisponivel {
 // ASSINATURA
 // ════════════════════════════════════════════════════════════
 
+/**
+ * Identificador semântico de uma assinatura na v1.7+ do backend.
+ * Uma pessoa pode ter N assinaturas — uma por unidade do grupo.
+ * Esta string é a UNIDADE_PADRAO em /types/crm.constants.ts.
+ */
+export type Unidade = string;
+
 export interface Assinatura {
   id?: number;
   user_email: string;
+  // 🆕 Fase E-1 (01/06/2026): unidade comercial do grupo
+  unidade: Unidade;
   nome_completo: string;
   cargo: string;
   email_assinatura: string;
@@ -246,6 +262,21 @@ export interface Assinatura {
   websites: string[];
   politica_privacidade_url: string;
   optout_texto: string;
+  // 🆕 Fase D (01/06/2026): controle de soft-disable + audit
+  ativo?: boolean;
+  criado_em?: string;
+  atualizado_em?: string;
+}
+
+/**
+ * Projeção leve de pessoa que pode receber assinatura — usada como
+ * dropdown do AssinaturaModal e na lista da AssinaturasPage.
+ */
+export interface PessoaAssinatura {
+  id: number;
+  nome_usuario: string;
+  email_usuario: string;
+  tipo_usuario: string;
 }
 
 // ════════════════════════════════════════════════════════════
