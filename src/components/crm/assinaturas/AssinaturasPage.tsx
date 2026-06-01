@@ -2,7 +2,12 @@
  * AssinaturasPage.tsx — Aba "Assinaturas" do módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/assinaturas/AssinaturasPage.tsx
- * Versão: 1.0 (Fase D — 01/06/2026)
+ * Versão: 1.1 (Fase D — 01/06/2026)
+ *
+ * Histórico:
+ *  - v1.0 (01/06/2026): versão inicial da aba.
+ *  - v1.1 (01/06/2026): correção de loop — depende de `get` (referência
+ *    estável), não do objeto `api` (recriado a cada render).
  *
  * Conceito:
  *  - Administrador: CRUD completo das assinaturas do time (criar/editar,
@@ -67,7 +72,10 @@ interface AssinaturasPageProps {
 // ════════════════════════════════════════════════════════════
 
 const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
-  const api = useCrmApi(CAMPANHA_API_URL);
+  // get/post são referências ESTÁVEIS (useCallback dentro do useCrmApi).
+  // Depender do objeto `api` inteiro recriaria o callback a cada render e
+  // dispararia o useEffect em loop. Por isso destruturamos.
+  const { get, post } = useCrmApi(CAMPANHA_API_URL);
 
   const isAdmin = currentUser?.tipo_usuario === 'Administrador';
   // E-mail do ator (necessário para o RBAC do backend). O User real carrega
@@ -95,14 +103,14 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
   // ── Carregar ──────────────────────────────────────────────
   const carregar = useCallback(async () => {
     setLoading(true);
-    const resp = await api.get<ListarUsuariosResponse>('listar_usuarios_assinatura');
+    const resp = await get<ListarUsuariosResponse>('listar_usuarios_assinatura');
     if (resp.ok && resp.data?.success) {
       setUsuarios(resp.data.usuarios || []);
     } else {
       setToast({ tipo: 'error', texto: resp.error || 'Falha ao carregar assinaturas' });
     }
     setLoading(false);
-  }, [api]);
+  }, [get]);
 
   useEffect(() => {
     carregar();
@@ -172,7 +180,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
   // ── Pré-visualizar (HTML renderizado) ─────────────────────
   const abrirPreview = async (u: UsuarioComAssinatura) => {
     if (!u.assinatura?.id) return;
-    const resp = await api.get<RenderResponse>('render_assinatura', { id: u.assinatura.id });
+    const resp = await get<RenderResponse>('render_assinatura', { id: u.assinatura.id });
     if (resp.ok && resp.data?.success) {
       setPreviewHtml(resp.data.html);
     } else {
@@ -187,7 +195,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
       return;
     }
     setSaving(true);
-    const resp = await api.post<SalvarResponse>('salvar_assinatura', {
+    const resp = await post<SalvarResponse>('salvar_assinatura', {
       ...editValue,
       ator_email: atorEmail,
     });
