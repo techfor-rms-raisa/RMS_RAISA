@@ -2,12 +2,14 @@
  * AssinaturasPage.tsx — Aba "Assinaturas" do módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/assinaturas/AssinaturasPage.tsx
- * Versão: 1.1 (Fase D — 01/06/2026)
+ * Versão: 1.2 (Fase D — 01/06/2026)
  *
  * Histórico:
  *  - v1.0 (01/06/2026): versão inicial da aba.
  *  - v1.1 (01/06/2026): correção de loop — depende de `get` (referência
  *    estável), não do objeto `api` (recriado a cada render).
+ *  - v1.2 (01/06/2026): botão Excluir (Admin) com ConfirmDialog reaproveitado.
+ *    Backend valida e bloqueia exclusão se em uso por campanha em andamento.
  *
  * Conceito:
  *  - Administrador: CRUD completo das assinaturas do time (criar/editar,
@@ -30,6 +32,7 @@ import { useCrmApi } from '../shared/hooks/useCrmApi';
 import { CAMPANHA_API_URL } from '../types/crm.constants';
 import type { Assinatura, CurrentUserLite } from '../types/crm.types';
 import AssinaturaModal, { PessoaAssinatura } from '../campanhas/AssinaturaModal';
+import ConfirmDialog from '../shared/components/ConfirmDialog';
 import EmptyState from '../shared/components/EmptyState';
 import Toast, { ToastMensagem } from '../shared/components/Toast';
 
@@ -75,7 +78,7 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
   // get/post são referências ESTÁVEIS (useCallback dentro do useCrmApi).
   // Depender do objeto `api` inteiro recriaria o callback a cada render e
   // dispararia o useEffect em loop. Por isso destruturamos.
-  const { get, post } = useCrmApi(CAMPANHA_API_URL);
+  const { get, post, del } = useCrmApi(CAMPANHA_API_URL);
 
   const isAdmin = currentUser?.tipo_usuario === 'Administrador';
   // E-mail do ator (necessário para o RBAC do backend). O User real carrega
@@ -99,6 +102,10 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
 
   // Preview (HTML renderizado)
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
+
+  // Confirmação de exclusão (Fase D v1.2)
+  const [alvoExcluir, setAlvoExcluir] = useState<UsuarioComAssinatura | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
 
   // ── Carregar ──────────────────────────────────────────────
   const carregar = useCallback(async () => {
@@ -207,6 +214,29 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
       carregar();
     } else {
       setToast({ tipo: 'error', texto: resp.error || 'Falha ao salvar assinatura' });
+    }
+  };
+
+  // ── Excluir (Admin) — Fase D v1.2 ─────────────────────────
+  const excluir = async () => {
+    if (!alvoExcluir?.assinatura?.id) return;
+    if (!atorEmail) {
+      setToast({ tipo: 'error', texto: 'Não foi possível identificar o usuário logado.' });
+      return;
+    }
+    setExcluindo(true);
+    const resp = await del<{ success: boolean; error?: string }>('excluir_assinatura', {
+      id: alvoExcluir.assinatura.id,
+      ator_email: atorEmail,
+    });
+    setExcluindo(false);
+
+    if (resp.ok && resp.data?.success) {
+      setToast({ tipo: 'success', texto: 'Assinatura excluída.' });
+      setAlvoExcluir(null);
+      carregar();
+    } else {
+      setToast({ tipo: 'error', texto: resp.error || 'Falha ao excluir assinatura' });
     }
   };
 
@@ -330,6 +360,15 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
                             <i className="fa-solid fa-pen mr-1"></i> Editar
                           </button>
                         )}
+                        {isAdmin && temAssinatura && (
+                          <button
+                            onClick={() => setAlvoExcluir(u)}
+                            className="px-2 py-1 text-xs text-red-600 hover:bg-red-50 rounded"
+                            title="Excluir assinatura"
+                          >
+                            <i className="fa-solid fa-trash"></i>
+                          </button>
+                        )}
                         {isAdmin && !temAssinatura && (
                           <button
                             onClick={() => abrirCriarPara(u)}
@@ -398,6 +437,30 @@ const AssinaturasPage: React.FC<AssinaturasPageProps> = ({ currentUser }) => {
           </div>
         </div>
       )}
+      {/* Confirmação de exclusão (Admin) */}
+      <ConfirmDialog
+        open={alvoExcluir !== null}
+        titulo="Excluir assinatura"
+        mensagem={
+          alvoExcluir?.assinatura ? (
+            <>
+              Tem certeza que deseja excluir a assinatura de{' '}
+              <strong>{alvoExcluir.assinatura.nome_completo}</strong> ({alvoExcluir.email_usuario})?
+              <br />
+              <span className="text-xs text-gray-500">
+                Campanhas em rascunho ou concluídas que usavam esta assinatura ficarão sem
+                assinatura vinculada. Campanhas ativas, agendadas ou pausadas bloqueiam a exclusão.
+              </span>
+            </>
+          ) : ''
+        }
+        confirmLabel="Excluir"
+        cancelLabel="Cancelar"
+        variante="danger"
+        loading={excluindo}
+        onConfirm={excluir}
+        onCancel={() => setAlvoExcluir(null)}
+      />
     </div>
   );
 };

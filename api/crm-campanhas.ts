@@ -7,6 +7,17 @@
  *  - v1.2 (30/05/2026 - Fase 4A): criar_step aceita copy_id opcional
  *    (vínculo opcional a uma copy da biblioteca; snapshot do conteúdo
  *    é sempre preservado — edição posterior da copy não afeta steps).
+ *  - v1.5 (01/06/2026 - Fase D refinamento):
+ *      • renderAssinatura: novo padrão corporativo — nome em vermelho
+ *        institucional TechForTI (#A33022), cargo em itálico, sem linha
+ *        divisória, parágrafo LGPD completo com link de Política de
+ *        Privacidade e e-mail do DPO (dpo@techforti.com.br). Campo
+ *        `optout_texto` deixa de aparecer no rodapé (texto agora vem
+ *        padronizado no parágrafo LGPD).
+ *      • NOVO DELETE excluir_assinatura: só Administrador; bloqueia se a
+ *        assinatura estiver em campanha ativa/agendada/pausada (preserva a
+ *        trava de segurança da Fase B). Hard delete (FK ON DELETE SET NULL
+ *        já cobre campanhas em rascunho/concluída).
  *  - v1.4 (01/06/2026 - Fase D): Aba Assinaturas (gestão pelo Admin).
  *      • NOVO GET listar_usuarios_assinatura: usuários elegíveis (Admin/GC/SDR)
  *        + a assinatura vinculada de cada um (join por e-mail). Alimenta a aba
@@ -939,6 +950,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success: true, desvinculados: ids.length });
       }
 
+      // ── Excluir assinatura (Admin) — Fase D v1.5 ────────────
+      // Bloqueia se a assinatura estiver em campanha ativa/agendada/pausada
+      // (preserva a trava de segurança da Fase B). Campanhas em rascunho ou
+      // concluída usam ON DELETE SET NULL (definido na migração da Fase A).
+      if (action === 'excluir_assinatura') {
+        const id = req.query.id as string;
+        const ator_email = req.query.ator_email as string;
+        if (!id) return res.status(400).json({ success: false, error: 'id obrigatório' });
+
+        // RBAC: só Administrador
+        const ator = await resolverUsuarioPorEmail(supabase, ator_email);
+        if (!ator || ator.tipo_usuario !== 'Administrador') {
+          return res.status(403).json({ success: false, error: 'Somente o Administrador pode excluir assinaturas' });
+        }
+
+        // Bloquear se a assinatura estiver em campanha em uso
+        const { count: emUso } = await supabase
+          .from('email_campanhas')
+          .select('id', { count: 'exact', head: true })
+          .eq('assinatura_id', id)
+          .in('status', ['ativa', 'agendada', 'pausada']);
+
+        if ((emUso || 0) > 0) {
+          return res.status(400).json({
+            success: false,
+            error: `Não é possível excluir: assinatura está em uso por ${emUso} campanha(s) em andamento (ativa/agendada/pausada).`
+          });
+        }
+
+        const { error } = await supabase
+          .from('email_assinaturas')
+          .delete()
+          .eq('id', id);
+
+        if (error) return res.status(500).json({ success: false, error: error.message });
+        return res.status(200).json({ success: true, message: 'Assinatura excluída' });
+      }
+
       return res.status(400).json({ success: false, error: `DELETE action desconhecida: ${action}` });
     }
 
@@ -988,24 +1037,55 @@ async function resolverAssinaturaIdPorEmail(supabase: any, email?: string): Prom
 }
 
 // ════════════════════════════════════════════════════════════════
-// HELPER: Renderizar assinatura em HTML
+// HELPER: Renderizar assinatura em HTML — Padrão corporativo (v1.5)
 // ════════════════════════════════════════════════════════════════
+// Layout:
+//   Nome (negrito, vermelho institucional #A33022)
+//   Cargo (itálico, cinza)
+//   E-mail (link azul)
+//   Tel. <fixo> | <celular>
+//   Website (URL completa, link azul)
+//   ──
+//   Parágrafo LGPD completo (Política de Privacidade + DPO + opt-out)
+//
+// Observações:
+//  - SEM linha divisória no topo (border-top removido).
+//  - O campo `optout_texto` da tabela NÃO é mais renderizado: o texto de
+//    opt-out passou a fazer parte do parágrafo LGPD padronizado.
+//  - DPO institucional fixo: dpo@techforti.com.br.
 function renderAssinatura(a: any): string {
+  const COR_NOME = '#A33022';   // vermelho institucional TechForTI (oficial)
+  const COR_LINK = '#1a73e8';
+  const COR_TEXTO = '#333333';
+  const COR_LGPD = '#666666';
+
   const telefones = [a.telefone_fixo, a.telefone_celular].filter(Boolean).join(' | ');
-  const websitesHtml = (a.websites || [])
-    .map((url: string) => `<a href="${url}" style="color:#1a73e8;text-decoration:none">${url.replace(/^https?:\/\//, '')}</a>`)
-    .join('<br/>');
+  const websitePrincipal = (a.websites || []).find(Boolean) || '';
+  const politicaUrl = a.politica_privacidade_url || '';
+
+  const linhaTel = telefones
+    ? `<p style="margin:0;color:${COR_TEXTO}">Tel. ${telefones}</p>`
+    : '';
+
+  const linhaSite = websitePrincipal
+    ? `<p style="margin:0"><a href="${websitePrincipal}" style="color:${COR_LINK};text-decoration:underline">${websitePrincipal}</a></p>`
+    : '';
+
+  const linkPolitica = politicaUrl
+    ? `<a href="${politicaUrl}" style="color:${COR_LINK};text-decoration:underline">Política de Privacidade</a>`
+    : 'Política de Privacidade';
 
   return `
-<div style="margin-top:24px;padding-top:16px;border-top:1px solid #e0e0e0;font-family:Arial,sans-serif;font-size:13px;color:#333">
-  <p style="margin:0 0 2px"><strong>${a.nome_completo}</strong></p>
-  ${a.cargo ? `<p style="margin:0 0 4px"><em>${a.cargo}</em></p>` : ''}
-  <p style="margin:0 0 2px">
-    <a href="mailto:${a.email_assinatura}" style="color:#1a73e8;text-decoration:none">${a.email_assinatura}</a>
-  </p>
-  ${telefones ? `<p style="margin:0 0 2px">Tel. ${telefones}</p>` : ''}
-  ${websitesHtml ? `<p style="margin:0 0 8px">${websitesHtml}</p>` : ''}
-  ${a.politica_privacidade_url ? `<p style="margin:8px 0 4px;font-size:11px;color:#888">Veja nossa Política de Privacidade <a href="${a.politica_privacidade_url}" style="color:#888">${a.politica_privacidade_url}</a></p>` : ''}
-  <p style="margin:4px 0 0;font-size:11px;color:#888">${a.optout_texto || 'Caso não queira receber nossos comunicados, responda SAIR'}</p>
+<div style="font-family:Arial,sans-serif;font-size:13px;color:${COR_TEXTO};line-height:1.5">
+  <p style="margin:0;color:${COR_NOME};font-weight:bold;font-size:14px">${a.nome_completo}</p>
+  ${a.cargo ? `<p style="margin:0;font-style:italic;color:#555">${a.cargo}</p>` : ''}
+  <p style="margin:0"><a href="mailto:${a.email_assinatura}" style="color:${COR_LINK};text-decoration:underline">${a.email_assinatura}</a></p>
+  ${linhaTel}
+  ${linhaSite}
+  <div style="margin-top:14px;font-size:11px;color:${COR_LGPD};line-height:1.5">
+    <p style="margin:0">Estamos entrando em contato contigo para lhe apresentar uma oportunidade, que entendemos ser do seu interesse, nos termos da Lei Geral de Proteção de Dados (LGPD).</p>
+    <p style="margin:0">Isso quer dizer que coletamos, tratamos e armazenamos dados pessoais com todo o cuidado e zelo. Leia atentamente a nossa ${linkPolitica} e, se tiver alguma dúvida, entre em contato com o nosso Encarregado de Dados (Data Protection Officer - DPO) no seguinte e-mail: <a href="mailto:dpo@techforti.com.br" style="color:${COR_LINK};text-decoration:underline">dpo@techforti.com.br</a>.</p>
+    <p style="margin:0">Se não tiver mais interesse em receber nossas mensagens, que foi baseado no legítimo interesse da LGPD, responda este e-mail solicitando o descadastramento (opt out) SAIR.</p>
+  </div>
 </div>`.trim();
 }
