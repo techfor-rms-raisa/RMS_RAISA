@@ -7,6 +7,16 @@
  *  - v1.2 (30/05/2026 - Fase 4A): criar_step aceita copy_id opcional
  *    (vínculo opcional a uma copy da biblioteca; snapshot do conteúdo
  *    é sempre preservado — edição posterior da copy não afeta steps).
+ *  - v1.6 (01/06/2026 - Fase 5A): Enfileiramento da email_fila ao ativar.
+ *      • mudar_status → 'ativa' (primeira ativação): popula email_fila com
+ *        1 linha por (lead × step). agendado_para[ordem=1] = inicio_envio;
+ *        steps seguintes acumulam delay_dias do próprio step. Defesa em
+ *        profundidade: opt-outs e leads inaptos filtrados aqui também.
+ *      • Bug fix: condição que setava inicio_envio era !campanha.status
+ *        (sempre falso — status é string). Corrigida para !inicio_envio
+ *        (só seta na PRIMEIRA ativação; pausada→ativa preserva a data).
+ *      • Idempotência: re-ativar (pausada→ativa) NÃO re-enfileira; os
+ *        registros pendentes da primeira ativação ficam preservados.
  *  - v1.5 (01/06/2026 - Fase D refinamento):
  *      • renderAssinatura: novo padrão corporativo — nome em vermelho
  *        institucional TechForTI (#A33022), cargo em itálico, sem linha
@@ -781,7 +791,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Validações de transição
         const { data: campanha } = await supabase
           .from('email_campanhas')
-          .select('status, responsavel_id, assinatura_id')
+          .select('status, responsavel_id, assinatura_id, inicio_envio, dominio_envio')
           .eq('id', id)
           .maybeSingle();
 
@@ -824,8 +834,132 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const updateData: any = { status, atualizado_em: new Date().toISOString() };
-        if (status === 'ativa' && !campanha.status) {
-          updateData.inicio_envio = new Date().toISOString();
+
+        // 🆕 Fase 5A (01/06/2026) — ENFILEIRAMENTO na PRIMEIRA ativação.
+        //
+        // Condição: indo para 'ativa' E inicio_envio ainda não foi definido.
+        // (Bug fix da v1.5: a condição era !campanha.status, sempre falsa, então
+        // inicio_envio nunca era setado e a fila nunca era populada.)
+        //
+        // Semântica do agendamento:
+        //   Step 1 (primeiro da sequência) → agendado_para = AGORA (delay_dias do step 1 é ignorado)
+        //   Step N (N > 1) → agendado_para[N] = agendado_para[N-1] + delay_dias do step N
+        //
+        // Idempotência: pausada→ativa NÃO re-enfileira (inicio_envio já existe).
+        // Resume será tratado pelo cron (Fase 5B) — basta ler pendentes.
+        let enfileiramento: { enfileirados: number; opt_outs_ignorados: number; inaptos_ignorados: number } | null = null;
+        if (status === 'ativa' && !campanha.inicio_envio) {
+          const agora = new Date();
+
+          // 1) Steps ativos ordenados
+          const { data: steps, error: errSteps } = await supabase
+            .from('email_campanha_steps')
+            .select('id, ordem, delay_dias')
+            .eq('campanha_id', id)
+            .eq('ativo', true)
+            .order('ordem', { ascending: true });
+
+          if (errSteps) return res.status(500).json({ success: false, error: `Falha ao ler steps: ${errSteps.message}` });
+          if (!steps || steps.length === 0) {
+            return res.status(400).json({ success: false, error: 'Sem steps ativos para enfileirar' });
+          }
+
+          // 2) Leads vinculados com dados completos
+          const { data: vinculos, error: errVinc } = await supabase
+            .from('email_lead_campanhas')
+            .select('lead_id, email_leads!inner(id, email, nome, apto_campanha)')
+            .eq('campanha_id', id)
+            .eq('status', 'ativa');
+
+          if (errVinc) return res.status(500).json({ success: false, error: `Falha ao ler leads vinculados: ${errVinc.message}` });
+          if (!vinculos || vinculos.length === 0) {
+            return res.status(400).json({ success: false, error: 'Sem leads vinculados para enfileirar' });
+          }
+
+          // 3) Opt-outs (defesa em profundidade — vincular_leads já filtra, mas o
+          //    lead pode ter entrado em opt-out depois de vinculado)
+          const { data: optouts } = await supabase
+            .from('email_optout')
+            .select('email');
+          const setOptout = new Set(
+            (optouts || []).map((o: any) => (o.email || '').toLowerCase().trim())
+          );
+
+          let inaptos = 0;
+          let optOutFiltrados = 0;
+          const leadsValidos: any[] = [];
+          for (const v of vinculos as any[]) {
+            const lead = v.email_leads;
+            if (!lead || !lead.email) { inaptos++; continue; }
+            if (!lead.apto_campanha) { inaptos++; continue; }
+            if (setOptout.has(lead.email.toLowerCase().trim())) { optOutFiltrados++; continue; }
+            leadsValidos.push(lead);
+          }
+
+          if (leadsValidos.length === 0) {
+            return res.status(400).json({
+              success: false,
+              error: `Todos os leads foram filtrados na ativação (inaptos: ${inaptos}, opt-out: ${optOutFiltrados}). Reveja a base.`,
+            });
+          }
+
+          // 4) agendado_para por step (cumulativo a partir de AGORA)
+          const stepDates = new Map<number, string>();
+          let cumDays = 0;
+          for (let i = 0; i < steps.length; i++) {
+            const s: any = steps[i];
+            if (i === 0) {
+              // primeiro step: envia no início
+              stepDates.set(s.id, agora.toISOString());
+            } else {
+              cumDays += Number(s.delay_dias) || 0;
+              const dt = new Date(agora);
+              dt.setDate(dt.getDate() + cumDays);
+              stepDates.set(s.id, dt.toISOString());
+            }
+          }
+
+          // 5) Montar rows
+          const filaRows: any[] = [];
+          for (const lead of leadsValidos) {
+            for (const s of steps as any[]) {
+              filaRows.push({
+                campanha_id: parseInt(id, 10),
+                step_id: s.id,
+                lead_id: lead.id,
+                destinatario_email: lead.email,
+                destinatario_nome: lead.nome || null,
+                dominio_usado: campanha.dominio_envio || null,
+                status: 'pendente',
+                agendado_para: stepDates.get(s.id),
+              });
+            }
+          }
+
+          // 6) Bulk insert em lotes (limite seguro de 500/req, dentro dos 60s do Vercel)
+          const TAM_LOTE = 500;
+          let totalInseridos = 0;
+          for (let i = 0; i < filaRows.length; i += TAM_LOTE) {
+            const lote = filaRows.slice(i, i + TAM_LOTE);
+            const { data: ins, error: errIns } = await supabase
+              .from('email_fila')
+              .insert(lote)
+              .select('id');
+            if (errIns) {
+              return res.status(500).json({
+                success: false,
+                error: `Falha ao enfileirar (lote ${Math.floor(i / TAM_LOTE) + 1}): ${errIns.message}. ${totalInseridos} itens já inseridos antes deste lote permanecem no banco.`,
+              });
+            }
+            totalInseridos += ins?.length || 0;
+          }
+
+          enfileiramento = {
+            enfileirados: totalInseridos,
+            opt_outs_ignorados: optOutFiltrados,
+            inaptos_ignorados: inaptos,
+          };
+          updateData.inicio_envio = agora.toISOString();
         }
 
         const { data, error } = await supabase
@@ -836,7 +970,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .single();
 
         if (error) return res.status(500).json({ success: false, error: error.message });
-        return res.status(200).json({ success: true, campanha: data });
+        return res.status(200).json({ success: true, campanha: data, fila: enfileiramento });
       }
 
       return res.status(400).json({ success: false, error: `PATCH action desconhecida: ${action}` });
