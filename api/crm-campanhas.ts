@@ -7,6 +7,13 @@
  *  - v1.2 (30/05/2026 - Fase 4A): criar_step aceita copy_id opcional
  *    (vínculo opcional a uma copy da biblioteca; snapshot do conteúdo
  *    é sempre preservado — edição posterior da copy não afeta steps).
+ *  - v1.4 (01/06/2026 - Fase D): Aba Assinaturas (gestão pelo Admin).
+ *      • NOVO GET listar_usuarios_assinatura: usuários elegíveis (Admin/GC/SDR)
+ *        + a assinatura vinculada de cada um (join por e-mail). Alimenta a aba
+ *        Assinaturas e o seletor de pessoa do modal.
+ *      • salvar_assinatura: RBAC — só Administrador pode criar/editar
+ *        (fecha a pendência deixada na Fase B). Aceita `ativo` e o `user_email`
+ *        da pessoa-alvo (não mais "o meu"). Exige `ator_email` (quem chama).
  *  - v1.3 (01/06/2026 - Fase B): Responsável + Assinatura travada no responsável.
  *      • criar_campanha: RBAC (só Administrador e Gestão Comercial criam; SDR
  *        bloqueado). GC trava o responsável nele mesmo; Admin escolhe o
@@ -47,6 +54,9 @@ const PERFIS_CRIAM_CAMPANHA = ['Administrador', 'Gestão Comercial'];
 
 /** Perfis que podem ser RESPONSÁVEIS por uma campanha (recebem a atribuição). */
 const PERFIS_RESPONSAVEL = ['Gestão Comercial', 'SDR'];
+
+/** Perfis elegíveis a ter assinatura (aparecem na aba Assinaturas e no seletor). */
+const PERFIS_COM_ASSINATURA = ['Administrador', 'Gestão Comercial', 'SDR'];
 
 interface AppUserLite {
   id: number;
@@ -260,6 +270,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (error) return res.status(500).json({ success: false, error: error.message });
         return res.status(200).json({ success: true, assinaturas: data });
+      }
+
+      // ── Usuários elegíveis + assinatura vinculada (Fase D) ──
+      // Lista Admin/GC/SDR ativos e, para cada um, a assinatura (se houver),
+      // casando email_assinaturas.user_email == app_users.email_usuario.
+      // Alimenta a aba Assinaturas e o seletor de pessoa do modal.
+      if (action === 'listar_usuarios_assinatura') {
+        const { data: usuarios, error: eU } = await supabase
+          .from('app_users')
+          .select('id, nome_usuario, email_usuario, tipo_usuario')
+          .in('tipo_usuario', PERFIS_COM_ASSINATURA)
+          .eq('ativo_usuario', true)
+          .order('nome_usuario', { ascending: true });
+
+        if (eU) return res.status(500).json({ success: false, error: eU.message });
+
+        const { data: assinaturas, error: eA } = await supabase
+          .from('email_assinaturas')
+          .select('*');
+
+        if (eA) return res.status(500).json({ success: false, error: eA.message });
+
+        const porEmail = new Map<string, any>();
+        (assinaturas || []).forEach((a: any) => porEmail.set(a.user_email, a));
+
+        const lista = (usuarios || []).map((u: any) => ({
+          id: u.id,
+          nome_usuario: u.nome_usuario,
+          email_usuario: u.email_usuario,
+          tipo_usuario: u.tipo_usuario,
+          assinatura: porEmail.get(u.email_usuario) || null,
+        }));
+
+        return res.status(200).json({ success: true, usuarios: lista });
+      }
+
+      // ── Render HTML de uma assinatura (preview fiel) — Fase D ─
+      // Reusa o MESMO renderAssinatura do envio (fonte única da verdade).
+      if (action === 'render_assinatura') {
+        const id = req.query.id as string;
+        const user_email = req.query.user_email as string;
+        if (!id && !user_email) {
+          return res.status(400).json({ success: false, error: 'id ou user_email obrigatório' });
+        }
+
+        let q = supabase.from('email_assinaturas').select('*');
+        q = id ? q.eq('id', id) : q.eq('user_email', user_email);
+        const { data: assinatura, error } = await q.maybeSingle();
+
+        if (error) return res.status(500).json({ success: false, error: error.message });
+        if (!assinatura) return res.status(404).json({ success: false, error: 'Assinatura não encontrada' });
+
+        return res.status(200).json({ success: true, html: renderAssinatura(assinatura) });
       }
 
       // ── Preview de email (corpo + variáveis + assinatura) ───
@@ -580,13 +643,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ── Salvar/Atualizar assinatura ─────────────────────────
-      // OBS: RBAC (só Admin) será aplicado na Fase D, junto com a aba Assinaturas.
+      // 🆕 Fase D (01/06/2026): RBAC — só Administrador cria/edita assinaturas.
+      // `ator_email` identifica quem está chamando; `user_email` é a pessoa-alvo
+      // da assinatura (pode ser outra pessoa, não só "o meu").
       if (action === 'salvar_assinatura') {
-        const { user_email, nome_completo, cargo, email_assinatura,
-                telefone_fixo, telefone_celular, websites, politica_privacidade_url, optout_texto } = body;
+        const { ator_email, user_email, nome_completo, cargo, email_assinatura,
+                telefone_fixo, telefone_celular, websites, politica_privacidade_url,
+                optout_texto, ativo } = body;
 
         if (!user_email || !nome_completo || !email_assinatura) {
           return res.status(400).json({ success: false, error: 'user_email, nome_completo e email_assinatura obrigatórios' });
+        }
+
+        // RBAC: apenas Administrador
+        const ator = await resolverUsuarioPorEmail(supabase, ator_email);
+        if (!ator || ator.tipo_usuario !== 'Administrador') {
+          return res.status(403).json({ success: false, error: 'Somente o Administrador pode criar ou editar assinaturas' });
         }
 
         const { data, error } = await supabase
@@ -601,6 +673,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             websites: websites || [],
             politica_privacidade_url: politica_privacidade_url || '',
             optout_texto: optout_texto || 'Caso não queira receber nossos comunicados, responda SAIR',
+            ativo: ativo === undefined ? true : ativo,
             atualizado_em: new Date().toISOString()
           }, { onConflict: 'user_email' })
           .select()
