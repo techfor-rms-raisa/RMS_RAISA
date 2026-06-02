@@ -37,6 +37,12 @@ export type View =
   | 'dashboard_ml' | 'dashboard_performance_ia' | 'dashboard_raisa_metrics'
   // PROSPECT Views
   | 'prospect_search' | 'prospect_list' | 'prospect_credits' | 'prospect_campaign'
+  // CRM & Campanhas — view principal + sub-páginas promovidas ao menu lateral (30/05/2026)
+  // Views legadas removidas na Fase 1E
+  | 'crm'                  // CRM & Campanhas (Campanhas + Copys + Assinaturas)
+  | 'crm_base_leads'       // Base de Leads (página standalone)
+  | 'crm_acompanhamento'   // Acompanhamento (página standalone)
+  | 'crm_config'           // Configurações CRM (página standalone)
   // CRECI Views
   | 'creci_page'
   // Movimentações e Posição

@@ -68,7 +68,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 id, nome_completo, cargo, email, email_status,
                 empresa_nome, empresa_dominio, linkedin_url,
                 departamentos, cidade, estado,
-                motor, status, criado_em,
+                motor, status, vertical, criado_em,
                 reservado_por, reservado_em,
                 exportado_por, exportado_em,
                 buscado_por, fonte_id_gemini,
@@ -131,6 +131,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
             if (error) return res.status(500).json({ success: false, error: error.message });
             return res.status(200).json({ success: true, atualizados: ids.length });
+        }
+
+        // ── Setar vertical de negócio (Prospect Engine → botão "+ Vertical") ──
+        // 🆕 31/05/2026: atribui a vertical (email_tipos_campanha.nome) ao(s) lead(s).
+        // Obrigatória para promover o lead a Campanhas.
+        if (body.setar_vertical === true) {
+            const vertical = (body.vertical ?? '').toString().trim();
+            if (!vertical) {
+                return res.status(400).json({ success: false, error: 'vertical obrigatória' });
+            }
+            // Valida contra as verticais ativas (fonte canônica)
+            const { data: tipos, error: errTipos } = await supabase
+                .from('email_tipos_campanha')
+                .select('nome')
+                .eq('ativo', true);
+            if (errTipos) return res.status(500).json({ success: false, error: errTipos.message });
+            const validas = (tipos || []).map((t: any) => t.nome);
+            if (!validas.includes(vertical)) {
+                return res.status(400).json({ success: false, error: `Vertical inválida: ${vertical}` });
+            }
+
+            const { error } = await supabase
+                .from('prospect_leads')
+                .update({ vertical })
+                .in('id', ids);
+
+            if (error) return res.status(500).json({ success: false, error: error.message });
+            return res.status(200).json({ success: true, atualizados: ids.length, vertical });
         }
 
         // ── Reservar empresa (atribuir analista) ─────────────────────────
