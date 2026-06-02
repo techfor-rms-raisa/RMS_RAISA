@@ -2,7 +2,19 @@
  * api/cron/disparar-fila.ts — Motor de envio de e-mails (Fase 5B-cron)
  *
  * Caminho: api/cron/disparar-fila.ts
- * Versão: 1.0 (01/06/2026 — Fase 5B-cron)
+ *
+ * Histórico:
+ *  - v1.0 (01/06/2026 — Fase 5B-cron): versão inicial do processador.
+ *  - v1.1 (02/06/2026): normalização de quebras de linha no `corpo_html`.
+ *      O CopyEditorModal usa <textarea> e permite texto puro OU HTML.
+ *      Quando o usuário digita texto puro com `Enter` entre parágrafos,
+ *      o conteúdo é salvo como `\n\n` no banco. Ao injetar isso em HTML
+ *      do e-mail, o whitespace colapsa e o destinatário recebe tudo
+ *      grudado num parágrafo só. A função `normalizarCorpoEmail` agora
+ *      detecta texto puro (sem tags de bloco) e converte para `<p>...</p>`
+ *      com `<br>` para quebras simples. Conteúdos que JÁ são HTML
+ *      (têm `<p>`, `<div>`, `<br>`, etc) passam intactos — correção
+ *      retroativa e não-destrutiva para todas as copies existentes.
  *
  * Roda a cada 15 minutos (vercel.json) e processa um lote de até 10
  * mensagens da `email_fila` (status='pendente' AND agendado_para <= NOW).
@@ -133,6 +145,60 @@ function renderAssinatura(a: any): string {
     <p style="margin:0">Se não tiver mais interesse em receber nossas mensagens, que foi baseado no legítimo interesse da LGPD, responda este e-mail solicitando o descadastramento (opt out) SAIR.</p>
   </div>
 </div>`.trim();
+}
+
+// ════════════════════════════════════════════════════════════════
+// NORMALIZAÇÃO DO CORPO DO E-MAIL (v1.1 — 02/06/2026)
+// ════════════════════════════════════════════════════════════════
+/**
+ * Garante que o `corpo_html` da copy seja HTML renderizável pelo cliente
+ * de e-mail (Gmail, Outlook, etc), respeitando as quebras de linha
+ * digitadas pelo usuário no editor.
+ *
+ * Cenário do bug que esta função resolve:
+ *   • CopyEditorModal usa <textarea>. A label permite "HTML ou texto puro".
+ *   • Usuário digita texto com Enter entre parágrafos → salvo como `\n\n`.
+ *   • Quando o cron injeta isso no campo `html:` do Resend, o HTML
+ *     colapsa whitespace e o destinatário recebe tudo grudado num
+ *     parágrafo só (perde a separação visual entre parágrafos).
+ *
+ * Estratégia:
+ *   1) Detectar se o conteúdo JÁ é HTML — procura tags de bloco/quebra
+ *      comuns (<p>, <div>, <br>, <h1-6>, <ul>, <ol>, <table>).
+ *   2) Se for HTML → retornar intacto (preserva intenção do autor).
+ *   3) Se for texto puro → converter:
+ *        - `\n\n` (ou mais) marca quebra de parágrafo → `<p>...</p>`
+ *        - `\n` simples marca quebra de linha dentro do parágrafo → `<br>`
+ *
+ * Correção retroativa: copies já cadastradas como texto puro passam a
+ * renderizar corretamente sem precisar reeditar. Nenhuma alteração no
+ * banco — a transformação é feita no momento do envio.
+ */
+function normalizarCorpoEmail(corpo: string): string {
+  if (!corpo) return '';
+
+  // Detecta tags HTML de bloco/quebra — se presentes, o autor escreveu HTML
+  // e a intenção dele deve ser preservada.
+  const TEM_TAG_HTML = /<\s*(p|div|br|h[1-6]|ul|ol|li|table|tr|td|blockquote|article|section)\b/i;
+  if (TEM_TAG_HTML.test(corpo)) {
+    return corpo;
+  }
+
+  // Texto puro → converter em parágrafos preservando quebras simples.
+  // Normaliza CRLF do Windows antes para evitar `<br>` duplicado.
+  const normalizado = corpo.replace(/\r\n/g, '\n').trim();
+  if (!normalizado) return '';
+
+  return normalizado
+    .split(/\n{2,}/)
+    .map((paragrafo) => {
+      const semQuebrasExtras = paragrafo.trim();
+      if (!semQuebrasExtras) return '';
+      const comBr = semQuebrasExtras.replace(/\n/g, '<br>');
+      return `<p style="margin:0 0 12px 0;line-height:1.5">${comBr}</p>`;
+    })
+    .filter(Boolean)
+    .join('');
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -344,9 +410,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // 5d) Renderizar e-mail
+      // v1.1: corpo_html pode ter sido salvo como texto puro pelo editor
+      // (textarea aceita "HTML ou texto puro"). Normalizamos antes para
+      // garantir que parágrafos digitados com Enter virem <p>...</p>.
       const primeiroNome = (item.destinatario_nome || '').split(' ')[0] || 'time';
-      const corpoMerged = (step.corpo_html || '')
-        .replace(/\{\{name\}\}/gi, primeiroNome);
+      const corpoNormalizado = normalizarCorpoEmail(step.corpo_html || '');
+      const corpoMerged = corpoNormalizado.replace(/\{\{name\}\}/gi, primeiroNome);
       const assinaturaHtml = assinatura ? renderAssinatura(assinatura) : '';
       const htmlFinal = `${corpoMerged}\n\n${assinaturaHtml}`;
       const textoFinal: string | undefined = step.corpo_texto
