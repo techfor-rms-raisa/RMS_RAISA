@@ -2,7 +2,7 @@
  * CampanhaWizard.tsx — Orquestrador do wizard de edição de campanha
  *
  * Caminho: src/components/crm/campanhas/CampanhaWizard.tsx
- * Versão: 2.0 (Fase 4C — 31/05/2026)
+ * Versão: 2.1 (Fase 5B-UI — 02/06/2026)
  *
  * Decomposto de CampaignBuilder.tsx (linhas 651-761 + ações dos passos).
  * Recebe os hooks já instanciados pelo CampanhasPage para evitar
@@ -15,16 +15,25 @@
  *  - handleSelecionarCopy cria o step via stepsHook.adicionarDeCopy (snapshot).
  *  - tipoIdInicial mapeia a vertical da campanha (campanha.tipo, por NOME) para
  *    o id do tipo, usado como filtro inicial do seletor.
+ *
+ * 🆕 Fase 5B-UI (02/06/2026):
+ *  - Fetch de `listar_responsaveis_elegiveis` (crm-campanhas.ts v1.8) no
+ *    mount do wizard. Resultado vai para o StepInfo v1.2 via props
+ *    `responsaveis` e `travadoNoProprio`, alimentando o novo dropdown
+ *    "Responsável da campanha". Antes não havia campo na UI e a campanha
+ *    saía com `responsavel_id=null`, quebrando o filtro de leads_disponiveis.
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import StepInfo from './wizard-steps/StepInfo';
+import StepInfo, { type ResponsavelElegivel } from './wizard-steps/StepInfo';
 import StepCopys from './wizard-steps/StepCopys';
 import StepLeads from './wizard-steps/StepLeads';
 import StepRevisao from './wizard-steps/StepRevisao';
 import CopySelector from './wizard-steps/CopySelector';
 import StatusBadge from '../shared/components/StatusBadge';
 import { useTiposCampanha } from '../shared/hooks/useTiposCampanha';
+import { useCrmApi } from '../shared/hooks/useCrmApi';
+import { CAMPANHA_API_URL } from '../types/crm.constants';
 import type { useCampanhas } from '../shared/hooks/useCampanhas';
 import type { useCampanhaSteps } from '../shared/hooks/useCampanhaSteps';
 import type { useCampanhaLeads } from '../shared/hooks/useCampanhaLeads';
@@ -73,6 +82,14 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
   const [activeTab, setActiveTab] = useState<WizardTab>('info');
   const [saving, setSaving] = useState(false);
 
+  // 🆕 Fase 5B-UI (02/06/2026) — responsáveis elegíveis para o dropdown
+  // do StepInfo. Carregado uma única vez no mount do wizard a partir do
+  // novo endpoint listar_responsaveis_elegiveis (crm-campanhas v1.8).
+  // Lista vazia para perfis sem permissão (SDR/Analista/etc).
+  const [responsaveis, setResponsaveis] = useState<ResponsavelElegivel[]>([]);
+  const [travadoNoProprio, setTravadoNoProprio] = useState(false);
+  const apiCampanhas = useCrmApi(CAMPANHA_API_URL);
+
   // 🆕 Fase 4C — seletor de copy
   const [seletorAberto, setSeletorAberto] = useState(false);
   const tiposHook = useTiposCampanha();
@@ -85,6 +102,34 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
     tiposHook.carregar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 🆕 Fase 5B-UI: carrega a lista de responsáveis elegíveis no mount do
+  // wizard. O backend já aplica a regra RBAC (Admin vê GC/SDR; GC trava
+  // no próprio; outros perfis recebem array vazio).
+  useEffect(() => {
+    let cancelado = false;
+    (async () => {
+      if (!user?.email) return;
+      const resp = await apiCampanhas.get<{
+        success: boolean;
+        responsaveis: ResponsavelElegivel[];
+        travado_no_proprio: boolean;
+        error?: string;
+      }>('listar_responsaveis_elegiveis', { criado_por: user.email });
+      if (cancelado) return;
+      if (resp.ok && resp.data?.success) {
+        setResponsaveis(resp.data.responsaveis || []);
+        setTravadoNoProprio(!!resp.data.travado_no_proprio);
+      } else {
+        setResponsaveis([]);
+        setTravadoNoProprio(false);
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.email]);
 
   // Carrega busca de leads disponíveis quando a busca muda
   useEffect(() => {
@@ -341,6 +386,8 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
             campanha={campanha}
             tipos={campanhasHook.tipos}
             assinaturaCarregada={assinaturaCarregada}
+            responsaveis={responsaveis}
+            travadoNoProprio={travadoNoProprio}
             onChange={campanhasHook.setCampanhaAtual}
             onAbrirAssinatura={onAbrirAssinatura}
             onProximo={() => trocarTab('steps')}

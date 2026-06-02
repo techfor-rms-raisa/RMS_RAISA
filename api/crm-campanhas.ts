@@ -7,6 +7,19 @@
  *  - v1.2 (30/05/2026 - Fase 4A): criar_step aceita copy_id opcional
  *    (vínculo opcional a uma copy da biblioteca; snapshot do conteúdo
  *    é sempre preservado — edição posterior da copy não afeta steps).
+ *  - v1.8 (02/06/2026): 2 correções decorrentes do re-teste da Fase 5B.
+ *      • criar_step linha 678: `delay_dias || 3` → `delay_dias ?? 3`.
+ *        O operador `||` trata 0 como falsy e caía no default 3,
+ *        ignorando o "envio imediato" digitado pelo usuário no editor
+ *        de steps. Bug histórico que só se manifestou quando uma
+ *        campanha foi cadastrada com delay=0 em todos os 4 steps.
+ *      • NOVA action GET `listar_responsaveis_elegiveis`: alimenta o
+ *        dropdown "Responsável da campanha" no StepInfo.tsx v1.2.
+ *        Admin enxerga todos GC/SDR; GC trava no próprio (campo fica
+ *        disabled no front com `travado_no_proprio: true`); outros
+ *        perfis recebem array vazio. Mesma RBAC já existente em
+ *        criar_campanha, agora exposta para a UI evitar criar campanhas
+ *        sem responsável (bug 3 da UI).
  *  - v1.7 (01/06/2026 - Fase E-1): Múltiplas assinaturas por pessoa
  *    (uma por unidade do grupo).
  *      • O grupo TechFor TI passa a operar 3 unidades comerciais
@@ -358,6 +371,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success: true, assinaturas: data });
       }
 
+      // ── Responsáveis elegíveis para o dropdown da campanha (Fase 5B-UI, 02/06/2026) ──
+      // 🆕 v1.8: usado pelo StepInfo.tsx para popular o dropdown "Responsável da campanha".
+      //   Retorna lista filtrada conforme a regra RBAC já implementada em criar_campanha:
+      //     • Administrador → vê todos GC + SDR ativos (PERFIS_RESPONSAVEL).
+      //     • Gestão Comercial → vê APENAS ele mesmo (trava de auto-atribuição).
+      //     • Outros perfis → array vazio (não devem nem chegar nesta UI).
+      //   Query param `criado_por` é o e-mail do usuário atual (mesmo padrão de
+      //   criar_campanha). Sem ele, retorna 403 — é proteção em profundidade,
+      //   a UI já oculta o componente para perfis sem permissão.
+      if (action === 'listar_responsaveis_elegiveis') {
+        const criadoPor = (req.query.criado_por as string) || '';
+        if (!criadoPor) {
+          return res.status(400).json({ success: false, error: 'criado_por obrigatório' });
+        }
+        const ator = await resolverUsuarioPorEmail(supabase, criadoPor);
+        if (!ator) {
+          return res.status(403).json({ success: false, error: 'Usuário atual não encontrado em app_users' });
+        }
+
+        // Admin enxerga todos GC/SDR ativos
+        if (ator.tipo_usuario === 'Administrador') {
+          const { data, error } = await supabase
+            .from('app_users')
+            .select('id, nome_usuario, email_usuario, tipo_usuario')
+            .in('tipo_usuario', PERFIS_RESPONSAVEL)
+            .eq('ativo_usuario', true)
+            .order('nome_usuario', { ascending: true });
+          if (error) return res.status(500).json({ success: false, error: error.message });
+          return res.status(200).json({ success: true, responsaveis: data || [], travado_no_proprio: false });
+        }
+
+        // GC fica travado no próprio user — UI exibe campo desabilitado com o nome dele
+        if (ator.tipo_usuario === 'Gestão Comercial') {
+          return res.status(200).json({
+            success: true,
+            responsaveis: [{
+              id: ator.id,
+              nome_usuario: ator.nome_usuario,
+              email_usuario: ator.email_usuario,
+              tipo_usuario: ator.tipo_usuario,
+            }],
+            travado_no_proprio: true,
+          });
+        }
+
+        // Demais perfis (SDR, Analista, Consulta, Cliente, etc) — sem opções
+        return res.status(200).json({
+          success: true,
+          responsaveis: [],
+          travado_no_proprio: false,
+        });
+      }
+
       // ── Usuários elegíveis + assinatura vinculada (Fase D, atualizado E-1) ──
       // 🔄 Fase E-1: agora retorna o produto cartesiano (pessoa × unidade do grupo).
       // Cada linha representa um par (usuário, unidade) — com `assinatura: {...}`
@@ -671,7 +737,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             assunto,
             corpo_html,
             corpo_texto: corpo_texto || '',
-            delay_dias: delay_dias || 3,
+            // 🔧 v1.8 (02/06/2026) — `||` trata 0 como falsy e cai no default
+            //   3 quando o frontend envia delay_dias=0 (envio imediato).
+            //   `??` (nullish coalescing) só substitui null/undefined,
+            //   preservando o 0 que o usuário digitou.
+            delay_dias: delay_dias ?? 3,
             condicao: condicao || 'sempre',
             ativo: true,
             copy_id: copy_id ?? null,

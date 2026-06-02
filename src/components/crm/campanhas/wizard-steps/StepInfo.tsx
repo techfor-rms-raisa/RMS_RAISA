@@ -2,7 +2,7 @@
  * StepInfo.tsx — Passo 1 do wizard: Dados gerais da campanha
  *
  * Caminho: src/components/crm/campanhas/wizard-steps/StepInfo.tsx
- * Versão: 1.1 (Fase E-1/E-2 — 01/06/2026)
+ * Versão: 1.2 (Fase 5B-UI — 02/06/2026)
  *
  * Histórico:
  *  - v1.0 (30/05/2026 — Fase 1D): decomposto de CampaignBuilder.tsx.
@@ -10,6 +10,17 @@
  *    (entre Tipo e Domínio). Default 'TechFor TI'. Toda campanha
  *    pertence a uma unidade, e a assinatura usada herda essa unidade
  *    (regra travada no backend desde a v1.7 de crm-campanhas.ts).
+ *  - v1.2 (02/06/2026 — Fase 5B-UI): novo campo "Responsável da campanha"
+ *    (entre Unidade e Domínio). Sem ele, a campanha era criada com
+ *    `responsavel_id=null` e o filtro de leads_disponiveis devolvia
+ *    sempre 0 — analista não conseguia vincular leads à campanha.
+ *      • Admin enxerga dropdown com GC/SDR ativos.
+ *      • Gestão Comercial vê o próprio nome disabled (trava no backend
+ *        já forçava isso, agora a UI reflete).
+ *      • Outros perfis nunca chegam aqui (criar_campanha bloqueia antes).
+ *      • Lista vem por prop (`responsaveis` + `travadoNoProprio`),
+ *        carregada uma vez pelo CampanhaWizard via
+ *        GET listar_responsaveis_elegiveis (crm-campanhas.ts v1.8).
  */
 
 import React from 'react';
@@ -20,10 +31,24 @@ import type { Campanha } from '../../types/crm.types';
 // PROPS
 // ════════════════════════════════════════════════════════════
 
+/** Item de responsável vindo de listar_responsaveis_elegiveis (crm-campanhas v1.8). */
+export interface ResponsavelElegivel {
+  id: number;
+  nome_usuario: string;
+  email_usuario: string;
+  tipo_usuario: string; // 'Administrador' | 'Gestão Comercial' | 'SDR'
+}
+
 export interface StepInfoProps {
   campanha: Partial<Campanha>;
   tipos: string[];
   assinaturaCarregada: boolean;
+  /** Lista de responsáveis que o usuário ATUAL pode atribuir à campanha.
+   *  Carregada pelo CampanhaWizard via GET listar_responsaveis_elegiveis. */
+  responsaveis: ResponsavelElegivel[];
+  /** True quando o backend forçou trava (Gestão Comercial — único candidato é ele mesmo).
+   *  A UI desabilita o dropdown nesse caso para refletir a regra do backend. */
+  travadoNoProprio: boolean;
   onChange: (campanha: Partial<Campanha>) => void;
   onAbrirAssinatura: () => void;
   onProximo: () => void;
@@ -37,6 +62,8 @@ const StepInfo: React.FC<StepInfoProps> = ({
   campanha,
   tipos,
   assinaturaCarregada,
+  responsaveis,
+  travadoNoProprio,
   onChange,
   onAbrirAssinatura,
   onProximo,
@@ -224,6 +251,46 @@ const StepInfo: React.FC<StepInfoProps> = ({
         </select>
         <p className="text-xs text-gray-400 mt-1">
           Define qual a identidade comercial dos e-mails (assinatura, link da empresa). A assinatura usada será a do responsável NA UNIDADE escolhida.
+        </p>
+      </div>
+
+      {/* 🆕 Fase 5B-UI: Responsável da campanha */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Responsável da campanha *
+        </label>
+        {travadoNoProprio ? (
+          // Gestão Comercial: campo travado no próprio user
+          <input
+            type="text"
+            value={responsaveis[0]?.nome_usuario || ''}
+            disabled
+            className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-600 cursor-not-allowed"
+          />
+        ) : (
+          // Administrador: dropdown com GC/SDR ativos
+          <select
+            value={campanha.responsavel_id ?? ''}
+            onChange={(e) =>
+              setField(
+                'responsavel_id',
+                e.target.value === '' ? (null as any) : (Number(e.target.value) as any)
+              )
+            }
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          >
+            <option value="">Selecionar responsável...</option>
+            {responsaveis.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.nome_usuario} — {r.tipo_usuario}
+              </option>
+            ))}
+          </select>
+        )}
+        <p className="text-xs text-gray-400 mt-1">
+          {travadoNoProprio
+            ? 'Gestão Comercial atribui campanhas para si mesmo.'
+            : 'Quem responde pelos envios. A assinatura usada será a dele, na unidade da campanha. Obrigatório para ativar a campanha.'}
         </p>
       </div>
 
