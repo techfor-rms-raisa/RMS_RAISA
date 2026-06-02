@@ -15,6 +15,17 @@
  *      com `<br>` para quebras simples. Conteúdos que JÁ são HTML
  *      (têm `<p>`, `<div>`, `<br>`, etc) passam intactos — correção
  *      retroativa e não-destrutiva para todas as copies existentes.
+ *  - v1.2 (02/06/2026): correções de ordenação e rate-limit do Resend.
+ *      • Segundo critério `id ASC` no SELECT do lote: quando muitos itens
+ *        têm o mesmo `agendado_para` (campanhas com delay=0 entre steps),
+ *        sem desempate o PostgreSQL retornava em ordem indeterminada e
+ *        o cron podia disparar Step 4 antes do Step 1 do mesmo lead.
+ *      • Throttle de 220ms entre envios (RATE_LIMIT_MS). O Resend impõe
+ *        rate limit de 5 req/s; lotes com delay=0 em todos os steps
+ *        geravam bursts > 5/s e os envios 6+ recebiam HTTP 429 "Too many
+ *        requests". Validado no teste de 02/06/2026: 2 dos 10 itens do
+ *        lote (ids 18, 19) voltaram para `pendente` por esse motivo.
+ *        Com o throttle, ~4.5 req/s — abaixo do teto com folga.
  *
  * Roda a cada 15 minutos (vercel.json) e processa um lote de até 10
  * mensagens da `email_fila` (status='pendente' AND agendado_para <= NOW).
@@ -59,6 +70,13 @@ const TIPO_CRON = 'disparar_fila';
 const LOTE_TAMANHO = 10;
 const MAX_TENTATIVAS = 3;
 const TIMEZONE_BR = 'America/Sao_Paulo';
+/** Pausa entre envios consecutivos via Resend (em ms).
+ *  🆕 v1.2 (02/06/2026) — o Resend impõe rate limit de 5 req/s.
+ *  220ms entre envios = ~4.5 req/s, abaixo do teto com folga. Sem esse
+ *  throttle, lotes com `delay=0` em todos os steps geravam bursts > 5/s
+ *  e os envios 6+ voltavam para `pendente` com erro "Too many requests".
+ *  Aumentar este valor se o plano do Resend mudar (ex: hobby = 5/s, pro = 10/s). */
+const RATE_LIMIT_MS = 220;
 
 // ════════════════════════════════════════════════════════════════
 // HELPERS
@@ -260,6 +278,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     // ── 3) SELECIONAR LOTE — passo 1: pegar IDs ─────────────────────
+    // 🆕 v1.2: segundo critério `id ASC`. Quando muitos itens têm o
+    // mesmo `agendado_para` (típico em campanhas com delay=0 em vários
+    // steps), sem desempate o PostgreSQL retorna em ordem indeterminada
+    // e o cron pode disparar Step 4 antes do Step 1 do mesmo lead. Como
+    // o enfileiramento popula a fila iterando (lead × step), `id ASC`
+    // dá a sequência natural Lead1[Step1→2→3→4] → Lead2[Step1→2→3→4]...
     const agora = new Date();
     const { data: candidatos, error: errSelect } = await supabase
       .from('email_fila')
@@ -267,6 +291,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq('status', 'pendente')
       .lte('agendado_para', agora.toISOString())
       .order('agendado_para', { ascending: true })
+      .order('id', { ascending: true })
       .limit(LOTE_TAMANHO);
 
     if (errSelect) {
@@ -359,6 +384,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const horaSP = horaAtualSP();
 
+    // 🆕 v1.2: flag para aplicar throttle ENTRE envios (não antes do primeiro).
+    // Marca true após o try/catch do `resend.emails.send`, independente do
+    // resultado (sucesso/erro/temporário). Resend conta tentativas mesmo em
+    // falha; respeitar 5 req/s sempre é mais seguro.
+    let jaEnviouAlgum = false;
+
     // ── 5) PROCESSAR cada linha do lote ─────────────────────────────
     for (const item of lote as any[]) {
       const campanha = mapaCampanhas.get(item.campanha_id);
@@ -423,6 +454,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         : undefined;
 
       const from = `${campanha.nome_remetente || 'TechFor TI'} <${campanha.email_remetente}>`;
+
+      // 🆕 v1.2 — Throttle ENTRE envios (não antes do primeiro). Mantém o ritmo
+      // abaixo do rate limit do Resend (5 req/s). Aplicado a partir do segundo
+      // envio do lote, independente do resultado do anterior.
+      if (jaEnviouAlgum) {
+        await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+      }
+      jaEnviouAlgum = true;
 
       // 5e) Enviar via Resend
       try {
