@@ -2,7 +2,26 @@
  * StepCopys.tsx — Passo 2 do wizard: Steps da sequência (até 5)
  *
  * Caminho: src/components/crm/campanhas/wizard-steps/StepCopys.tsx
- * Versão: 2.0 (Fase 4C — 31/05/2026)
+ * Versão: 2.1 (Fase 5B-UI — 02/06/2026)
+ *
+ * Histórico:
+ *  - v1.0 (Fase 1D): decomposto de CampaignBuilder.tsx (linhas 922-1080).
+ *    Textareas inline de assunto/corpo + input de delay + select de condição.
+ *  - v2.0 (Fase 4C, 31/05/2026): substituição do editor inline pelo seletor
+ *    de biblioteca. Conteúdo (assunto/corpo) deixa de ser digitado aqui —
+ *    cada step é criado selecionando uma copy via CopySelector (snapshot).
+ *    Conteúdo READ-ONLY. Permanecem editáveis apenas timing (delay/condição).
+ *    Modo híbrido: steps legados sem copy_id continuam sendo exibidos como
+ *    "Conteúdo manual (legado)".
+ *  - v2.1 (02/06/2026 — Fase 5B-UI): correção visual do input de delay no
+ *    Step 1. O input já era `disabled={index === 0}` (regra: primeiro step =
+ *    envio imediato), mas o `value` exibia o `delay_dias` do banco — e
+ *    campanhas LEGACY criadas antes da correção `||` → `??` (crm-campanhas
+ *    v1.8, 02/06/2026) carregavam `3` aqui, confundindo o usuário que via
+ *    "3 dias" debaixo de um campo bloqueado com texto "envio imediato".
+ *    Agora o `value` força `0` quando `index === 0`, independente do banco.
+ *    O cron já ignorava esse valor (ver mudar_status, step 1 = AGORA);
+ *    a correção é puramente cosmética.
  *
  * 🔄 Fase 4C — Substituição do editor inline pelo seletor de biblioteca:
  *  - O conteúdo (assunto/corpo) deixa de ser digitado aqui. Cada step é criado
@@ -11,9 +30,6 @@
  *  - Permanecem editáveis apenas os campos de TIMING do step: delay e condição.
  *  - Compatibilidade (modo híbrido): steps legados sem copy_id continuam sendo
  *    exibidos (read-only), marcados como "Conteúdo manual (legado)".
- *
- * Versão anterior (1.0, Fase 1D) trazia textareas de assunto/corpo inline,
- * decompostas de CampaignBuilder.tsx (linhas 922-1080). Removidas nesta versão.
  */
 
 import React from 'react';
@@ -198,7 +214,11 @@ const StepCopys: React.FC<StepCopysProps> = ({
                           type="number"
                           min="0"
                           max="30"
-                          value={step.delay_dias}
+                          // 🔧 v2.1 — display força 0 no Step 1 (envio imediato),
+                          // independente do que está no banco. Cobre campanhas
+                          // legacy criadas com a v1.7 do backend (antes do
+                          // fix `|| 3` → `?? 3` no criar_step v1.8).
+                          value={index === 0 ? 0 : step.delay_dias}
                           onChange={(e) =>
                             onAtualizarCampo(
                               index,

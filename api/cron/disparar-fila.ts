@@ -2,7 +2,30 @@
  * api/cron/disparar-fila.ts — Motor de envio de e-mails (Fase 5B-cron)
  *
  * Caminho: api/cron/disparar-fila.ts
- * Versão: 1.0 (01/06/2026 — Fase 5B-cron)
+ *
+ * Histórico:
+ *  - v1.0 (01/06/2026 — Fase 5B-cron): versão inicial do processador.
+ *  - v1.1 (02/06/2026): normalização de quebras de linha no `corpo_html`.
+ *      O CopyEditorModal usa <textarea> e permite texto puro OU HTML.
+ *      Quando o usuário digita texto puro com `Enter` entre parágrafos,
+ *      o conteúdo é salvo como `\n\n` no banco. Ao injetar isso em HTML
+ *      do e-mail, o whitespace colapsa e o destinatário recebe tudo
+ *      grudado num parágrafo só. A função `normalizarCorpoEmail` agora
+ *      detecta texto puro (sem tags de bloco) e converte para `<p>...</p>`
+ *      com `<br>` para quebras simples. Conteúdos que JÁ são HTML
+ *      (têm `<p>`, `<div>`, `<br>`, etc) passam intactos — correção
+ *      retroativa e não-destrutiva para todas as copies existentes.
+ *  - v1.2 (02/06/2026): correções de ordenação e rate-limit do Resend.
+ *      • Segundo critério `id ASC` no SELECT do lote: quando muitos itens
+ *        têm o mesmo `agendado_para` (campanhas com delay=0 entre steps),
+ *        sem desempate o PostgreSQL retornava em ordem indeterminada e
+ *        o cron podia disparar Step 4 antes do Step 1 do mesmo lead.
+ *      • Throttle de 220ms entre envios (RATE_LIMIT_MS). O Resend impõe
+ *        rate limit de 5 req/s; lotes com delay=0 em todos os steps
+ *        geravam bursts > 5/s e os envios 6+ recebiam HTTP 429 "Too many
+ *        requests". Validado no teste de 02/06/2026: 2 dos 10 itens do
+ *        lote (ids 18, 19) voltaram para `pendente` por esse motivo.
+ *        Com o throttle, ~4.5 req/s — abaixo do teto com folga.
  *
  * Roda a cada 15 minutos (vercel.json) e processa um lote de até 10
  * mensagens da `email_fila` (status='pendente' AND agendado_para <= NOW).
@@ -47,6 +70,13 @@ const TIPO_CRON = 'disparar_fila';
 const LOTE_TAMANHO = 10;
 const MAX_TENTATIVAS = 3;
 const TIMEZONE_BR = 'America/Sao_Paulo';
+/** Pausa entre envios consecutivos via Resend (em ms).
+ *  🆕 v1.2 (02/06/2026) — o Resend impõe rate limit de 5 req/s.
+ *  220ms entre envios = ~4.5 req/s, abaixo do teto com folga. Sem esse
+ *  throttle, lotes com `delay=0` em todos os steps geravam bursts > 5/s
+ *  e os envios 6+ voltavam para `pendente` com erro "Too many requests".
+ *  Aumentar este valor se o plano do Resend mudar (ex: hobby = 5/s, pro = 10/s). */
+const RATE_LIMIT_MS = 220;
 
 // ════════════════════════════════════════════════════════════════
 // HELPERS
@@ -136,6 +166,60 @@ function renderAssinatura(a: any): string {
 }
 
 // ════════════════════════════════════════════════════════════════
+// NORMALIZAÇÃO DO CORPO DO E-MAIL (v1.1 — 02/06/2026)
+// ════════════════════════════════════════════════════════════════
+/**
+ * Garante que o `corpo_html` da copy seja HTML renderizável pelo cliente
+ * de e-mail (Gmail, Outlook, etc), respeitando as quebras de linha
+ * digitadas pelo usuário no editor.
+ *
+ * Cenário do bug que esta função resolve:
+ *   • CopyEditorModal usa <textarea>. A label permite "HTML ou texto puro".
+ *   • Usuário digita texto com Enter entre parágrafos → salvo como `\n\n`.
+ *   • Quando o cron injeta isso no campo `html:` do Resend, o HTML
+ *     colapsa whitespace e o destinatário recebe tudo grudado num
+ *     parágrafo só (perde a separação visual entre parágrafos).
+ *
+ * Estratégia:
+ *   1) Detectar se o conteúdo JÁ é HTML — procura tags de bloco/quebra
+ *      comuns (<p>, <div>, <br>, <h1-6>, <ul>, <ol>, <table>).
+ *   2) Se for HTML → retornar intacto (preserva intenção do autor).
+ *   3) Se for texto puro → converter:
+ *        - `\n\n` (ou mais) marca quebra de parágrafo → `<p>...</p>`
+ *        - `\n` simples marca quebra de linha dentro do parágrafo → `<br>`
+ *
+ * Correção retroativa: copies já cadastradas como texto puro passam a
+ * renderizar corretamente sem precisar reeditar. Nenhuma alteração no
+ * banco — a transformação é feita no momento do envio.
+ */
+function normalizarCorpoEmail(corpo: string): string {
+  if (!corpo) return '';
+
+  // Detecta tags HTML de bloco/quebra — se presentes, o autor escreveu HTML
+  // e a intenção dele deve ser preservada.
+  const TEM_TAG_HTML = /<\s*(p|div|br|h[1-6]|ul|ol|li|table|tr|td|blockquote|article|section)\b/i;
+  if (TEM_TAG_HTML.test(corpo)) {
+    return corpo;
+  }
+
+  // Texto puro → converter em parágrafos preservando quebras simples.
+  // Normaliza CRLF do Windows antes para evitar `<br>` duplicado.
+  const normalizado = corpo.replace(/\r\n/g, '\n').trim();
+  if (!normalizado) return '';
+
+  return normalizado
+    .split(/\n{2,}/)
+    .map((paragrafo) => {
+      const semQuebrasExtras = paragrafo.trim();
+      if (!semQuebrasExtras) return '';
+      const comBr = semQuebrasExtras.replace(/\n/g, '<br>');
+      return `<p style="margin:0 0 12px 0;line-height:1.5">${comBr}</p>`;
+    })
+    .filter(Boolean)
+    .join('');
+}
+
+// ════════════════════════════════════════════════════════════════
 // HANDLER
 // ════════════════════════════════════════════════════════════════
 
@@ -194,6 +278,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   try {
     // ── 3) SELECIONAR LOTE — passo 1: pegar IDs ─────────────────────
+    // 🆕 v1.2: segundo critério `id ASC`. Quando muitos itens têm o
+    // mesmo `agendado_para` (típico em campanhas com delay=0 em vários
+    // steps), sem desempate o PostgreSQL retorna em ordem indeterminada
+    // e o cron pode disparar Step 4 antes do Step 1 do mesmo lead. Como
+    // o enfileiramento popula a fila iterando (lead × step), `id ASC`
+    // dá a sequência natural Lead1[Step1→2→3→4] → Lead2[Step1→2→3→4]...
     const agora = new Date();
     const { data: candidatos, error: errSelect } = await supabase
       .from('email_fila')
@@ -201,6 +291,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .eq('status', 'pendente')
       .lte('agendado_para', agora.toISOString())
       .order('agendado_para', { ascending: true })
+      .order('id', { ascending: true })
       .limit(LOTE_TAMANHO);
 
     if (errSelect) {
@@ -293,6 +384,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const horaSP = horaAtualSP();
 
+    // 🆕 v1.2: flag para aplicar throttle ENTRE envios (não antes do primeiro).
+    // Marca true após o try/catch do `resend.emails.send`, independente do
+    // resultado (sucesso/erro/temporário). Resend conta tentativas mesmo em
+    // falha; respeitar 5 req/s sempre é mais seguro.
+    let jaEnviouAlgum = false;
+
     // ── 5) PROCESSAR cada linha do lote ─────────────────────────────
     for (const item of lote as any[]) {
       const campanha = mapaCampanhas.get(item.campanha_id);
@@ -344,9 +441,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // 5d) Renderizar e-mail
+      // v1.1: corpo_html pode ter sido salvo como texto puro pelo editor
+      // (textarea aceita "HTML ou texto puro"). Normalizamos antes para
+      // garantir que parágrafos digitados com Enter virem <p>...</p>.
       const primeiroNome = (item.destinatario_nome || '').split(' ')[0] || 'time';
-      const corpoMerged = (step.corpo_html || '')
-        .replace(/\{\{name\}\}/gi, primeiroNome);
+      const corpoNormalizado = normalizarCorpoEmail(step.corpo_html || '');
+      const corpoMerged = corpoNormalizado.replace(/\{\{name\}\}/gi, primeiroNome);
       const assinaturaHtml = assinatura ? renderAssinatura(assinatura) : '';
       const htmlFinal = `${corpoMerged}\n\n${assinaturaHtml}`;
       const textoFinal: string | undefined = step.corpo_texto
@@ -354,6 +454,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         : undefined;
 
       const from = `${campanha.nome_remetente || 'TechFor TI'} <${campanha.email_remetente}>`;
+
+      // 🆕 v1.2 — Throttle ENTRE envios (não antes do primeiro). Mantém o ritmo
+      // abaixo do rate limit do Resend (5 req/s). Aplicado a partir do segundo
+      // envio do lote, independente do resultado do anterior.
+      if (jaEnviouAlgum) {
+        await new Promise((r) => setTimeout(r, RATE_LIMIT_MS));
+      }
+      jaEnviouAlgum = true;
 
       // 5e) Enviar via Resend
       try {
