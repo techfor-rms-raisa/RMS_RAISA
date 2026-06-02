@@ -11,6 +11,17 @@
  *    (1 corretor de corretores_creci → email_leads com vertical='CRECI').
  *    Promoção marca corretores_creci.data_envio_adv como timestamp da
  *    promoção (coluna reaproveitada, sem migração SQL).
+ *  - v1.4 (02/06/2026): correção crítica do enfileiramento — ambas as
+ *    actions de promoção agora setam `apto_campanha = true`, `reservado_por`
+ *    e seus timestamps no momento do INSERT em email_leads. Antes os leads
+ *    promovidos caíam com `apto_campanha = false` (default) e `reservado_por
+ *    = null`, e o filtro da Fase A (leads_disponiveis) escondia eles do
+ *    Campaign Builder — ninguém conseguia vincular leads recém-promovidos.
+ *      • promover_para_campanha: `reservado_por = prospect.reservado_por`
+ *        (preserva o dono do prospect original).
+ *      • promover_corretor_para_campanha: lookup de app_users por
+ *        `nome_usuario = criado_por` para resolver o id que vai em
+ *        `reservado_por` (corretor não tem dono prévio).
  *
  * Endpoints:
  * GET  ?action=listar_empresas[&busca=X&setor=X&page=1&limit=20]
@@ -610,6 +621,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 5. Criar email_lead no CRM
+        // v1.4: lead já entra apto para campanhas e reservado para o dono do
+        // prospect original. Sem isso, o filtro da Fase A (leads_disponiveis
+        // = WHERE reservado_por = responsavel_id AND apto_campanha = true)
+        // escondia o lead recém-promovido — analista não conseguia vinculá-lo
+        // a uma campanha mesmo logo após promover.
+        const agora = new Date().toISOString();
         const { data: novoLead, error: errInsertLead } = await supabase
           .from('email_leads')
           .insert({
@@ -622,6 +639,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             vertical: String(prospect.vertical).trim(),
             origem: 'prospect_engine',
             criado_por,
+            // 🆕 v1.4 — flags de elegibilidade para Campaign Builder
+            apto_campanha: true,
+            apto_campanha_em: agora,
+            apto_campanha_por: criado_por,
+            reservado_por: prospect.reservado_por || null,
+            reservado_em: prospect.reservado_por ? agora : null,
           })
           .select()
           .single();
@@ -762,6 +785,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('email', emailNormalizado)
           .maybeSingle();
 
+        // 5b. 🆕 v1.4 — Resolver o id numérico do app_user que está promovendo,
+        // a partir do nome_usuario passado em `criado_por`. Esse id vai em
+        // `reservado_por` para que o lead apareça imediatamente no Campaign
+        // Builder da pessoa que promoveu (filtro reservado_por = responsavel_id).
+        const { data: appUser } = await supabase
+          .from('app_users')
+          .select('id')
+          .eq('nome_usuario', criado_por)
+          .maybeSingle();
+        const idResponsavel: number | null = appUser?.id ?? null;
+        if (!idResponsavel) {
+          // Não bloqueia, mas registra — sem reservado_por o lead só aparece
+          // após UPDATE manual. Em produção real, isso deve ser raro porque
+          // o usuário logado sempre existe em app_users.
+          console.warn(`⚠️ [crm-leads] app_user "${criado_por}" não encontrado — lead será criado sem reservado_por`);
+        }
+        const agora = new Date().toISOString();
+
         // 6. Criar email_lead com vertical='CRECI' e empresa_id=null
         const { data: novoLead, error: errInsert } = await supabase
           .from('email_leads')
@@ -776,6 +817,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             criado_por,
             opt_out: !!optout,
             opt_out_em: optout ? new Date().toISOString() : null,
+            // 🆕 v1.4 — flags de elegibilidade para Campaign Builder
+            apto_campanha: true,
+            apto_campanha_em: agora,
+            apto_campanha_por: criado_por,
+            reservado_por: idResponsavel,
+            reservado_em: idResponsavel ? agora : null,
           })
           .select()
           .single();
