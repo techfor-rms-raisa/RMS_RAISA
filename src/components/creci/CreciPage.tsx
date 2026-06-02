@@ -1,11 +1,25 @@
 /**
- * CreciPage.tsx — Módulo CRECI v1.0
- * 
+ * CreciPage.tsx — Módulo CRECI
+ *
  * Gerenciamento de corretores CRECI extraídos via Chrome Extension.
  * 3 abas: Lista CRECI | Meus Leads Salvos | Dashboard
- * 
+ *
  * Caminho: src/components/creci/CreciPage.tsx
- * Data: 09/05/2026
+ *
+ * Histórico:
+ *  - v1.0 (09/05/2026): versão inicial.
+ *  - v1.1 (02/06/2026):
+ *      • Celular vira link `https://wa.me/...` (WhatsApp Click-to-Chat) com
+ *        texto padrão pré-preenchido. Placeholder {{Nome}} é substituído
+ *        pelo primeiro nome do corretor (capitalizado).
+ *      • Coluna "ENVIO ADV" renomeada para "CAMPANHA" (semântica de promoção
+ *        ao CRM, não mais marcação manual de envio físico).
+ *      • Botão da célula vira "+ Campanha" e chama a action
+ *        `promover_corretor_para_campanha` em `api/crm-leads.ts`, criando
+ *        um email_lead com vertical='CRECI' e marcando `data_envio_adv` no
+ *        banco (coluna reaproveitada — sem migração).
+ *      • Export XLSX: header "Envio ADV" trocado por "Campanha".
+ *      • Toast inline para feedback de sucesso/erro da promoção.
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
@@ -60,6 +74,72 @@ interface CreciPageProps {
 // ─── CONSTANTES ───────────────────────────────────────────────────────────────
 const PAGE_SIZE = 50;
 
+// v1.1 — Texto padrão da mensagem que o WhatsApp Click-to-Chat (wa.me) leva
+// pré-digitado. O placeholder {{Nome}} é substituído pelo primeiro nome do
+// corretor (extraído de `corretores_creci.nome` e capitalizado).
+// IMPORTANTE: o link wa.me só transporta TEXTO. Vídeo/mídia não são suportados
+// pela API oficial de Click-to-Chat — o destinatário acessa o vídeo via link
+// do site (https://techcob.com.br/ci) incluso no texto abaixo.
+const WHATSAPP_TEXTO_PADRAO =
+  'Olá {{Nome}}, espero que esteja bem!  Sou Débora da TechCob. ' +
+  'Estamos com uma oportuidade interessante para auxiliar Corretores do ' +
+  'CRECI, a recuperar comissões em atraso. Assista nosso video, se precisar ' +
+  'de mais detalhes, me chame aqui ou  acesso nosso site:  ' +
+  'https://techcob.com.br/ci';
+
+// v1.1 — Helpers para montar o link do WhatsApp.
+
+/**
+ * Extrai o primeiro nome de "NOME COMPLETO" e capitaliza:
+ * "ADRIANA BARBOSA MONTILARES" → "Adriana"
+ */
+function extrairPrimeiroNome(nomeCompleto: string | null | undefined): string {
+  if (!nomeCompleto) return '';
+  const partes = nomeCompleto.trim().split(/\s+/);
+  if (partes.length === 0 || !partes[0]) return '';
+  const primeiro = partes[0];
+  return primeiro.charAt(0).toUpperCase() + primeiro.slice(1).toLowerCase();
+}
+
+/**
+ * Sanitiza um celular brasileiro para o formato esperado pelo wa.me:
+ * apenas dígitos, com código do país (55).
+ *  - "(11) 94141-2457"    → "5511941412457"
+ *  - "11 99999-9999"      → "5511999999999"
+ *  - "+55 (11) 9..."      → "5511..."
+ *  - número inválido      → null (não gera link quebrado)
+ */
+function sanitizarCelularBR(celular: string | null | undefined): string | null {
+  if (!celular) return null;
+  const digitos = celular.replace(/\D/g, '');
+  if (digitos.length === 0) return null;
+  // Já com código do país: 12 (fixo com 55) ou 13 (celular com 55) dígitos
+  if (digitos.startsWith('55') && (digitos.length === 12 || digitos.length === 13)) {
+    return digitos;
+  }
+  // DDD + número (10 = fixo, 11 = celular com 9 na frente)
+  if (digitos.length === 10 || digitos.length === 11) {
+    return '55' + digitos;
+  }
+  // Formato atípico — não gera link para não enviar para número errado
+  return null;
+}
+
+/**
+ * Monta a URL Click-to-Chat do WhatsApp com texto padrão personalizado.
+ * Retorna null se o celular for inválido (não renderiza link).
+ */
+function montarLinkWhatsApp(
+  celular: string | null | undefined,
+  nomeCompleto: string | null | undefined
+): string | null {
+  const numero = sanitizarCelularBR(celular);
+  if (!numero) return null;
+  const primeiroNome = extrairPrimeiroNome(nomeCompleto);
+  const texto = WHATSAPP_TEXTO_PADRAO.replace(/\{\{Nome\}\}/g, primeiroNome);
+  return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
+}
+
 type TabType = 'lista' | 'leads' | 'dashboard';
 type StatusFilter = 'todos' | 'novos' | 'extraidos';
 type ContatoFilter = 'todos' | 'com_email' | 'sem_email' | 'com_telefone' | 'sem_telefone';
@@ -94,6 +174,10 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
 
   // ── Exportando ──────────────────────────────────────────────────────────────
   const [exporting, setExporting] = useState(false);
+
+  // ── v1.1 — Promoção do corretor para o CRM (botão "+ Campanha") ─────────────
+  const [promovendoIds, setPromovendoIds] = useState<Set<number>>(new Set());
+  const [toastMsg, setToastMsg] = useState<{ tipo: 'ok' | 'erro'; msg: string } | null>(null);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // CARREGAR ANALISTAS DISTINTOS
@@ -356,7 +440,7 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
         'Capturado Em': d.capturado_em ? new Date(d.capturado_em).toLocaleDateString('pt-BR') : '',
         'Data Contato': d.data_contato ? new Date(d.data_contato).toLocaleDateString('pt-BR') : '',
         'Interesse': d.interesse === 'yes' ? 'Sim' : d.interesse === 'not' ? 'Não' : '',
-        'Envio ADV': d.data_envio_adv ? new Date(d.data_envio_adv).toLocaleDateString('pt-BR') : '',
+        'Campanha': d.data_envio_adv ? new Date(d.data_envio_adv).toLocaleDateString('pt-BR') : '',
         'Negócio Fechado': d.negocio_fechado || '',
       }));
 
@@ -377,7 +461,7 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
         { wch: 14 }, // Capturado Em
         { wch: 14 }, // Data Contato
         { wch: 10 }, // Interesse
-        { wch: 14 }, // Envio ADV
+        { wch: 14 }, // Campanha
         { wch: 16 }, // Negócio Fechado
       ];
 
@@ -437,9 +521,67 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
     updateField(id, 'interesse', novo);
   };
 
-  const marcarEnvioADV = (id: number) => {
-    updateField(id, 'data_envio_adv', new Date().toISOString());
-  };
+  // v1.1 — Substituiu o antigo `marcarEnvioADV`.
+  // Antes: apenas marcava `data_envio_adv` localmente para "lembrete" de envio.
+  // Agora: promove o corretor para o CRM (cria email_lead com vertical='CRECI')
+  // via backend `/api/crm-leads?action=promover_corretor_para_campanha`. O
+  // backend já marca `data_envio_adv` no banco como timestamp da promoção, e
+  // aqui replicamos no estado local para refletir na UI sem refetch.
+  const promoverCorretorParaCampanha = useCallback(async (
+    corretorId: number,
+    corretorNome: string
+  ) => {
+    if (!currentUser?.nome_usuario) {
+      setToastMsg({ tipo: 'erro', msg: 'Usuário não identificado. Faça login novamente.' });
+      setTimeout(() => setToastMsg(null), 4000);
+      return;
+    }
+    if (promovendoIds.has(corretorId)) return;
+
+    setPromovendoIds(prev => new Set(prev).add(corretorId));
+    try {
+      const resp = await fetch('/api/crm-leads', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'promover_corretor_para_campanha',
+          corretor_id: corretorId,
+          criado_por: currentUser.nome_usuario,
+        }),
+      });
+      const data = await resp.json();
+      if (data.success) {
+        setToastMsg({
+          tipo: 'ok',
+          msg: data.ja_existia
+            ? `"${corretorNome}" já estava no CRM — registro sincronizado.`
+            : `"${corretorNome}" enviado ao CRM (Vertical CRECI).`,
+        });
+        setTimeout(() => setToastMsg(null), 3500);
+        // Replicar no estado local — o backend marca data_envio_adv no banco
+        setCorretores(prev => prev.map(c =>
+          c.id === corretorId
+            ? { ...c, data_envio_adv: new Date().toISOString() }
+            : c
+        ));
+      } else {
+        setToastMsg({
+          tipo: 'erro',
+          msg: data.error || 'Erro ao enviar corretor para o CRM.',
+        });
+        setTimeout(() => setToastMsg(null), 4000);
+      }
+    } catch (err: any) {
+      setToastMsg({ tipo: 'erro', msg: `Erro: ${err.message}` });
+      setTimeout(() => setToastMsg(null), 4000);
+    } finally {
+      setPromovendoIds(prev => {
+        const next = new Set(prev);
+        next.delete(corretorId);
+        return next;
+      });
+    }
+  }, [currentUser, promovendoIds]);
 
   const toggleNegocio = (id: number, atual: string | null) => {
     const novo = atual ? null : new Date().toISOString();
@@ -456,6 +598,18 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
   // ═══════════════════════════════════════════════════════════════════════════
   return (
     <div className="flex-1 overflow-auto bg-gray-50 p-4 md:p-6">
+      {/* TOAST de feedback da promoção para Campanha (v1.1) */}
+      {toastMsg && (
+        <div
+          className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-md ${
+            toastMsg.tipo === 'ok' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+          }`}
+          role="status"
+        >
+          {toastMsg.tipo === 'ok' ? '✅ ' : '❌ '}{toastMsg.msg}
+        </div>
+      )}
+
       {/* HEADER */}
       <div className="mb-6">
         <div className="flex items-center gap-3 mb-1">
@@ -669,7 +823,7 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
                     )}
                     <th className="text-center px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">CONTATADO</th>
                     <th className="text-center px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">INTERESSE</th>
-                    <th className="text-center px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">ENVIO ADV</th>
+                    <th className="text-center px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">CAMPANHA</th>
                     <th className="text-center px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">NEGÓCIO</th>
                     <th className="text-center px-3 py-3 font-semibold text-gray-600 whitespace-nowrap">DATA</th>
                   </tr>
@@ -714,13 +868,32 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
                           )}
                         </td>
 
-                        {/* Celular */}
+                        {/* Celular — v1.1: agora abre WhatsApp Click-to-Chat
+                            (wa.me) com texto padrão e {{Nome}} substituído.
+                            Limitação oficial da Meta: leva texto, não mídia. */}
                         <td className="px-3 py-2.5">
-                          {c.celular ? (
-                            <a href={`tel:${c.celular}`} className="text-green-600 hover:underline text-xs whitespace-nowrap">
-                              {c.celular}
-                            </a>
-                          ) : (
+                          {c.celular ? (() => {
+                            const linkWA = montarLinkWhatsApp(c.celular, c.nome);
+                            return linkWA ? (
+                              <a
+                                href={linkWA}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-green-600 hover:underline text-xs whitespace-nowrap inline-flex items-center gap-1"
+                                title="Abrir WhatsApp com mensagem padrão"
+                              >
+                                <i className="fa-brands fa-whatsapp text-sm"></i>
+                                {c.celular}
+                              </a>
+                            ) : (
+                              <span
+                                className="text-gray-400 text-xs whitespace-nowrap"
+                                title="Celular em formato inválido para WhatsApp"
+                              >
+                                {c.celular}
+                              </span>
+                            );
+                          })() : (
                             <span className="text-gray-300 text-xs">sem tel</span>
                           )}
                         </td>
@@ -775,21 +948,46 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
                           </button>
                         </td>
 
-                        {/* Envio ADV */}
+                        {/* Campanha (antes "Envio ADV") — v1.1:
+                            Quando promovido, mostra ✅ + data.
+                            Quando não, botão "+ Campanha" chama a API que
+                            cria email_lead com vertical='CRECI' no CRM. */}
                         <td className="px-3 py-2.5 text-center">
                           {c.data_envio_adv ? (
-                            <span className="text-xs text-purple-600 font-medium" title={new Date(c.data_envio_adv).toLocaleString('pt-BR')}>
-                              📩 {new Date(c.data_envio_adv).toLocaleDateString('pt-BR')}
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => marcarEnvioADV(c.id)}
-                              className="text-xs text-gray-400 hover:text-purple-600 transition px-2 py-1 rounded hover:bg-purple-50"
-                              title="Marcar envio ADV"
+                            <span
+                              className="text-xs text-purple-600 font-medium"
+                              title={`Promovido ao CRM em ${new Date(c.data_envio_adv).toLocaleString('pt-BR')}`}
                             >
-                              📩 Enviar
-                            </button>
-                          )}
+                              ✅ {new Date(c.data_envio_adv).toLocaleDateString('pt-BR')}
+                            </span>
+                          ) : (() => {
+                            const semEmail = !c.email_creci && !c.email_pessoal;
+                            const promovendo = promovendoIds.has(c.id);
+                            return (
+                              <button
+                                onClick={() => promoverCorretorParaCampanha(c.id, c.nome)}
+                                disabled={promovendo || semEmail}
+                                className="text-xs font-medium text-purple-700 bg-purple-50 hover:bg-purple-100 transition px-2 py-1 rounded inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
+                                title={
+                                  semEmail
+                                    ? 'Corretor sem e-mail — não pode ser enviado para Campanhas'
+                                    : 'Enviar para o CRM (Vertical CRECI)'
+                                }
+                              >
+                                {promovendo ? (
+                                  <>
+                                    <span className="animate-spin">⏳</span>
+                                    <span>...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <i className="fa-solid fa-plus text-[9px]"></i>
+                                    <span>Campanha</span>
+                                  </>
+                                )}
+                              </button>
+                            );
+                          })()}
                         </td>
 
                         {/* Negócio Fechado */}
