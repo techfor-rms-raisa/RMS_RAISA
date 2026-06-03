@@ -4,7 +4,12 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
- *  - v1.0 (01/06/2026 — Fase 5B-cron): versão inicial do processador.
+ *  - v1.3 (03/06/2026 — Fase 7-MVP): adicionado `reply_to` dinâmico em
+ *      cada envio Resend, no formato `respostas+f{fila_id}+l{lead_id}@{dominio}`.
+ *      Quando o lead responde ao e-mail, a resposta vai para esse endereço,
+ *      o Resend Inbound recebe e dispara webhook `email.received`, que
+ *      correlaciona a resposta com fila/lead pelo plus-alias.
+ *      Mudança cirúrgica: 1 cálculo de string + 1 linha no payload de envio.
  *  - v1.1 (02/06/2026): normalização de quebras de linha no `corpo_html`.
  *      O CopyEditorModal usa <textarea> e permite texto puro OU HTML.
  *      Quando o usuário digita texto puro com `Enter` entre parágrafos,
@@ -26,6 +31,7 @@
  *        requests". Validado no teste de 02/06/2026: 2 dos 10 itens do
  *        lote (ids 18, 19) voltaram para `pendente` por esse motivo.
  *        Com o throttle, ~4.5 req/s — abaixo do teto com folga.
+ *  - v1.0 (01/06/2026 — Fase 5B-cron): versão inicial do processador.
  *
  * Roda a cada 15 minutos (vercel.json) e processa um lote de até 10
  * mensagens da `email_fila` (status='pendente' AND agendado_para <= NOW).
@@ -455,6 +461,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const from = `${campanha.nome_remetente || 'TechFor TI'} <${campanha.email_remetente}>`;
 
+      // 🆕 v1.3 — Reply-To dinâmico com plus-aliasing (Fase 7-MVP).
+      // Quando o lead responde, a resposta vai para `respostas+f{id}+l{id}@dominio`.
+      // O Resend Inbound recebe, dispara webhook `email.received`, e o
+      // api/crm-webhook.ts parseia o plus-alias para correlacionar a resposta
+      // com a fila (fila_id) e o lead (lead_id) originais.
+      //
+      // Domínio: usa o `dominio_envio` da campanha (mesmo domínio do remetente,
+      // que está configurado com MX inbound do Resend). Fallback `techfor.com.br`
+      // se a coluna estiver vazia, garantindo que o envio não quebra.
+      const dominioReplyTo = campanha.dominio_envio || 'techfor.com.br';
+      const replyTo = `respostas+f${item.id}+l${item.lead_id}@${dominioReplyTo}`;
+
       // 🆕 v1.2 — Throttle ENTRE envios (não antes do primeiro). Mantém o ritmo
       // abaixo do rate limit do Resend (5 req/s). Aplicado a partir do segundo
       // envio do lote, independente do resultado do anterior.
@@ -468,6 +486,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { data, error } = await resend.emails.send({
           from,
           to: [item.destinatario_email],
+          reply_to: replyTo, // 🆕 v1.3 (Fase 7-MVP) — captura de respostas via Inbound
           subject: step.assunto || '(sem assunto)',
           html: htmlFinal,
           text: textoFinal,

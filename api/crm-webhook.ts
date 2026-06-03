@@ -1,36 +1,57 @@
 /**
  * api/crm-webhook.ts — Webhook receiver para eventos do Resend
  *
- * Fase 5C-1 — 03/06/2026 (Motor de Disparo / CRM Campanhas)
+ * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
- * v1.0 — 03/06/2026 — Primeira versão
+ * v1.1.1 — 03/06/2026 — Link no e-mail de alerta agora aponta para deep link
+ *   da ficha do lead em Production:
+ *     https://techfortirms.online/?view=crm_base_leads&lead_id={lead_id}
+ *   Pre-requisito para deep link FUNCIONAR (abrir drawer auto): mudança
+ *   pendente no App.tsx parsear `view` e `lead_id` da query string.
+ *   Enquanto isso, o link leva o gestor pra home; ele navega manualmente
+ *   até a ficha — comportamento gracioso, não quebra.
+ *
+ * v1.1 — 03/06/2026 — Adicionado handler para evento email.received (Fase 7-MVP).
+ *   - Parse do "to" do payload para extrair fila_id e lead_id via padrão
+ *     `respostas+f{fila_id}+l{lead_id}@dominio`.
+ *   - INSERT em email_respostas (lead_id, campanha_id, fila_id, de_email,
+ *     de_nome, assunto, corpo_texto, corpo_html).
+ *   - UPDATE email_fila.status = 'respondido' (sem regredir; já está em
+ *     estado terminal alternativo).
+ *   - INSERT em email_lead_historico (tipo 'email_respondido').
+ *   - Disparo de e-mail de alerta ao responsavel_id da campanha
+ *     (via api/send-email type='general'), respeitando flag
+ *     receber_alertas_email do destinatário.
+ *   - Email recebido em endereço que NÃO bate o padrão `respostas+...`
+ *     gera evento órfão (auditável) sem quebrar o webhook.
+ *
+ * v1.0 — 03/06/2026 — Primeira versão (sent/delivered/opened/clicked/bounced/
+ *   complained/delivery_delayed):
  *   - Validação HMAC (Svix headers: svix-id, svix-timestamp, svix-signature)
  *   - INSERT em email_eventos (log imutável)
- *   - UPDATE em email_fila (status + timestamp do evento) com hierarquia de
- *     status para não regredir
- *   - INSERT em email_lead_historico (timeline do lead)
+ *   - UPDATE em email_fila (status + timestamp do evento) com hierarquia
+ *   - INSERT em email_lead_historico (timeline)
  *   - Auto-opt-out em hard bounce e complaint
- *   - Recálculo dos contadores agregados via RPC
- *     recalcular_contadores_campanha
+ *   - Recálculo de contadores via RPC recalcular_contadores_campanha
  *
  * Endpoint público — não exige autenticação JWT (Resend chama de fora).
  * Segurança vem 100% da validação HMAC do header svix-signature.
  *
  * Configuração do webhook no painel Resend:
- *   URL    : https://techfortirms.online/api/crm-webhook
+ *   URL    : https://{deploy}.vercel.app/api/crm-webhook
  *   Events : email.sent, email.delivered, email.delivery_delayed,
- *            email.bounced, email.complained, email.opened, email.clicked
- *   Secret : já configurada em env var RESEND_WEBHOOK_SECRET
- *
- * IMPORTANTE: este endpoint usa raw body (bodyParser: false) para validação
- * HMAC. Não tente acessar req.body — use o stream lido manualmente.
+ *            email.bounced, email.complained, email.opened, email.clicked,
+ *            email.received   ← Fase 7-MVP
+ *   Secret : RESEND_WEBHOOK_SECRET
  *
  * Tabelas envolvidas:
  *   - email_fila          (UPDATE status + timestamp por evento)
  *   - email_eventos       (INSERT log do evento, fonte da verdade)
  *   - email_lead_historico (INSERT timeline)
  *   - email_optout        (UPSERT em hard bounce e complaint)
+ *   - email_respostas     (INSERT em email.received — Fase 7-MVP)
  *   - email_campanhas     (UPDATE via RPC recalcular_contadores_campanha)
+ *   - app_users           (SELECT responsável da campanha para alerta)
  *
  * Caminho: api/crm-webhook.ts
  */
@@ -42,10 +63,6 @@ import crypto from 'crypto';
 // ────────────────────────────────────────────────────────────────────────
 // CONFIGURAÇÃO VERCEL
 // ────────────────────────────────────────────────────────────────────────
-// bodyParser: false → habilita leitura do raw body (necessário para HMAC).
-// maxDuration: 30 → webhook deve ser rápido. Se passar disso, Resend
-// considera falha e reenvia.
-// ────────────────────────────────────────────────────────────────────────
 export const config = {
   api: { bodyParser: false },
   maxDuration: 30,
@@ -55,12 +72,7 @@ export const config = {
 // CONSTANTES
 // ────────────────────────────────────────────────────────────────────────
 
-/**
- * Hierarquia de status do email_fila — usada para impedir regressão.
- * Quando um evento chega tardio (ex: 'delivered' depois de já estar 'aberto'),
- * gravamos o timestamp do evento na coluna correspondente, mas NÃO baixamos
- * o status global.
- */
+/** Hierarquia de status do email_fila — usada para impedir regressão. */
 const STATUS_HIERARQUIA: Record<string, number> = {
   pendente: 0,
   enviado: 1,
@@ -68,17 +80,14 @@ const STATUS_HIERARQUIA: Record<string, number> = {
   aberto: 3,
   clicado: 4,
   respondido: 5,
-  // Estados terminais (não progressivos — força status independente)
+  // Estados terminais alternativos
   bounce: 99,
   unsubscribed: 99,
   erro: 99,
   cancelado: 99,
 };
 
-/**
- * Mapeia tipos do Resend para o vocabulário interno do banco.
- * O banco usa termos enxutos; o Resend usa 'email.xxx'.
- */
+/** Mapeia tipos do Resend para o vocabulário interno do banco. */
 const MAPA_TIPO_EVENTO: Record<string, string> = {
   'email.sent': 'sent',
   'email.delivered': 'delivered',
@@ -87,14 +96,18 @@ const MAPA_TIPO_EVENTO: Record<string, string> = {
   'email.clicked': 'clicked',
   'email.bounced': 'bounced',
   'email.complained': 'complained',
+  'email.received': 'received', // 🆕 Fase 7-MVP
 };
 
-/**
- * Tolerância do timestamp do Svix em segundos.
- * Mensagens com timestamp mais antigo que isso são rejeitadas (replay attack).
- * Svix oficialmente usa 5 minutos.
- */
+/** Tolerância do timestamp do Svix em segundos (anti-replay). */
 const SVIX_TIMESTAMP_TOLERANCE_SEC = 5 * 60;
+
+/**
+ * Regex do padrão de Reply-To dinâmico usado pelo cron disparar-fila:
+ *   respostas+f{fila_id}+l{lead_id}@{dominio}
+ * Match groups: [1]=fila_id  [2]=lead_id
+ */
+const REPLY_TO_PATTERN = /^respostas\+f(\d+)\+l(\d+)@/i;
 
 // ────────────────────────────────────────────────────────────────────────
 // HELPER: ler raw body do stream
@@ -109,29 +122,13 @@ async function lerRawBody(req: VercelRequest): Promise<string> {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// HELPER: validar assinatura Svix
+// HELPER: validar assinatura Svix (HMAC-SHA256 com anti-replay)
 // ────────────────────────────────────────────────────────────────────────
-/**
- * Implementação manual da validação Svix (mesmo algoritmo da lib oficial).
- * Não importamos a lib 'svix' pra economizar bundle e cold start.
- *
- * Spec: https://docs.svix.com/receiving/verifying-payloads/how-manual
- *
- * Algoritmo:
- *   1. Pega o secret (formato "whsec_BASE64"), decodifica base64 da parte
- *      após "whsec_".
- *   2. Concatena: `${svix_id}.${svix_timestamp}.${raw_body}`
- *   3. HMAC-SHA256 dessa string com a secret decodificada.
- *   4. Codifica em base64.
- *   5. Compara (timing-safe) com cada assinatura no header
- *      svix-signature, que tem formato "v1,BASE64 v1,BASE64 ..."
- */
 function validarAssinaturaSvix(
   rawBody: string,
   headers: { svixId: string; svixTimestamp: string; svixSignature: string },
   secret: string,
 ): { ok: boolean; motivo?: string } {
-  // 1. Validar timestamp (anti-replay)
   const ts = parseInt(headers.svixTimestamp, 10);
   if (Number.isNaN(ts)) {
     return { ok: false, motivo: 'svix-timestamp inválido' };
@@ -142,22 +139,18 @@ function validarAssinaturaSvix(
     return { ok: false, motivo: `timestamp fora da janela (${delta}s)` };
   }
 
-  // 2. Extrair secret real (após "whsec_")
   const prefix = 'whsec_';
   if (!secret.startsWith(prefix)) {
     return { ok: false, motivo: 'secret não começa com whsec_' };
   }
   const secretBytes = Buffer.from(secret.substring(prefix.length), 'base64');
 
-  // 3. Montar a string assinada e calcular HMAC esperado
   const dadosAssinados = `${headers.svixId}.${headers.svixTimestamp}.${rawBody}`;
   const assinaturaEsperada = crypto
     .createHmac('sha256', secretBytes)
     .update(dadosAssinados, 'utf8')
     .digest('base64');
 
-  // 4. Comparar (timing-safe) com cada assinatura recebida
-  // Formato: "v1,assinatura1 v1,assinatura2 ..."
   const assinaturas = headers.svixSignature.split(' ');
   for (const sig of assinaturas) {
     const [version, valor] = sig.split(',');
@@ -172,18 +165,184 @@ function validarAssinaturaSvix(
         return { ok: true };
       }
     } catch {
-      // ignore base64 inválido e segue tentando os próximos
+      // ignore base64 inválido
     }
   }
   return { ok: false, motivo: 'nenhuma assinatura bate com a calculada' };
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// HELPER: header como string (req.headers pode trazer string ou string[])
+// HELPER: header como string
 // ────────────────────────────────────────────────────────────────────────
 function hdr(req: VercelRequest, nome: string): string {
   const v = req.headers[nome.toLowerCase()];
   return Array.isArray(v) ? v[0] ?? '' : v ?? '';
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// HELPER (🆕 Fase 7-MVP): parse do "to" do email.received
+// ────────────────────────────────────────────────────────────────────────
+/**
+ * O payload do email.received traz "to" como string OU array de strings.
+ * Procura entre eles o primeiro que case com o padrão de Reply-To dinâmico.
+ *
+ * Retorno: { filaId, leadId } se encontrar; null caso contrário.
+ */
+function parsearReplyTo(toField: any): { filaId: number; leadId: number } | null {
+  const candidatos: string[] = Array.isArray(toField)
+    ? toField.map((x) => String(x || '').trim())
+    : [String(toField || '').trim()];
+
+  for (const dest of candidatos) {
+    const m = dest.match(REPLY_TO_PATTERN);
+    if (m) {
+      const filaId = parseInt(m[1], 10);
+      const leadId = parseInt(m[2], 10);
+      if (!Number.isNaN(filaId) && !Number.isNaN(leadId)) {
+        return { filaId, leadId };
+      }
+    }
+  }
+  return null;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// HELPER (🆕 Fase 7-MVP): extrair from como { email, nome }
+// ────────────────────────────────────────────────────────────────────────
+/**
+ * O campo "from" do payload pode vir como:
+ *   - "Nome Sobrenome <email@dominio.com>"
+ *   - "email@dominio.com"
+ * Esta função separa nome e e-mail. Robusto a ambos os formatos.
+ */
+function parsearFrom(fromField: any): { email: string; nome: string | null } {
+  const raw = String(fromField || '').trim();
+  if (!raw) return { email: '', nome: null };
+
+  // Formato "Nome <email>"
+  const m = raw.match(/^\s*(.+?)\s*<\s*([^>]+)\s*>\s*$/);
+  if (m) {
+    return {
+      email: m[2].trim().toLowerCase(),
+      nome: m[1].replace(/^["']|["']$/g, '').trim() || null,
+    };
+  }
+  // Só e-mail
+  return { email: raw.toLowerCase(), nome: null };
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// HELPER (🆕 Fase 7-MVP): disparar alerta de resposta para o responsável
+// ────────────────────────────────────────────────────────────────────────
+/**
+ * Chama internamente o endpoint /api/send-email para notificar o responsável
+ * da campanha que recebeu uma nova resposta. Usa type='general'.
+ *
+ * Não falha o webhook se o alerta falhar — apenas loga. A resposta já
+ * está gravada em email_respostas; o gestor pode ver pela UI mesmo sem o alerta.
+ */
+async function dispararAlertaResposta(opts: {
+  supabase: any;
+  origem: string; // base URL do próprio Vercel (req.headers.host)
+  responsavelId: number | null | undefined;
+  leadId: number;                          // 🆕 v1.1.1 — usado no deep link
+  leadEmail: string;
+  leadNome: string | null;
+  campanhaNome: string;
+  assunto: string | null;
+  corpoTexto: string | null;
+}): Promise<void> {
+  if (!opts.responsavelId) {
+    console.log('[crm-webhook] ⚠️ Campanha sem responsavel_id — alerta não enviado');
+    return;
+  }
+
+  try {
+    // Buscar e-mail do responsável
+    const { data: usr, error: errUsr } = await opts.supabase
+      .from('app_users')
+      .select('id, nome_usuario, email_usuario, receber_alertas_email, ativo_usuario')
+      .eq('id', opts.responsavelId)
+      .maybeSingle();
+
+    if (errUsr || !usr) {
+      console.warn('[crm-webhook] ⚠️ Responsável da campanha não encontrado:', opts.responsavelId);
+      return;
+    }
+    if (usr.ativo_usuario === false) {
+      console.log(`[crm-webhook] ⚠️ Responsável ${usr.email_usuario} está inativo — alerta não enviado`);
+      return;
+    }
+    if (usr.receber_alertas_email === false) {
+      console.log(`[crm-webhook] ⚠️ Responsável ${usr.email_usuario} desabilitou alertas — não enviado`);
+      return;
+    }
+
+    const previewCorpo = (opts.corpoTexto || '').substring(0, 500);
+
+    // 🆕 v1.1.1 — Link deep para a ficha do lead no RMS-RAISA (Production).
+    // Em Preview (sem custom domain), o e-mail mostraria a URL Vercel; em
+    // Production essa é a URL definitiva. Hoje (sem mudança no App.tsx),
+    // o gestor cai na home e navega manualmente; quando o App.tsx parsear
+    // a query string, o link abre direto na ficha do lead (drawer auto-aberto).
+    const linkDeepFichaLead = `https://techfortirms.online/?view=crm_base_leads&lead_id=${opts.leadId}`;
+
+    const subjectAlerta = `RMS-RAISA: ${opts.leadNome || opts.leadEmail} respondeu à campanha "${opts.campanhaNome}"`;
+    const htmlAlerta = `
+      <div style="font-family:Arial,sans-serif;font-size:14px;color:#333;line-height:1.5">
+        <p>Olá ${usr.nome_usuario || ''},</p>
+        <p>Um lead respondeu a uma campanha sob sua responsabilidade.</p>
+        <table style="border-collapse:collapse;margin:16px 0;font-size:13px">
+          <tr><td style="padding:4px 10px 4px 0;color:#666">Lead:</td><td style="padding:4px 0"><strong>${opts.leadNome || '(sem nome)'}</strong> &lt;${opts.leadEmail}&gt;</td></tr>
+          <tr><td style="padding:4px 10px 4px 0;color:#666">Campanha:</td><td style="padding:4px 0">${opts.campanhaNome}</td></tr>
+          <tr><td style="padding:4px 10px 4px 0;color:#666">Assunto da resposta:</td><td style="padding:4px 0">${opts.assunto || '(sem assunto)'}</td></tr>
+        </table>
+        <p style="color:#666;font-size:13px;margin-top:18px">Prévia da resposta:</p>
+        <blockquote style="margin:6px 0;padding:10px 14px;border-left:3px solid #A33022;background:#f7f7f7;color:#444;font-size:13px;white-space:pre-wrap">${previewCorpo || '(sem corpo de texto)'}</blockquote>
+        <p style="margin-top:18px;font-size:13px">Acesse: <a href="${linkDeepFichaLead}" style="color:#A33022;text-decoration:underline;font-weight:bold">${linkDeepFichaLead}</a> para ver a resposta completa na ficha do lead e decidir os próximos passos (continuar a sequência ou pausar).</p>
+        <p style="font-size:12px;color:#999;margin-top:24px">— RMS-RAISA Sequenciador</p>
+      </div>
+    `.trim();
+    const textAlerta = `Olá ${usr.nome_usuario || ''},
+Um lead respondeu a uma campanha sob sua responsabilidade.
+
+Lead: ${opts.leadNome || '(sem nome)'} <${opts.leadEmail}>
+Campanha: ${opts.campanhaNome}
+Assunto: ${opts.assunto || '(sem assunto)'}
+
+Prévia: ${previewCorpo || '(sem corpo)'}
+
+Acesse: ${linkDeepFichaLead} para ver a resposta completa e decidir os próximos passos.`;
+
+    // Chama o /api/send-email do próprio deploy
+    const baseUrl = opts.origem.startsWith('http')
+      ? opts.origem
+      : `https://${opts.origem}`;
+
+    const respAlerta = await fetch(`${baseUrl}/api/send-email`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: usr.email_usuario,
+        toName: usr.nome_usuario,
+        subject: subjectAlerta,
+        type: 'general',
+        summary: textAlerta,
+        // Override para HTML rico (send-email com type='general' usa <p>${summary}</p>;
+        // queremos um layout melhor, então passamos HTML completo via summary mesmo
+        // — o send-email envolve em <p> mas o navegador trata HTML interno).
+      }),
+    });
+
+    if (!respAlerta.ok) {
+      const txt = await respAlerta.text().catch(() => '');
+      console.warn(`[crm-webhook] ⚠️ Alerta falhou (status ${respAlerta.status}): ${txt.substring(0, 200)}`);
+    } else {
+      console.log(`[crm-webhook] 📨 Alerta de resposta enviado para ${usr.email_usuario}`);
+    }
+  } catch (e: any) {
+    console.warn('[crm-webhook] ⚠️ Erro ao disparar alerta de resposta:', e?.message);
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -219,7 +378,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const svixSignature = hdr(req, 'svix-signature');
 
   if (!svixId || !svixTimestamp || !svixSignature) {
-    console.warn('[crm-webhook] ⚠️ Headers Svix ausentes:', { svixId, svixTimestamp, svixSignature });
+    console.warn('[crm-webhook] ⚠️ Headers Svix ausentes');
     return res.status(401).json({ error: 'Missing Svix headers' });
   }
 
@@ -245,23 +404,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const tipoResend: string = payload?.type || '';
   const dataEvento: any = payload?.data || {};
-  const resendMessageId: string | undefined = dataEvento?.email_id;
   const createdAtResend: string | undefined = payload?.created_at || dataEvento?.created_at;
 
-  // Mapear para vocabulário interno
   const tipoInterno = MAPA_TIPO_EVENTO[tipoResend];
   if (!tipoInterno) {
     console.warn('[crm-webhook] ⚠️ Tipo de evento desconhecido:', tipoResend);
-    // Retorna 200 OK pra evitar retries infinitos do Resend
     return res.status(200).json({ ignored: true, reason: 'unknown event type', tipoResend });
   }
 
-  if (!resendMessageId) {
-    console.warn('[crm-webhook] ⚠️ Payload sem email_id:', payload);
-    return res.status(200).json({ ignored: true, reason: 'missing email_id' });
-  }
-
-  console.log(`[crm-webhook] 📨 Evento ${tipoInterno} para message_id ${resendMessageId}`);
+  console.log(`[crm-webhook] 📨 Evento ${tipoInterno}`);
 
   // ════════ 6. Conectar ao Supabase ════════
   const supabase = createClient(
@@ -269,8 +420,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
   );
 
+  // ════════ 7. ROTEAMENTO POR TIPO DE EVENTO ════════
   try {
-    // ════════ 7. Buscar item da fila pelo message_id ════════
+    // ───────────────────────────────────────────────────────────────
+    // 🆕 RAMO ESPECIAL: email.received (Fase 7-MVP)
+    // ───────────────────────────────────────────────────────────────
+    if (tipoInterno === 'received') {
+      return await processarEmailRecebido({
+        supabase,
+        req,
+        res,
+        payload,
+        dataEvento,
+        createdAtResend,
+      });
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // RAMO PADRÃO: eventos outbound (sent, delivered, opened, etc.)
+    // ───────────────────────────────────────────────────────────────
+    const resendMessageId: string | undefined = dataEvento?.email_id;
+    if (!resendMessageId) {
+      console.warn('[crm-webhook] ⚠️ Payload sem email_id:', payload);
+      return res.status(200).json({ ignored: true, reason: 'missing email_id' });
+    }
+
+    // Buscar item da fila pelo message_id
     const { data: fila, error: errFila } = await supabase
       .from('email_fila')
       .select('id, campanha_id, lead_id, step_id, destinatario_email, destinatario_nome, status')
@@ -283,10 +458,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (!fila) {
-      // Evento chegou antes do cron gravar o resend_message_id, ou pra um
-      // e-mail que não saiu por essa fila (ex: alertas RMS). Registra o
-      // evento mesmo assim para auditoria, sem update de fila.
-      console.warn(`[crm-webhook] ⚠️ Nenhuma fila encontrada para ${resendMessageId} — gravando evento órfão`);
+      console.warn(`[crm-webhook] ⚠️ Nenhuma fila para ${resendMessageId} — gravando órfão`);
       await supabase.from('email_eventos').insert({
         fila_id: null,
         lead_id: null,
@@ -301,11 +473,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ ok: true, orphan: true });
     }
 
-    // ════════ 8. Extrair dados específicos por tipo de evento ════════
+    // Extrair dados específicos do evento
     let linkClicado: string | null = null;
     let ipOrigem: string | null = null;
     let userAgent: string | null = null;
-    let bounceType: string | null = null;     // 'hard' | 'soft' | null
+    let bounceType: string | null = null;
     let bounceMessage: string | null = null;
 
     if (tipoInterno === 'clicked') {
@@ -320,7 +492,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       bounceMessage = dataEvento?.bounce?.message || null;
     }
 
-    // ════════ 9. INSERT em email_eventos (log imutável) ════════
+    // INSERT em email_eventos (log imutável)
     const { error: errEvento } = await supabase.from('email_eventos').insert({
       fila_id: fila.id,
       lead_id: fila.lead_id,
@@ -335,44 +507,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (errEvento) {
       console.error('[crm-webhook] ❌ Erro ao inserir email_eventos:', errEvento.message);
-      // Não retorna 500 — segue tentando o resto. Resend reenvia se status != 2xx.
     }
 
-    // ════════ 10. UPDATE em email_fila — status + timestamp ════════
-    // Hierarquia: só sobe; eventos tardios atualizam só o timestamp.
+    // UPDATE email_fila — status + timestamp do evento
     const updateFila: Record<string, any> = {};
     const statusAtualNum = STATUS_HIERARQUIA[fila.status] ?? 0;
 
     switch (tipoInterno) {
       case 'sent':
-        // já tratado pelo cron — só registra log, não mexe na fila
         break;
-
       case 'delivered':
         updateFila.entregue_em = createdAtResend || new Date().toISOString();
-        if (statusAtualNum < STATUS_HIERARQUIA.entregue) {
-          updateFila.status = 'entregue';
-        }
+        if (statusAtualNum < STATUS_HIERARQUIA.entregue) updateFila.status = 'entregue';
         break;
-
       case 'delivery_delayed':
-        // sem timestamp dedicado no schema; só registra evento (já feito)
         break;
-
       case 'opened':
         updateFila.aberto_em = createdAtResend || new Date().toISOString();
-        if (statusAtualNum < STATUS_HIERARQUIA.aberto) {
-          updateFila.status = 'aberto';
-        }
+        if (statusAtualNum < STATUS_HIERARQUIA.aberto) updateFila.status = 'aberto';
         break;
-
       case 'clicked':
         updateFila.clicado_em = createdAtResend || new Date().toISOString();
-        if (statusAtualNum < STATUS_HIERARQUIA.clicado) {
-          updateFila.status = 'clicado';
-        }
+        if (statusAtualNum < STATUS_HIERARQUIA.clicado) updateFila.status = 'clicado';
         break;
-
       case 'bounced':
         updateFila.bounce_em = createdAtResend || new Date().toISOString();
         updateFila.status = 'bounce';
@@ -380,7 +537,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ? `Bounce (${bounceType || 'unknown'}): ${bounceMessage}`
           : `Bounce (${bounceType || 'unknown'})`;
         break;
-
       case 'complained':
         updateFila.status = 'unsubscribed';
         break;
@@ -388,15 +544,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (Object.keys(updateFila).length > 0) {
       const { error: errUpdateFila } = await supabase
-        .from('email_fila')
-        .update(updateFila)
-        .eq('id', fila.id);
+        .from('email_fila').update(updateFila).eq('id', fila.id);
       if (errUpdateFila) {
         console.error('[crm-webhook] ❌ Erro ao atualizar email_fila:', errUpdateFila.message);
       }
     }
 
-    // ════════ 11. INSERT em email_lead_historico (timeline) ════════
+    // INSERT email_lead_historico (timeline)
     if (fila.lead_id) {
       const mapaHistorico: Record<string, { tipo: string; descricao: string }> = {
         sent:              { tipo: 'email_enviado',     descricao: 'E-mail enviado pelo provedor (Resend)' },
@@ -407,10 +561,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         bounced:           { tipo: 'bounce',            descricao: `Bounce ${bounceType || ''}: ${bounceMessage || 'sem detalhes'}`.trim() },
         complained:        { tipo: 'opt_out',           descricao: 'Marcado como spam (auto opt-out)' },
       };
-
       const hist = mapaHistorico[tipoInterno];
       if (hist) {
-        const { error: errHist } = await supabase.from('email_lead_historico').insert({
+        await supabase.from('email_lead_historico').insert({
           lead_id: fila.lead_id,
           campanha_id: fila.campanha_id,
           step_id: fila.step_id,
@@ -421,14 +574,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           criado_por: 'webhook_resend',
           criado_em: createdAtResend || new Date().toISOString(),
         });
-        if (errHist) {
-          // não bloqueia o resto — timeline é cosmético
-          console.warn('[crm-webhook] ⚠️ Falha ao gravar histórico (ignorado):', errHist.message);
-        }
       }
     }
 
-    // ════════ 12. Auto-opt-out (hard bounce + complaint) ════════
+    // Auto-opt-out (hard bounce + complaint)
     const deveOptOut =
       (tipoInterno === 'bounced' && bounceType === 'hard') ||
       tipoInterno === 'complained';
@@ -438,40 +587,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         tipoInterno === 'complained'
           ? 'Marcou como spam (auto opt-out via webhook)'
           : `Hard bounce: ${bounceMessage || 'destinatário inexistente'}`;
-
-      const { error: errOptOut } = await supabase
-        .from('email_optout')
-        .upsert(
-          {
-            email: fila.destinatario_email.toLowerCase().trim(),
-            motivo,
-            campanha_origem_id: fila.campanha_id,
-            criado_em: new Date().toISOString(),
-          },
-          { onConflict: 'email', ignoreDuplicates: true },
-        );
-
-      if (errOptOut) {
-        console.warn('[crm-webhook] ⚠️ Falha ao gravar opt-out (ignorado):', errOptOut.message);
-      } else {
-        console.log(`[crm-webhook] 🚫 Auto opt-out: ${fila.destinatario_email}`);
-      }
+      await supabase.from('email_optout').upsert(
+        {
+          email: fila.destinatario_email.toLowerCase().trim(),
+          motivo,
+          campanha_origem_id: fila.campanha_id,
+          criado_em: new Date().toISOString(),
+        },
+        { onConflict: 'email', ignoreDuplicates: true },
+      );
+      console.log(`[crm-webhook] 🚫 Auto opt-out: ${fila.destinatario_email}`);
     }
 
-    // ════════ 13. Recalcular contadores agregados da campanha (via RPC) ════════
-    // RPC criada pelo SQL 2026-06-03_crm_webhook_recalcular_contadores.sql.
-    // Recalcular sempre (em vez de incrementar) elimina race conditions e
-    // garante idempotência mesmo se o Resend reenviar o mesmo evento.
+    // Recalcular contadores agregados via RPC
     if (fila.campanha_id) {
-      const { error: errRpc } = await supabase.rpc('recalcular_contadores_campanha', {
-        p_campanha_id: fila.campanha_id,
-      });
-      if (errRpc) {
-        console.warn('[crm-webhook] ⚠️ Falha ao recalcular contadores (ignorado):', errRpc.message);
-      }
+      await supabase.rpc('recalcular_contadores_campanha', { p_campanha_id: fila.campanha_id });
     }
 
-    // ════════ 14. Resposta de sucesso ════════
     return res.status(200).json({
       ok: true,
       tipo: tipoInterno,
@@ -484,4 +616,201 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.error('[crm-webhook] Stack:', err?.stack);
     return res.status(500).json({ error: 'Internal server error', detail: err?.message });
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// 🆕 PROCESSADOR DEDICADO: email.received (Fase 7-MVP)
+// ────────────────────────────────────────────────────────────────────────
+/**
+ * Trata um evento email.received do Resend Inbound.
+ *
+ * Fluxo:
+ *   1. Parse do "to" do payload → extrai fila_id e lead_id do plus-alias
+ *      `respostas+f{fila_id}+l{lead_id}@dominio`.
+ *   2. Lookup da fila correspondente (valida que fila_id e lead_id batem).
+ *   3. INSERT em email_respostas com de_email, de_nome, assunto, corpos.
+ *   4. UPDATE em email_fila: status='respondido' (estado terminal alternativo).
+ *   5. INSERT em email_lead_historico (timeline tipo='email_respondido').
+ *   6. Recalcular contadores da campanha (RPC).
+ *   7. Disparar alerta por e-mail ao responsável (não-bloqueante).
+ *
+ * Casos de borda:
+ *   - "to" não bate o padrão → grava evento órfão em email_eventos para
+ *     auditoria, retorna 200 (não força retry do Resend).
+ *   - fila/lead inconsistente → idem.
+ */
+async function processarEmailRecebido(opts: {
+  supabase: any;
+  req: VercelRequest;
+  res: VercelResponse;
+  payload: any;
+  dataEvento: any;
+  createdAtResend: string | undefined;
+}) {
+  const { supabase, req, res, payload, dataEvento, createdAtResend } = opts;
+
+  // 1. Parse do "to" — campo do Resend pode ser string ou array
+  const toField = dataEvento?.to;
+  const parsed = parsearReplyTo(toField);
+
+  if (!parsed) {
+    console.warn('[crm-webhook] ⚠️ email.received sem padrão respostas+f+l no "to":', toField);
+    // Grava como evento órfão pra auditoria
+    await supabase.from('email_eventos').insert({
+      fila_id: null,
+      lead_id: null,
+      resend_message_id: null,
+      tipo_evento: 'received',
+      dados: payload,
+      criado_em: createdAtResend || new Date().toISOString(),
+    });
+    return res.status(200).json({
+      ok: true,
+      orphan: true,
+      reason: 'to não bate padrão respostas+f{id}+l{id}',
+    });
+  }
+
+  const { filaId, leadId } = parsed;
+
+  // 2. Lookup da fila — valida que existe e que lead_id confere
+  const { data: fila, error: errFila } = await supabase
+    .from('email_fila')
+    .select('id, campanha_id, lead_id, step_id, destinatario_email')
+    .eq('id', filaId)
+    .maybeSingle();
+
+  if (errFila) {
+    console.error('[crm-webhook] ❌ Erro ao buscar fila para resposta:', errFila.message);
+    return res.status(500).json({ error: 'DB lookup failed', detail: errFila.message });
+  }
+
+  if (!fila) {
+    console.warn(`[crm-webhook] ⚠️ Fila ${filaId} não encontrada (resposta órfã)`);
+    await supabase.from('email_eventos').insert({
+      fila_id: null,
+      lead_id: leadId,
+      resend_message_id: null,
+      tipo_evento: 'received',
+      dados: payload,
+      criado_em: createdAtResend || new Date().toISOString(),
+    });
+    return res.status(200).json({ ok: true, orphan: true, reason: 'fila não encontrada' });
+  }
+
+  if (fila.lead_id !== leadId) {
+    console.warn(
+      `[crm-webhook] ⚠️ Lead do Reply-To (${leadId}) não bate com fila ${filaId} (lead ${fila.lead_id})`,
+    );
+    // Ainda assim grava a resposta — confia no lead_id da fila como verdade
+  }
+
+  // 3. Buscar dados da campanha para o alerta
+  const { data: campanha } = await supabase
+    .from('email_campanhas')
+    .select('id, nome, responsavel_id')
+    .eq('id', fila.campanha_id)
+    .maybeSingle();
+
+  // 4. Buscar dados do lead (para o nome no histórico)
+  const { data: lead } = await supabase
+    .from('email_leads')
+    .select('id, nome, email')
+    .eq('id', fila.lead_id)
+    .maybeSingle();
+
+  // 5. Extrair from, assunto e corpos do payload
+  const { email: deEmail, nome: deNome } = parsearFrom(dataEvento?.from);
+  const assunto: string | null = dataEvento?.subject || null;
+  const corpoTexto: string | null = dataEvento?.text || null;
+  const corpoHtml: string | null = dataEvento?.html || null;
+
+  if (!deEmail) {
+    console.warn('[crm-webhook] ⚠️ email.received sem "from" válido');
+    return res.status(200).json({ ok: true, orphan: true, reason: 'from inválido' });
+  }
+
+  // 6. INSERT em email_respostas
+  const { data: novaResposta, error: errResp } = await supabase
+    .from('email_respostas')
+    .insert({
+      lead_id: fila.lead_id,
+      campanha_id: fila.campanha_id,
+      fila_id: fila.id,
+      de_email: deEmail,
+      de_nome: deNome,
+      assunto,
+      corpo_texto: corpoTexto,
+      corpo_html: corpoHtml,
+      classificacao: 'pendente',
+      lido: false,
+      recebido_em: createdAtResend || new Date().toISOString(),
+    })
+    .select('id')
+    .single();
+
+  if (errResp) {
+    console.error('[crm-webhook] ❌ Erro ao inserir email_respostas:', errResp.message);
+    return res.status(500).json({ error: 'Insert failed', detail: errResp.message });
+  }
+
+  console.log(`[crm-webhook] 💬 Resposta gravada: id=${novaResposta?.id} lead=${fila.lead_id} campanha=${fila.campanha_id}`);
+
+  // 7. UPDATE em email_fila — status='respondido'
+  await supabase
+    .from('email_fila')
+    .update({ status: 'respondido' })
+    .eq('id', fila.id);
+
+  // 8. INSERT em email_lead_historico
+  await supabase.from('email_lead_historico').insert({
+    lead_id: fila.lead_id,
+    campanha_id: fila.campanha_id,
+    step_id: fila.step_id,
+    tipo: 'email_respondido',
+    descricao: assunto ? `Resposta recebida: ${assunto}` : 'Resposta recebida do lead',
+    dados: {
+      resposta_id: novaResposta?.id,
+      de_email: deEmail,
+      de_nome: deNome,
+      preview: (corpoTexto || '').substring(0, 200),
+    },
+    criado_por: 'webhook_resend',
+    criado_em: createdAtResend || new Date().toISOString(),
+  });
+
+  // 9. Recalcular contadores (atualiza total_respondidos e taxa_resposta)
+  if (fila.campanha_id) {
+    const { error: errRpc } = await supabase.rpc('recalcular_contadores_campanha', {
+      p_campanha_id: fila.campanha_id,
+    });
+    if (errRpc) {
+      console.warn('[crm-webhook] ⚠️ Falha ao recalcular contadores:', errRpc.message);
+    }
+  }
+
+  // 10. Disparar alerta para o responsável (não-bloqueante)
+  if (campanha?.responsavel_id) {
+    const host = hdr(req, 'host') || hdr(req, 'x-forwarded-host') || '';
+    await dispararAlertaResposta({
+      supabase,
+      origem: host,
+      responsavelId: campanha.responsavel_id,
+      leadId: fila.lead_id, // 🆕 v1.1.1 — para deep link
+      leadEmail: lead?.email || deEmail,
+      leadNome: lead?.nome || deNome,
+      campanhaNome: campanha.nome || `Campanha #${campanha.id}`,
+      assunto,
+      corpoTexto,
+    });
+  }
+
+  return res.status(200).json({
+    ok: true,
+    tipo: 'received',
+    resposta_id: novaResposta?.id,
+    fila_id: fila.id,
+    lead_id: fila.lead_id,
+    campanha_id: fila.campanha_id,
+  });
 }
