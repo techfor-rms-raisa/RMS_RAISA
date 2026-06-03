@@ -603,13 +603,13 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 52 arquivos | 608.2 KB | 02/06/2026 |
-| `src/components/` | 111 arquivos | 921.3 KB | 02/06/2026 |
+| `api/` | 58 arquivos | 756.1 KB | 03/06/2026 |
+| `src/components/` | 156 arquivos | 921.3 KB | 03/06/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 02/06/2026 |
-| `src/types/` | 6 arquivos | 30.4 KB | 02/06/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 02/06/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 02/06/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 03/06/2026 |
+| `src/types/` | 6 arquivos | 30.8 KB | 03/06/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 03/06/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 03/06/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -617,6 +617,11 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 - `api/apollo-prospect-test.ts`
 - `api/claude-analyze.ts`
 - `api/creci-capture.ts`
+- `api/crm-analytics.ts`
+- `api/crm-campanhas.ts`
+- `api/crm-config.ts`
+- `api/crm-copys.ts`
+- `api/crm-leads.ts`
 - `api/cv-generator-docx-bg.ts`
 - `api/cv-generator-docx.ts`
 - `api/debug-env.ts`
