@@ -4,6 +4,14 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.3.1 (03/06/2026 — Fase 7-MVP hotfix): trocado `reply_to` por `replyTo`
+ *      no payload do `resend.emails.send`. O SDK do Resend (versão Node atual)
+ *      espera o parâmetro em camelCase; em snake_case, o campo era silenciosamente
+ *      ignorado e os e-mails saíam sem Reply-To, fazendo o destinatário responder
+ *      para o `From` original em vez do plus-alias `respostas+fX+lY@`.
+ *      Validado no teste end-to-end de 03/06/2026: as 3 primeiras respostas
+ *      chegaram no Resend Inbound endereçadas para o `From` (dsouza@techfor.com.br),
+ *      não para o plus-alias esperado — confirmando o bug.
  *  - v1.3 (03/06/2026 — Fase 7-MVP): adicionado `reply_to` dinâmico em
  *      cada envio Resend, no formato `respostas+f{fila_id}+l{lead_id}@{dominio}`.
  *      Quando o lead responde ao e-mail, a resposta vai para esse endereço,
@@ -486,7 +494,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { data, error } = await resend.emails.send({
           from,
           to: [item.destinatario_email],
-          reply_to: replyTo, // 🆕 v1.3 (Fase 7-MVP) — captura de respostas via Inbound
+          replyTo: replyTo, // 🆕 v1.3.1 (Fase 7-MVP) — captura de respostas via Inbound. SDK Resend usa camelCase.
           subject: step.assunto || '(sem assunto)',
           html: htmlFinal,
           text: textoFinal,
