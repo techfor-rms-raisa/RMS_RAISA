@@ -4,6 +4,20 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.5 (04/06/2026 — Fase 7-MVP definitivo): Reply-To via HEADERS SMTP.
+ *      Causa do incidente de 04/06/2026: confirmado pelo Raw JSON de 4
+ *      envios — `"reply_to": []` mesmo com `replyTo: replyTo` no payload.
+ *      O SDK do Resend Node está descartando silenciosamente AMBOS os
+ *      formatos do parâmetro (`replyTo` camelCase E `reply_to` snake_case).
+ *      Validamos isso em 2 hotfixes seguidos (v1.3 → v1.3.1 → v1.4) e o
+ *      bug persistiu.
+ *      Solução robusta: passar `Reply-To` como header SMTP padrão (RFC 5322)
+ *      pelo campo `headers`, que comprovadamente funciona — o `X-Entity-Ref-ID`
+ *      sempre chegou correto no JSON de retorno. Header RFC é universal e
+ *      qualquer cliente de e-mail (Gmail, Outlook, etc) respeita.
+ *      O parâmetro `replyTo` é mantido por defesa em profundidade — se o
+ *      SDK consertar no futuro, ambos coexistem sem conflito.
+ *      Adicionado console.log do payload essencial para auditoria futura.
  *  - v1.4 (03/06/2026 — Fase 7-MVP regra de negócio):
  *      Reply-To FIXO em `techfor.com.br`, ignorando `campanha.dominio_envio`.
  *      Razão: o Resend Inbound está habilitado APENAS em `techfor.com.br`
@@ -501,16 +515,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       jaEnviouAlgum = true;
 
       // 5e) Enviar via Resend
+      //
+      // 🆕 v1.5 (04/06/2026 — Fase 7-MVP definitivo): Reply-To via HEADERS.
+      // Causa do incidente de 04/06/2026: o parâmetro `replyTo` (e seu primo
+      // snake_case `reply_to`) do SDK Resend Node está sendo SILENCIOSAMENTE
+      // descartado pelo servidor — o Raw JSON dos 4 envios mostrou `"reply_to": []`
+      // mesmo com o parâmetro preenchido no código. Resultado: respostas
+      // dos leads foram para o `From` em vez do plus-alias, e o webhook
+      // recebeu eventos órfãos (fila_id/lead_id = null).
+      //
+      // Solução robusta: passar `Reply-To` como header SMTP padrão (RFC 5322),
+      // pelo campo `headers` que comprovadamente funciona (o `X-Entity-Ref-ID`
+      // sempre chega corretamente no JSON de retorno). Bypassa o bug do
+      // parâmetro de alto nível. Mantemos também o parâmetro `replyTo` por
+      // defesa em profundidade — se o SDK consertar no futuro, não atrapalha.
+      //
+      // Auditoria: log explícito do payload essencial para facilitar diagnóstico
+      // caso o problema retorne. Mostra os campos críticos sem poluir os logs
+      // com HTML/texto do corpo.
+      console.log(
+        `[disparar-fila] 📤 fila=${item.id} from="${from}" to="${item.destinatario_email}" reply_to_header="${replyTo}"`
+      );
+
       try {
         const { data, error } = await resend.emails.send({
           from,
           to: [item.destinatario_email],
-          replyTo: replyTo, // 🆕 v1.3.1 (Fase 7-MVP) — captura de respostas via Inbound. SDK Resend usa camelCase.
+          replyTo: replyTo, // mantido por defesa em profundidade (vide v1.5)
           subject: step.assunto || '(sem assunto)',
           html: htmlFinal,
           text: textoFinal,
           headers: {
             'X-Entity-Ref-ID': `rms-fila-${item.id}`,
+            'Reply-To': replyTo, // 🆕 v1.5 — caminho RFC garantido (SDK ignora `replyTo`)
           },
         });
 
