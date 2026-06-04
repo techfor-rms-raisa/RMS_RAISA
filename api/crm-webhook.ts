@@ -3,6 +3,30 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.4 — 04/06/2026 — Hotfix: contadores agregados em email_leads.
+ *   Sintoma: cards do header da ficha do lead ficavam zerados
+ *   (total_emails_recebidos, total_emails_abertos, total_emails_clicados,
+ *   total_respostas) mesmo quando o lead tinha eventos gravados em
+ *   email_eventos / email_respostas.
+ *   Causa-raiz: nenhum handler do webhook fazia UPDATE em email_leads.
+ *   Os contadores eram só calculados em email_campanhas (via RPC
+ *   recalcular_contadores_campanha), nunca espelhados no lead.
+ *   Correção:
+ *     1) Nova RPC SQL `incrementar_contador_lead(p_lead_id, p_campo, p_delta)`
+ *        — UPDATE atômico com whitelist de campos para evitar SQL injection
+ *        e race conditions em concorrência.
+ *     2) Ramo outbound (delivered/opened/clicked): após o UPDATE em
+ *        email_fila, chama a RPC se for a PRIMEIRA ocorrência do tipo
+ *        para aquela fila (gate: entregue_em/aberto_em/clicado_em IS NULL).
+ *        Esse gate evita inflar o contador quando o Resend reenvia o
+ *        mesmo evento (idempotência).
+ *     3) Ramo received: cada resposta nova incrementa total_respostas
+ *        (lead pode responder N vezes — cada resposta conta).
+ *     4) SELECT da fila no ramo outbound passou a trazer também
+ *        entregue_em, aberto_em, clicado_em para suportar o gate.
+ *   Falha na RPC só loga warning; não quebra o webhook. A reconciliação
+ *   histórica é feita separadamente por SQL script.
+ *
  * v1.3 — 04/06/2026 — Plano B: SDK Resend ELIMINADO desta função.
  *   Após validar em 4 versões de `disparar-fila.ts` (v1.3 → v1.3.1 → v1.4 → v1.5)
  *   que o SDK do Resend Node descarta `replyTo`/`reply_to` e até o header
@@ -597,9 +621,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Buscar item da fila pelo message_id
+    //   v1.4: adicionados entregue_em/aberto_em/clicado_em para suportar o
+    //   gate de idempotência ao incrementar contadores em email_leads
+    //   (só incrementa na PRIMEIRA ocorrência do tipo para aquela fila).
     const { data: fila, error: errFila } = await supabase
       .from('email_fila')
-      .select('id, campanha_id, lead_id, step_id, destinatario_email, destinatario_nome, status')
+      .select('id, campanha_id, lead_id, step_id, destinatario_email, destinatario_nome, status, entregue_em, aberto_em, clicado_em')
       .eq('resend_message_id', resendMessageId)
       .maybeSingle();
 
@@ -698,6 +725,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .from('email_fila').update(updateFila).eq('id', fila.id);
       if (errUpdateFila) {
         console.error('[crm-webhook] ❌ Erro ao atualizar email_fila:', errUpdateFila.message);
+      }
+    }
+
+    // 🆕 v1.4 — Incrementar contadores agregados em email_leads.
+    //   Gate de idempotência: só incrementa na PRIMEIRA ocorrência do tipo
+    //   para esta fila (campos *_em ainda NULL no estado lido ANTES do UPDATE).
+    //   Evita inflar quando o Resend reenvia o mesmo evento (retry).
+    //   Falha na RPC só loga warning; não impacta o fluxo do webhook.
+    if (fila.lead_id) {
+      let campoIncrementar: string | null = null;
+      if (tipoInterno === 'delivered' && !fila.entregue_em) {
+        campoIncrementar = 'total_emails_recebidos';
+      } else if (tipoInterno === 'opened' && !fila.aberto_em) {
+        campoIncrementar = 'total_emails_abertos';
+      } else if (tipoInterno === 'clicked' && !fila.clicado_em) {
+        campoIncrementar = 'total_emails_clicados';
+      }
+
+      if (campoIncrementar) {
+        const { error: errInc } = await supabase.rpc('incrementar_contador_lead', {
+          p_lead_id: fila.lead_id,
+          p_campo: campoIncrementar,
+          p_delta: 1,
+        });
+        if (errInc) {
+          console.warn(
+            `[crm-webhook] ⚠️ Falha ao incrementar ${campoIncrementar} no lead ${fila.lead_id}:`,
+            errInc.message,
+          );
+        } else {
+          console.log(
+            `[crm-webhook] 📊 lead=${fila.lead_id} ${campoIncrementar} +1 (evento ${tipoInterno})`,
+          );
+        }
       }
     }
 
@@ -929,6 +990,28 @@ async function processarEmailRecebido(opts: {
     criado_por: 'webhook_resend',
     criado_em: createdAtResend || new Date().toISOString(),
   });
+
+  // 🆕 v1.4 — Incrementar total_respostas no lead.
+  //   Diferente dos contadores outbound (delivered/opened/clicked), aqui NÃO
+  //   há gate de idempotência: cada email.received que passa pelo parser
+  //   corresponde a uma resposta legítima recém-inserida em email_respostas,
+  //   e o lead pode responder ao mesmo email N vezes — cada uma é uma resposta.
+  //   Falha na RPC só loga warning; resposta já está gravada.
+  if (fila.lead_id) {
+    const { error: errIncResp } = await supabase.rpc('incrementar_contador_lead', {
+      p_lead_id: fila.lead_id,
+      p_campo: 'total_respostas',
+      p_delta: 1,
+    });
+    if (errIncResp) {
+      console.warn(
+        `[crm-webhook] ⚠️ Falha ao incrementar total_respostas no lead ${fila.lead_id}:`,
+        errIncResp.message,
+      );
+    } else {
+      console.log(`[crm-webhook] 📊 lead=${fila.lead_id} total_respostas +1`);
+    }
+  }
 
   // 9. Recalcular contadores (atualiza total_respondidos e taxa_resposta)
   if (fila.campanha_id) {
