@@ -3,6 +3,22 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.7 — 04/06/2026 — Fix do endpoint REST para inbound emails.
+ *   Diagnóstico (após nova API key Full Access ativa em preview):
+ *     • Log mostrou `GET /emails/{id}` retornando 404 "Email not found"
+ *       mesmo com chave Full Access — confirmando que esse endpoint é
+ *       apenas para emails OUTBOUND (mensagens enviadas via POST /emails).
+ *     • Inspeção do `/api/webhook/email-inbound` (módulo RAISA legacy,
+ *       que resolveu o mesmo problema há 5 meses) revelou que o endpoint
+ *       correto para inbound emails é `GET /emails/receiving/{id}`.
+ *   Correção:
+ *     1) Em `buscarEmailCompletoResend`: trocada a URL
+ *        `https://api.resend.com/emails/${id}`  (outbound)
+ *        → `https://api.resend.com/emails/receiving/${id}`  (inbound).
+ *     2) Header `Content-Type: application/json` adicionado por simetria
+ *        com o padrão do legacy (não é estritamente necessário em GET,
+ *        mas mantém consistência se o Resend exigir no futuro).
+ *
  * v1.6 — 04/06/2026 — Fix definitivo do bug "(sem corpo)".
  *   Diagnóstico (apoiado pela v1.5):
  *     • Query SQL: `SELECT pg_typeof(dados->'data'->'text'), LENGTH(...)`
@@ -880,40 +896,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 /**
  * O webhook de `email.received` chega SEM `text` e `html` no payload
  * (descoberta validada na v1.5 — `LENGTH(dados->'data'->>'text') = NULL`).
- * O corpo só está disponível chamando `GET /emails/:id` na REST API.
+ * O corpo só está disponível chamando a REST API com o id do email.
+ *
+ * 🆕 v1.7 (04/06/2026) — Endpoint correto para INBOUND emails é
+ *   `GET /emails/receiving/{id}` (não `GET /emails/{id}`, que é só
+ *   para outbound). Descoberto via inspeção do webhook legacy
+ *   `/api/webhook/email-inbound` do módulo RAISA candidaturas, que já
+ *   usava esse path corretamente desde a sua primeira versão (5 meses).
  *
  * Esta função encapsula esse fetch:
  *   • Usa o id do e-mail (campo `id` ou `email_id` do payload).
- *   • Autentica com `RESEND_API_KEY` (Bearer).
+ *   • Autentica com `RESEND_API_KEY` (Bearer) — requer chave Full Access.
  *   • Retorna `{ text, html, subject }` ou null em qualquer falha.
  *   • Nunca lança exceção — falha é graceful (loga warning e retorna null).
  *
- * Comportamento idêntico ao webhook legacy `/api/webhook/email-inbound`
- * (módulo RAISA candidaturas, que resolveu o mesmo problema em 2025).
+ * Comportamento idêntico ao webhook legacy `/api/webhook/email-inbound`.
  */
 async function buscarEmailCompletoResend(
   emailId: string,
   apiKey: string,
 ): Promise<{ text: string | null; html: string | null; subject: string | null } | null> {
   try {
-    const resp = await fetch(`https://api.resend.com/emails/${encodeURIComponent(emailId)}`, {
+    // 🆕 v1.7 — URL específica para INBOUND. Path: /emails/receiving/{id}
+    const url = `https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`;
+    const resp = await fetch(url, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
       },
     });
 
     if (!resp.ok) {
       const body = await resp.text().catch(() => '');
       console.warn(
-        `[crm-webhook] ⚠️ GET /emails/${emailId} retornou ${resp.status}: ${body.substring(0, 200)}`,
+        `[crm-webhook] ⚠️ GET /emails/receiving/${emailId} retornou ${resp.status}: ${body.substring(0, 200)}`,
       );
       return null;
     }
 
     const data: any = await resp.json().catch(() => null);
     if (!data) {
-      console.warn(`[crm-webhook] ⚠️ GET /emails/${emailId} sem corpo JSON`);
+      console.warn(`[crm-webhook] ⚠️ GET /emails/receiving/${emailId} sem corpo JSON`);
       return null;
     }
 
@@ -924,7 +948,7 @@ async function buscarEmailCompletoResend(
     };
   } catch (e: any) {
     console.warn(
-      `[crm-webhook] ⚠️ Exceção em GET /emails/${emailId}:`,
+      `[crm-webhook] ⚠️ Exceção em GET /emails/receiving/${emailId}:`,
       e?.message || String(e),
     );
     return null;
