@@ -4,7 +4,60 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
- *  - v1.0 (01/06/2026 — Fase 5B-cron): versão inicial do processador.
+ *  - v1.6 (04/06/2026 — Plano B definitivo): SDK Resend ELIMINADO desta etapa.
+ *      Após v1.3 → v1.3.1 → v1.4 → v1.5 falharem em fazer o `Reply-To`
+ *      chegar no e-mail enviado (todos os Raw JSONs mostraram `reply_to: []`
+ *      mesmo com o campo preenchido no payload, e o `Reply-To` em `headers`
+ *      também foi filtrado pelo Resend), partimos para chamada `fetch` direta
+ *      à API REST do Resend em `https://api.resend.com/emails`.
+ *      Mudanças:
+ *        • Removida `import { Resend } from 'resend'` e `new Resend(...)`.
+ *        • Nova constante `RESEND_API_URL`.
+ *        • `resend.emails.send(...)` → `fetch(RESEND_API_URL, { POST + Bearer })`
+ *          com body JSON contendo `reply_to` em snake_case (formato nativo da REST).
+ *        • Tratamento de erro adaptado: do objeto do SDK (`{name, statusCode, message}`)
+ *          para a response HTTP + body JSON do REST. `classificarErroResend()`
+ *          continua reaproveitada porque já trabalha com `statusCode`/`name`.
+ *      Resultado esperado: `reply_to` populado no Raw JSON, respostas dos leads
+ *      indo para o plus-alias `respostas+fX+lY@techfor.com.br`, webhook
+ *      parseando corretamente e encaminhando ao gestor responsável.
+ *  - v1.5 (04/06/2026 — Fase 7-MVP definitivo): Reply-To via HEADERS SMTP.
+ *      Causa do incidente de 04/06/2026: confirmado pelo Raw JSON de 4
+ *      envios — `"reply_to": []` mesmo com `replyTo: replyTo` no payload.
+ *      O SDK do Resend Node está descartando silenciosamente AMBOS os
+ *      formatos do parâmetro (`replyTo` camelCase E `reply_to` snake_case).
+ *      Validamos isso em 2 hotfixes seguidos (v1.3 → v1.3.1 → v1.4) e o
+ *      bug persistiu.
+ *      Solução robusta: passar `Reply-To` como header SMTP padrão (RFC 5322)
+ *      pelo campo `headers`, que comprovadamente funciona — o `X-Entity-Ref-ID`
+ *      sempre chegou correto no JSON de retorno. Header RFC é universal e
+ *      qualquer cliente de e-mail (Gmail, Outlook, etc) respeita.
+ *      O parâmetro `replyTo` é mantido por defesa em profundidade — se o
+ *      SDK consertar no futuro, ambos coexistem sem conflito.
+ *      Adicionado console.log do payload essencial para auditoria futura.
+ *  - v1.4 (03/06/2026 — Fase 7-MVP regra de negócio):
+ *      Reply-To FIXO em `techfor.com.br`, ignorando `campanha.dominio_envio`.
+ *      Razão: o Resend Inbound está habilitado APENAS em `techfor.com.br`
+ *      (limitação de DNS do `techforti.com.br`, que tem políticas de
+ *      segurança que impedem reconfiguração dos MX). Mesmo quando a
+ *      campanha sai por `techforti.inf.br`, o `Reply-To` precisa
+ *      apontar para `techfor.com.br` para que as respostas caiam no
+ *      único Inbound configurado e disparem o webhook `email.received`.
+ *      Mudança cirúrgica: 1 constante + 1 comentário (linhas ~481-482).
+ *  - v1.3.1 (03/06/2026 — Fase 7-MVP hotfix): trocado `reply_to` por `replyTo`
+ *      no payload do `resend.emails.send`. O SDK do Resend (versão Node atual)
+ *      espera o parâmetro em camelCase; em snake_case, o campo era silenciosamente
+ *      ignorado e os e-mails saíam sem Reply-To, fazendo o destinatário responder
+ *      para o `From` original em vez do plus-alias `respostas+fX+lY@`.
+ *      Validado no teste end-to-end de 03/06/2026: as 3 primeiras respostas
+ *      chegaram no Resend Inbound endereçadas para o `From` (dsouza@techfor.com.br),
+ *      não para o plus-alias esperado — confirmando o bug.
+ *  - v1.3 (03/06/2026 — Fase 7-MVP): adicionado `reply_to` dinâmico em
+ *      cada envio Resend, no formato `respostas+f{fila_id}+l{lead_id}@{dominio}`.
+ *      Quando o lead responde ao e-mail, a resposta vai para esse endereço,
+ *      o Resend Inbound recebe e dispara webhook `email.received`, que
+ *      correlaciona a resposta com fila/lead pelo plus-alias.
+ *      Mudança cirúrgica: 1 cálculo de string + 1 linha no payload de envio.
  *  - v1.1 (02/06/2026): normalização de quebras de linha no `corpo_html`.
  *      O CopyEditorModal usa <textarea> e permite texto puro OU HTML.
  *      Quando o usuário digita texto puro com `Enter` entre parágrafos,
@@ -26,6 +79,7 @@
  *        requests". Validado no teste de 02/06/2026: 2 dos 10 itens do
  *        lote (ids 18, 19) voltaram para `pendente` por esse motivo.
  *        Com o throttle, ~4.5 req/s — abaixo do teto com folga.
+ *  - v1.0 (01/06/2026 — Fase 5B-cron): versão inicial do processador.
  *
  * Roda a cada 15 minutos (vercel.json) e processa um lote de até 10
  * mensagens da `email_fila` (status='pendente' AND agendado_para <= NOW).
@@ -58,7 +112,11 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { Resend } from 'resend';
+// 🆕 v1.6 (04/06/2026 — Plano B): SDK Resend REMOVIDO. Após v1.3.1 → v1.4 →
+// v1.5 falharem (SDK descarta `replyTo`/`reply_to`/header `Reply-To` no campo
+// `headers`), partimos para chamada `fetch` direta à API REST do Resend, onde
+// o `reply_to` (snake_case) no body JSON é aceito nativamente — sem intermediação
+// do SDK. Não há mais `import { Resend } from 'resend'` neste arquivo.
 
 export const config = { maxDuration: 60 };
 
@@ -77,6 +135,12 @@ const TIMEZONE_BR = 'America/Sao_Paulo';
  *  e os envios 6+ voltavam para `pendente` com erro "Too many requests".
  *  Aumentar este valor se o plano do Resend mudar (ex: hobby = 5/s, pro = 10/s). */
 const RATE_LIMIT_MS = 220;
+
+/** Endpoint da API REST do Resend para envio de e-mails.
+ *  🆕 v1.6 (04/06/2026 — Plano B) — usado em chamada `fetch` direta para
+ *  bypassar o SDK do Resend que descarta `replyTo`/`reply_to`/header `Reply-To`
+ *  silenciosamente. Body JSON aceita `reply_to` em snake_case nativamente. */
+const RESEND_API_URL = 'https://api.resend.com/emails';
 
 // ════════════════════════════════════════════════════════════════
 // HELPERS
@@ -262,7 +326,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       error: 'RESEND_API_KEY não configurada no ambiente Vercel.',
     });
   }
-  const resend = new Resend(resendApiKey);
+  // 🆕 v1.6 — SDK removido. As chamadas usam `fetch` direto em RESEND_API_URL,
+  // autenticadas com a chave abaixo via header `Authorization: Bearer ...`.
 
   // Estado da execução
   let enviadosCount = 0;
@@ -455,6 +520,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const from = `${campanha.nome_remetente || 'TechFor TI'} <${campanha.email_remetente}>`;
 
+      // 🆕 v1.3 — Reply-To dinâmico com plus-aliasing (Fase 7-MVP).
+      // Quando o lead responde, a resposta vai para `respostas+f{id}+l{id}@dominio`.
+      // O Resend Inbound recebe, dispara webhook `email.received`, e o
+      // api/crm-webhook.ts parseia o plus-alias para correlacionar a resposta
+      // com a fila (fila_id) e o lead (lead_id) originais.
+      //
+      // 🔒 v1.4 — Domínio FIXO em `techfor.com.br`, ignorando `campanha.dominio_envio`.
+      // O Resend Inbound só está habilitado neste domínio (limitação de DNS
+      // do `techforti.com.br`, mantido em outro provedor por política corporativa).
+      // Centraliza toda a captura de respostas — campanhas que saem por
+      // `techforti.inf.br` continuam tendo as respostas roteadas para cá.
+      const DOMINIO_REPLY_TO = 'techfor.com.br';
+      const replyTo = `respostas+f${item.id}+l${item.lead_id}@${DOMINIO_REPLY_TO}`;
+
       // 🆕 v1.2 — Throttle ENTRE envios (não antes do primeiro). Mantém o ritmo
       // abaixo do rate limit do Resend (5 req/s). Aplicado a partir do segundo
       // envio do lote, independente do resultado do anterior.
@@ -463,23 +542,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       jaEnviouAlgum = true;
 
-      // 5e) Enviar via Resend
+      // 5e) Enviar via Resend — chamada `fetch` direta à API REST.
+      //
+      // 🆕 v1.6 (04/06/2026 — Plano B): SDK Resend ELIMINADO desta etapa.
+      // Cronologia do bug:
+      //   • v1.3 — `reply_to` (snake_case) no payload → ignorado pelo SDK.
+      //   • v1.3.1 — `replyTo` (camelCase) no payload → também ignorado.
+      //   • v1.5 — `Reply-To` em `headers` → também ignorado/filtrado.
+      // Em TODOS os Raw JSONs dos envios, o campo `reply_to: []` voltou vazio.
+      // Como o SDK do Resend Node está descartando todas as tentativas de
+      // definir o Reply-To, partimos para `fetch` direto no endpoint REST,
+      // onde o body JSON com `reply_to` em snake_case é aceito nativamente
+      // pelo servidor (sem intermediação do SDK).
+      //
+      // Auditoria: log explícito do payload essencial para diagnóstico futuro.
+      console.log(
+        `[disparar-fila] 📤 fila=${item.id} from="${from}" to="${item.destinatario_email}" reply_to="${replyTo}"`
+      );
+
       try {
-        const { data, error } = await resend.emails.send({
-          from,
-          to: [item.destinatario_email],
-          subject: step.assunto || '(sem assunto)',
-          html: htmlFinal,
-          text: textoFinal,
+        const respFetch = await fetch(RESEND_API_URL, {
+          method: 'POST',
           headers: {
-            'X-Entity-Ref-ID': `rms-fila-${item.id}`,
+            'Authorization': `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json',
           },
+          body: JSON.stringify({
+            from,
+            to: [item.destinatario_email],
+            reply_to: replyTo, // 🆕 v1.6 — snake_case, formato nativo da REST API
+            subject: step.assunto || '(sem assunto)',
+            html: htmlFinal,
+            text: textoFinal,
+            headers: {
+              'X-Entity-Ref-ID': `rms-fila-${item.id}`,
+            },
+          }),
         });
 
-        if (error) {
-          const classe = classificarErroResend(error);
+        // O endpoint REST sempre retorna JSON, sucesso ou erro
+        const respBody: any = await respFetch.json().catch(() => ({}));
+
+        if (!respFetch.ok) {
+          // Erro do Resend — formato: { name, message, statusCode? }
+          const classe = classificarErroResend({
+            statusCode: respFetch.status,
+            name: respBody?.name,
+            message: respBody?.message,
+          });
           const novasTentativas = (item.tentativas || 0) + 1;
-          const erroMsg = ((error as any).message || JSON.stringify(error)).substring(0, 500);
+          const erroMsg = `[${respFetch.status}] ${respBody?.name || 'erro'}: ${respBody?.message || JSON.stringify(respBody)}`.substring(0, 500);
 
           if (classe === 'definitivo' || novasTentativas >= MAX_TENTATIVAS) {
             await supabase.from('email_fila').update({
@@ -505,17 +617,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           continue;
         }
 
-        // Sucesso
+        // Sucesso — o body de retorno traz `{ id: "uuid" }`
+        const resendId: string | null = respBody?.id || null;
         await supabase.from('email_fila').update({
           status: 'enviado',
           enviado_em: new Date().toISOString(),
-          resend_message_id: data?.id || null,
+          resend_message_id: resendId,
         }).eq('id', item.id);
         enviadosCount++;
         detalhes.itens.push({
           id: item.id,
           resultado: 'enviado',
-          resend_id: data?.id,
+          resend_id: resendId,
         });
       } catch (sendErr: any) {
         // Exceção inesperada (rede, timeout) — trata como temporário

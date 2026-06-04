@@ -2,6 +2,25 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.9 (04/06/2026 — Fase 7-MVP guard): trava do domínio do remetente.
+ *      Causa: incidente de 04/06/2026 — campanha id=1 criada com
+ *      `email_remetente=moliveira@techforti.com.br` (domínio institucional,
+ *      NÃO verificado no Resend). Resend devolveu 403 validation_error em
+ *      4 envios consecutivos. A UI não validava (`CampanhasPage.handleNovaCampanha`
+ *      pré-preenchia com o `userEmail` institucional, e o auto-fill do
+ *      StepInfo não sobrescrevia campo já preenchido).
+ *      Correção (defesa em profundidade — backend bloqueia mesmo se a UI
+ *      quebrar):
+ *        • Nova constante `DOMINIOS_VERIFICADOS_ENVIO = ['techfor.com.br',
+ *          'techforti.inf.br']` + helper `validarEmailRemetente(email, {obrigatorio})`.
+ *        • `criar_campanha`: valida `email_remetente` (vazio OK em rascunho;
+ *          se preenchido, exige domínio verificado).
+ *        • `atualizar_campanha`: idem para o campo `email_remetente`.
+ *        • `mudar_status` (agendada/ativa): EXIGE remetente preenchido e
+ *          em domínio verificado. SELECT da campanha agora carrega o campo.
+ *      Frontend complementar: remover pré-preenchimento em
+ *      `CampanhasPage.handleNovaCampanha` (deixa vazio; auto-fill do
+ *      StepInfo gera dentro dos domínios permitidos).
  *  - v1.0 (14/05/2026): criado como api/campaign-builder.ts
  *  - v1.1 (30/05/2026 - Fase 1E): renomeado para api/crm-campanhas.ts
  *  - v1.2 (30/05/2026 - Fase 4A): criar_step aceita copy_id opcional
@@ -147,6 +166,75 @@ function validarUnidade(u: string | undefined | null):
     };
   }
   return { ok: true, unidade: u as Unidade };
+}
+
+// ════════════════════════════════════════════════════════════════
+// DOMÍNIOS DE ENVIO VERIFICADOS — v1.9 (04/06/2026 — Fase 7-MVP guard)
+// ════════════════════════════════════════════════════════════════
+//
+// Lista canônica dos domínios verificados no Resend para ENVIO de
+// e-mails (header From). Qualquer tentativa de criar/atualizar/ativar
+// uma campanha cujo `email_remetente` tenha domínio fora desta lista
+// é rejeitada com 400 — defesa em profundidade contra o bug que travou
+// o teste de 04/06/2026 (e-mail saiu por `@techforti.com.br`, domínio
+// institucional NÃO verificado, e o Resend devolveu 403 nos 4 envios).
+//
+// Domínios institucionais como `@techforti.com.br` e `@techcob.com.br`
+// existem para CORRESPONDÊNCIA (caixa postal dos gestores), não para
+// envio via Resend, e por política de DNS não terão os MX/SPF trocados.
+//
+// ⚠️ Para adicionar/remover domínio: atualizar a lista aqui E em
+//    src/components/crm/types/crm.constants.ts (DOMINIOS_ENVIO).
+//    A coluna `dominio_envio` é TEXT livre no banco — não exige migração.
+
+const DOMINIOS_VERIFICADOS_ENVIO = ['techfor.com.br', 'techforti.inf.br'] as const;
+
+/**
+ * Valida o `email_remetente` informado pelo cliente.
+ *
+ * Modos de operação:
+ *  - `obrigatorio=false` (default — `criar_campanha`/`atualizar_campanha`):
+ *      vazio é OK (rascunho em construção); se preenchido, valida formato +
+ *      domínio verificado.
+ *  - `obrigatorio=true` (`mudar_status` para agendada/ativa):
+ *      vazio é rejeitado; precisa estar preenchido e em domínio verificado.
+ *
+ * Retorna estruturado para o handler responder 400 com mensagem clara
+ * ao usuário (com instrução de como corrigir).
+ */
+function validarEmailRemetente(
+  email: string | undefined | null,
+  opts: { obrigatorio?: boolean } = {}
+): { ok: true } | { ok: false; erro: string } {
+  const obrigatorio = !!opts.obrigatorio;
+  const valor = (email || '').trim().toLowerCase();
+
+  if (!valor) {
+    if (obrigatorio) {
+      return {
+        ok: false,
+        erro: `Defina o e-mail do remetente antes de agendar/ativar a campanha. Use um endereço @${DOMINIOS_VERIFICADOS_ENVIO.join(' ou @')}.`,
+      };
+    }
+    return { ok: true };
+  }
+
+  // Formato básico de e-mail: algo@algo.algo (defesa preliminar; o Resend
+  // faz a validação completa no momento do envio).
+  const m = valor.match(/^[^\s@]+@([^\s@]+\.[^\s@]+)$/);
+  if (!m) {
+    return { ok: false, erro: `E-mail do remetente inválido: "${valor}".` };
+  }
+
+  const dominio = m[1];
+  if (!(DOMINIOS_VERIFICADOS_ENVIO as readonly string[]).includes(dominio)) {
+    return {
+      ok: false,
+      erro: `Domínio "@${dominio}" não está verificado no Resend para envio. Use @${DOMINIOS_VERIFICADOS_ENVIO.join(' ou @')}.`,
+    };
+  }
+
+  return { ok: true };
 }
 
 interface AppUserLite {
@@ -641,6 +729,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const valU = validarUnidade(unidade);
         if (!valU.ok) return res.status(400).json({ success: false, error: valU.erro });
 
+        // 🆕 v1.9 (04/06/2026 — Fase 7-MVP guard) — valida domínio do remetente.
+        // Em rascunho o campo pode estar vazio (o wizard pré-preenche conforme
+        // o usuário avança); se vier preenchido, EXIGE domínio verificado.
+        const valEmail = validarEmailRemetente(email_remetente, { obrigatorio: false });
+        if (!valEmail.ok) return res.status(400).json({ success: false, error: valEmail.erro });
+
+
         // 🆕 Fase B (01/06/2026) — RBAC + atribuição de responsável/assinatura
         const ator = await resolverUsuarioPorEmail(supabase, criado_por);
         if (!ator) {
@@ -910,6 +1005,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           updateData.unidade = valU.unidade;
         }
 
+        // 🆕 v1.9 (04/06/2026 — Fase 7-MVP guard) — valida domínio do remetente
+        // se vier no payload. Aceita vazio (rascunho); rejeita domínio fora da
+        // lista verificada no Resend.
+        if (campos.email_remetente !== undefined) {
+          const valEmail = validarEmailRemetente(campos.email_remetente, { obrigatorio: false });
+          if (!valEmail.ok) return res.status(400).json({ success: false, error: valEmail.erro });
+        }
+
         // 🆕 Fase B + 🔄 Fase E-1 — responsável e/ou unidade mudaram → recalcular
         // assinatura. A assinatura_id NUNCA vem do cliente: é sempre derivada
         // de (responsável, unidade). Por isso o recálculo dispara se QUALQUER um
@@ -1001,7 +1104,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Validações de transição
         const { data: campanha } = await supabase
           .from('email_campanhas')
-          .select('status, responsavel_id, assinatura_id, inicio_envio, dominio_envio, unidade')
+          .select('status, responsavel_id, assinatura_id, inicio_envio, dominio_envio, email_remetente, unidade')
           .eq('id', id)
           .maybeSingle();
 
@@ -1025,6 +1128,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
           if ((leadsCount || 0) === 0) {
             return res.status(400).json({ success: false, error: 'Campanha precisa ter ao menos 1 lead vinculado para ser ativada' });
+          }
+
+          // 🆕 v1.9 (04/06/2026 — Fase 7-MVP guard) — TRAVA do REMETENTE.
+          // Bloqueia ativar/agendar campanha com domínio do remetente não
+          // verificado no Resend (causa do incidente de 04/06/2026: 403
+          // validation_error em 4 envios consecutivos por usar @techforti.com.br).
+          const valEmail = validarEmailRemetente(campanha.email_remetente, { obrigatorio: true });
+          if (!valEmail.ok) {
+            return res.status(400).json({ success: false, error: valEmail.erro });
           }
 
           // 🆕 Fase B + 🔄 Fase E-1 — TRAVA DE SEGURANÇA: a assinatura tem que

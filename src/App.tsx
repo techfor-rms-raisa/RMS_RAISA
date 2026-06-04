@@ -114,8 +114,68 @@ const App: React.FC = () => {
   // ✅ NOVO: Estado para modal de sugestões IA
   const [vagaParaSugestao, setVagaParaSugestao] = useState<Vaga | null>(null);
 
+  // 🆕 v60.4 (Fase 7-MVP — 03/06/2026) — Deep link para abrir ficha de lead
+  // diretamente a partir de URL com `?view=crm_base_leads&lead_id=N`.
+  // Usado pelo e-mail de alerta de resposta (api/crm-webhook.ts) para levar
+  // o gestor da campanha direto à ficha do lead que respondeu.
+  //
+  // Comportamento:
+  //   1. Na montagem do App, lemos window.location.search uma única vez.
+  //   2. Se houver `view` válida, setCurrentView para essa view.
+  //   3. Se houver `lead_id` numérico, gravamos em deepLinkLeadId — passado
+  //      como prop para BaseLeadsPage, que abre o drawer automaticamente.
+  //   4. Limpamos a query string da URL com history.replaceState para
+  //      evitar que o drawer reabra ao remontar/recarregar o componente.
+  const [deepLinkLeadId, setDeepLinkLeadId] = useState<number | null>(null);
+
   useEffect(() => {
       console.log("ORBIT.ai V2.0 + RAISA Integrado Loaded");
+  }, []);
+
+  // 🆕 v60.4 — Parser de deep link (roda 1x na montagem)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const viewParam = params.get('view');
+      const leadIdParam = params.get('lead_id');
+
+      let alterouUrl = false;
+
+      // Lista de views válidas que aceitamos via deep link. Mantemos restritiva
+      // para evitar abertura de views internas via URL externa.
+      const VIEWS_VALIDAS_DEEPLINK: View[] = [
+        'crm_base_leads',
+        'crm_acompanhamento',
+        'crm_config',
+        'crm',
+      ];
+
+      if (viewParam && (VIEWS_VALIDAS_DEEPLINK as string[]).includes(viewParam)) {
+        setCurrentView(viewParam as View);
+        alterouUrl = true;
+      }
+
+      if (leadIdParam) {
+        const lid = parseInt(leadIdParam, 10);
+        if (!Number.isNaN(lid) && lid > 0) {
+          setDeepLinkLeadId(lid);
+          alterouUrl = true;
+        }
+      }
+
+      // Limpa a query string sem disparar refresh (preserva pathname e hash).
+      // Importante: sem isso, recarregar a página reabriria o drawer.
+      if (alterouUrl) {
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname + window.location.hash,
+        );
+      }
+    } catch (err) {
+      console.warn('[App] Falha ao parsear deep link:', err);
+    }
   }, []);
 
   // 🆕 Expor userId no window para o Plugin LinkedIn Chrome
@@ -577,9 +637,17 @@ const App: React.FC = () => {
       // 🆕 30/05/2026 — Sub-páginas do CRM promovidas a views próprias
       // ============================================
       case 'crm_base_leads':
+          // 🆕 v60.4 (Fase 7-MVP) — deepLinkLeadId vem do parser de URL no topo
+          // do App.tsx. Quando presente, BaseLeadsPage seta a aba 'leads' e
+          // abre o drawer de detalhe automaticamente. onDeepLinkConsumed limpa
+          // o state após a consumação, evitando reabertura ao re-render.
           return (
             <div className="space-y-6">
-              <BaseLeadsPage currentUser={currentUser!} />
+              <BaseLeadsPage
+                currentUser={currentUser!}
+                deepLinkLeadId={deepLinkLeadId}
+                onDeepLinkConsumed={() => setDeepLinkLeadId(null)}
+              />
             </div>
           );
 

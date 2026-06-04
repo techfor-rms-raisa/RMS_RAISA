@@ -2,17 +2,21 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.0 (Fase 1C — 29/05/2026)
+ * Versão: 1.1 (Fase 7-MVP — 03/06/2026)
  *
- * Substitui o componente monolítico EmpresasLeadsCRM.tsx.
- * Responsabilidades:
- *  - Orquestrar os hooks useEmpresas, useLeads, useImportProspects.
- *  - Gerenciar os modais (Empresa/Lead form, Importação) e
- *    drawers (Empresa/Lead detalhe).
- *  - Renderizar header + KPIs + abas Empresas/Leads.
+ * v1.1 (03/06/2026 — Fase 7-MVP): suporte a deep link.
+ *   Recebe prop opcional `deepLinkLeadId`. Quando presente, força a aba
+ *   'leads' e dispara `abrirDetalhe(N)` automaticamente. Após consumir,
+ *   chama `onDeepLinkConsumed` para limpar o state no App.tsx — evita
+ *   reabertura ao re-render.
  *
- * Comportamento idêntico ao EmpresasLeadsCRM.tsx original
- * (1205 linhas) — agora decomposto em 11 arquivos.
+ * v1.0 (Fase 1C — 29/05/2026): primeira versão.
+ *   Substitui o componente monolítico EmpresasLeadsCRM.tsx.
+ *   Responsabilidades:
+ *    - Orquestrar os hooks useEmpresas, useLeads, useImportProspects.
+ *    - Gerenciar os modais (Empresa/Lead form, Importação) e
+ *      drawers (Empresa/Lead detalhe).
+ *    - Renderizar header + KPIs + abas Empresas/Leads.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -37,13 +41,27 @@ import type { CurrentUserLite, Empresa, Lead } from '../types/crm.types';
 
 export interface BaseLeadsPageProps {
   currentUser: CurrentUserLite;
+  /**
+   * 🆕 v1.1 (Fase 7-MVP) — Deep link opcional.
+   * Quando presente, BaseLeadsPage automaticamente:
+   *   1. Muda para a aba 'leads'.
+   *   2. Chama useLeads.abrirDetalhe(N) para abrir o drawer do lead.
+   *   3. Invoca onDeepLinkConsumed para o App.tsx limpar o state e
+   *      evitar reabertura em renders subsequentes.
+   */
+  deepLinkLeadId?: number | null;
+  onDeepLinkConsumed?: () => void;
 }
 
 // ════════════════════════════════════════════════════════════
 // COMPONENTE
 // ════════════════════════════════════════════════════════════
 
-const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({ currentUser }) => {
+const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
+  currentUser,
+  deepLinkLeadId,
+  onDeepLinkConsumed,
+}) => {
   // ── Aba ativa ──
   const [abaAtiva, setAbaAtiva] = useState<'empresas' | 'leads'>('empresas');
 
@@ -85,6 +103,23 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({ currentUser }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaAtiva, leadsH.pagina, leadsH.busca, leadsH.filtroFunil]);
+
+  // 🆕 v1.1 (Fase 7-MVP) — Consumo do deep link.
+  // Quando recebemos deepLinkLeadId pelo App.tsx (parser de URL), forçamos
+  // a aba 'leads' e abrimos o drawer do lead automaticamente. Em seguida,
+  // disparamos onDeepLinkConsumed para o App.tsx limpar o state — assim
+  // re-renders subsequentes deste componente NÃO reabrem o drawer.
+  //
+  // Atenção: a dependência inclui apenas deepLinkLeadId (não leadsH) para
+  // evitar loop. leadsH.abrirDetalhe é estável via useCallback no hook.
+  useEffect(() => {
+    if (deepLinkLeadId && deepLinkLeadId > 0) {
+      setAbaAtiva('leads');
+      leadsH.abrirDetalhe(deepLinkLeadId);
+      onDeepLinkConsumed?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepLinkLeadId]);
 
   // ════════════════════════════════════════════════════════════
   // HANDLERS — EMPRESA
