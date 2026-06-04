@@ -14,6 +14,16 @@
  *        (1 query por tabela, evita N+1).
  *      • listar_invalidos — email_fila WHERE status IN ('bounce','erro'),
  *        com joins para lead+empresa+campanha.
+ *  - v1.4 (04/06/2026 - Fase 8-fix): correção do bug
+ *    "Could not find the 'email_empresas' column of 'email_leads'"
+ *    nas actions PATCH `atualizar_lead` e `atualizar_empresa`. Causa:
+ *    o frontend trazia o JOIN embed (ex.: `email_empresas`) no objeto
+ *    e enviava de volta no PATCH; o PostgREST tentava `UPDATE` na
+ *    coluna fantasma e falhava. Solução: whitelist explícita das
+ *    colunas editáveis (defesa em profundidade) — qualquer campo fora
+ *    da whitelist é silenciosamente ignorado, protegendo também
+ *    contra futuras adições de JOINs e contra mutação de campos
+ *    calculados (contadores, timestamps de webhook).
  *
  * Endpoints:
  * GET  ?action=listar_empresas[&busca=X&setor=X&page=1&limit=20]
@@ -28,8 +38,8 @@
  * POST action=criar_lead
  * POST action=importar_prospects    (importa de prospect_leads → email_leads/email_empresas)
  * POST action=promover_para_campanha (1 prospect → email_leads; marca status='no_crm')
- * PATCH action=atualizar_empresa
- * PATCH action=atualizar_lead
+ * PATCH action=atualizar_empresa    (🔧 v1.4 — whitelist de campos)
+ * PATCH action=atualizar_lead       (🔧 v1.4 — whitelist de campos)
  * PATCH action=mudar_funil          (muda status funil + registra histórico)
  *
  * Caminho: api/crm-leads.ts
@@ -44,6 +54,73 @@ const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+// ════════════════════════════════════════════════════════════════════════
+// 🆕 v1.4 — WHITELIST DE CAMPOS EDITÁVEIS
+// ════════════════════════════════════════════════════════════════════════
+// O frontend traz objetos com JOIN embed (ex.: email_leads.email_empresas,
+// vindo do `.select('*, email_empresas(...)')`) que NÃO são colunas reais
+// da tabela. Sem essa whitelist, ao salvar a edição o PostgREST devolve:
+//   "Could not find the 'email_empresas' column of 'email_leads'"
+//
+// A whitelist também serve como defesa em profundidade contra mutação
+// indevida de:
+//   - contadores incrementados pelo webhook (total_emails_recebidos, etc.)
+//   - timestamps automáticos (criado_em, opt_out_em, ultimo_email_*)
+//   - flags calculadas (apto_campanha, score_engajamento)
+//   - funil_status (deve ser atualizado pela action `mudar_funil` com
+//     registro de histórico, não diretamente)
+//
+// Para incluir novo campo editável: ADICIONAR aqui + no LeadFormModal
+// (ou EmpresaFormModal) na UI. Para campos somente leitura: deixar fora.
+
+const COLUNAS_EDITAVEIS_LEAD = [
+  'empresa_id',
+  'nome',
+  'email',
+  'cargo',
+  'telefone',
+  'linkedin_url',
+  'opt_out',
+  'tags',
+  'notas',
+  'reservado_por',
+  'origem',
+  'prospect_lead_id',
+] as const;
+
+const COLUNAS_EDITAVEIS_EMPRESA = [
+  'nome',
+  'dominio',
+  'cnpj',
+  'setor',
+  'porte',
+  'cidade',
+  'uf',
+  'website',
+  'linkedin_url',
+  'telefone_comercial',
+  'observacoes',
+  'origem',
+] as const;
+
+/**
+ * Pega do `body` apenas os campos presentes na `whitelist`, ignorando
+ * qualquer outro. Preserva valores `null` (necessário para limpar campos
+ * — ex.: empresa_id = null).
+ */
+function pickEditable<T extends readonly string[]>(
+  body: Record<string, any>,
+  whitelist: T,
+): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const key of whitelist) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      out[key] = body[key];
+    }
+  }
+  return out;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -953,16 +1030,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── ATUALIZAR EMPRESA ────────────────────────
       if (action === 'atualizar_empresa') {
-        const { id, ...campos } = body;
+        const { id } = body;
         if (!id) return res.status(400).json({ success: false, error: 'id é obrigatório' });
 
-        // Remover campos que não devem ser atualizados
-        delete campos.action;
-        delete campos.criado_em;
-        delete campos.criado_por;
+        // 🆕 v1.4 — Whitelist de colunas editáveis (vide cabeçalho).
+        //   Substitui o padrão antigo de `{ id, ...campos }` + deletes,
+        //   que deixava passar JOINs embed e campos calculados.
+        const campos = pickEditable(body, COLUNAS_EDITAVEIS_EMPRESA);
         campos.atualizado_em = new Date().toISOString();
 
-        if (campos.dominio) campos.dominio = campos.dominio.toLowerCase().trim();
+        if (campos.dominio) campos.dominio = String(campos.dominio).toLowerCase().trim();
 
         const { data, error } = await supabase
           .from('email_empresas')
@@ -973,21 +1050,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (error) throw error;
 
-        console.log(`✅ [crm-leads] Empresa atualizada: ID ${id}`);
+        console.log(`✅ [crm-leads] Empresa atualizada: ID ${id} (${Object.keys(campos).length - 1} campos)`);
         return res.status(200).json({ success: true, empresa: data });
       }
 
       // ── ATUALIZAR LEAD ───────────────────────────
       if (action === 'atualizar_lead') {
-        const { id, ...campos } = body;
+        const { id } = body;
         if (!id) return res.status(400).json({ success: false, error: 'id é obrigatório' });
 
-        delete campos.action;
-        delete campos.criado_em;
-        delete campos.criado_por;
+        // 🆕 v1.4 — Whitelist de colunas editáveis (vide cabeçalho).
+        //   Resolve o bug "Could not find the 'email_empresas' column of
+        //   'email_leads'" — o frontend enviava o JOIN embed no PATCH e o
+        //   PostgREST falhava tentando UPDATE numa coluna fantasma.
+        const campos = pickEditable(body, COLUNAS_EDITAVEIS_LEAD);
         campos.atualizado_em = new Date().toISOString();
 
-        if (campos.email) campos.email = campos.email.toLowerCase().trim();
+        if (campos.email) campos.email = String(campos.email).toLowerCase().trim();
 
         const { data, error } = await supabase
           .from('email_leads')
@@ -998,7 +1077,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (error) throw error;
 
-        console.log(`✅ [crm-leads] Lead atualizado: ID ${id}`);
+        console.log(`✅ [crm-leads] Lead atualizado: ID ${id} (${Object.keys(campos).length - 1} campos)`);
         return res.status(200).json({ success: true, lead: data });
       }
 
