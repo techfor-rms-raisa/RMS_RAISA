@@ -4,6 +4,15 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.4 (03/06/2026 — Fase 7-MVP regra de negócio):
+ *      Reply-To FIXO em `techfor.com.br`, ignorando `campanha.dominio_envio`.
+ *      Razão: o Resend Inbound está habilitado APENAS em `techfor.com.br`
+ *      (limitação de DNS do `techforti.com.br`, que tem políticas de
+ *      segurança que impedem reconfiguração dos MX). Mesmo quando a
+ *      campanha sai por `techforti.inf.br`, o `Reply-To` precisa
+ *      apontar para `techfor.com.br` para que as respostas caiam no
+ *      único Inbound configurado e disparem o webhook `email.received`.
+ *      Mudança cirúrgica: 1 constante + 1 comentário (linhas ~481-482).
  *  - v1.3.1 (03/06/2026 — Fase 7-MVP hotfix): trocado `reply_to` por `replyTo`
  *      no payload do `resend.emails.send`. O SDK do Resend (versão Node atual)
  *      espera o parâmetro em camelCase; em snake_case, o campo era silenciosamente
@@ -475,11 +484,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // api/crm-webhook.ts parseia o plus-alias para correlacionar a resposta
       // com a fila (fila_id) e o lead (lead_id) originais.
       //
-      // Domínio: usa o `dominio_envio` da campanha (mesmo domínio do remetente,
-      // que está configurado com MX inbound do Resend). Fallback `techfor.com.br`
-      // se a coluna estiver vazia, garantindo que o envio não quebra.
-      const dominioReplyTo = campanha.dominio_envio || 'techfor.com.br';
-      const replyTo = `respostas+f${item.id}+l${item.lead_id}@${dominioReplyTo}`;
+      // 🔒 v1.4 — Domínio FIXO em `techfor.com.br`, ignorando `campanha.dominio_envio`.
+      // O Resend Inbound só está habilitado neste domínio (limitação de DNS
+      // do `techforti.com.br`, mantido em outro provedor por política corporativa).
+      // Centraliza toda a captura de respostas — campanhas que saem por
+      // `techforti.inf.br` continuam tendo as respostas roteadas para cá.
+      const DOMINIO_REPLY_TO = 'techfor.com.br';
+      const replyTo = `respostas+f${item.id}+l${item.lead_id}@${DOMINIO_REPLY_TO}`;
 
       // 🆕 v1.2 — Throttle ENTRE envios (não antes do primeiro). Mantém o ritmo
       // abaixo do rate limit do Resend (5 req/s). Aplicado a partir do segundo

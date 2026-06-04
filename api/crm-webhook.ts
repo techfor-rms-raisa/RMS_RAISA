@@ -3,6 +3,27 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.2 — 03/06/2026 — Forward completo da resposta ao gestor (Fase 7-MVP final).
+ *   - Renomeada `dispararAlertaResposta()` → `encaminharRespostaAoGestor()`.
+ *   - Antes: chamava `/api/send-email` (type='general'), que embrulha em
+ *     `<p>${summary}</p>` e quebra HTML rico. O gestor recebia apenas uma
+ *     notificação curta com preview de 500 chars.
+ *   - Agora: usa o SDK do Resend diretamente para enviar um e-mail rico
+ *     ao gestor responsável pela campanha, contendo o CONTEÚDO COMPLETO
+ *     da resposta do lead (HTML preservado + texto fallback). O gestor
+ *     pode clicar em "Responder" e responder DIRETO para o lead — o
+ *     header `Reply-To` no encaminhamento é o e-mail do próprio lead,
+ *     então o envio sai do servidor de e-mail corporativo do gestor
+ *     (@techforti.com.br) sem precisar passar pelo Resend Inbound.
+ *   - Razão arquitetural: o domínio `techforti.com.br` não pode ter os
+ *     MX trocados para o Resend Inbound (política de segurança da TI).
+ *     A solução é encaminhar via webhook em vez de redirecionar no
+ *     servidor SMTP — mantém Resend Inbound + entrega completa ao gestor.
+ *   - Novo parâmetro `corpoHtml` na chamada (era só `corpoTexto`).
+ *   - Adicionado import { Resend } from 'resend'.
+ *   - From do forward: `${leadNome} via RMS-RAISA <notificacoes@techfortirms.online>`.
+ *   - Subject do forward: `[Lead respondeu] ${assunto original do lead}`.
+ *
  * v1.1.1 — 03/06/2026 — Link no e-mail de alerta agora aponta para deep link
  *   da ficha do lead em Production:
  *     https://techfortirms.online/?view=crm_base_leads&lead_id={lead_id}
@@ -58,6 +79,7 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import { Resend } from 'resend';
 import crypto from 'crypto';
 
 // ────────────────────────────────────────────────────────────────────────
@@ -232,33 +254,83 @@ function parsearFrom(fromField: any): { email: string; nome: string | null } {
 }
 
 // ────────────────────────────────────────────────────────────────────────
-// HELPER (🆕 Fase 7-MVP): disparar alerta de resposta para o responsável
+// HELPER (🆕 Fase 7-MVP): escapar HTML em interpolação de texto
 // ────────────────────────────────────────────────────────────────────────
 /**
- * Chama internamente o endpoint /api/send-email para notificar o responsável
- * da campanha que recebeu uma nova resposta. Usa type='general'.
- *
- * Não falha o webhook se o alerta falhar — apenas loga. A resposta já
- * está gravada em email_respostas; o gestor pode ver pela UI mesmo sem o alerta.
+ * Escapa caracteres especiais de HTML para evitar XSS quando interpolamos
+ * dados externos (nome do lead, e-mail, assunto) em templates.
+ * Usado no cabeçalho de contexto do encaminhamento — o corpo do e-mail
+ * em si (corpoHtml do lead) é encaminhado intacto, pois é HTML legítimo
+ * recebido via Resend Inbound (já passou pelo filtro deles).
  */
-async function dispararAlertaResposta(opts: {
+function escapeHtml(str: string | null | undefined): string {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// HELPER (🆕 Fase 7-MVP v1.2): encaminhar a resposta completa ao gestor
+// ────────────────────────────────────────────────────────────────────────
+/**
+ * Encaminha o conteúdo COMPLETO da resposta do lead ao gestor responsável
+ * pela campanha, usando o SDK do Resend diretamente.
+ *
+ * Diferença vs. v1.1.1 (chamava /api/send-email):
+ *   • Antes: notificação curta com preview de 500 chars (send-email com
+ *     type='general' embrulha tudo em <p>${summary}</p> e quebra HTML rico).
+ *   • Agora: e-mail rico com cabeçalho de contexto + HTML completo do lead
+ *     preservado + Reply-To = e-mail do lead (gestor responde direto).
+ *
+ * Estrutura do e-mail enviado ao gestor:
+ *   ┌──────────────────────────────────────────────────────────┐
+ *   │ Cabeçalho de contexto (campanha, link CRM, lead, assunto)│
+ *   ├──────────────────────────────────────────────────────────┤
+ *   │ HTML/texto ORIGINAL da resposta do lead                  │
+ *   ├──────────────────────────────────────────────────────────┤
+ *   │ Rodapé técnico (LGPD, opt-out, instrução de resposta)    │
+ *   └──────────────────────────────────────────────────────────┘
+ *
+ * Headers do envio:
+ *   • From    : `${leadNome} via RMS-RAISA <notificacoes@techfortirms.online>`
+ *   • To      : e-mail pessoal do gestor (app_users.email_usuario)
+ *   • Reply-To: e-mail do PRÓPRIO LEAD — assim, quando o gestor clica em
+ *               "Responder" no seu cliente de e-mail (Gmail/Outlook), o
+ *               envio vai DIRETO para o lead, saindo do servidor SMTP
+ *               corporativo do gestor (@techforti.com.br) sem passar pelo
+ *               Resend Inbound (não cria loop).
+ *
+ * Respeita as flags do gestor:
+ *   • `app_users.ativo_usuario = false` → não encaminha
+ *   • `app_users.receber_alertas_email = false` → não encaminha
+ *
+ * Não falha o webhook se o encaminhamento falhar — apenas loga. A resposta
+ * já está gravada em `email_respostas`; o gestor pode ver pela ficha do
+ * lead no CRM mesmo sem o encaminhamento.
+ */
+async function encaminharRespostaAoGestor(opts: {
   supabase: any;
-  origem: string; // base URL do próprio Vercel (req.headers.host)
+  resend: Resend;
   responsavelId: number | null | undefined;
-  leadId: number;                          // 🆕 v1.1.1 — usado no deep link
+  leadId: number;
   leadEmail: string;
   leadNome: string | null;
   campanhaNome: string;
   assunto: string | null;
   corpoTexto: string | null;
+  corpoHtml: string | null;          // 🆕 v1.2 — HTML completo do lead
 }): Promise<void> {
   if (!opts.responsavelId) {
-    console.log('[crm-webhook] ⚠️ Campanha sem responsavel_id — alerta não enviado');
+    console.log('[crm-webhook] ⚠️ Campanha sem responsavel_id — encaminhamento não enviado');
     return;
   }
 
   try {
-    // Buscar e-mail do responsável
+    // 1) Buscar dados do gestor responsável
     const { data: usr, error: errUsr } = await opts.supabase
       .from('app_users')
       .select('id, nome_usuario, email_usuario, receber_alertas_email, ativo_usuario')
@@ -270,7 +342,7 @@ async function dispararAlertaResposta(opts: {
       return;
     }
     if (usr.ativo_usuario === false) {
-      console.log(`[crm-webhook] ⚠️ Responsável ${usr.email_usuario} está inativo — alerta não enviado`);
+      console.log(`[crm-webhook] ⚠️ Responsável ${usr.email_usuario} está inativo — encaminhamento não enviado`);
       return;
     }
     if (usr.receber_alertas_email === false) {
@@ -278,70 +350,107 @@ async function dispararAlertaResposta(opts: {
       return;
     }
 
-    const previewCorpo = (opts.corpoTexto || '').substring(0, 500);
+    // 2) Preparar campos do e-mail
+    const FROM_DOMAIN = process.env.RESEND_FROM_EMAIL || 'notificacoes@techfortirms.online';
+    // Extrai só o e-mail caso a env venha como "Nome <email>"
+    const fromEmailMatch = String(FROM_DOMAIN).match(/<([^>]+)>/);
+    const fromEmailLimpo = fromEmailMatch ? fromEmailMatch[1] : String(FROM_DOMAIN);
+    const fromNomeAmigavel = opts.leadNome
+      ? `${opts.leadNome} via RMS-RAISA`
+      : 'RMS-RAISA Sequenciador';
+    const fromFormatado = `${fromNomeAmigavel} <${fromEmailLimpo}>`;
 
-    // 🆕 v1.1.1 — Link deep para a ficha do lead no RMS-RAISA (Production).
-    // Em Preview (sem custom domain), o e-mail mostraria a URL Vercel; em
-    // Production essa é a URL definitiva. Hoje (sem mudança no App.tsx),
-    // o gestor cai na home e navega manualmente; quando o App.tsx parsear
-    // a query string, o link abre direto na ficha do lead (drawer auto-aberto).
+    const assuntoLead = opts.assunto || '(sem assunto)';
+    // Mantém o "Re:" se já vier do lead, senão prefixa "[Lead respondeu]"
+    const subjectForward = /^re\s*:/i.test(assuntoLead)
+      ? `[Lead respondeu] ${assuntoLead}`
+      : `[Lead respondeu] ${assuntoLead}`;
+
+    // Deep link para a ficha do lead no CRM (Production)
     const linkDeepFichaLead = `https://techfortirms.online/?view=crm_base_leads&lead_id=${opts.leadId}`;
 
-    const subjectAlerta = `RMS-RAISA: ${opts.leadNome || opts.leadEmail} respondeu à campanha "${opts.campanhaNome}"`;
-    const htmlAlerta = `
-      <div style="font-family:Arial,sans-serif;font-size:14px;color:#333;line-height:1.5">
-        <p>Olá ${usr.nome_usuario || ''},</p>
-        <p>Um lead respondeu a uma campanha sob sua responsabilidade.</p>
-        <table style="border-collapse:collapse;margin:16px 0;font-size:13px">
-          <tr><td style="padding:4px 10px 4px 0;color:#666">Lead:</td><td style="padding:4px 0"><strong>${opts.leadNome || '(sem nome)'}</strong> &lt;${opts.leadEmail}&gt;</td></tr>
-          <tr><td style="padding:4px 10px 4px 0;color:#666">Campanha:</td><td style="padding:4px 0">${opts.campanhaNome}</td></tr>
-          <tr><td style="padding:4px 10px 4px 0;color:#666">Assunto da resposta:</td><td style="padding:4px 0">${opts.assunto || '(sem assunto)'}</td></tr>
-        </table>
-        <p style="color:#666;font-size:13px;margin-top:18px">Prévia da resposta:</p>
-        <blockquote style="margin:6px 0;padding:10px 14px;border-left:3px solid #A33022;background:#f7f7f7;color:#444;font-size:13px;white-space:pre-wrap">${previewCorpo || '(sem corpo de texto)'}</blockquote>
-        <p style="margin-top:18px;font-size:13px">Acesse: <a href="${linkDeepFichaLead}" style="color:#A33022;text-decoration:underline;font-weight:bold">${linkDeepFichaLead}</a> para ver a resposta completa na ficha do lead e decidir os próximos passos (continuar a sequência ou pausar).</p>
-        <p style="font-size:12px;color:#999;margin-top:24px">— RMS-RAISA Sequenciador</p>
-      </div>
-    `.trim();
-    const textAlerta = `Olá ${usr.nome_usuario || ''},
-Um lead respondeu a uma campanha sob sua responsabilidade.
+    // Sanitiza dados externos no cabeçalho (anti-XSS)
+    const safeLeadNome = escapeHtml(opts.leadNome) || '(sem nome)';
+    const safeLeadEmail = escapeHtml(opts.leadEmail);
+    const safeCampanhaNome = escapeHtml(opts.campanhaNome);
+    const safeAssunto = escapeHtml(assuntoLead);
+    const safeGestorNome = escapeHtml(usr.nome_usuario);
 
-Lead: ${opts.leadNome || '(sem nome)'} <${opts.leadEmail}>
-Campanha: ${opts.campanhaNome}
-Assunto: ${opts.assunto || '(sem assunto)'}
+    // 3) Corpo do e-mail — HTML rico
+    //    Cabeçalho de contexto + HTML original do lead + rodapé técnico.
+    //    O corpoHtml vem do payload do Resend Inbound (já processado por eles);
+    //    é seguro encaminhar intacto. Fallback para corpoTexto envolvido em
+    //    <pre> quando o lead respondeu em texto puro.
+    const corpoOriginalRender = opts.corpoHtml
+      ? opts.corpoHtml
+      : `<pre style="font-family:Arial,sans-serif;font-size:14px;color:#333;line-height:1.5;white-space:pre-wrap;margin:0">${escapeHtml(opts.corpoTexto || '(sem corpo)')}</pre>`;
 
-Prévia: ${previewCorpo || '(sem corpo)'}
+    const htmlForward = `
+<div style="font-family:Arial,sans-serif;font-size:14px;color:#333;line-height:1.5;max-width:680px">
+  <!-- Cabeçalho de contexto RMS-RAISA -->
+  <div style="background:#f7f7f7;padding:14px 18px;border-left:4px solid #A33022;margin-bottom:24px;font-size:13px;border-radius:0 4px 4px 0">
+    <p style="margin:0 0 8px 0;color:#666;font-size:12px;text-transform:uppercase;letter-spacing:0.5px"><strong style="color:#A33022">Resposta recebida</strong> — RMS-RAISA Sequenciador</p>
+    <p style="margin:0 0 4px 0"><strong>De:</strong> ${safeLeadNome} &lt;${safeLeadEmail}&gt;</p>
+    <p style="margin:0 0 4px 0"><strong>Campanha:</strong> ${safeCampanhaNome}</p>
+    <p style="margin:0 0 10px 0"><strong>Assunto original:</strong> ${safeAssunto}</p>
+    <p style="margin:0"><a href="${linkDeepFichaLead}" style="display:inline-block;padding:6px 14px;background:#A33022;color:#fff;text-decoration:none;border-radius:4px;font-weight:bold;font-size:12px">Abrir ficha do lead no CRM</a></p>
+  </div>
 
-Acesse: ${linkDeepFichaLead} para ver a resposta completa e decidir os próximos passos.`;
+  <!-- E-mail original do lead (preservado) -->
+  <div style="border:1px solid #e5e7eb;border-radius:4px;padding:18px;background:#fff">
+    ${corpoOriginalRender}
+  </div>
 
-    // Chama o /api/send-email do próprio deploy
-    const baseUrl = opts.origem.startsWith('http')
-      ? opts.origem
-      : `https://${opts.origem}`;
+  <!-- Rodapé técnico -->
+  <hr style="margin:24px 0 14px 0;border:none;border-top:1px solid #e5e7eb">
+  <p style="font-size:11px;color:#999;line-height:1.6;margin:0">
+    Olá ${safeGestorNome}, você está recebendo este encaminhamento porque é o responsável pela campanha acima.<br>
+    Para responder ao lead, clique em <strong>"Responder"</strong> no seu cliente de e-mail — sua resposta irá direto para <strong>${safeLeadEmail}</strong> a partir da sua caixa institucional.<br>
+    Próximos passos (continuar sequência ou pausar campanha) devem ser feitos pela ficha do lead no CRM.
+  </p>
+</div>`.trim();
 
-    const respAlerta = await fetch(`${baseUrl}/api/send-email`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        to: usr.email_usuario,
-        toName: usr.nome_usuario,
-        subject: subjectAlerta,
-        type: 'general',
-        summary: textAlerta,
-        // Override para HTML rico (send-email com type='general' usa <p>${summary}</p>;
-        // queremos um layout melhor, então passamos HTML completo via summary mesmo
-        // — o send-email envolve em <p> mas o navegador trata HTML interno).
-      }),
+    const textForward = `RESPOSTA RECEBIDA — RMS-RAISA Sequenciador
+═══════════════════════════════════════════════════════
+
+De:                ${opts.leadNome || '(sem nome)'} <${opts.leadEmail}>
+Campanha:          ${opts.campanhaNome}
+Assunto original:  ${assuntoLead}
+
+Abrir ficha no CRM: ${linkDeepFichaLead}
+
+───────────────────────────────────────────────────────
+RESPOSTA DO LEAD:
+───────────────────────────────────────────────────────
+
+${opts.corpoTexto || '(sem corpo de texto)'}
+
+───────────────────────────────────────────────────────
+Olá ${usr.nome_usuario || ''}, você está recebendo este encaminhamento
+porque é o responsável pela campanha. Para responder ao lead, basta
+usar "Responder" no seu cliente de e-mail — sua mensagem irá direto
+para ${opts.leadEmail} a partir da sua caixa institucional.`;
+
+    // 4) Disparo via Resend (SDK direto)
+    const { data, error } = await opts.resend.emails.send({
+      from: fromFormatado,
+      to: [usr.email_usuario],
+      replyTo: opts.leadEmail,  // 🔑 Gestor clica "Responder" → vai DIRETO ao lead
+      subject: subjectForward,
+      html: htmlForward,
+      text: textForward,
+      headers: {
+        'X-Entity-Ref-ID': `rms-forward-lead-${opts.leadId}`,
+      },
     });
 
-    if (!respAlerta.ok) {
-      const txt = await respAlerta.text().catch(() => '');
-      console.warn(`[crm-webhook] ⚠️ Alerta falhou (status ${respAlerta.status}): ${txt.substring(0, 200)}`);
+    if (error) {
+      console.warn('[crm-webhook] ⚠️ Forward falhou:', JSON.stringify(error).substring(0, 300));
     } else {
-      console.log(`[crm-webhook] 📨 Alerta de resposta enviado para ${usr.email_usuario}`);
+      console.log(`[crm-webhook] 📨 Resposta encaminhada para ${usr.email_usuario} (resend_id=${data?.id})`);
     }
   } catch (e: any) {
-    console.warn('[crm-webhook] ⚠️ Erro ao disparar alerta de resposta:', e?.message);
+    console.warn('[crm-webhook] ⚠️ Erro ao encaminhar resposta ao gestor:', e?.message);
   }
 }
 
@@ -789,20 +898,30 @@ async function processarEmailRecebido(opts: {
     }
   }
 
-  // 10. Disparar alerta para o responsável (não-bloqueante)
+  // 10. Encaminhar a resposta COMPLETA do lead ao gestor (não-bloqueante).
+  //     🆕 v1.2 — substituiu o antigo "alerta curto" via /api/send-email.
+  //     Agora vai HTML completo + Reply-To = lead, então o gestor responde
+  //     direto do cliente de e-mail dele (Gmail/Outlook). Requer RESEND_API_KEY
+  //     no ambiente; se ausente, loga e segue (não quebra o webhook).
   if (campanha?.responsavel_id) {
-    const host = hdr(req, 'host') || hdr(req, 'x-forwarded-host') || '';
-    await dispararAlertaResposta({
-      supabase,
-      origem: host,
-      responsavelId: campanha.responsavel_id,
-      leadId: fila.lead_id, // 🆕 v1.1.1 — para deep link
-      leadEmail: lead?.email || deEmail,
-      leadNome: lead?.nome || deNome,
-      campanhaNome: campanha.nome || `Campanha #${campanha.id}`,
-      assunto,
-      corpoTexto,
-    });
+    const resendApiKey = process.env.RESEND_API_KEY;
+    if (!resendApiKey) {
+      console.warn('[crm-webhook] ⚠️ RESEND_API_KEY ausente — encaminhamento ao gestor pulado');
+    } else {
+      const resendClient = new Resend(resendApiKey);
+      await encaminharRespostaAoGestor({
+        supabase,
+        resend: resendClient,
+        responsavelId: campanha.responsavel_id,
+        leadId: fila.lead_id,
+        leadEmail: lead?.email || deEmail,
+        leadNome: lead?.nome || deNome,
+        campanhaNome: campanha.nome || `Campanha #${campanha.id}`,
+        assunto,
+        corpoTexto,
+        corpoHtml, // 🆕 v1.2 — HTML completo preservado
+      });
+    }
   }
 
   return res.status(200).json({
