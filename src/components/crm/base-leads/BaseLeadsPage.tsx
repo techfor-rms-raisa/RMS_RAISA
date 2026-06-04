@@ -2,7 +2,30 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.1 (Fase 7-MVP — 03/06/2026)
+ * Versão: 1.3 (Fase 8-fix2 — 04/06/2026)
+ *
+ * v1.3 (04/06/2026 — Fase 8-fix2): badges das 4 abas (Empresas / Leads /
+ *   Respostas / Inválidos) agora usam `stats.total_*` como fonte primária
+ *   e caem em `*H.total` apenas como fallback. Antes os badges ficavam
+ *   zerados até o usuário clicar em cada aba (porque os hooks só carregam
+ *   sob demanda). Com a v1.5 do `crm-leads.ts` devolvendo `total_respostas`
+ *   e `total_invalidos` no payload de `stats` (já chamado no mount), o
+ *   número correto aparece desde o primeiro render — sem custo extra de
+ *   requisições.
+ *
+ * v1.2 (04/06/2026 — Fase 8-Inbox): novas abas "Respostas" e "Inválidos".
+ *   Mudanças aditivas:
+ *    - `abaAtiva` agora aceita 'respostas' e 'invalidos'.
+ *    - Imports dos novos hooks (useRespostas, useInvalidos) e componentes
+ *      (RespostasTab, InvalidosTab).
+ *    - useEffects para carregar cada tab sob demanda (mesmo padrão das
+ *      abas existentes).
+ *    - Handler `abrirEditarLeadPorId(leadId)`: usado pela aba Inválidos
+ *      para corrigir cadastro do lead. Faz fetch em /api/crm-leads
+ *      ?action=detalhe_lead, popula o formLead e abre o LeadFormModal
+ *      em modo 'editar'.
+ *    - Após edição bem-sucedida, todas as 4 listagens são recarregadas
+ *      (empresas, leads, respostas, invalidos) para refletir mudanças.
  *
  * v1.1 (03/06/2026 — Fase 7-MVP): suporte a deep link.
  *   Recebe prop opcional `deepLinkLeadId`. Quando presente, força a aba
@@ -23,9 +46,15 @@ import React, { useEffect, useState } from 'react';
 import { useEmpresas } from '../shared/hooks/useEmpresas';
 import { useLeads } from '../shared/hooks/useLeads';
 import { useImportProspects } from '../shared/hooks/useImportProspects';
+// 🆕 v1.2 (Fase 8-Inbox) — hooks das novas abas
+import { useRespostas } from '../shared/hooks/useRespostas';
+import { useInvalidos } from '../shared/hooks/useInvalidos';
 
 import EmpresasTab from './EmpresasTab';
 import LeadsTab from './LeadsTab';
+// 🆕 v1.2 (Fase 8-Inbox) — componentes das novas abas
+import RespostasTab from './RespostasTab';
+import InvalidosTab from './InvalidosTab';
 import EmpresaFormModal from './EmpresaFormModal';
 import LeadFormModal from './LeadFormModal';
 import EmpresaDetailDrawer from './EmpresaDetailDrawer';
@@ -63,12 +92,18 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   onDeepLinkConsumed,
 }) => {
   // ── Aba ativa ──
-  const [abaAtiva, setAbaAtiva] = useState<'empresas' | 'leads'>('empresas');
+  // 🆕 v1.2 (Fase 8-Inbox) — agora aceita 'respostas' e 'invalidos'.
+  const [abaAtiva, setAbaAtiva] = useState<'empresas' | 'leads' | 'respostas' | 'invalidos'>(
+    'empresas'
+  );
 
   // ── Hooks ──
   const empresasH = useEmpresas();
   const leadsH = useLeads();
   const importH = useImportProspects();
+  // 🆕 v1.2 (Fase 8-Inbox)
+  const respostasH = useRespostas();
+  const invalidosH = useInvalidos();
 
   // ── Modais de formulário ──
   const [modalEmpresa, setModalEmpresa] = useState<'criar' | 'editar' | null>(null);
@@ -103,6 +138,21 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaAtiva, leadsH.pagina, leadsH.busca, leadsH.filtroFunil]);
+
+  // 🆕 v1.2 (Fase 8-Inbox) — carregamento das novas abas sob demanda
+  useEffect(() => {
+    if (abaAtiva === 'respostas') {
+      respostasH.carregar();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abaAtiva, respostasH.pagina, respostasH.busca]);
+
+  useEffect(() => {
+    if (abaAtiva === 'invalidos') {
+      invalidosH.carregar();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abaAtiva, invalidosH.pagina, invalidosH.busca]);
 
   // 🆕 v1.1 (Fase 7-MVP) — Consumo do deep link.
   // Quando recebemos deepLinkLeadId pelo App.tsx (parser de URL), forçamos
@@ -163,6 +213,26 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     setModalLead('editar');
   };
 
+  // 🆕 v1.2 (Fase 8-Inbox) — chamado pela aba Inválidos.
+  //   A aba só tem o lead_id (a listagem não traz o objeto Lead completo).
+  //   Aqui buscamos o lead pelo endpoint detalhe_lead, populamos o formLead
+  //   e abrimos o modal em modo editar — fluxo idêntico ao `abrirEditarLead`
+  //   tradicional, só com o passo extra de carregar os dados.
+  const abrirEditarLeadPorId = async (leadId: number) => {
+    try {
+      const resp = await fetch(`/api/crm-leads?action=detalhe_lead&id=${leadId}`);
+      const data = await resp.json();
+      if (data?.success && data.lead) {
+        setFormLead(data.lead);
+        setModalLead('editar');
+      } else {
+        alert(data?.error || 'Lead não encontrado.');
+      }
+    } catch (err: any) {
+      alert('Erro ao carregar lead: ' + (err?.message || 'desconhecido'));
+    }
+  };
+
   const salvarLead = async () => {
     const ok = await leadsH.salvar(formLead as any, currentUser.nome_usuario);
     if (ok) {
@@ -170,6 +240,13 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       setFormLead({});
       leadsH.carregar();
       leadsH.carregarStats();
+      // 🆕 v1.2 — recarrega as listagens das outras abas para refletir
+      // qualquer mudança no e-mail (relevante para resolver itens da aba
+      // Inválidos: ao corrigir o e-mail, o item correspondente em
+      // email_fila ainda fica com status='bounce'/'erro', mas o usuário
+      // pode reenfileirar via campanha — fluxo manual atual).
+      if (abaAtiva === 'respostas') respostasH.carregar();
+      if (abaAtiva === 'invalidos') invalidosH.carregar();
     }
   };
 
@@ -296,29 +373,54 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
 
       {/* ── Abas ── */}
       <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-        <div className="flex border-b">
+        <div className="flex border-b overflow-x-auto">
           {[
             {
               key: 'empresas' as const,
               label: 'Empresas',
               icon: 'fa-solid fa-building',
-              count: empresasH.total,
+              // 🆕 v1.3 — `stats` (carregado no mount) tem o total agregado;
+              //   `empresasH.total` só fica preenchido após a primeira
+              //   carga da aba. O `??` garante que o badge não pisque "0"
+              //   antes de o usuário clicar.
+              count: stats?.total_empresas ?? empresasH.total,
             },
             {
               key: 'leads' as const,
               label: 'Leads',
               icon: 'fa-solid fa-users',
-              count: leadsH.total,
+              // 🆕 v1.3 — somatório de leads + prospects + clientes
+              //   (o `total_leads` do stats filtra só funil_status='lead',
+              //   por isso somamos os 3 funis para corresponder à listagem).
+              count: stats
+                ? stats.total_leads + stats.total_prospects + stats.total_clientes
+                : leadsH.total,
+            },
+            // 🆕 v1.2 (Fase 8-Inbox)
+            {
+              key: 'respostas' as const,
+              label: 'Respostas',
+              icon: 'fa-solid fa-reply',
+              count: stats?.total_respostas ?? respostasH.total, // 🆕 v1.3
+            },
+            {
+              key: 'invalidos' as const,
+              label: 'Inválidos',
+              icon: 'fa-solid fa-circle-exclamation',
+              count: stats?.total_invalidos ?? invalidosH.total, // 🆕 v1.3
             },
           ].map((tab) => (
             <button
               key={tab.key}
               onClick={() => {
                 setAbaAtiva(tab.key);
+                // Reseta paginação ao trocar de aba
                 if (tab.key === 'empresas') empresasH.setPagina(1);
-                else leadsH.setPagina(1);
+                else if (tab.key === 'leads') leadsH.setPagina(1);
+                else if (tab.key === 'respostas') respostasH.setPagina(1);
+                else if (tab.key === 'invalidos') invalidosH.setPagina(1);
               }}
-              className={`flex-1 md:flex-none px-6 py-3 text-sm font-medium flex items-center justify-center gap-2 border-b-2 transition-colors ${
+              className={`flex-1 md:flex-none px-6 py-3 text-sm font-medium flex items-center justify-center gap-2 border-b-2 transition-colors whitespace-nowrap ${
                 abaAtiva === tab.key
                   ? 'border-indigo-600 text-indigo-600 bg-indigo-50/50'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
@@ -380,6 +482,44 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             onAbrirDetalhe={abrirDetalheLead}
             onEditar={abrirEditarLead}
             onNovoLead={abrirCriarLead}
+          />
+        )}
+
+        {/* 🆕 v1.2 (Fase 8-Inbox) — Aba Respostas */}
+        {abaAtiva === 'respostas' && (
+          <RespostasTab
+            itens={respostasH.itens}
+            total={respostasH.total}
+            pagina={respostasH.pagina}
+            pageSize={respostasH.pageSize}
+            busca={respostasH.busca}
+            loading={respostasH.loading}
+            onBuscaChange={respostasH.setBusca}
+            onBuscar={() => {
+              respostasH.setPagina(1);
+              respostasH.carregar();
+            }}
+            onPaginaChange={respostasH.setPagina}
+            onAbrirLead={abrirDetalheLead}
+          />
+        )}
+
+        {/* 🆕 v1.2 (Fase 8-Inbox) — Aba Inválidos */}
+        {abaAtiva === 'invalidos' && (
+          <InvalidosTab
+            itens={invalidosH.itens}
+            total={invalidosH.total}
+            pagina={invalidosH.pagina}
+            pageSize={invalidosH.pageSize}
+            busca={invalidosH.busca}
+            loading={invalidosH.loading}
+            onBuscaChange={invalidosH.setBusca}
+            onBuscar={() => {
+              invalidosH.setPagina(1);
+              invalidosH.carregar();
+            }}
+            onPaginaChange={invalidosH.setPagina}
+            onEditarLead={abrirEditarLeadPorId}
           />
         )}
       </div>

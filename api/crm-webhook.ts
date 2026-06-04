@@ -3,6 +3,90 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.7 — 04/06/2026 — Fix do endpoint REST para inbound emails.
+ *   Diagnóstico (após nova API key Full Access ativa em preview):
+ *     • Log mostrou `GET /emails/{id}` retornando 404 "Email not found"
+ *       mesmo com chave Full Access — confirmando que esse endpoint é
+ *       apenas para emails OUTBOUND (mensagens enviadas via POST /emails).
+ *     • Inspeção do `/api/webhook/email-inbound` (módulo RAISA legacy,
+ *       que resolveu o mesmo problema há 5 meses) revelou que o endpoint
+ *       correto para inbound emails é `GET /emails/receiving/{id}`.
+ *   Correção:
+ *     1) Em `buscarEmailCompletoResend`: trocada a URL
+ *        `https://api.resend.com/emails/${id}`  (outbound)
+ *        → `https://api.resend.com/emails/receiving/${id}`  (inbound).
+ *     2) Header `Content-Type: application/json` adicionado por simetria
+ *        com o padrão do legacy (não é estritamente necessário em GET,
+ *        mas mantém consistência se o Resend exigir no futuro).
+ *
+ * v1.6 — 04/06/2026 — Fix definitivo do bug "(sem corpo)".
+ *   Diagnóstico (apoiado pela v1.5):
+ *     • Query SQL: `SELECT pg_typeof(dados->'data'->'text'), LENGTH(...)`
+ *       sobre `email_eventos` mostrou tam_text/tam_html = NULL.
+ *     • O webhook do Resend para `email.received` NÃO inclui `text`/`html`
+ *       no payload (por design). Esses campos só existem no recurso completo
+ *       e devem ser obtidos via `GET https://api.resend.com/emails/{id}`.
+ *     • Comportamento idêntico ao do webhook legacy
+ *       `/api/webhook/email-inbound` (módulo RAISA candidaturas), que já
+ *       resolveu o mesmo problema há ~5 meses pelo mesmo caminho.
+ *   Correção:
+ *     1) Novo helper `buscarEmailCompletoResend(emailId, apiKey)` —
+ *        chama `GET /emails/:id` e devolve `{ text, html, subject }`.
+ *     2) Em `processarEmailRecebido`: se `dataEvento.text` E `dataEvento.html`
+ *        vierem vazios, faz o fallback fetch e enriquece os corpos antes
+ *        de gravar em `email_respostas` e antes do forward ao gestor.
+ *     3) `corpoTexto`/`corpoHtml`/`assunto` agora são `let` (mutáveis para
+ *        absorver o enriquecimento).
+ *     4) Falha no fetch só loga warning e segue com o que tinha — não
+ *        bloqueia gravação (o histórico mostra "Resposta recebida" mesmo
+ *        sem o corpo; é graceful degradation).
+ *
+ * v1.5 — 04/06/2026 — Instrumentação do email.received (debug do bug "(sem corpo)").
+ *   Sintoma: forward ao gestor chega com "(sem corpo)" e o drawer da ficha
+ *   mostra "—" na seção Respostas, mesmo quando a UI do Resend Activity
+ *   mostra que o e-mail recebido tem `text` e `html` preenchidos.
+ *   Achado adicional: a query `SELECT * FROM email_eventos WHERE tipo_evento='received'`
+ *   retornou vazio — porque o caminho feliz do `processarEmailRecebido()`
+ *   NUNCA gravava em email_eventos (só os órfãos eram gravados). Sem o
+ *   payload bruto preservado, não há como auditar quais chaves o Resend
+ *   está mandando no webhook (que pode ser diferente do objeto retornado
+ *   pela UI Activity).
+ *   Correção (não-invasiva, só observabilidade):
+ *     1) `console.log` verboso no início de `processarEmailRecebido` com
+ *        tem_text/tam_text/tem_html/tam_html + lista das primeiras chaves
+ *        do payload.data — permite diagnóstico via logs do Vercel.
+ *     2) INSERT em email_eventos AGORA é feito SEMPRE para email.received
+ *        (caminho feliz e órfão), igual aos outros tipos de evento. Isso
+ *        preserva o payload bruto em `dados` para auditoria SQL posterior.
+ *     3) Resend_message_id no INSERT lê de dataEvento.id || dataEvento.email_id
+ *        (cobre as 2 variações possíveis do payload).
+ *   Não altera o parsing do corpo (corpoTexto/corpoHtml) — esse fix
+ *   definitivo virá na v1.6, baseado no payload real capturado.
+ *
+ * v1.4 — 04/06/2026 — Hotfix: contadores agregados em email_leads.
+ *   Sintoma: cards do header da ficha do lead ficavam zerados
+ *   (total_emails_recebidos, total_emails_abertos, total_emails_clicados,
+ *   total_respostas) mesmo quando o lead tinha eventos gravados em
+ *   email_eventos / email_respostas.
+ *   Causa-raiz: nenhum handler do webhook fazia UPDATE em email_leads.
+ *   Os contadores eram só calculados em email_campanhas (via RPC
+ *   recalcular_contadores_campanha), nunca espelhados no lead.
+ *   Correção:
+ *     1) Nova RPC SQL `incrementar_contador_lead(p_lead_id, p_campo, p_delta)`
+ *        — UPDATE atômico com whitelist de campos para evitar SQL injection
+ *        e race conditions em concorrência.
+ *     2) Ramo outbound (delivered/opened/clicked): após o UPDATE em
+ *        email_fila, chama a RPC se for a PRIMEIRA ocorrência do tipo
+ *        para aquela fila (gate: entregue_em/aberto_em/clicado_em IS NULL).
+ *        Esse gate evita inflar o contador quando o Resend reenvia o
+ *        mesmo evento (idempotência).
+ *     3) Ramo received: cada resposta nova incrementa total_respostas
+ *        (lead pode responder N vezes — cada resposta conta).
+ *     4) SELECT da fila no ramo outbound passou a trazer também
+ *        entregue_em, aberto_em, clicado_em para suportar o gate.
+ *   Falha na RPC só loga warning; não quebra o webhook. A reconciliação
+ *   histórica é feita separadamente por SQL script.
+ *
  * v1.3 — 04/06/2026 — Plano B: SDK Resend ELIMINADO desta função.
  *   Após validar em 4 versões de `disparar-fila.ts` (v1.3 → v1.3.1 → v1.4 → v1.5)
  *   que o SDK do Resend Node descarta `replyTo`/`reply_to` e até o header
@@ -597,9 +681,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Buscar item da fila pelo message_id
+    //   v1.4: adicionados entregue_em/aberto_em/clicado_em para suportar o
+    //   gate de idempotência ao incrementar contadores em email_leads
+    //   (só incrementa na PRIMEIRA ocorrência do tipo para aquela fila).
     const { data: fila, error: errFila } = await supabase
       .from('email_fila')
-      .select('id, campanha_id, lead_id, step_id, destinatario_email, destinatario_nome, status')
+      .select('id, campanha_id, lead_id, step_id, destinatario_email, destinatario_nome, status, entregue_em, aberto_em, clicado_em')
       .eq('resend_message_id', resendMessageId)
       .maybeSingle();
 
@@ -701,6 +788,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    // 🆕 v1.4 — Incrementar contadores agregados em email_leads.
+    //   Gate de idempotência: só incrementa na PRIMEIRA ocorrência do tipo
+    //   para esta fila (campos *_em ainda NULL no estado lido ANTES do UPDATE).
+    //   Evita inflar quando o Resend reenvia o mesmo evento (retry).
+    //   Falha na RPC só loga warning; não impacta o fluxo do webhook.
+    if (fila.lead_id) {
+      let campoIncrementar: string | null = null;
+      if (tipoInterno === 'delivered' && !fila.entregue_em) {
+        campoIncrementar = 'total_emails_recebidos';
+      } else if (tipoInterno === 'opened' && !fila.aberto_em) {
+        campoIncrementar = 'total_emails_abertos';
+      } else if (tipoInterno === 'clicked' && !fila.clicado_em) {
+        campoIncrementar = 'total_emails_clicados';
+      }
+
+      if (campoIncrementar) {
+        const { error: errInc } = await supabase.rpc('incrementar_contador_lead', {
+          p_lead_id: fila.lead_id,
+          p_campo: campoIncrementar,
+          p_delta: 1,
+        });
+        if (errInc) {
+          console.warn(
+            `[crm-webhook] ⚠️ Falha ao incrementar ${campoIncrementar} no lead ${fila.lead_id}:`,
+            errInc.message,
+          );
+        } else {
+          console.log(
+            `[crm-webhook] 📊 lead=${fila.lead_id} ${campoIncrementar} +1 (evento ${tipoInterno})`,
+          );
+        }
+      }
+    }
+
     // INSERT email_lead_historico (timeline)
     if (fila.lead_id) {
       const mapaHistorico: Record<string, { tipo: string; descricao: string }> = {
@@ -770,6 +891,71 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// 🆕 v1.6 — HELPER: buscar e-mail completo via REST API do Resend
+// ────────────────────────────────────────────────────────────────────────
+/**
+ * O webhook de `email.received` chega SEM `text` e `html` no payload
+ * (descoberta validada na v1.5 — `LENGTH(dados->'data'->>'text') = NULL`).
+ * O corpo só está disponível chamando a REST API com o id do email.
+ *
+ * 🆕 v1.7 (04/06/2026) — Endpoint correto para INBOUND emails é
+ *   `GET /emails/receiving/{id}` (não `GET /emails/{id}`, que é só
+ *   para outbound). Descoberto via inspeção do webhook legacy
+ *   `/api/webhook/email-inbound` do módulo RAISA candidaturas, que já
+ *   usava esse path corretamente desde a sua primeira versão (5 meses).
+ *
+ * Esta função encapsula esse fetch:
+ *   • Usa o id do e-mail (campo `id` ou `email_id` do payload).
+ *   • Autentica com `RESEND_API_KEY` (Bearer) — requer chave Full Access.
+ *   • Retorna `{ text, html, subject }` ou null em qualquer falha.
+ *   • Nunca lança exceção — falha é graceful (loga warning e retorna null).
+ *
+ * Comportamento idêntico ao webhook legacy `/api/webhook/email-inbound`.
+ */
+async function buscarEmailCompletoResend(
+  emailId: string,
+  apiKey: string,
+): Promise<{ text: string | null; html: string | null; subject: string | null } | null> {
+  try {
+    // 🆕 v1.7 — URL específica para INBOUND. Path: /emails/receiving/{id}
+    const url = `https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`;
+    const resp = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      console.warn(
+        `[crm-webhook] ⚠️ GET /emails/receiving/${emailId} retornou ${resp.status}: ${body.substring(0, 200)}`,
+      );
+      return null;
+    }
+
+    const data: any = await resp.json().catch(() => null);
+    if (!data) {
+      console.warn(`[crm-webhook] ⚠️ GET /emails/receiving/${emailId} sem corpo JSON`);
+      return null;
+    }
+
+    return {
+      text: typeof data.text === 'string' ? data.text : null,
+      html: typeof data.html === 'string' ? data.html : null,
+      subject: typeof data.subject === 'string' ? data.subject : null,
+    };
+  } catch (e: any) {
+    console.warn(
+      `[crm-webhook] ⚠️ Exceção em GET /emails/receiving/${emailId}:`,
+      e?.message || String(e),
+    );
+    return null;
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // 🆕 PROCESSADOR DEDICADO: email.received (Fase 7-MVP)
 // ────────────────────────────────────────────────────────────────────────
 /**
@@ -799,6 +985,32 @@ async function processarEmailRecebido(opts: {
   createdAtResend: string | undefined;
 }) {
   const { supabase, req, res, payload, dataEvento, createdAtResend } = opts;
+
+  // 🆕 v1.5 — Log verboso para diagnóstico do bug "(sem corpo)" no forward.
+  //   Mostra exatamente quais campos chegaram no payload do email.received,
+  //   incluindo tamanho do text/html e a lista das primeiras chaves do
+  //   data — essencial porque o webhook do Resend pode usar nomes
+  //   diferentes do objeto retornado pela UI Activity.
+  try {
+    const chavesData = dataEvento && typeof dataEvento === 'object'
+      ? Object.keys(dataEvento).slice(0, 30)
+      : [];
+    console.log('[crm-webhook] 📩 email.received — campos recebidos:', {
+      to: dataEvento?.to,
+      from: typeof dataEvento?.from === 'string'
+        ? dataEvento.from.substring(0, 80)
+        : dataEvento?.from,
+      subject: dataEvento?.subject,
+      tem_text: !!dataEvento?.text,
+      tam_text: typeof dataEvento?.text === 'string' ? dataEvento.text.length : null,
+      tem_html: !!dataEvento?.html,
+      tam_html: typeof dataEvento?.html === 'string' ? dataEvento.html.length : null,
+      id_resend: dataEvento?.id || dataEvento?.email_id,
+      chaves_data: chavesData,
+    });
+  } catch (e) {
+    console.warn('[crm-webhook] ⚠️ Falha ao logar diag email.received:', (e as any)?.message);
+  }
 
   // 1. Parse do "to" — campo do Resend pode ser string ou array
   const toField = dataEvento?.to;
@@ -872,9 +1084,49 @@ async function processarEmailRecebido(opts: {
 
   // 5. Extrair from, assunto e corpos do payload
   const { email: deEmail, nome: deNome } = parsearFrom(dataEvento?.from);
-  const assunto: string | null = dataEvento?.subject || null;
-  const corpoTexto: string | null = dataEvento?.text || null;
-  const corpoHtml: string | null = dataEvento?.html || null;
+  // 🆕 v1.6 — mutáveis para absorver o enriquecimento via REST API.
+  let assunto: string | null = dataEvento?.subject || null;
+  let corpoTexto: string | null = dataEvento?.text || null;
+  let corpoHtml: string | null = dataEvento?.html || null;
+
+  // 🆕 v1.6 — Fallback fetch quando text E html vierem vazios.
+  //   O webhook do Resend para email.received NÃO traz o corpo no payload
+  //   (descoberta da v1.5). Precisamos buscar via REST API para enriquecer.
+  //   Se text OU html já vierem preenchidos (cenário raro mas possível),
+  //   pulamos o fetch e usamos o que veio no payload.
+  if (!corpoTexto && !corpoHtml) {
+    const emailIdResend: string | null =
+      dataEvento?.id || dataEvento?.email_id || null;
+    const apiKey = process.env.RESEND_API_KEY;
+
+    if (!emailIdResend) {
+      console.warn(
+        '[crm-webhook] ⚠️ email.received sem id/email_id no payload — não é possível enriquecer',
+      );
+    } else if (!apiKey) {
+      console.warn(
+        '[crm-webhook] ⚠️ RESEND_API_KEY ausente — corpo do e-mail não será buscado',
+      );
+    } else {
+      console.log(
+        `[crm-webhook] 🔍 Buscando email completo via REST API (id=${emailIdResend})`,
+      );
+      const enriquecido = await buscarEmailCompletoResend(emailIdResend, apiKey);
+      if (enriquecido) {
+        // Preenche o que estava vazio sem sobrescrever o que já veio.
+        if (!corpoTexto && enriquecido.text) corpoTexto = enriquecido.text;
+        if (!corpoHtml && enriquecido.html) corpoHtml = enriquecido.html;
+        if (!assunto && enriquecido.subject) assunto = enriquecido.subject;
+        console.log(
+          `[crm-webhook] ✅ Email enriquecido: text_len=${(corpoTexto || '').length} html_len=${(corpoHtml || '').length}`,
+        );
+      } else {
+        console.warn(
+          `[crm-webhook] ⚠️ Falha ao enriquecer email ${emailIdResend} — graceful degradation`,
+        );
+      }
+    }
+  }
 
   if (!deEmail) {
     console.warn('[crm-webhook] ⚠️ email.received sem "from" válido');
@@ -930,6 +1182,28 @@ async function processarEmailRecebido(opts: {
     criado_em: createdAtResend || new Date().toISOString(),
   });
 
+  // 🆕 v1.4 — Incrementar total_respostas no lead.
+  //   Diferente dos contadores outbound (delivered/opened/clicked), aqui NÃO
+  //   há gate de idempotência: cada email.received que passa pelo parser
+  //   corresponde a uma resposta legítima recém-inserida em email_respostas,
+  //   e o lead pode responder ao mesmo email N vezes — cada uma é uma resposta.
+  //   Falha na RPC só loga warning; resposta já está gravada.
+  if (fila.lead_id) {
+    const { error: errIncResp } = await supabase.rpc('incrementar_contador_lead', {
+      p_lead_id: fila.lead_id,
+      p_campo: 'total_respostas',
+      p_delta: 1,
+    });
+    if (errIncResp) {
+      console.warn(
+        `[crm-webhook] ⚠️ Falha ao incrementar total_respostas no lead ${fila.lead_id}:`,
+        errIncResp.message,
+      );
+    } else {
+      console.log(`[crm-webhook] 📊 lead=${fila.lead_id} total_respostas +1`);
+    }
+  }
+
   // 9. Recalcular contadores (atualiza total_respondidos e taxa_resposta)
   if (fila.campanha_id) {
     const { error: errRpc } = await supabase.rpc('recalcular_contadores_campanha', {
@@ -938,6 +1212,27 @@ async function processarEmailRecebido(opts: {
     if (errRpc) {
       console.warn('[crm-webhook] ⚠️ Falha ao recalcular contadores:', errRpc.message);
     }
+  }
+
+  // 🆕 v1.5 — Sempre gravar em email_eventos (log imutável do payload).
+  //   Antes da v1.5, eventos received OK não eram gravados em email_eventos,
+  //   só os órfãos. Isso impedia auditoria do payload no caminho feliz.
+  //   Agora cada received gera 1 linha em email_eventos com o payload bruto
+  //   completo em `dados`, permitindo diagnóstico SQL post-mortem.
+  //   Falha aqui só loga warning; não desfaz email_respostas já inserido.
+  const { error: errEvento } = await supabase.from('email_eventos').insert({
+    fila_id: fila.id,
+    lead_id: fila.lead_id,
+    resend_message_id: dataEvento?.id || dataEvento?.email_id || null,
+    tipo_evento: 'received',
+    dados: payload,
+    criado_em: createdAtResend || new Date().toISOString(),
+  });
+  if (errEvento) {
+    console.warn(
+      '[crm-webhook] ⚠️ Falha ao gravar email_eventos (received):',
+      errEvento.message,
+    );
   }
 
   // 10. Encaminhar a resposta COMPLETA do lead ao gestor (não-bloqueante).

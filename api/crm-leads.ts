@@ -7,21 +7,31 @@
  *    UPDATE de prospect_leads.status='no_crm' em importar_prospects
  *  - v1.2 (30/05/2026 - Fase 1E): renomeado para api/crm-leads.ts
  *    (nome semanticamente correto — CRUD do CRM, não de campanhas).
- *  - v1.3 (02/06/2026): adicionada action 'promover_corretor_para_campanha'
- *    (1 corretor de corretores_creci → email_leads com vertical='CRECI').
- *    Promoção marca corretores_creci.data_envio_adv como timestamp da
- *    promoção (coluna reaproveitada, sem migração SQL).
- *  - v1.4 (02/06/2026): correção crítica do enfileiramento — ambas as
- *    actions de promoção agora setam `apto_campanha = true`, `reservado_por`
- *    e seus timestamps no momento do INSERT em email_leads. Antes os leads
- *    promovidos caíam com `apto_campanha = false` (default) e `reservado_por
- *    = null`, e o filtro da Fase A (leads_disponiveis) escondia eles do
- *    Campaign Builder — ninguém conseguia vincular leads recém-promovidos.
- *      • promover_para_campanha: `reservado_por = prospect.reservado_por`
- *        (preserva o dono do prospect original).
- *      • promover_corretor_para_campanha: lookup de app_users por
- *        `nome_usuario = criado_por` para resolver o id que vai em
- *        `reservado_por` (corretor não tem dono prévio).
+ *  - v1.3 (04/06/2026 - Fase 8-Inbox): novas actions GET para alimentar
+ *    as abas "Respostas" e "Inválidos" do Form Empresas & Leads:
+ *      • listar_respostas — UNION em camada Node de email_respostas +
+ *        email_optout, com lookups de lead/empresa/campanha em batch
+ *        (1 query por tabela, evita N+1).
+ *      • listar_invalidos — email_fila WHERE status IN ('bounce','erro'),
+ *        com joins para lead+empresa+campanha.
+ *  - v1.4 (04/06/2026 - Fase 8-fix): correção do bug
+ *    "Could not find the 'email_empresas' column of 'email_leads'"
+ *    nas actions PATCH `atualizar_lead` e `atualizar_empresa`. Causa:
+ *    o frontend trazia o JOIN embed (ex.: `email_empresas`) no objeto
+ *    e enviava de volta no PATCH; o PostgREST tentava `UPDATE` na
+ *    coluna fantasma e falhava. Solução: whitelist explícita das
+ *    colunas editáveis (defesa em profundidade) — qualquer campo fora
+ *    da whitelist é silenciosamente ignorado, protegendo também
+ *    contra futuras adições de JOINs e contra mutação de campos
+ *    calculados (contadores, timestamps de webhook).
+ *  - v1.5 (04/06/2026 - Fase 8-fix2): action `stats` agora também
+ *    devolve `total_respostas` (rows em `email_respostas`) e
+ *    `total_invalidos` (rows em `email_fila` com status bounce/erro).
+ *    Motivação: os badges das abas "Respostas" e "Inválidos" no
+ *    BaseLeadsPage ficavam zerados até o usuário clicar (porque os
+ *    respectivos hooks só carregavam sob demanda). Com `stats`
+ *    devolvendo os totais agregados no mount, o badge fica sempre
+ *    correto sem custo extra de requisições.
  *
  * Endpoints:
  * GET  ?action=listar_empresas[&busca=X&setor=X&page=1&limit=20]
@@ -30,13 +40,14 @@
  * GET  ?action=detalhe_lead&id=X  (inclui timeline + campanhas)
  * GET  ?action=buscar_global&q=X  (busca por nome empresa/domínio/email lead)
  * GET  ?action=stats                (contadores gerais)
+ * GET  ?action=listar_respostas[&busca=X&page=1&limit=30]   (🆕 v1.3 — Fase 8)
+ * GET  ?action=listar_invalidos[&busca=X&page=1&limit=30]   (🆕 v1.3 — Fase 8)
  * POST action=criar_empresa
  * POST action=criar_lead
  * POST action=importar_prospects    (importa de prospect_leads → email_leads/email_empresas)
- * POST action=promover_para_campanha           (1 prospect → email_leads; marca status='no_crm')
- * POST action=promover_corretor_para_campanha  (1 corretor CRECI → email_leads; vertical='CRECI')
- * PATCH action=atualizar_empresa
- * PATCH action=atualizar_lead
+ * POST action=promover_para_campanha (1 prospect → email_leads; marca status='no_crm')
+ * PATCH action=atualizar_empresa    (🔧 v1.4 — whitelist de campos)
+ * PATCH action=atualizar_lead       (🔧 v1.4 — whitelist de campos)
  * PATCH action=mudar_funil          (muda status funil + registra histórico)
  *
  * Caminho: api/crm-leads.ts
@@ -51,6 +62,73 @@ const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+// ════════════════════════════════════════════════════════════════════════
+// 🆕 v1.4 — WHITELIST DE CAMPOS EDITÁVEIS
+// ════════════════════════════════════════════════════════════════════════
+// O frontend traz objetos com JOIN embed (ex.: email_leads.email_empresas,
+// vindo do `.select('*, email_empresas(...)')`) que NÃO são colunas reais
+// da tabela. Sem essa whitelist, ao salvar a edição o PostgREST devolve:
+//   "Could not find the 'email_empresas' column of 'email_leads'"
+//
+// A whitelist também serve como defesa em profundidade contra mutação
+// indevida de:
+//   - contadores incrementados pelo webhook (total_emails_recebidos, etc.)
+//   - timestamps automáticos (criado_em, opt_out_em, ultimo_email_*)
+//   - flags calculadas (apto_campanha, score_engajamento)
+//   - funil_status (deve ser atualizado pela action `mudar_funil` com
+//     registro de histórico, não diretamente)
+//
+// Para incluir novo campo editável: ADICIONAR aqui + no LeadFormModal
+// (ou EmpresaFormModal) na UI. Para campos somente leitura: deixar fora.
+
+const COLUNAS_EDITAVEIS_LEAD = [
+  'empresa_id',
+  'nome',
+  'email',
+  'cargo',
+  'telefone',
+  'linkedin_url',
+  'opt_out',
+  'tags',
+  'notas',
+  'reservado_por',
+  'origem',
+  'prospect_lead_id',
+] as const;
+
+const COLUNAS_EDITAVEIS_EMPRESA = [
+  'nome',
+  'dominio',
+  'cnpj',
+  'setor',
+  'porte',
+  'cidade',
+  'uf',
+  'website',
+  'linkedin_url',
+  'telefone_comercial',
+  'observacoes',
+  'origem',
+] as const;
+
+/**
+ * Pega do `body` apenas os campos presentes na `whitelist`, ignorando
+ * qualquer outro. Preserva valores `null` (necessário para limpar campos
+ * — ex.: empresa_id = null).
+ */
+function pickEditable<T extends readonly string[]>(
+  body: Record<string, any>,
+  whitelist: T,
+): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const key of whitelist) {
+    if (Object.prototype.hasOwnProperty.call(body, key)) {
+      out[key] = body[key];
+    }
+  }
+  return out;
+}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
@@ -292,6 +370,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { count: totalCampanhas } = await supabase
           .from('email_campanhas').select('id', { count: 'exact', head: true });
 
+        // 🆕 v1.5 — agregados das abas "Respostas" e "Inválidos"
+        // (Fase 8-fix2: badges sempre populados, sem precisar abrir a aba).
+        const { count: totalRespostas } = await supabase
+          .from('email_respostas').select('id', { count: 'exact', head: true });
+
+        const { count: totalInvalidos } = await supabase
+          .from('email_fila').select('id', { count: 'exact', head: true })
+          .in('status', ['bounce', 'erro']);
+
         return res.status(200).json({
           success: true,
           stats: {
@@ -301,7 +388,282 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             total_clientes: totalClientes || 0,
             total_optout: totalOptOut || 0,
             total_campanhas: totalCampanhas || 0,
+            // 🆕 v1.5
+            total_respostas: totalRespostas || 0,
+            total_invalidos: totalInvalidos || 0,
           }
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════
+      // 🆕 v1.3 — INBOX DE RESPOSTAS (Aba "Respostas" do Form Empresas)
+      // ════════════════════════════════════════════════════════════
+      // UNION em camada Node de email_respostas + email_optout, ordenado
+      // por data DESC. Lookup de lead/empresa/campanha em batch (1 query
+      // por tabela), evitando N+1. Filtro de busca aplica em pós-merge
+      // sobre nome do lead, e-mail e assunto.
+      //
+      // Parâmetros aceitos:
+      //   - busca: string (nome, email, assunto) — opcional, ilike
+      //   - page, limit: paginação clássica (default 1 / 30)
+      //
+      // Resposta: { success, itens: RespostaInbox[], total, page, limit }
+      if (action === 'listar_respostas') {
+        const { busca = '', page = '1', limit = '30' } = req.query as Record<string, string>;
+        const limitNum = Math.max(1, Math.min(parseInt(limit) || 30, 200));
+        const pageNum = Math.max(1, parseInt(page) || 1);
+
+        // Trazemos um teto generoso (500 mais recentes) de cada fonte e
+        // paginamos no Node após o merge. Para volumes maiores, migramos
+        // para uma VIEW SQL `vw_crm_inbox_respostas` com paginação real.
+        const TETO_POR_FONTE = 500;
+
+        // ── Respostas ──
+        const { data: respostas, error: errR } = await supabase
+          .from('email_respostas')
+          .select('id, lead_id, campanha_id, de_email, de_nome, assunto, corpo_texto, classificacao, lido, recebido_em')
+          .order('recebido_em', { ascending: false })
+          .limit(TETO_POR_FONTE);
+        if (errR) throw errR;
+
+        // ── Opt-outs ──
+        const { data: optouts, error: errO } = await supabase
+          .from('email_optout')
+          .select('id, email, motivo, campanha_origem_id, criado_em')
+          .order('criado_em', { ascending: false })
+          .limit(TETO_POR_FONTE);
+        if (errO) throw errO;
+
+        // ── Lookups em batch ──
+        const leadIds = Array.from(new Set([
+          ...((respostas || []).map(r => r.lead_id).filter(Boolean) as number[]),
+        ]));
+        const optoutEmails = Array.from(new Set(
+          (optouts || []).map(o => (o.email || '').toLowerCase().trim()).filter(Boolean)
+        ));
+        const campanhaIds = Array.from(new Set([
+          ...((respostas || []).map(r => r.campanha_id).filter(Boolean) as number[]),
+          ...((optouts || []).map(o => o.campanha_origem_id).filter(Boolean) as number[]),
+        ]));
+
+        // Lead lookup (por id E por email — opt-out muitas vezes só tem email)
+        const leadsPorId: Record<number, any> = {};
+        const leadsPorEmail: Record<string, any> = {};
+        if (leadIds.length > 0 || optoutEmails.length > 0) {
+          let q = supabase.from('email_leads').select('id, nome, email, empresa_id');
+          if (leadIds.length > 0 && optoutEmails.length > 0) {
+            // OR composto: id IN (...) OR email IN (...)
+            const idsCSV = leadIds.join(',');
+            const emailsCSV = optoutEmails.map(e => `"${e}"`).join(',');
+            q = q.or(`id.in.(${idsCSV}),email.in.(${emailsCSV})`);
+          } else if (leadIds.length > 0) {
+            q = q.in('id', leadIds);
+          } else {
+            q = q.in('email', optoutEmails);
+          }
+          const { data: leadsData, error: errL } = await q;
+          if (errL) throw errL;
+          for (const lead of leadsData || []) {
+            leadsPorId[lead.id] = lead;
+            if (lead.email) leadsPorEmail[lead.email.toLowerCase()] = lead;
+          }
+        }
+
+        // Empresa lookup
+        const empresaIds = Array.from(new Set(
+          Object.values(leadsPorId).map((l: any) => l.empresa_id).filter(Boolean)
+        )) as number[];
+        const empresasPorId: Record<number, any> = {};
+        if (empresaIds.length > 0) {
+          const { data: emps, error: errE } = await supabase
+            .from('email_empresas')
+            .select('id, nome')
+            .in('id', empresaIds);
+          if (errE) throw errE;
+          for (const e of emps || []) empresasPorId[e.id] = e;
+        }
+
+        // Campanha lookup
+        const campanhasPorId: Record<number, any> = {};
+        if (campanhaIds.length > 0) {
+          const { data: camps, error: errC } = await supabase
+            .from('email_campanhas')
+            .select('id, nome')
+            .in('id', campanhaIds);
+          if (errC) throw errC;
+          for (const c of camps || []) campanhasPorId[c.id] = c;
+        }
+
+        // ── Montar itens unificados ──
+        type ItemInbox = {
+          tipo: 'resposta' | 'opt_out';
+          id: number;
+          data_evento: string;
+          lead_id: number | null;
+          lead_nome: string | null;
+          lead_email: string;
+          empresa_id: number | null;
+          empresa_nome: string | null;
+          campanha_id: number | null;
+          campanha_nome: string | null;
+          assunto: string | null;
+          corpo_texto: string | null;
+          classificacao: string | null;
+          lido: boolean;
+          motivo_optout: string | null;
+        };
+
+        const itens: ItemInbox[] = [];
+
+        for (const r of respostas || []) {
+          const lead = r.lead_id != null ? leadsPorId[r.lead_id] : null;
+          const empresa = lead?.empresa_id ? empresasPorId[lead.empresa_id] : null;
+          const camp = r.campanha_id ? campanhasPorId[r.campanha_id] : null;
+          itens.push({
+            tipo: 'resposta',
+            id: r.id,
+            data_evento: r.recebido_em,
+            lead_id: r.lead_id,
+            lead_nome: lead?.nome ?? r.de_nome ?? null,
+            lead_email: r.de_email,
+            empresa_id: lead?.empresa_id ?? null,
+            empresa_nome: empresa?.nome ?? null,
+            campanha_id: r.campanha_id,
+            campanha_nome: camp?.nome ?? null,
+            assunto: r.assunto,
+            // Preview do corpo (200 chars) — corpo completo fica em email_respostas
+            corpo_texto: r.corpo_texto ? r.corpo_texto.substring(0, 400) : null,
+            classificacao: r.classificacao || 'pendente',
+            lido: !!r.lido,
+            motivo_optout: null,
+          });
+        }
+
+        for (const o of optouts || []) {
+          const emailKey = (o.email || '').toLowerCase().trim();
+          const lead = emailKey ? leadsPorEmail[emailKey] : null;
+          const empresa = lead?.empresa_id ? empresasPorId[lead.empresa_id] : null;
+          const camp = o.campanha_origem_id ? campanhasPorId[o.campanha_origem_id] : null;
+          itens.push({
+            tipo: 'opt_out',
+            id: o.id,
+            data_evento: o.criado_em,
+            lead_id: lead?.id ?? null,
+            lead_nome: lead?.nome ?? null,
+            lead_email: o.email,
+            empresa_id: lead?.empresa_id ?? null,
+            empresa_nome: empresa?.nome ?? null,
+            campanha_id: o.campanha_origem_id,
+            campanha_nome: camp?.nome ?? null,
+            assunto: null,
+            corpo_texto: null,
+            classificacao: null,
+            lido: true,
+            motivo_optout: o.motivo || 'Opt-out',
+          });
+        }
+
+        // Ordenar por data desc
+        itens.sort((a, b) => (b.data_evento || '').localeCompare(a.data_evento || ''));
+
+        // Filtro de busca (pós-merge)
+        let itensFiltrados = itens;
+        if (busca && busca.trim().length > 0) {
+          const q = busca.toLowerCase().trim();
+          itensFiltrados = itens.filter(it =>
+            (it.lead_nome || '').toLowerCase().includes(q) ||
+            (it.lead_email || '').toLowerCase().includes(q) ||
+            (it.empresa_nome || '').toLowerCase().includes(q) ||
+            (it.assunto || '').toLowerCase().includes(q)
+          );
+        }
+
+        const total = itensFiltrados.length;
+        const offset = (pageNum - 1) * limitNum;
+        const pageItems = itensFiltrados.slice(offset, offset + limitNum);
+
+        return res.status(200).json({
+          success: true,
+          itens: pageItems,
+          total,
+          page: pageNum,
+          limit: limitNum,
+          total_pages: Math.ceil(total / limitNum),
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════
+      // 🆕 v1.3 — INVÁLIDOS (Aba "Inválidos" do Form Empresas)
+      // ════════════════════════════════════════════════════════════
+      // E-mails que falharam tecnicamente: email_fila WHERE status IN
+      // ('bounce','erro'). Joins via embed para puxar lead/empresa/campanha
+      // em uma única query, com fallback em camada Node para o caso de
+      // FK quebrada (lead deletado, por exemplo).
+      //
+      // Parâmetros aceitos:
+      //   - busca: string (nome, email, empresa, motivo) — opcional
+      //   - page, limit: paginação clássica
+      //
+      // Resposta: { success, itens: InvalidoItem[], total, page, limit }
+      if (action === 'listar_invalidos') {
+        const { busca = '', page = '1', limit = '30' } = req.query as Record<string, string>;
+        const limitNum = Math.max(1, Math.min(parseInt(limit) || 30, 200));
+        const pageNum = Math.max(1, parseInt(page) || 1);
+        const offset = (pageNum - 1) * limitNum;
+
+        // Conta total (com filtro de busca aplicado depois para simplicidade)
+        // — para volumes muito grandes podemos migrar para count_estimate.
+        let query = supabase
+          .from('email_fila')
+          .select(
+            'id, lead_id, campanha_id, destinatario_email, destinatario_nome, status, erro_detalhes, bounce_em, enviado_em, criado_em, ' +
+            'email_leads(id, nome, empresa_id, email_empresas(id, nome)), ' +
+            'email_campanhas(id, nome)',
+            { count: 'exact' }
+          )
+          .in('status', ['bounce', 'erro'])
+          .order('bounce_em', { ascending: false, nullsFirst: false })
+          .order('criado_em', { ascending: false })
+          .range(offset, offset + limitNum - 1);
+
+        if (busca && busca.trim().length > 0) {
+          const q = busca.trim();
+          query = query.or(
+            `destinatario_email.ilike.%${q}%,destinatario_nome.ilike.%${q}%,erro_detalhes.ilike.%${q}%`
+          );
+        }
+
+        const { data: fila, error: errF, count } = await query;
+        if (errF) throw errF;
+
+        const itens = (fila || []).map((f: any) => {
+          const lead = f.email_leads;
+          const empresa = lead?.email_empresas;
+          const camp = f.email_campanhas;
+          return {
+            fila_id: f.id,
+            lead_id: f.lead_id,
+            lead_nome: lead?.nome ?? f.destinatario_nome ?? null,
+            empresa_id: lead?.empresa_id ?? null,
+            empresa_nome: empresa?.nome ?? null,
+            destinatario_email: f.destinatario_email,
+            campanha_id: f.campanha_id,
+            campanha_nome: camp?.nome ?? null,
+            status: f.status as 'bounce' | 'erro',
+            motivo: f.erro_detalhes ?? (f.status === 'bounce' ? 'Bounce (sem detalhe)' : 'Erro de envio'),
+            bounce_em: f.bounce_em,
+            enviado_em: f.enviado_em,
+            criado_em: f.criado_em,
+          };
+        });
+
+        return res.status(200).json({
+          success: true,
+          itens,
+          total: count || 0,
+          page: pageNum,
+          limit: limitNum,
+          total_pages: Math.ceil((count || 0) / limitNum),
         });
       }
 
@@ -621,12 +983,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 5. Criar email_lead no CRM
-        // v1.4: lead já entra apto para campanhas e reservado para o dono do
-        // prospect original. Sem isso, o filtro da Fase A (leads_disponiveis
-        // = WHERE reservado_por = responsavel_id AND apto_campanha = true)
-        // escondia o lead recém-promovido — analista não conseguia vinculá-lo
-        // a uma campanha mesmo logo após promover.
-        const agora = new Date().toISOString();
         const { data: novoLead, error: errInsertLead } = await supabase
           .from('email_leads')
           .insert({
@@ -639,12 +995,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             vertical: String(prospect.vertical).trim(),
             origem: 'prospect_engine',
             criado_por,
-            // 🆕 v1.4 — flags de elegibilidade para Campaign Builder
-            apto_campanha: true,
-            apto_campanha_em: agora,
-            apto_campanha_por: criado_por,
-            reservado_por: prospect.reservado_por || null,
-            reservado_em: prospect.reservado_por ? agora : null,
           })
           .select()
           .single();
@@ -689,183 +1039,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // ─────────────────────────────────────────────────────────────────────
-      // 🆕 PROMOVER 1 CORRETOR CRECI → CRM (02/06/2026 — v1.3)
-      // ─────────────────────────────────────────────────────────────────────
-      // Action chamada pelo botão "+ Campanha" da aba "Lista CRECI" do
-      // CreciPage.tsx (v1.1). Promove um corretor da tabela
-      // `corretores_creci` para `email_leads` com vertical='CRECI'.
-      //
-      // Diferenças de 'promover_para_campanha' (que vem de prospect_leads):
-      //  - Origem: tabela 'corretores_creci' (não 'prospect_leads')
-      //  - empresa_id: SEMPRE null (corretor é PF, não tem empresa associada)
-      //  - vertical: FIXO em 'CRECI' (não vem do registro)
-      //  - origem: 'creci'
-      //  - prospect_lead_id: null (não há prospect de origem)
-      //  - Marca corretores_creci.data_envio_adv = NOW() (timestamp da
-      //    promoção). A coluna foi reaproveitada semanticamente: antes
-      //    representava "envio físico ADV manual", agora representa
-      //    "promovido para Campanha CRECI no CRM". Sem migração de banco.
-      //  - Verifica opt-out global (defesa em profundidade — corretor pode
-      //    ter pedido sair em campanha anterior).
-      //  - Caso já exista lead com o mesmo e-mail, sincroniza data_envio_adv
-      //    e retorna ja_existia=true (não cria duplicata).
-      // ─────────────────────────────────────────────────────────────────────
-      if (action === 'promover_corretor_para_campanha') {
-        const { corretor_id, criado_por } = body;
-
-        if (!corretor_id || !criado_por) {
-          return res.status(400).json({
-            success: false,
-            error: 'corretor_id e criado_por são obrigatórios',
-          });
-        }
-
-        // 1. Buscar o corretor
-        const { data: corretor, error: errCorretor } = await supabase
-          .from('corretores_creci')
-          .select('*')
-          .eq('id', corretor_id)
-          .maybeSingle();
-
-        if (errCorretor) throw errCorretor;
-        if (!corretor) {
-          return res.status(404).json({ success: false, error: 'Corretor não encontrado' });
-        }
-
-        // 2. Resolver e-mail (prioriza email_creci, fallback para email_pessoal)
-        const emailBruto = (corretor.email_creci || corretor.email_pessoal || '').trim();
-        if (!emailBruto) {
-          return res.status(400).json({
-            success: false,
-            error: 'Corretor sem e-mail — não pode ser enviado para Campanhas',
-          });
-        }
-        const emailNormalizado = emailBruto.toLowerCase();
-
-        // 3. Validar nome (corretores raros podem vir sem nome)
-        const nomeLimpo = (corretor.nome || '').trim();
-        if (!nomeLimpo) {
-          return res.status(400).json({
-            success: false,
-            error: 'Corretor sem nome — registro inválido para promoção',
-          });
-        }
-
-        // 4. Se já existe em email_leads, sincroniza data_envio_adv no
-        //    corretor e retorna ja_existia=true (sem criar duplicata)
-        const { data: leadExistente } = await supabase
-          .from('email_leads')
-          .select('id, nome, vertical')
-          .eq('email', emailNormalizado)
-          .maybeSingle();
-
-        if (leadExistente) {
-          await supabase
-            .from('corretores_creci')
-            .update({
-              data_envio_adv: new Date().toISOString(),
-              atualizado_em: new Date().toISOString(),
-            })
-            .eq('id', corretor_id);
-
-          console.log(`ℹ️ [crm-leads] Corretor CRECI "${corretor.nome}" já existia no CRM (lead ${leadExistente.id}, vertical=${leadExistente.vertical}). data_envio_adv sincronizada.`);
-          return res.status(200).json({
-            success: true,
-            lead: leadExistente,
-            ja_existia: true,
-            mensagem: `Corretor já estava no CRM (vertical=${leadExistente.vertical}). Data sincronizada.`,
-          });
-        }
-
-        // 5. Verificar opt-out global (defesa em profundidade)
-        const { data: optout } = await supabase
-          .from('email_optout')
-          .select('id')
-          .eq('email', emailNormalizado)
-          .maybeSingle();
-
-        // 5b. 🆕 v1.4 — Resolver o id numérico do app_user que está promovendo,
-        // a partir do nome_usuario passado em `criado_por`. Esse id vai em
-        // `reservado_por` para que o lead apareça imediatamente no Campaign
-        // Builder da pessoa que promoveu (filtro reservado_por = responsavel_id).
-        const { data: appUser } = await supabase
-          .from('app_users')
-          .select('id')
-          .eq('nome_usuario', criado_por)
-          .maybeSingle();
-        const idResponsavel: number | null = appUser?.id ?? null;
-        if (!idResponsavel) {
-          // Não bloqueia, mas registra — sem reservado_por o lead só aparece
-          // após UPDATE manual. Em produção real, isso deve ser raro porque
-          // o usuário logado sempre existe em app_users.
-          console.warn(`⚠️ [crm-leads] app_user "${criado_por}" não encontrado — lead será criado sem reservado_por`);
-        }
-        const agora = new Date().toISOString();
-
-        // 6. Criar email_lead com vertical='CRECI' e empresa_id=null
-        const { data: novoLead, error: errInsert } = await supabase
-          .from('email_leads')
-          .insert({
-            empresa_id: null,
-            prospect_lead_id: null,
-            nome: nomeLimpo,
-            email: emailNormalizado,
-            telefone: corretor.celular || null,
-            vertical: 'CRECI',
-            origem: 'creci',
-            criado_por,
-            opt_out: !!optout,
-            opt_out_em: optout ? new Date().toISOString() : null,
-            // 🆕 v1.4 — flags de elegibilidade para Campaign Builder
-            apto_campanha: true,
-            apto_campanha_em: agora,
-            apto_campanha_por: criado_por,
-            reservado_por: idResponsavel,
-            reservado_em: idResponsavel ? agora : null,
-          })
-          .select()
-          .single();
-
-        if (errInsert) {
-          return res.status(500).json({
-            success: false,
-            error: `Erro ao criar lead no CRM: ${errInsert.message}`,
-          });
-        }
-
-        // 7. Marcar data_envio_adv no corretor (timestamp da promoção)
-        const { error: errUpdate } = await supabase
-          .from('corretores_creci')
-          .update({
-            data_envio_adv: new Date().toISOString(),
-            atualizado_em: new Date().toISOString(),
-          })
-          .eq('id', corretor_id);
-
-        if (errUpdate) {
-          // Não bloqueia — o lead já está no CRM. Apenas o marcador no
-          // corretor ficou pendente; loga para inspeção posterior.
-          console.error(`⚠️ [crm-leads] Lead criado mas falhou ao atualizar data_envio_adv do corretor ${corretor_id}: ${errUpdate.message}`);
-        }
-
-        // 8. Registrar no histórico do lead
-        await supabase.from('email_lead_historico').insert({
-          lead_id: novoLead.id,
-          tipo: 'lead_criado',
-          descricao: `Lead promovido da Base CRECI (corretor ID ${corretor.id}, CRECI ${corretor.creci || 'sem registro'})`,
-          criado_por,
-        });
-
-        console.log(`✅ [crm-leads] Corretor CRECI promovido: ${nomeLimpo} <${emailNormalizado}> → email_leads ID ${novoLead.id}${optout ? ' ⚠️ OPT-OUT' : ''}`);
-        return res.status(201).json({
-          success: true,
-          lead: novoLead,
-          ja_existia: false,
-          opt_out_warning: !!optout,
-        });
-      }
-
       return res.status(400).json({ success: false, error: `Ação POST desconhecida: ${action}` });
     }
 
@@ -877,16 +1050,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── ATUALIZAR EMPRESA ────────────────────────
       if (action === 'atualizar_empresa') {
-        const { id, ...campos } = body;
+        const { id } = body;
         if (!id) return res.status(400).json({ success: false, error: 'id é obrigatório' });
 
-        // Remover campos que não devem ser atualizados
-        delete campos.action;
-        delete campos.criado_em;
-        delete campos.criado_por;
+        // 🆕 v1.4 — Whitelist de colunas editáveis (vide cabeçalho).
+        //   Substitui o padrão antigo de `{ id, ...campos }` + deletes,
+        //   que deixava passar JOINs embed e campos calculados.
+        const campos = pickEditable(body, COLUNAS_EDITAVEIS_EMPRESA);
         campos.atualizado_em = new Date().toISOString();
 
-        if (campos.dominio) campos.dominio = campos.dominio.toLowerCase().trim();
+        if (campos.dominio) campos.dominio = String(campos.dominio).toLowerCase().trim();
 
         const { data, error } = await supabase
           .from('email_empresas')
@@ -897,21 +1070,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (error) throw error;
 
-        console.log(`✅ [crm-leads] Empresa atualizada: ID ${id}`);
+        console.log(`✅ [crm-leads] Empresa atualizada: ID ${id} (${Object.keys(campos).length - 1} campos)`);
         return res.status(200).json({ success: true, empresa: data });
       }
 
       // ── ATUALIZAR LEAD ───────────────────────────
       if (action === 'atualizar_lead') {
-        const { id, ...campos } = body;
+        const { id } = body;
         if (!id) return res.status(400).json({ success: false, error: 'id é obrigatório' });
 
-        delete campos.action;
-        delete campos.criado_em;
-        delete campos.criado_por;
+        // 🆕 v1.4 — Whitelist de colunas editáveis (vide cabeçalho).
+        //   Resolve o bug "Could not find the 'email_empresas' column of
+        //   'email_leads'" — o frontend enviava o JOIN embed no PATCH e o
+        //   PostgREST falhava tentando UPDATE numa coluna fantasma.
+        const campos = pickEditable(body, COLUNAS_EDITAVEIS_LEAD);
         campos.atualizado_em = new Date().toISOString();
 
-        if (campos.email) campos.email = campos.email.toLowerCase().trim();
+        if (campos.email) campos.email = String(campos.email).toLowerCase().trim();
 
         const { data, error } = await supabase
           .from('email_leads')
@@ -922,7 +1097,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (error) throw error;
 
-        console.log(`✅ [crm-leads] Lead atualizado: ID ${id}`);
+        console.log(`✅ [crm-leads] Lead atualizado: ID ${id} (${Object.keys(campos).length - 1} campos)`);
         return res.status(200).json({ success: true, lead: data });
       }
 

@@ -2,17 +2,34 @@
  * AcompanhamentoPage.tsx — Página de Acompanhamento (Dashboard CRM)
  *
  * Caminho: src/components/crm/acompanhamento/AcompanhamentoPage.tsx
- * Versão: 1.0 (Fase 8 — 01/06/2026)
+ * Versão: 2.0 (Fase 8-fix2 — 04/06/2026)
  *
- * Escopo desta primeira versão (modo "esqueleto pronto, dados de envio
- * zerados até o motor de disparo existir" — decisão tomada com Messias):
- *  - 6 KPIs de status (Total, Ativas, Agendadas, Em rascunho, Pausadas,
- *    Concluídas) — DADOS REAIS hoje.
- *  - 4 KPIs de engajamento (Enviado / Abertura / Clique / Bounce) com badge
- *    "aguardando motor de disparo" — populam quando os webhooks existirem.
- *  - Distribuição por responsável / vertical / domínio (3 tabelas).
- *  - Lista de campanhas em andamento (até 20).
- *  - Saúde da base: opt-outs, leads aptos, e alerta se há leads SEM vertical.
+ * v2.0 (04/06/2026 — Fase 8-fix2): cards de Engajamento & Entregabilidade
+ *   foram CONECTADOS aos dados reais. Antes (v1.0) eles eram placeholders
+ *   cinza hardcoded com "—" e "aguardando motor" — restante da Fase 5C-4
+ *   que nunca foi finalizada. Como o motor de disparo, o cron e os
+ *   webhooks já estão em produção (Fase 7-MVP — 03/06/2026), os dados
+ *   já chegam no backend (`api/crm-analytics.ts → dashboard_stats →
+ *   engajamento`). Agora a UI honra:
+ *     - `stats.engajamento.total_enviado`     → valor do card "Total enviado"
+ *     - `stats.engajamento.taxa_abertura`     → valor do card "Taxa abertura" (%)
+ *     - `stats.engajamento.taxa_clique`       → valor do card "Taxa clique"   (%)
+ *     - `stats.engajamento.taxa_bounce`       → valor do card "Taxa bounce"   (%)
+ *   O badge "aguardando motor" continua respeitando a flag
+ *   `stats.engajamento.aguardando_motor` do backend: aparece SÓ quando
+ *   não há nenhum envio no período selecionado (zero por zero não tem
+ *   taxa fazer sentido) — caso contrário, mostra os números reais.
+ *
+ * v1.0 (Fase 8 — 01/06/2026): primeira versão.
+ *   - 6 KPIs de status (Total, Ativas, Agendadas, Em rascunho, Pausadas,
+ *     Concluídas) — DADOS REAIS hoje.
+ *   - 4 KPIs de engajamento (Enviado / Abertura / Clique / Bounce) com
+ *     badge "aguardando motor de disparo" (placeholder) — populam quando
+ *     os webhooks existirem.
+ *   - Distribuição por responsável / vertical / domínio (3 tabelas).
+ *   - Lista de campanhas em andamento (até 20).
+ *   - Saúde da base: opt-outs, leads aptos, e alerta se há leads SEM
+ *     vertical.
  *
  * RBAC vem PRONTO do backend (api/crm-analytics.ts): a página apenas
  * mostra o que recebeu. Admin/Gestão de R&S enxergam tudo; demais perfis
@@ -227,20 +244,119 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
             </div>
           </section>
 
-          {/* ──────────── Seção 2: Engajamento (placeholder) ──────────── */}
+          {/* ──────────── Seção 2: Engajamento & Entregabilidade ──────────── */}
+          {/* 🆕 v2.0 — conectado aos dados reais. A flag `aguardando_motor`
+              continua respeitada (do backend): quando não houve nenhum
+              envio no período, mostra placeholder. Caso contrário, números
+              reais. */}
           <section>
             <h2 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2">
               <i className="fa-solid fa-envelope-open-text text-gray-400"></i> Engajamento & Entregabilidade
             </h2>
-            <p className="text-xs text-gray-500 mb-3">
-              <i className="fa-solid fa-clock mr-1 text-amber-500"></i>
-              Aguardando motor de disparo — os números abaixo são preenchidos quando os webhooks do Resend começarem a chegar.
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 opacity-60">
-              <KpiCard label="Total enviado" valor="—" icon="fa-solid fa-paper-plane" cor="gray" sufixo="" detalhe="aguardando motor" />
-              <KpiCard label="Taxa abertura" valor="—" icon="fa-solid fa-eye" cor="gray" sufixo="%" detalhe="aguardando motor" />
-              <KpiCard label="Taxa clique" valor="—" icon="fa-solid fa-arrow-pointer" cor="gray" sufixo="%" detalhe="aguardando motor" />
-              <KpiCard label="Taxa bounce" valor="—" icon="fa-solid fa-triangle-exclamation" cor="gray" sufixo="%" detalhe="aguardando motor" />
+            {stats.engajamento.aguardando_motor ? (
+              <p className="text-xs text-gray-500 mb-3">
+                <i className="fa-solid fa-clock mr-1 text-amber-500"></i>
+                Sem envios no período — os números abaixo aparecem quando as
+                campanhas começarem a disparar.
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500 mb-3">
+                <i className="fa-solid fa-circle-check mr-1 text-emerald-500"></i>
+                Dados consolidados pelos webhooks do Resend
+                {stats.engajamento.total_enviado > 0 && (
+                  <span className="ml-1 text-gray-400">
+                    ({stats.engajamento.total_enviado.toLocaleString('pt-BR')} envios no período)
+                  </span>
+                )}
+              </p>
+            )}
+            <div
+              className={`grid grid-cols-2 md:grid-cols-4 gap-3 ${
+                stats.engajamento.aguardando_motor ? 'opacity-60' : ''
+              }`}
+            >
+              <KpiCard
+                label="Total enviado"
+                valor={
+                  stats.engajamento.aguardando_motor
+                    ? '—'
+                    : stats.engajamento.total_enviado.toLocaleString('pt-BR')
+                }
+                icon="fa-solid fa-paper-plane"
+                cor="gray"
+                sufixo=""
+                detalhe={
+                  stats.engajamento.aguardando_motor
+                    ? 'aguardando motor'
+                    : 'no período selecionado'
+                }
+              />
+              <KpiCard
+                label="Taxa abertura"
+                valor={
+                  stats.engajamento.aguardando_motor
+                    ? '—'
+                    : stats.engajamento.taxa_abertura.toFixed(1)
+                }
+                icon="fa-solid fa-eye"
+                cor={
+                  stats.engajamento.aguardando_motor
+                    ? 'gray'
+                    : stats.engajamento.taxa_abertura >= 20
+                    ? 'green'
+                    : stats.engajamento.taxa_abertura >= 10
+                    ? 'amber'
+                    : 'gray'
+                }
+                sufixo="%"
+                detalhe={
+                  stats.engajamento.aguardando_motor ? 'aguardando motor' : 'aberturas / enviados'
+                }
+              />
+              <KpiCard
+                label="Taxa clique"
+                valor={
+                  stats.engajamento.aguardando_motor
+                    ? '—'
+                    : stats.engajamento.taxa_clique.toFixed(1)
+                }
+                icon="fa-solid fa-arrow-pointer"
+                cor={
+                  stats.engajamento.aguardando_motor
+                    ? 'gray'
+                    : stats.engajamento.taxa_clique >= 3
+                    ? 'green'
+                    : stats.engajamento.taxa_clique >= 1
+                    ? 'amber'
+                    : 'gray'
+                }
+                sufixo="%"
+                detalhe={
+                  stats.engajamento.aguardando_motor ? 'aguardando motor' : 'cliques / enviados'
+                }
+              />
+              <KpiCard
+                label="Taxa bounce"
+                valor={
+                  stats.engajamento.aguardando_motor
+                    ? '—'
+                    : stats.engajamento.taxa_bounce.toFixed(1)
+                }
+                icon="fa-solid fa-triangle-exclamation"
+                cor={
+                  stats.engajamento.aguardando_motor
+                    ? 'gray'
+                    : stats.engajamento.taxa_bounce >= 5
+                    ? 'red'
+                    : stats.engajamento.taxa_bounce >= 2
+                    ? 'amber'
+                    : 'green'
+                }
+                sufixo="%"
+                detalhe={
+                  stats.engajamento.aguardando_motor ? 'aguardando motor' : 'bounces / enviados'
+                }
+              />
             </div>
           </section>
 
