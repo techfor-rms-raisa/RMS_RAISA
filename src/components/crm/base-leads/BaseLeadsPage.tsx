@@ -2,7 +2,16 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.2 (Fase 8-Inbox — 04/06/2026)
+ * Versão: 1.3 (Fase 8-fix2 — 04/06/2026)
+ *
+ * v1.3 (04/06/2026 — Fase 8-fix2): badges das 4 abas (Empresas / Leads /
+ *   Respostas / Inválidos) agora usam `stats.total_*` como fonte primária
+ *   e caem em `*H.total` apenas como fallback. Antes os badges ficavam
+ *   zerados até o usuário clicar em cada aba (porque os hooks só carregam
+ *   sob demanda). Com a v1.5 do `crm-leads.ts` devolvendo `total_respostas`
+ *   e `total_invalidos` no payload de `stats` (já chamado no mount), o
+ *   número correto aparece desde o primeiro render — sem custo extra de
+ *   requisições.
  *
  * v1.2 (04/06/2026 — Fase 8-Inbox): novas abas "Respostas" e "Inválidos".
  *   Mudanças aditivas:
@@ -370,26 +379,35 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
               key: 'empresas' as const,
               label: 'Empresas',
               icon: 'fa-solid fa-building',
-              count: empresasH.total,
+              // 🆕 v1.3 — `stats` (carregado no mount) tem o total agregado;
+              //   `empresasH.total` só fica preenchido após a primeira
+              //   carga da aba. O `??` garante que o badge não pisque "0"
+              //   antes de o usuário clicar.
+              count: stats?.total_empresas ?? empresasH.total,
             },
             {
               key: 'leads' as const,
               label: 'Leads',
               icon: 'fa-solid fa-users',
-              count: leadsH.total,
+              // 🆕 v1.3 — somatório de leads + prospects + clientes
+              //   (o `total_leads` do stats filtra só funil_status='lead',
+              //   por isso somamos os 3 funis para corresponder à listagem).
+              count: stats
+                ? stats.total_leads + stats.total_prospects + stats.total_clientes
+                : leadsH.total,
             },
             // 🆕 v1.2 (Fase 8-Inbox)
             {
               key: 'respostas' as const,
               label: 'Respostas',
               icon: 'fa-solid fa-reply',
-              count: respostasH.total,
+              count: stats?.total_respostas ?? respostasH.total, // 🆕 v1.3
             },
             {
               key: 'invalidos' as const,
               label: 'Inválidos',
               icon: 'fa-solid fa-circle-exclamation',
-              count: invalidosH.total,
+              count: stats?.total_invalidos ?? invalidosH.total, // 🆕 v1.3
             },
           ].map((tab) => (
             <button

@@ -24,6 +24,14 @@
  *    da whitelist é silenciosamente ignorado, protegendo também
  *    contra futuras adições de JOINs e contra mutação de campos
  *    calculados (contadores, timestamps de webhook).
+ *  - v1.5 (04/06/2026 - Fase 8-fix2): action `stats` agora também
+ *    devolve `total_respostas` (rows em `email_respostas`) e
+ *    `total_invalidos` (rows em `email_fila` com status bounce/erro).
+ *    Motivação: os badges das abas "Respostas" e "Inválidos" no
+ *    BaseLeadsPage ficavam zerados até o usuário clicar (porque os
+ *    respectivos hooks só carregavam sob demanda). Com `stats`
+ *    devolvendo os totais agregados no mount, o badge fica sempre
+ *    correto sem custo extra de requisições.
  *
  * Endpoints:
  * GET  ?action=listar_empresas[&busca=X&setor=X&page=1&limit=20]
@@ -362,6 +370,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { count: totalCampanhas } = await supabase
           .from('email_campanhas').select('id', { count: 'exact', head: true });
 
+        // 🆕 v1.5 — agregados das abas "Respostas" e "Inválidos"
+        // (Fase 8-fix2: badges sempre populados, sem precisar abrir a aba).
+        const { count: totalRespostas } = await supabase
+          .from('email_respostas').select('id', { count: 'exact', head: true });
+
+        const { count: totalInvalidos } = await supabase
+          .from('email_fila').select('id', { count: 'exact', head: true })
+          .in('status', ['bounce', 'erro']);
+
         return res.status(200).json({
           success: true,
           stats: {
@@ -371,6 +388,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             total_clientes: totalClientes || 0,
             total_optout: totalOptOut || 0,
             total_campanhas: totalCampanhas || 0,
+            // 🆕 v1.5
+            total_respostas: totalRespostas || 0,
+            total_invalidos: totalInvalidos || 0,
           }
         });
       }

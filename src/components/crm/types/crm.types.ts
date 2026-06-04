@@ -2,7 +2,7 @@
  * crm.types.ts — Tipos compartilhados do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/types/crm.types.ts
- * Versão: 1.2 (Fase 8-Inbox — 04/06/2026)
+ * Versão: 1.3 (Fase 8-fix2 — 04/06/2026)
  *
  * Histórico:
  *  - v1.0 (29/05/2026 — Fase 1B): fonte única de verdade dos tipos.
@@ -16,6 +16,10 @@
  *    "Respostas" (inbox unificado de respostas + opt-outs) e
  *    "Inválidos" (e-mails que falharam por bounce ou erro de envio):
  *    `RespostaInbox`, `RespostaInboxTipo` e `InvalidoItem`.
+ *  - v1.3 (04/06/2026 — Fase 8-fix2): `CRMStats` ganhou dois campos
+ *    agregados — `total_respostas` e `total_invalidos` — para alimentar
+ *    os badges das abas Respostas/Inválidos no BaseLeadsPage sem
+ *    precisar abrir cada aba.
  *
  * Convenção:
  *   - Tipos de domínio (Empresa, Lead, Campanha, etc.) representam
@@ -363,6 +367,10 @@ export interface CRMStats {
   total_clientes: number;
   total_optout: number;
   total_campanhas: number;
+  /** 🆕 v1.3 — count de `email_respostas` (todas as respostas recebidas). */
+  total_respostas: number;
+  /** 🆕 v1.3 — count de `email_fila` WHERE status IN ('bounce','erro'). */
+  total_invalidos: number;
 }
 
 // ════════════════════════════════════════════════════════════
