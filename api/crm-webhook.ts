@@ -3,6 +3,28 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.5 — 04/06/2026 — Instrumentação do email.received (debug do bug "(sem corpo)").
+ *   Sintoma: forward ao gestor chega com "(sem corpo)" e o drawer da ficha
+ *   mostra "—" na seção Respostas, mesmo quando a UI do Resend Activity
+ *   mostra que o e-mail recebido tem `text` e `html` preenchidos.
+ *   Achado adicional: a query `SELECT * FROM email_eventos WHERE tipo_evento='received'`
+ *   retornou vazio — porque o caminho feliz do `processarEmailRecebido()`
+ *   NUNCA gravava em email_eventos (só os órfãos eram gravados). Sem o
+ *   payload bruto preservado, não há como auditar quais chaves o Resend
+ *   está mandando no webhook (que pode ser diferente do objeto retornado
+ *   pela UI Activity).
+ *   Correção (não-invasiva, só observabilidade):
+ *     1) `console.log` verboso no início de `processarEmailRecebido` com
+ *        tem_text/tam_text/tem_html/tam_html + lista das primeiras chaves
+ *        do payload.data — permite diagnóstico via logs do Vercel.
+ *     2) INSERT em email_eventos AGORA é feito SEMPRE para email.received
+ *        (caminho feliz e órfão), igual aos outros tipos de evento. Isso
+ *        preserva o payload bruto em `dados` para auditoria SQL posterior.
+ *     3) Resend_message_id no INSERT lê de dataEvento.id || dataEvento.email_id
+ *        (cobre as 2 variações possíveis do payload).
+ *   Não altera o parsing do corpo (corpoTexto/corpoHtml) — esse fix
+ *   definitivo virá na v1.6, baseado no payload real capturado.
+ *
  * v1.4 — 04/06/2026 — Hotfix: contadores agregados em email_leads.
  *   Sintoma: cards do header da ficha do lead ficavam zerados
  *   (total_emails_recebidos, total_emails_abertos, total_emails_clicados,
@@ -861,6 +883,32 @@ async function processarEmailRecebido(opts: {
 }) {
   const { supabase, req, res, payload, dataEvento, createdAtResend } = opts;
 
+  // 🆕 v1.5 — Log verboso para diagnóstico do bug "(sem corpo)" no forward.
+  //   Mostra exatamente quais campos chegaram no payload do email.received,
+  //   incluindo tamanho do text/html e a lista das primeiras chaves do
+  //   data — essencial porque o webhook do Resend pode usar nomes
+  //   diferentes do objeto retornado pela UI Activity.
+  try {
+    const chavesData = dataEvento && typeof dataEvento === 'object'
+      ? Object.keys(dataEvento).slice(0, 30)
+      : [];
+    console.log('[crm-webhook] 📩 email.received — campos recebidos:', {
+      to: dataEvento?.to,
+      from: typeof dataEvento?.from === 'string'
+        ? dataEvento.from.substring(0, 80)
+        : dataEvento?.from,
+      subject: dataEvento?.subject,
+      tem_text: !!dataEvento?.text,
+      tam_text: typeof dataEvento?.text === 'string' ? dataEvento.text.length : null,
+      tem_html: !!dataEvento?.html,
+      tam_html: typeof dataEvento?.html === 'string' ? dataEvento.html.length : null,
+      id_resend: dataEvento?.id || dataEvento?.email_id,
+      chaves_data: chavesData,
+    });
+  } catch (e) {
+    console.warn('[crm-webhook] ⚠️ Falha ao logar diag email.received:', (e as any)?.message);
+  }
+
   // 1. Parse do "to" — campo do Resend pode ser string ou array
   const toField = dataEvento?.to;
   const parsed = parsearReplyTo(toField);
@@ -1021,6 +1069,27 @@ async function processarEmailRecebido(opts: {
     if (errRpc) {
       console.warn('[crm-webhook] ⚠️ Falha ao recalcular contadores:', errRpc.message);
     }
+  }
+
+  // 🆕 v1.5 — Sempre gravar em email_eventos (log imutável do payload).
+  //   Antes da v1.5, eventos received OK não eram gravados em email_eventos,
+  //   só os órfãos. Isso impedia auditoria do payload no caminho feliz.
+  //   Agora cada received gera 1 linha em email_eventos com o payload bruto
+  //   completo em `dados`, permitindo diagnóstico SQL post-mortem.
+  //   Falha aqui só loga warning; não desfaz email_respostas já inserido.
+  const { error: errEvento } = await supabase.from('email_eventos').insert({
+    fila_id: fila.id,
+    lead_id: fila.lead_id,
+    resend_message_id: dataEvento?.id || dataEvento?.email_id || null,
+    tipo_evento: 'received',
+    dados: payload,
+    criado_em: createdAtResend || new Date().toISOString(),
+  });
+  if (errEvento) {
+    console.warn(
+      '[crm-webhook] ⚠️ Falha ao gravar email_eventos (received):',
+      errEvento.message,
+    );
   }
 
   // 10. Encaminhar a resposta COMPLETA do lead ao gestor (não-bloqueante).
