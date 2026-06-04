@@ -2,7 +2,7 @@
  * crm.types.ts — Tipos compartilhados do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/types/crm.types.ts
- * Versão: 1.1 (Fase E-1/E-2 — 01/06/2026)
+ * Versão: 1.2 (Fase 8-Inbox — 04/06/2026)
  *
  * Histórico:
  *  - v1.0 (29/05/2026 — Fase 1B): fonte única de verdade dos tipos.
@@ -12,6 +12,10 @@
  *    `ativo`, `criado_em`, `atualizado_em` em Assinatura). Adicionado
  *    o campo `unidade` em Assinatura e Campanha (Fase E-1). Novos
  *    tipos: `Unidade` e `PessoaAssinatura` (consumido pelo modal).
+ *  - v1.2 (04/06/2026 — Fase 8-Inbox): novos tipos para as abas
+ *    "Respostas" (inbox unificado de respostas + opt-outs) e
+ *    "Inválidos" (e-mails que falharam por bounce ou erro de envio):
+ *    `RespostaInbox`, `RespostaInboxTipo` e `InvalidoItem`.
  *
  * Convenção:
  *   - Tipos de domínio (Empresa, Lead, Campanha, etc.) representam
@@ -359,6 +363,97 @@ export interface CRMStats {
   total_clientes: number;
   total_optout: number;
   total_campanhas: number;
+}
+
+// ════════════════════════════════════════════════════════════
+// INBOX UNIFICADO — Aba "Respostas" (Fase 8 — 04/06/2026)
+// ════════════════════════════════════════════════════════════
+
+/**
+ * Distingue a origem do item no inbox unificado.
+ *  - 'resposta' : lead respondeu a um e-mail da campanha (email_respostas).
+ *  - 'opt_out'  : lead saiu da base, seja manualmente, por hard bounce ou
+ *                 por marcar como spam (email_optout). Tratado com URGÊNCIA
+ *                 visual porque exige remoção imediata do mailing.
+ */
+export type RespostaInboxTipo = 'resposta' | 'opt_out';
+
+export interface RespostaInbox {
+  /** Origem do item — define ícone, cor e ação no card. */
+  tipo: RespostaInboxTipo;
+  /** ID na tabela de origem (email_respostas.id OU email_optout.id). */
+  id: number;
+  /** Timestamp do evento (recebido_em da resposta ou criado_em do opt-out). */
+  data_evento: string;
+
+  // ── Lead (pode ser null para opt-outs manuais sem lead correspondente) ──
+  lead_id: number | null;
+  lead_nome: string | null;
+  lead_email: string;
+
+  // ── Empresa ──
+  empresa_id: number | null;
+  empresa_nome: string | null;
+
+  // ── Campanha de origem (pode ser null para opt-outs sem origem) ──
+  campanha_id: number | null;
+  campanha_nome: string | null;
+
+  // ── Conteúdo: presente quando tipo='resposta' ──
+  assunto: string | null;
+  corpo_texto: string | null;          // preview/texto puro (200 chars)
+  classificacao: string | null;        // 'pendente', 'interessado', etc.
+  lido: boolean;
+
+  // ── Conteúdo: presente quando tipo='opt_out' ──
+  motivo_optout: string | null;        // ex: "Hard bounce", "Marcou como spam"
+}
+
+// ════════════════════════════════════════════════════════════
+// INVÁLIDOS — Aba "Inválidos" (Fase 8 — 04/06/2026)
+// ════════════════════════════════════════════════════════════
+
+/**
+ * Item da aba Inválidos: e-mails que falharam tecnicamente em envios
+ * de campanhas. Critério: `email_fila.status IN ('bounce','erro')`.
+ *
+ * Opt-out NÃO entra aqui — vai para a aba Respostas (decisão de produto
+ * de 04/06/2026: opt-out é urgência de remoção, não falha técnica).
+ */
+export type InvalidoStatus = 'bounce' | 'erro';
+
+export interface InvalidoItem {
+  /** ID da linha em email_fila — usado como chave da listagem. */
+  fila_id: number;
+
+  // ── Lead + Empresa ──
+  lead_id: number | null;
+  lead_nome: string | null;
+  empresa_id: number | null;
+  empresa_nome: string | null;
+
+  /** E-mail que estava sendo usado quando a falha aconteceu. */
+  destinatario_email: string;
+
+  // ── Campanha emissora ──
+  campanha_id: number;
+  campanha_nome: string | null;
+
+  /** Tipo de falha: 'bounce' (rejeitado pelo destinatário) ou 'erro' (falha de envio). */
+  status: InvalidoStatus;
+
+  /**
+   * Motivo legível da falha — vem de `email_fila.erro_detalhes`, populado
+   * pelo cron de envio (erro 4xx/5xx) ou pelo webhook (bounce hard/soft).
+   */
+  motivo: string | null;
+
+  /** Quando o bounce foi registrado (presente apenas para status='bounce'). */
+  bounce_em: string | null;
+  /** Quando o cron tentou enviar (presente apenas para status='erro'). */
+  enviado_em: string | null;
+  /** Timestamp de criação do item da fila (sempre presente — usado como fallback). */
+  criado_em: string;
 }
 
 // ════════════════════════════════════════════════════════════

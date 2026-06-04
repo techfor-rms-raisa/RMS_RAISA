@@ -3,6 +3,28 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.6 — 04/06/2026 — Fix definitivo do bug "(sem corpo)".
+ *   Diagnóstico (apoiado pela v1.5):
+ *     • Query SQL: `SELECT pg_typeof(dados->'data'->'text'), LENGTH(...)`
+ *       sobre `email_eventos` mostrou tam_text/tam_html = NULL.
+ *     • O webhook do Resend para `email.received` NÃO inclui `text`/`html`
+ *       no payload (por design). Esses campos só existem no recurso completo
+ *       e devem ser obtidos via `GET https://api.resend.com/emails/{id}`.
+ *     • Comportamento idêntico ao do webhook legacy
+ *       `/api/webhook/email-inbound` (módulo RAISA candidaturas), que já
+ *       resolveu o mesmo problema há ~5 meses pelo mesmo caminho.
+ *   Correção:
+ *     1) Novo helper `buscarEmailCompletoResend(emailId, apiKey)` —
+ *        chama `GET /emails/:id` e devolve `{ text, html, subject }`.
+ *     2) Em `processarEmailRecebido`: se `dataEvento.text` E `dataEvento.html`
+ *        vierem vazios, faz o fallback fetch e enriquece os corpos antes
+ *        de gravar em `email_respostas` e antes do forward ao gestor.
+ *     3) `corpoTexto`/`corpoHtml`/`assunto` agora são `let` (mutáveis para
+ *        absorver o enriquecimento).
+ *     4) Falha no fetch só loga warning e segue com o que tinha — não
+ *        bloqueia gravação (o histórico mostra "Resposta recebida" mesmo
+ *        sem o corpo; é graceful degradation).
+ *
  * v1.5 — 04/06/2026 — Instrumentação do email.received (debug do bug "(sem corpo)").
  *   Sintoma: forward ao gestor chega com "(sem corpo)" e o drawer da ficha
  *   mostra "—" na seção Respostas, mesmo quando a UI do Resend Activity
@@ -853,6 +875,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// 🆕 v1.6 — HELPER: buscar e-mail completo via REST API do Resend
+// ────────────────────────────────────────────────────────────────────────
+/**
+ * O webhook de `email.received` chega SEM `text` e `html` no payload
+ * (descoberta validada na v1.5 — `LENGTH(dados->'data'->>'text') = NULL`).
+ * O corpo só está disponível chamando `GET /emails/:id` na REST API.
+ *
+ * Esta função encapsula esse fetch:
+ *   • Usa o id do e-mail (campo `id` ou `email_id` do payload).
+ *   • Autentica com `RESEND_API_KEY` (Bearer).
+ *   • Retorna `{ text, html, subject }` ou null em qualquer falha.
+ *   • Nunca lança exceção — falha é graceful (loga warning e retorna null).
+ *
+ * Comportamento idêntico ao webhook legacy `/api/webhook/email-inbound`
+ * (módulo RAISA candidaturas, que resolveu o mesmo problema em 2025).
+ */
+async function buscarEmailCompletoResend(
+  emailId: string,
+  apiKey: string,
+): Promise<{ text: string | null; html: string | null; subject: string | null } | null> {
+  try {
+    const resp = await fetch(`https://api.resend.com/emails/${encodeURIComponent(emailId)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      console.warn(
+        `[crm-webhook] ⚠️ GET /emails/${emailId} retornou ${resp.status}: ${body.substring(0, 200)}`,
+      );
+      return null;
+    }
+
+    const data: any = await resp.json().catch(() => null);
+    if (!data) {
+      console.warn(`[crm-webhook] ⚠️ GET /emails/${emailId} sem corpo JSON`);
+      return null;
+    }
+
+    return {
+      text: typeof data.text === 'string' ? data.text : null,
+      html: typeof data.html === 'string' ? data.html : null,
+      subject: typeof data.subject === 'string' ? data.subject : null,
+    };
+  } catch (e: any) {
+    console.warn(
+      `[crm-webhook] ⚠️ Exceção em GET /emails/${emailId}:`,
+      e?.message || String(e),
+    );
+    return null;
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // 🆕 PROCESSADOR DEDICADO: email.received (Fase 7-MVP)
 // ────────────────────────────────────────────────────────────────────────
 /**
@@ -981,9 +1060,49 @@ async function processarEmailRecebido(opts: {
 
   // 5. Extrair from, assunto e corpos do payload
   const { email: deEmail, nome: deNome } = parsearFrom(dataEvento?.from);
-  const assunto: string | null = dataEvento?.subject || null;
-  const corpoTexto: string | null = dataEvento?.text || null;
-  const corpoHtml: string | null = dataEvento?.html || null;
+  // 🆕 v1.6 — mutáveis para absorver o enriquecimento via REST API.
+  let assunto: string | null = dataEvento?.subject || null;
+  let corpoTexto: string | null = dataEvento?.text || null;
+  let corpoHtml: string | null = dataEvento?.html || null;
+
+  // 🆕 v1.6 — Fallback fetch quando text E html vierem vazios.
+  //   O webhook do Resend para email.received NÃO traz o corpo no payload
+  //   (descoberta da v1.5). Precisamos buscar via REST API para enriquecer.
+  //   Se text OU html já vierem preenchidos (cenário raro mas possível),
+  //   pulamos o fetch e usamos o que veio no payload.
+  if (!corpoTexto && !corpoHtml) {
+    const emailIdResend: string | null =
+      dataEvento?.id || dataEvento?.email_id || null;
+    const apiKey = process.env.RESEND_API_KEY;
+
+    if (!emailIdResend) {
+      console.warn(
+        '[crm-webhook] ⚠️ email.received sem id/email_id no payload — não é possível enriquecer',
+      );
+    } else if (!apiKey) {
+      console.warn(
+        '[crm-webhook] ⚠️ RESEND_API_KEY ausente — corpo do e-mail não será buscado',
+      );
+    } else {
+      console.log(
+        `[crm-webhook] 🔍 Buscando email completo via REST API (id=${emailIdResend})`,
+      );
+      const enriquecido = await buscarEmailCompletoResend(emailIdResend, apiKey);
+      if (enriquecido) {
+        // Preenche o que estava vazio sem sobrescrever o que já veio.
+        if (!corpoTexto && enriquecido.text) corpoTexto = enriquecido.text;
+        if (!corpoHtml && enriquecido.html) corpoHtml = enriquecido.html;
+        if (!assunto && enriquecido.subject) assunto = enriquecido.subject;
+        console.log(
+          `[crm-webhook] ✅ Email enriquecido: text_len=${(corpoTexto || '').length} html_len=${(corpoHtml || '').length}`,
+        );
+      } else {
+        console.warn(
+          `[crm-webhook] ⚠️ Falha ao enriquecer email ${emailIdResend} — graceful degradation`,
+        );
+      }
+    }
+  }
 
   if (!deEmail) {
     console.warn('[crm-webhook] ⚠️ email.received sem "from" válido');
