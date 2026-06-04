@@ -2,13 +2,18 @@
  * CampanhasPage.tsx — Container principal do módulo de Campanhas
  *
  * Caminho: src/components/crm/campanhas/CampanhasPage.tsx
- * Versão: 1.1 (Fase 5B-fix — 01/06/2026)
+ * Versão: 1.2 (Fase 7-MVP guard — 04/06/2026)
  *
  * Histórico:
- *  - v1.0 (30/05/2026 — Fase 1D): substitui o CampaignBuilder.tsx monolítico
- *    (1483 linhas). Orquestra os 5 hooks (campanhas, steps, leads, assinatura,
- *    preview), alterna entre VISTA LISTA e VISTA WIZARD, exibe modal de
- *    assinatura e toast de mensagens.
+ *  - v1.2 (04/06/2026 — Fase 7-MVP guard): NÃO pré-preencher `email_remetente`
+ *    em `handleNovaCampanha`. Causa do incidente de 04/06/2026: o `userEmail`
+ *    do usuário logado é o e-mail institucional (`@techforti.com.br`), domínio
+ *    NÃO verificado no Resend para envio. Como o auto-fill do StepInfo só
+ *    sobrescreve campo vazio, o e-mail institucional era mantido e o Resend
+ *    devolvia 403 validation_error nos envios. Agora `email_remetente: ''`,
+ *    o auto-fill do StepInfo computa um e-mail derivado do `nome_remetente`
+ *    + `dominio_envio` (sempre dentro dos domínios verificados). O backend
+ *    crm-campanhas.ts v1.9 valida em defesa em profundidade.
  *  - v1.1 (01/06/2026 — Fase 5B-fix): corrige bug crítico do envio do
  *    `criado_por` para o backend de Campanhas. A "Fase 4C-fix" (31/05) tinha
  *    usado `user.nome_usuario` como fallback de email, mas `nome_usuario`
@@ -16,6 +21,10 @@
  *    O backend rejeitava com "Criador não encontrado em app_users". Agora
  *    usa o padrão correto da casa: `user.email` ?? `user.email_usuario` ??
  *    fail (visto no AssinaturasPage que funciona em produção).
+ *  - v1.0 (30/05/2026 — Fase 1D): substitui o CampaignBuilder.tsx monolítico
+ *    (1483 linhas). Orquestra os 5 hooks (campanhas, steps, leads, assinatura,
+ *    preview), alterna entre VISTA LISTA e VISTA WIZARD, exibe modal de
+ *    assinatura e toast de mensagens.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -112,7 +121,14 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
       tipo: 'Outsourcing',
       status: 'rascunho',
       dominio_envio: '',
-      email_remetente: userEmail,
+      // 🆕 v1.2 (04/06/2026 — Fase 7-MVP guard): NÃO pré-preencher com userEmail.
+      // O `userEmail` é o e-mail institucional (@techforti.com.br), domínio que
+      // NÃO está verificado no Resend para envio (envios saem por @techfor.com.br
+      // ou @techforti.inf.br). Pré-preencher com o institucional fazia o Resend
+      // devolver 403 validation_error. Deixando vazio aqui, o auto-fill do
+      // StepInfo computa um e-mail derivado de (nome_remetente + dominio_envio),
+      // sempre dentro dos domínios verificados.
+      email_remetente: '',
       nome_remetente: userNome,
       horario_inicio: '08:00',
       horario_fim: '18:00',
