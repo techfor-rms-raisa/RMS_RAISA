@@ -4,6 +4,23 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.6 (04/06/2026 — Plano B definitivo): SDK Resend ELIMINADO desta etapa.
+ *      Após v1.3 → v1.3.1 → v1.4 → v1.5 falharem em fazer o `Reply-To`
+ *      chegar no e-mail enviado (todos os Raw JSONs mostraram `reply_to: []`
+ *      mesmo com o campo preenchido no payload, e o `Reply-To` em `headers`
+ *      também foi filtrado pelo Resend), partimos para chamada `fetch` direta
+ *      à API REST do Resend em `https://api.resend.com/emails`.
+ *      Mudanças:
+ *        • Removida `import { Resend } from 'resend'` e `new Resend(...)`.
+ *        • Nova constante `RESEND_API_URL`.
+ *        • `resend.emails.send(...)` → `fetch(RESEND_API_URL, { POST + Bearer })`
+ *          com body JSON contendo `reply_to` em snake_case (formato nativo da REST).
+ *        • Tratamento de erro adaptado: do objeto do SDK (`{name, statusCode, message}`)
+ *          para a response HTTP + body JSON do REST. `classificarErroResend()`
+ *          continua reaproveitada porque já trabalha com `statusCode`/`name`.
+ *      Resultado esperado: `reply_to` populado no Raw JSON, respostas dos leads
+ *      indo para o plus-alias `respostas+fX+lY@techfor.com.br`, webhook
+ *      parseando corretamente e encaminhando ao gestor responsável.
  *  - v1.5 (04/06/2026 — Fase 7-MVP definitivo): Reply-To via HEADERS SMTP.
  *      Causa do incidente de 04/06/2026: confirmado pelo Raw JSON de 4
  *      envios — `"reply_to": []` mesmo com `replyTo: replyTo` no payload.
@@ -95,7 +112,11 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { Resend } from 'resend';
+// 🆕 v1.6 (04/06/2026 — Plano B): SDK Resend REMOVIDO. Após v1.3.1 → v1.4 →
+// v1.5 falharem (SDK descarta `replyTo`/`reply_to`/header `Reply-To` no campo
+// `headers`), partimos para chamada `fetch` direta à API REST do Resend, onde
+// o `reply_to` (snake_case) no body JSON é aceito nativamente — sem intermediação
+// do SDK. Não há mais `import { Resend } from 'resend'` neste arquivo.
 
 export const config = { maxDuration: 60 };
 
@@ -114,6 +135,12 @@ const TIMEZONE_BR = 'America/Sao_Paulo';
  *  e os envios 6+ voltavam para `pendente` com erro "Too many requests".
  *  Aumentar este valor se o plano do Resend mudar (ex: hobby = 5/s, pro = 10/s). */
 const RATE_LIMIT_MS = 220;
+
+/** Endpoint da API REST do Resend para envio de e-mails.
+ *  🆕 v1.6 (04/06/2026 — Plano B) — usado em chamada `fetch` direta para
+ *  bypassar o SDK do Resend que descarta `replyTo`/`reply_to`/header `Reply-To`
+ *  silenciosamente. Body JSON aceita `reply_to` em snake_case nativamente. */
+const RESEND_API_URL = 'https://api.resend.com/emails';
 
 // ════════════════════════════════════════════════════════════════
 // HELPERS
@@ -299,7 +326,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       error: 'RESEND_API_KEY não configurada no ambiente Vercel.',
     });
   }
-  const resend = new Resend(resendApiKey);
+  // 🆕 v1.6 — SDK removido. As chamadas usam `fetch` direto em RESEND_API_URL,
+  // autenticadas com a chave abaixo via header `Authorization: Bearer ...`.
 
   // Estado da execução
   let enviadosCount = 0;
@@ -514,47 +542,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
       jaEnviouAlgum = true;
 
-      // 5e) Enviar via Resend
+      // 5e) Enviar via Resend — chamada `fetch` direta à API REST.
       //
-      // 🆕 v1.5 (04/06/2026 — Fase 7-MVP definitivo): Reply-To via HEADERS.
-      // Causa do incidente de 04/06/2026: o parâmetro `replyTo` (e seu primo
-      // snake_case `reply_to`) do SDK Resend Node está sendo SILENCIOSAMENTE
-      // descartado pelo servidor — o Raw JSON dos 4 envios mostrou `"reply_to": []`
-      // mesmo com o parâmetro preenchido no código. Resultado: respostas
-      // dos leads foram para o `From` em vez do plus-alias, e o webhook
-      // recebeu eventos órfãos (fila_id/lead_id = null).
+      // 🆕 v1.6 (04/06/2026 — Plano B): SDK Resend ELIMINADO desta etapa.
+      // Cronologia do bug:
+      //   • v1.3 — `reply_to` (snake_case) no payload → ignorado pelo SDK.
+      //   • v1.3.1 — `replyTo` (camelCase) no payload → também ignorado.
+      //   • v1.5 — `Reply-To` em `headers` → também ignorado/filtrado.
+      // Em TODOS os Raw JSONs dos envios, o campo `reply_to: []` voltou vazio.
+      // Como o SDK do Resend Node está descartando todas as tentativas de
+      // definir o Reply-To, partimos para `fetch` direto no endpoint REST,
+      // onde o body JSON com `reply_to` em snake_case é aceito nativamente
+      // pelo servidor (sem intermediação do SDK).
       //
-      // Solução robusta: passar `Reply-To` como header SMTP padrão (RFC 5322),
-      // pelo campo `headers` que comprovadamente funciona (o `X-Entity-Ref-ID`
-      // sempre chega corretamente no JSON de retorno). Bypassa o bug do
-      // parâmetro de alto nível. Mantemos também o parâmetro `replyTo` por
-      // defesa em profundidade — se o SDK consertar no futuro, não atrapalha.
-      //
-      // Auditoria: log explícito do payload essencial para facilitar diagnóstico
-      // caso o problema retorne. Mostra os campos críticos sem poluir os logs
-      // com HTML/texto do corpo.
+      // Auditoria: log explícito do payload essencial para diagnóstico futuro.
       console.log(
-        `[disparar-fila] 📤 fila=${item.id} from="${from}" to="${item.destinatario_email}" reply_to_header="${replyTo}"`
+        `[disparar-fila] 📤 fila=${item.id} from="${from}" to="${item.destinatario_email}" reply_to="${replyTo}"`
       );
 
       try {
-        const { data, error } = await resend.emails.send({
-          from,
-          to: [item.destinatario_email],
-          replyTo: replyTo, // mantido por defesa em profundidade (vide v1.5)
-          subject: step.assunto || '(sem assunto)',
-          html: htmlFinal,
-          text: textoFinal,
+        const respFetch = await fetch(RESEND_API_URL, {
+          method: 'POST',
           headers: {
-            'X-Entity-Ref-ID': `rms-fila-${item.id}`,
-            'Reply-To': replyTo, // 🆕 v1.5 — caminho RFC garantido (SDK ignora `replyTo`)
+            'Authorization': `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json',
           },
+          body: JSON.stringify({
+            from,
+            to: [item.destinatario_email],
+            reply_to: replyTo, // 🆕 v1.6 — snake_case, formato nativo da REST API
+            subject: step.assunto || '(sem assunto)',
+            html: htmlFinal,
+            text: textoFinal,
+            headers: {
+              'X-Entity-Ref-ID': `rms-fila-${item.id}`,
+            },
+          }),
         });
 
-        if (error) {
-          const classe = classificarErroResend(error);
+        // O endpoint REST sempre retorna JSON, sucesso ou erro
+        const respBody: any = await respFetch.json().catch(() => ({}));
+
+        if (!respFetch.ok) {
+          // Erro do Resend — formato: { name, message, statusCode? }
+          const classe = classificarErroResend({
+            statusCode: respFetch.status,
+            name: respBody?.name,
+            message: respBody?.message,
+          });
           const novasTentativas = (item.tentativas || 0) + 1;
-          const erroMsg = ((error as any).message || JSON.stringify(error)).substring(0, 500);
+          const erroMsg = `[${respFetch.status}] ${respBody?.name || 'erro'}: ${respBody?.message || JSON.stringify(respBody)}`.substring(0, 500);
 
           if (classe === 'definitivo' || novasTentativas >= MAX_TENTATIVAS) {
             await supabase.from('email_fila').update({
@@ -580,17 +617,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           continue;
         }
 
-        // Sucesso
+        // Sucesso — o body de retorno traz `{ id: "uuid" }`
+        const resendId: string | null = respBody?.id || null;
         await supabase.from('email_fila').update({
           status: 'enviado',
           enviado_em: new Date().toISOString(),
-          resend_message_id: data?.id || null,
+          resend_message_id: resendId,
         }).eq('id', item.id);
         enviadosCount++;
         detalhes.itens.push({
           id: item.id,
           resultado: 'enviado',
-          resend_id: data?.id,
+          resend_id: resendId,
         });
       } catch (sendErr: any) {
         // Exceção inesperada (rede, timeout) — trata como temporário

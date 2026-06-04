@@ -3,6 +3,22 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.3 — 04/06/2026 — Plano B: SDK Resend ELIMINADO desta função.
+ *   Após validar em 4 versões de `disparar-fila.ts` (v1.3 → v1.3.1 → v1.4 → v1.5)
+ *   que o SDK do Resend Node descarta `replyTo`/`reply_to` e até o header
+ *   `Reply-To` em `headers`, o caminho de chamada do `encaminharRespostaAoGestor()`
+ *   foi migrado para `fetch` direto na REST API do Resend
+ *   (`https://api.resend.com/emails`), onde o body JSON com `reply_to`
+ *   (snake_case) é aceito nativamente.
+ *   Mudanças:
+ *     • Removida `import { Resend } from 'resend'`.
+ *     • Interface da função: `resend: Resend` → `resendApiKey: string`.
+ *     • Disparo: `opts.resend.emails.send(...)` → `fetch(...)`.
+ *     • Callsite no `processarEmailRecebido`: não instancia mais `new Resend()`;
+ *       passa apenas a chave `RESEND_API_KEY` do env.
+ *     • Tratamento de erro adaptado para HTTP status + body JSON.
+ *     • Console.log explícito do `reply_to` para auditoria.
+ *
  * v1.2 — 03/06/2026 — Forward completo da resposta ao gestor (Fase 7-MVP final).
  *   - Renomeada `dispararAlertaResposta()` → `encaminharRespostaAoGestor()`.
  *   - Antes: chamava `/api/send-email` (type='general'), que embrulha em
@@ -79,7 +95,10 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { Resend } from 'resend';
+// 🆕 v1.3 (04/06/2026 — Plano B): SDK Resend REMOVIDO deste arquivo. A
+// função `encaminharRespostaAoGestor()` chama a API REST do Resend via
+// `fetch` direto. Razão: o SDK descarta `replyTo`/`reply_to`/header `Reply-To`
+// silenciosamente (validado em 4 versões consecutivas de `disparar-fila.ts`).
 import crypto from 'crypto';
 
 // ────────────────────────────────────────────────────────────────────────
@@ -314,7 +333,7 @@ function escapeHtml(str: string | null | undefined): string {
  */
 async function encaminharRespostaAoGestor(opts: {
   supabase: any;
-  resend: Resend;
+  resendApiKey: string;        // 🆕 v1.3 — chave da API (SDK removido, fetch direto)
   responsavelId: number | null | undefined;
   leadId: number;
   leadEmail: string;
@@ -431,23 +450,46 @@ porque é o responsável pela campanha. Para responder ao lead, basta
 usar "Responder" no seu cliente de e-mail — sua mensagem irá direto
 para ${opts.leadEmail} a partir da sua caixa institucional.`;
 
-    // 4) Disparo via Resend (SDK direto)
-    const { data, error } = await opts.resend.emails.send({
-      from: fromFormatado,
-      to: [usr.email_usuario],
-      replyTo: opts.leadEmail,  // 🔑 Gestor clica "Responder" → vai DIRETO ao lead
-      subject: subjectForward,
-      html: htmlForward,
-      text: textForward,
+    // 4) Disparo via Resend — chamada `fetch` direta à API REST.
+    //
+    // 🆕 v1.3 (04/06/2026 — Plano B) — SDK Resend ELIMINADO daqui também.
+    // Razão: o SDK descarta `replyTo` silenciosamente (validado em 4 versões
+    // de `disparar-fila.ts`). Sem o `Reply-To` correto no encaminhamento,
+    // quando o gestor clicar "Responder" no Outlook/Gmail, o envio iria para
+    // o `From` (`notificacoes@techfortirms.online`) em vez de ir direto para
+    // o lead (`opts.leadEmail`), quebrando o fluxo proposto.
+    // Solução: chamada direta à REST API com `reply_to` em snake_case.
+    console.log(
+      `[crm-webhook] 📤 forward fila_lead=${opts.leadId} to="${usr.email_usuario}" reply_to="${opts.leadEmail}"`
+    );
+
+    const respFetch = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
       headers: {
-        'X-Entity-Ref-ID': `rms-forward-lead-${opts.leadId}`,
+        'Authorization': `Bearer ${opts.resendApiKey}`,
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({
+        from: fromFormatado,
+        to: [usr.email_usuario],
+        reply_to: opts.leadEmail,  // 🔑 Gestor clica "Responder" → vai DIRETO ao lead
+        subject: subjectForward,
+        html: htmlForward,
+        text: textForward,
+        headers: {
+          'X-Entity-Ref-ID': `rms-forward-lead-${opts.leadId}`,
+        },
+      }),
     });
 
-    if (error) {
-      console.warn('[crm-webhook] ⚠️ Forward falhou:', JSON.stringify(error).substring(0, 300));
+    const respBody: any = await respFetch.json().catch(() => ({}));
+
+    if (!respFetch.ok) {
+      console.warn(
+        `[crm-webhook] ⚠️ Forward falhou [${respFetch.status}] ${respBody?.name || ''}: ${respBody?.message || JSON.stringify(respBody).substring(0, 200)}`
+      );
     } else {
-      console.log(`[crm-webhook] 📨 Resposta encaminhada para ${usr.email_usuario} (resend_id=${data?.id})`);
+      console.log(`[crm-webhook] 📨 Resposta encaminhada para ${usr.email_usuario} (resend_id=${respBody?.id})`);
     }
   } catch (e: any) {
     console.warn('[crm-webhook] ⚠️ Erro ao encaminhar resposta ao gestor:', e?.message);
@@ -903,15 +945,16 @@ async function processarEmailRecebido(opts: {
   //     Agora vai HTML completo + Reply-To = lead, então o gestor responde
   //     direto do cliente de e-mail dele (Gmail/Outlook). Requer RESEND_API_KEY
   //     no ambiente; se ausente, loga e segue (não quebra o webhook).
+  //     🆕 v1.3 (Plano B) — passa apenas a chave; a função chama API REST do
+  //     Resend via fetch direto (SDK eliminado).
   if (campanha?.responsavel_id) {
     const resendApiKey = process.env.RESEND_API_KEY;
     if (!resendApiKey) {
       console.warn('[crm-webhook] ⚠️ RESEND_API_KEY ausente — encaminhamento ao gestor pulado');
     } else {
-      const resendClient = new Resend(resendApiKey);
       await encaminharRespostaAoGestor({
         supabase,
-        resend: resendClient,
+        resendApiKey,
         responsavelId: campanha.responsavel_id,
         leadId: fila.lead_id,
         leadEmail: lead?.email || deEmail,
