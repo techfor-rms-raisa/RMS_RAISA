@@ -2,16 +2,32 @@
  * api/crm-analytics.ts — Endpoint do Dashboard de Acompanhamento
  *
  * Caminho: api/crm-analytics.ts
- * Versão: 1.0 (Fase 8 — 01/06/2026)
+ * Versão: 2.0 (Fase 8-fix2 — 04/06/2026)
  *
- * Escopo desta primeira versão (modo "esqueleto pronto, dados de envio
- * zerados até o motor de disparo existir" — decisão tomada com Messias):
- *  - Estrutura das campanhas (status, distribuição, lista de ativas).
- *  - Saúde da base (opt-outs, leads aptos, leads sem vertical).
- *  - Métricas de envio (abertura/clique/bounce) ficam ZERADAS hoje porque
- *    `email_eventos` e `email_fila` ainda não são populadas — quando o
- *    motor de disparo entrar (PENDENCIA_Motor_Disparo_Email_Fila.md), os
- *    cálculos abaixo refletem dados reais sem mudança de contrato.
+ * v2.0 (04/06/2026 — Fase 8-fix2): conectado às fontes reais de envio.
+ *   A v1.0 entregou o esqueleto com `engajamento` zerado e
+ *   `aguardando_motor: true` hardcoded — o pretexto era que o motor de
+ *   disparo (cron + Resend + webhooks) ainda não existia. A Fase 7-MVP
+ *   (03/06/2026) e a Fase 8-Inbox + fixes de hoje fecharam toda a cadeia
+ *   de eventos, e `email_fila` já é populada em tempo real pelos
+ *   webhooks (delivered/opened/clicked/bounced → enviado_em / entregue_em
+ *   / aberto_em / clicado_em / bounce_em). Mudanças nesta versão:
+ *     1) Nova função `calcularEngajamento`: 4 counts paralelos em
+ *        `email_fila` filtrando por campanhas que o ator vê (RBAC) e
+ *        pelo período selecionado. Calcula `total_enviado`,
+ *        `taxa_abertura`, `taxa_clique`, `taxa_bounce`. A flag
+ *        `aguardando_motor` passa a significar "sem envios no período"
+ *        (true ⇔ total_enviado === 0) — não "motor inexistente".
+ *     2) Nova função `calcularTaxasPorCampanha`: agrega taxas por
+ *        campanha em UMA query só (Node-side aggregation). Substitui o
+ *        bloco hardcoded de `listarAtivas`.
+ *     3) `listarAtivas` agora consulta o Map e devolve `taxa_abertura` /
+ *        `taxa_clique` reais por campanha (e `aguardando_motor` por
+ *        campanha = true só quando aquela campanha ainda não enviou
+ *        nada).
+ *
+ * v1.0 (Fase 8 — 01/06/2026): primeira versão (esqueleto pronto, dados
+ *   de envio zerados até o motor de disparo existir).
  *
  * RBAC (espelha Pre_Projeto v3.1 §5.3):
  *  - Administrador, Gestão de R&S → vê tudo
@@ -84,16 +100,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ── Status das campanhas (Seção 1) ──
       const statusCampanhas = await contarStatus(supabase, filtroResp);
 
-      // ── Engajamento (Seção 2) — ZERADO até motor existir ──
-      // Quando email_eventos for populada por webhooks, esta seção passa
-      // a calcular de verdade sem mudar contrato.
-      const engajamento = {
-        total_enviado: 0,
-        taxa_abertura: 0,
-        taxa_clique: 0,
-        taxa_bounce: 0,
-        aguardando_motor: true,
-      };
+      // ── Engajamento (Seção 2) ──
+      // 🆕 v2.0 — dados reais consolidados pelos webhooks do Resend
+      //   (delivered / opened / clicked / bounced → colunas datetime em
+      //   email_fila). A flag `aguardando_motor` agora reflete somente
+      //   "sem envios no período selecionado", não "motor inexistente".
+      const engajamento = await calcularEngajamento(supabase, filtroResp, inicio);
 
       // ── Distribuição (Seção 3) ──
       const distribuicao = await calcularDistribuicao(supabase, filtroResp);
@@ -234,10 +246,19 @@ async function listarAtivas(supabase: any, filtro: { responsavel_id?: number }) 
   const respIds = [...new Set(campanhas.map((c) => c.responsavel_id).filter(Boolean))] as number[];
   const nomesResp = await resolverNomesUsuarios(supabase, respIds);
 
+  // 🆕 v2.0 — taxas reais por campanha (1 query agregada para todas).
+  const ids = campanhas.slice(0, 20).map((c) => c.id);
+  const taxasPorCampanha = await calcularTaxasPorCampanha(supabase, ids);
+
   const agora = Date.now();
   return campanhas.slice(0, 20).map((c) => {
     const inicio = c.inicio_envio ? new Date(c.inicio_envio).getTime() : null;
     const diasRodando = inicio ? Math.floor((agora - inicio) / (1000 * 60 * 60 * 24)) : null;
+
+    const t = taxasPorCampanha.get(c.id) || { total_enviado: 0, total_aberto: 0, total_clicado: 0 };
+    const taxaAbertura = t.total_enviado > 0 ? Number(((t.total_aberto / t.total_enviado) * 100).toFixed(2)) : null;
+    const taxaClique = t.total_enviado > 0 ? Number(((t.total_clicado / t.total_enviado) * 100).toFixed(2)) : null;
+
     return {
       id: c.id,
       nome: c.nome,
@@ -246,12 +267,115 @@ async function listarAtivas(supabase: any, filtro: { responsavel_id?: number }) 
       total_destinatarios: c.total_destinatarios || 0,
       responsavel: c.responsavel_id ? nomesResp.get(c.responsavel_id) || `#${c.responsavel_id}` : '—',
       dias_rodando: diasRodando,
-      // Taxas zeradas até o motor existir
-      taxa_abertura: null,
-      taxa_clique: null,
-      aguardando_motor: true,
+      // 🆕 v2.0 — taxas reais (ou null/true quando ainda sem envios)
+      taxa_abertura: taxaAbertura,
+      taxa_clique: taxaClique,
+      aguardando_motor: t.total_enviado === 0,
     };
   });
+}
+
+// ════════════════════════════════════════════════════════════════
+// 🆕 v2.0 — ENGAJAMENTO REAL (a partir de email_fila)
+// ════════════════════════════════════════════════════════════════
+// O cron `disparar-fila.ts` e o webhook `crm-webhook.ts` (v1.7)
+// alimentam `email_fila` com timestamps de cada etapa do ciclo de vida
+// do e-mail: enviado_em, entregue_em, aberto_em, clicado_em, bounce_em.
+// Aqui agregamos esses timestamps por campanha visível ao ator (RBAC),
+// dentro do período selecionado, devolvendo as 4 métricas do dashboard.
+//
+// Trade-off: 4 counts paralelos por chamada. Para o volume atual (até
+// poucos milhares de envios/mês) é instantâneo. Quando o volume crescer,
+// migrar para uma VIEW SQL `vw_crm_engajamento_periodo` com índice em
+// `(campanha_id, enviado_em)` resolve sem mudar contrato.
+
+async function calcularEngajamento(
+  supabase: any,
+  filtro: { responsavel_id?: number },
+  inicioPeriodo: string,
+) {
+  // 1) Lista IDs das campanhas que o ator vê (RBAC já é aplicado aqui).
+  const qCamp = supabase.from('email_campanhas').select('id');
+  const { data: campanhasIds } = await aplicarFiltroResp(qCamp, filtro);
+  const ids = ((campanhasIds || []) as any[]).map((c) => c.id);
+
+  if (ids.length === 0) {
+    return {
+      total_enviado: 0,
+      taxa_abertura: 0,
+      taxa_clique: 0,
+      taxa_bounce: 0,
+      aguardando_motor: true,
+    };
+  }
+
+  // 2) Constrói uma query base e aplica filtro de período em CADA campo
+  //    datetime relevante (enviado_em / aberto_em / clicado_em / bounce_em).
+  //    Para `periodo='total'` o início é Unix epoch ('1970-01-01...'), o
+  //    que efetivamente desliga o filtro temporal.
+  const usaPeriodo = inicioPeriodo !== '1970-01-01T00:00:00Z';
+  const filtrar = (campoData: string) => {
+    let q = supabase
+      .from('email_fila')
+      .select('id', { count: 'exact', head: true })
+      .in('campanha_id', ids)
+      .not(campoData, 'is', null);
+    if (usaPeriodo) q = q.gte(campoData, inicioPeriodo);
+    return q;
+  };
+
+  const [enviadoR, abertoR, clicadoR, bounceR] = await Promise.all([
+    filtrar('enviado_em'),
+    filtrar('aberto_em'),
+    filtrar('clicado_em'),
+    filtrar('bounce_em'),
+  ]);
+
+  const tEnviado = enviadoR.count || 0;
+  const tAberto = abertoR.count || 0;
+  const tClicado = clicadoR.count || 0;
+  const tBounce = bounceR.count || 0;
+
+  const pct = (n: number) =>
+    tEnviado > 0 ? Number(((n / tEnviado) * 100).toFixed(2)) : 0;
+
+  return {
+    total_enviado: tEnviado,
+    taxa_abertura: pct(tAberto),
+    taxa_clique: pct(tClicado),
+    taxa_bounce: pct(tBounce),
+    aguardando_motor: tEnviado === 0,
+  };
+}
+
+/**
+ * 🆕 v2.0 — taxas reais POR campanha (usada pela tabela "Campanhas em
+ * andamento"). Faz UMA query trazendo os campos relevantes de email_fila
+ * para todas as campanhas pedidas e agrega no Node — evita N×3 queries
+ * quando há até 20 campanhas ativas.
+ */
+async function calcularTaxasPorCampanha(
+  supabase: any,
+  ids: number[],
+): Promise<Map<number, { total_enviado: number; total_aberto: number; total_clicado: number }>> {
+  if (ids.length === 0) return new Map();
+
+  const { data } = await supabase
+    .from('email_fila')
+    .select('campanha_id, enviado_em, aberto_em, clicado_em')
+    .in('campanha_id', ids);
+
+  const m = new Map<number, { total_enviado: number; total_aberto: number; total_clicado: number }>();
+  for (const r of (data || []) as any[]) {
+    const cur =
+      m.get(r.campanha_id) ||
+      { total_enviado: 0, total_aberto: 0, total_clicado: 0 };
+    if (r.enviado_em) cur.total_enviado++;
+    if (r.aberto_em) cur.total_aberto++;
+    if (r.clicado_em) cur.total_clicado++;
+    m.set(r.campanha_id, cur);
+  }
+  return m;
 }
 
 async function calcularSaudeBase(supabase: any) {
