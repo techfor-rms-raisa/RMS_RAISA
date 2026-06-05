@@ -46,6 +46,27 @@
  *    Engine marca status='no_crm'). Idempotente: se já existe lead
  *    com o mesmo email, apenas sincroniza data_envio_adv e retorna
  *    ja_existia=true.
+ *  - v1.7 (05/06/2026 - Lead RBAC fix): novas funcionalidades para o
+ *    LeadFormModal v1.1 — leads criados via "Novo Lead" agora entram
+ *    com vertical/apto/reservado_por corretamente populados:
+ *      • Nova action GET `listar_responsaveis_lead`: retorna usuários
+ *        com tipo_usuario IN ('Gestão Comercial','SDR'). Usado pelo
+ *        Admin no LeadFormModal para escolher para quem o lead será
+ *        reservado.
+ *      • Action `criar_lead`: passou a aceitar `vertical`,
+ *        `apto_campanha` e `reservado_por` no body; valida que
+ *        `vertical` (NOT NULL após esse fix), `apto_campanha`
+ *        (boolean, default true) e `reservado_por` (FK app_users)
+ *        sejam consistentes. Grava no INSERT em email_leads.
+ *      • Whitelist `COLUNAS_EDITAVEIS_LEAD` (v1.4): adicionados
+ *        `vertical`, `apto_campanha`, `reservado_por` à lista de
+ *        colunas editáveis via PATCH `atualizar_lead`. Sem isso, o
+ *        Admin não conseguiria corrigir a vertical de um lead já
+ *        existente.
+ *    Combinação dos 3 garante que a action `leads_disponiveis` da
+ *    campanha encontre o lead no seletor de vínculo (era o sintoma
+ *    reportado pela Débora SDR em 05/06/2026 com 3 leads de teste
+ *    invisíveis em campanha).
  *
  * Endpoints:
  * GET  ?action=listar_empresas[&busca=X&setor=X&page=1&limit=20]
@@ -56,8 +77,9 @@
  * GET  ?action=stats                (contadores gerais)
  * GET  ?action=listar_respostas[&busca=X&page=1&limit=30]   (🆕 v1.3 — Fase 8)
  * GET  ?action=listar_invalidos[&busca=X&page=1&limit=30]   (🆕 v1.3 — Fase 8)
+ * GET  ?action=listar_responsaveis_lead                     (🆕 v1.7 — Lead RBAC fix; retorna GC + SDR)
  * POST action=criar_empresa
- * POST action=criar_lead
+ * POST action=criar_lead                                    (🔧 v1.7 — aceita vertical, apto_campanha, reservado_por)
  * POST action=importar_prospects    (importa de prospect_leads → email_leads/email_empresas)
  * POST action=promover_para_campanha (1 prospect → email_leads; marca status='no_crm')
  * POST action=promover_corretor_para_campanha (🆕 v1.6 — 1 corretor CRECI → email_leads; marca data_envio_adv)
@@ -110,6 +132,9 @@ const COLUNAS_EDITAVEIS_LEAD = [
   'reservado_por',
   'origem',
   'prospect_lead_id',
+  // 🆕 v1.7 (05/06/2026 — Lead RBAC fix)
+  'vertical',
+  'apto_campanha',
 ] as const;
 
 const COLUNAS_EDITAVEIS_EMPRESA = [
@@ -682,6 +707,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      // ── LISTAR RESPONSÁVEIS ELEGÍVEIS (GC + SDR) ──────────────────────────────
+      // 🆕 v1.7 (05/06/2026) — Usado pelo LeadFormModal quando o usuário logado
+      // é Administrador: ele precisa escolher para quem o lead será reservado
+      // (não pode reservar para si mesmo, pois Admin não atua operacionalmente).
+      // GC/SDR não chamam essa action — eles são travados automaticamente em
+      // si mesmos no lado do frontend.
+      if (action === 'listar_responsaveis_lead') {
+        const { data, error } = await supabase
+          .from('app_users')
+          .select('id, nome_usuario, tipo_usuario, email_usuario')
+          .in('tipo_usuario', ['Gestão Comercial', 'SDR'])
+          .order('tipo_usuario', { ascending: true })
+          .order('nome_usuario', { ascending: true });
+
+        if (error) {
+          console.error('[crm-leads] listar_responsaveis_lead erro:', error.message);
+          return res.status(500).json({ success: false, error: error.message });
+        }
+
+        return res.status(200).json({
+          success: true,
+          responsaveis: data || [],
+        });
+      }
+
       return res.status(400).json({ success: false, error: `Ação GET desconhecida: ${action}` });
     }
 
@@ -746,10 +796,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ── CRIAR LEAD ───────────────────────────────
       if (action === 'criar_lead') {
         const { empresa_id, nome, email, cargo, telefone, linkedin_url,
-                tags, notas, origem, criado_por, prospect_lead_id } = body;
+                tags, notas, origem, criado_por, prospect_lead_id,
+                // 🆕 v1.7 — Lead RBAC fix
+                vertical, apto_campanha, reservado_por } = body;
 
         if (!nome || !email || !criado_por) {
           return res.status(400).json({ success: false, error: 'nome, email e criado_por são obrigatórios' });
+        }
+
+        // 🆕 v1.7 — vertical e reservado_por agora são obrigatórios (sem eles
+        // o lead vira invisível para a action `leads_disponiveis` de campanha)
+        if (!vertical || !String(vertical).trim()) {
+          return res.status(400).json({
+            success: false,
+            error: 'vertical é obrigatória — sem ela o lead não fica elegível para campanhas',
+          });
+        }
+        if (!reservado_por || typeof reservado_por !== 'number') {
+          return res.status(400).json({
+            success: false,
+            error: 'reservado_por é obrigatório (id do responsável GC/SDR pelo lead)',
+          });
+        }
+
+        // 🆕 v1.7 — Validar que reservado_por aponta para um usuário GC/SDR ativo
+        const { data: respUser } = await supabase
+          .from('app_users')
+          .select('id, tipo_usuario')
+          .eq('id', reservado_por)
+          .maybeSingle();
+        if (!respUser) {
+          return res.status(400).json({
+            success: false,
+            error: `Usuário responsável (id=${reservado_por}) não encontrado em app_users`,
+          });
+        }
+        if (!['Gestão Comercial', 'SDR', 'Administrador'].includes(respUser.tipo_usuario)) {
+          // Permite Admin (caso ele crie um lead reservado a si mesmo em algum
+          // cenário excepcional), mas bloqueia outros perfis não operacionais.
+          return res.status(400).json({
+            success: false,
+            error: `Tipo de usuário inválido para responsabilizar por lead: ${respUser.tipo_usuario}`,
+          });
         }
 
         // Verificar duplicata por email
@@ -774,6 +862,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('email', email.toLowerCase().trim())
           .maybeSingle();
 
+        // 🆕 v1.7 — apto_campanha respeita o que veio do form (default true).
+        // Se vier opt-out global, força apto_campanha=false como guarda-extra
+        // (não faz sentido aptar p/ campanha um endereço que opt-out).
+        const aptoFinal =
+          (apto_campanha === undefined ? true : !!apto_campanha) && !optout;
+
         const { data, error } = await supabase
           .from('email_leads')
           .insert({
@@ -790,6 +884,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             criado_por,
             opt_out: !!optout,
             opt_out_em: optout ? new Date().toISOString() : null,
+            // 🆕 v1.7 — Lead RBAC fix
+            vertical: String(vertical).trim(),
+            apto_campanha: aptoFinal,
+            apto_campanha_em: aptoFinal ? new Date().toISOString() : null,
+            apto_campanha_por: aptoFinal ? criado_por : null,
+            reservado_por,
+            reservado_em: new Date().toISOString(),
           })
           .select()
           .single();

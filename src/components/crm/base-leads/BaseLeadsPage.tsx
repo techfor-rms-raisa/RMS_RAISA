@@ -2,7 +2,19 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.3 (Fase 8-fix2 — 04/06/2026)
+ * Versão: 1.4 (Lead RBAC fix — 05/06/2026)
+ *
+ * v1.4 (05/06/2026 — Lead RBAC fix): leads criados via "Novo Lead"
+ *   estavam ficando com vertical=NULL, apto_campanha=false,
+ *   reservado_por=NULL — e por isso invisíveis para a action
+ *   `leads_disponiveis` da campanha. Correção em 3 frentes:
+ *    - Instancia hook `useTiposCampanha` no mount, passa lista para
+ *      o LeadFormModal alimentar o seletor de vertical.
+ *    - Instancia hook `useResponsaveis` no mount (apenas se o usuário
+ *      logado for Administrador). Passa lista de GC/SDR para o
+ *      LeadFormModal alimentar o seletor de "Reservado para".
+ *    - Para não-admin, o LeadFormModal trava automaticamente
+ *      `reservado_por = currentUser.id` (lógica interna do modal).
  *
  * v1.3 (04/06/2026 — Fase 8-fix2): badges das 4 abas (Empresas / Leads /
  *   Respostas / Inválidos) agora usam `stats.total_*` como fonte primária
@@ -49,6 +61,9 @@ import { useImportProspects } from '../shared/hooks/useImportProspects';
 // 🆕 v1.2 (Fase 8-Inbox) — hooks das novas abas
 import { useRespostas } from '../shared/hooks/useRespostas';
 import { useInvalidos } from '../shared/hooks/useInvalidos';
+// 🆕 v1.4 (Lead RBAC fix) — hooks para o LeadFormModal
+import { useTiposCampanha } from '../shared/hooks/useTiposCampanha';
+import { useResponsaveis } from '../shared/hooks/useResponsaveis';
 
 import EmpresasTab from './EmpresasTab';
 import LeadsTab from './LeadsTab';
@@ -104,6 +119,9 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   // 🆕 v1.2 (Fase 8-Inbox)
   const respostasH = useRespostas();
   const invalidosH = useInvalidos();
+  // 🆕 v1.4 (Lead RBAC fix) — fontes p/ o LeadFormModal
+  const tiposCampanhaH = useTiposCampanha();
+  const responsaveisH = useResponsaveis();
 
   // ── Modais de formulário ──
   const [modalEmpresa, setModalEmpresa] = useState<'criar' | 'editar' | null>(null);
@@ -117,6 +135,12 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   // ── Efeitos: carregar dados ──
   useEffect(() => {
     leadsH.carregarStats();
+    // 🆕 v1.4 — Verticais (todos os perfis precisam para o seletor)
+    tiposCampanhaH.carregar();
+    // 🆕 v1.4 — Lista de responsáveis (somente Admin precisa)
+    if (currentUser.tipo_usuario === 'Administrador') {
+      responsaveisH.carregar();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -542,6 +566,9 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
         form={formLead}
         loading={leadsH.loading}
         empresas={empresasH.empresas}
+        verticais={tiposCampanhaH.tipos}
+        currentUser={currentUser}
+        responsaveis={responsaveisH.responsaveis}
         onChange={setFormLead}
         onSalvar={salvarLead}
         onFechar={() => setModalLead(null)}
