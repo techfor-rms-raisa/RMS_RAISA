@@ -603,13 +603,13 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 58 arquivos | 756.1 KB | 04/06/2026 |
-| `src/components/` | 156 arquivos | 921.3 KB | 04/06/2026 |
+| `api/` | 59 arquivos | 833.1 KB | 05/06/2026 |
+| `src/components/` | 160 arquivos | 921.3 KB | 05/06/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 04/06/2026 |
-| `src/types/` | 6 arquivos | 30.8 KB | 04/06/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 04/06/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 04/06/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 05/06/2026 |
+| `src/types/` | 6 arquivos | 30.8 KB | 05/06/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 05/06/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 05/06/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -622,6 +622,7 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 - `api/crm-config.ts`
 - `api/crm-copys.ts`
 - `api/crm-leads.ts`
+- `api/crm-webhook.ts`
 - `api/cv-generator-docx-bg.ts`
 - `api/cv-generator-docx.ts`
 - `api/debug-env.ts`
