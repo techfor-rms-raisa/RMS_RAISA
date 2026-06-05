@@ -4,6 +4,16 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.8 (05/06/2026 — Renomeação comercial do plus-alias):
+ *      Trocada a palavra-base do plus-alias de `respostas` para `customer-service`
+ *      por ser mais profissional para o lead que vê o Reply-To no cliente
+ *      de e-mail. Adicionalmente, em Production o sufixo de ambiente foi
+ *      removido (ficava feio comercialmente expor `+prod`). Resultado:
+ *        Production envia:  customer-service+f{id}+l{id}@techfor.com.br
+ *        Preview envia:     customer-service+test+f{id}+l{id}@techfor.com.br
+ *      O `api/crm-webhook.ts` v1.9 aceita ambos formatos (novo e legacy via
+ *      OR no regex), mantendo backward compat com filas em curso da v1.7
+ *      (`respostas+prod+...` e `respostas+preview+...`).
  *  - v1.7 (05/06/2026 — Separação de ambientes no plus-alias Reply-To):
  *      Resolvido o problema de webhooks de Production e Preview processando
  *      eventos do ambiente errado contra bancos Supabase separados, gerando
@@ -155,24 +165,24 @@ const RATE_LIMIT_MS = 220;
  *  silenciosamente. Body JSON aceita `reply_to` em snake_case nativamente. */
 const RESEND_API_URL = 'https://api.resend.com/emails';
 
-/** Prefixo de ambiente no plus-alias de Reply-To.
- *  🆕 v1.7 (05/06/2026 — separação Production/Preview):
- *  O Resend Inbound dispara `email.received` para TODOS os webhooks
- *  configurados no painel, independentemente do ambiente que originou o
- *  envio. Como Production e Preview têm Supabases separados, sem este
- *  prefixo o webhook de Preview processava eventos de Production contra
- *  o banco de Preview, encontrando filas/leads antigos e gerando forwards
- *  para destinatários errados.
+/** Sufixo de ambiente no plus-alias de Reply-To.
+ *  🆕 v1.8 (05/06/2026 — renomeação comercial):
+ *  Substituiu PREFIXO_AMBIENTE da v1.7. Mudanças semânticas:
+ *    - Production agora retorna string VAZIA → plus-alias fica
+ *      `customer-service+f{id}+l{id}@...` (sem expor "prod" ao lead).
+ *    - Preview retorna `+test` → plus-alias fica
+ *      `customer-service+test+f{id}+l{id}@...`.
  *
- *  Comportamento:
- *    - process.env.VERCEL_ENV === 'production' → prefixo = 'prod'
- *    - qualquer outro valor ('preview', 'development', undefined) → 'preview'
+ *  Razão: o lead vê o Reply-To no cliente de e-mail dele. "prod" é jargão
+ *  técnico que polui a percepção comercial; "test" só aparece em ambiente
+ *  interno (Preview) e é aceitável para uso transitório.
  *
- *  O `api/crm-webhook.ts` v1.8 lê este prefixo do plus-alias e compara com
- *  o próprio `VERCEL_ENV` — eventos de outro ambiente são ignorados (200 OK
- *  silencioso) sem nenhum side-effect no banco. */
-const PREFIXO_AMBIENTE: 'prod' | 'preview' =
-  process.env.VERCEL_ENV === 'production' ? 'prod' : 'preview';
+ *  O `api/crm-webhook.ts` v1.9 detecta o ambiente:
+ *    - Sufixo `test` → ambiente `preview`
+ *    - Sem sufixo → ambiente `prod` (default novo)
+ *    - Sufixos `prod` / `preview` da v1.7 → ambos reconhecidos (backward compat) */
+const SUFIXO_AMBIENTE: '' | '+test' =
+  process.env.VERCEL_ENV === 'production' ? '' : '+test';
 
 // ════════════════════════════════════════════════════════════════
 // HELPERS
@@ -553,7 +563,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const from = `${campanha.nome_remetente || 'TechFor TI'} <${campanha.email_remetente}>`;
 
       // 🆕 v1.3 — Reply-To dinâmico com plus-aliasing (Fase 7-MVP).
-      // Quando o lead responde, a resposta vai para `respostas+f{id}+l{id}@dominio`.
+      // Quando o lead responde, a resposta vai para `customer-service+f{id}+l{id}@dominio`.
       // O Resend Inbound recebe, dispara webhook `email.received`, e o
       // api/crm-webhook.ts parseia o plus-alias para correlacionar a resposta
       // com a fila (fila_id) e o lead (lead_id) originais.
@@ -564,12 +574,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Centraliza toda a captura de respostas — campanhas que saem por
       // `techforti.inf.br` continuam tendo as respostas roteadas para cá.
       //
-      // 🆕 v1.7 — Prefixo de ambiente (`prod` ou `preview`) entre `respostas` e
-      // `+f`. Permite ao webhook de cada ambiente ignorar eventos do outro
-      // (necessário porque Production e Preview têm Supabases separados e o
-      // Resend dispara webhook em TODOS os endpoints configurados).
+      // 🆕 v1.7 — Sufixo de ambiente entre a palavra-base e `+f`. Permite ao
+      // webhook de cada ambiente ignorar eventos do outro (necessário porque
+      // Production e Preview têm Supabases separados e o Resend dispara
+      // webhook em TODOS os endpoints configurados).
+      //
+      // 🆕 v1.8 — Palavra-base renomeada `respostas` → `customer-service` por
+      // razões comerciais (lead vê esse endereço no cliente de e-mail dele).
+      // Production NÃO leva sufixo de ambiente (mais limpo comercialmente);
+      // Preview leva `+test`. O webhook v1.9 aceita ambas as palavras-base
+      // (`customer-service` e `respostas` legacy) e todos os sufixos
+      // (`test`, `prod`, `preview`) via regex tolerante.
       const DOMINIO_REPLY_TO = 'techfor.com.br';
-      const replyTo = `respostas+${PREFIXO_AMBIENTE}+f${item.id}+l${item.lead_id}@${DOMINIO_REPLY_TO}`;
+      const replyTo = `customer-service${SUFIXO_AMBIENTE}+f${item.id}+l${item.lead_id}@${DOMINIO_REPLY_TO}`;
 
       // 🆕 v1.2 — Throttle ENTRE envios (não antes do primeiro). Mantém o ritmo
       // abaixo do rate limit do Resend (5 req/s). Aplicado a partir do segundo

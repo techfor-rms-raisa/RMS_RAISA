@@ -3,6 +3,31 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.9 — 05/06/2026 — Renomeação comercial do plus-alias.
+ *   Motivação: o Reply-To `respostas+prod+f4+l1@techfor.com.br` aparecia
+ *   diretamente no cliente de e-mail do lead. "respostas" é descritivo mas
+ *   "+prod" expunha jargão técnico interno. Decisão de produto: trocar para
+ *   `customer-service` (mais profissional) e remover o sufixo de ambiente
+ *   em Production (Preview mantém `+test` para diferenciação interna).
+ *
+ *   Mudanças cirúrgicas:
+ *     1) `REPLY_TO_PATTERN` ampliada com OR para aceitar AMBAS as palavras-base
+ *        e ambos os conjuntos de sufixos:
+ *          `(?:customer-service|respostas)(?:\+(test|prod|preview))?\+f(\d+)\+l(\d+)@`
+ *        Backward compat 100%: filas em curso da v1.7 (`respostas+prod+...`,
+ *        `respostas+preview+...`) e da v1.6 ou anterior (`respostas+...` sem
+ *        sufixo) continuam funcionando sem migração.
+ *     2) `parsearReplyTo` mapeia sufixo → ambiente:
+ *          - 'test'    → 'preview' (novo formato v1.8)
+ *          - 'preview' → 'preview' (legacy v1.7)
+ *          - 'prod'    → 'prod'    (legacy v1.7)
+ *          - undefined → 'prod'    (default novo: Production sem sufixo)
+ *     3) Logs e mensagens de erro atualizadas para mencionar ambos formatos.
+ *
+ *   Dependência: requer `api/cron/disparar-fila.ts` v1.8 para gerar
+ *     `customer-service[+test]+f{id}+l{id}@...` em vez de `respostas+prod/...`.
+ *   Nada muda no Resend painel (o MX captura tudo do domínio `techfor.com.br`).
+ *
  * v1.8 — 05/06/2026 — Separação de ambientes (Production/Preview) no plus-alias.
  *   Diagnóstico (05/06/2026, primeira campanha real em Production):
  *     • Campanha 1 enviada e respondida em Production. Forwards bagunçados
@@ -256,17 +281,23 @@ const MAPA_TIPO_EVENTO: Record<string, string> = {
 const SVIX_TIMESTAMP_TOLERANCE_SEC = 5 * 60;
 
 /**
- * Regex do padrão de Reply-To dinâmico usado pelo cron disparar-fila:
- *   respostas+{env}+f{fila_id}+l{lead_id}@{dominio}    (v1.7+ — com prefixo)
- *   respostas+f{fila_id}+l{lead_id}@{dominio}          (v1.6 e antes — sem prefixo)
+ * Regex do padrão de Reply-To dinâmico usado pelo cron disparar-fila.
  *
- * 🆕 v1.8 — Prefixo de ambiente (`prod` ou `preview`) opcional entre
- * `respostas` e `+f`. Backward compat: sem prefixo → assume 'prod' no
- * `parsearReplyTo` (preserva filas já em curso ao deploy desta versão).
+ * Formatos aceitos (em ordem cronológica do projeto):
+ *   v1.8+ Production:  customer-service+f{fila_id}+l{lead_id}@{dominio}        (atual)
+ *   v1.8+ Preview:     customer-service+test+f{fila_id}+l{lead_id}@{dominio}   (atual)
+ *   v1.7  Production:  respostas+prod+f{fila_id}+l{lead_id}@{dominio}          (legacy)
+ *   v1.7  Preview:     respostas+preview+f{fila_id}+l{lead_id}@{dominio}       (legacy)
+ *   v1.6  e anterior:  respostas+f{fila_id}+l{lead_id}@{dominio}               (legacy)
  *
- * Match groups: [1]=env (prod|preview|undefined)  [2]=fila_id  [3]=lead_id
+ * 🆕 v1.9 — Adicionado `customer-service` como palavra-base alternativa, e
+ * `test` como sufixo equivalente a `preview` (ambos mapeiam para env=preview).
+ * Sem sufixo → assume `prod` (default novo de Production).
+ *
+ * Match groups: [1]=sufixo (test|prod|preview|undefined)  [2]=fila_id  [3]=lead_id
  */
-const REPLY_TO_PATTERN = /^respostas(?:\+(prod|preview))?\+f(\d+)\+l(\d+)@/i;
+const REPLY_TO_PATTERN =
+  /^(?:customer-service|respostas)(?:\+(test|prod|preview))?\+f(\d+)\+l(\d+)@/i;
 
 // ────────────────────────────────────────────────────────────────────────
 // HELPER: ler raw body do stream
@@ -345,8 +376,12 @@ function hdr(req: VercelRequest, nome: string): string {
  * O payload do email.received traz "to" como string OU array de strings.
  * Procura entre eles o primeiro que case com o padrão de Reply-To dinâmico.
  *
- * 🆕 v1.8 — Retorno inclui `env` ('prod' | 'preview'). Quando o plus-alias
- * vem sem prefixo (formato v1.6 ou antes), assume 'prod' por compat.
+ * 🆕 v1.9 — Mapeamento sufixo → ambiente:
+ *   - 'test'    → 'preview'  (novo formato v1.8, Production sem sufixo)
+ *   - 'preview' → 'preview'  (legacy v1.7)
+ *   - 'prod'    → 'prod'     (legacy v1.7)
+ *   - undefined → 'prod'     (default novo: Production v1.8 não traz sufixo;
+ *                             OU formato v1.6/anterior sem prefixo de ambiente)
  *
  * Retorno: { env, filaId, leadId } se encontrar; null caso contrário.
  */
@@ -360,9 +395,10 @@ function parsearReplyTo(
   for (const dest of candidatos) {
     const m = dest.match(REPLY_TO_PATTERN);
     if (m) {
-      // m[1] = 'prod' | 'preview' | undefined (sem prefixo no plus-alias)
+      // m[1] = 'test' | 'prod' | 'preview' | undefined
+      const sufixo = m[1]?.toLowerCase();
       const env: 'prod' | 'preview' =
-        (m[1]?.toLowerCase() === 'preview' ? 'preview' : 'prod');
+        sufixo === 'test' || sufixo === 'preview' ? 'preview' : 'prod';
       const filaId = parseInt(m[2], 10);
       const leadId = parseInt(m[3], 10);
       if (!Number.isNaN(filaId) && !Number.isNaN(leadId)) {
@@ -1059,7 +1095,7 @@ async function processarEmailRecebido(opts: {
   const parsed = parsearReplyTo(toField);
 
   if (!parsed) {
-    console.warn('[crm-webhook] ⚠️ email.received sem padrão respostas+f+l no "to":', toField);
+    console.warn('[crm-webhook] ⚠️ email.received sem padrão de Reply-To esperado (customer-service+[test+]f{id}+l{id} ou respostas+...) no "to":', toField);
     // Grava como evento órfão pra auditoria
     await supabase.from('email_eventos').insert({
       fila_id: null,
@@ -1072,7 +1108,7 @@ async function processarEmailRecebido(opts: {
     return res.status(200).json({
       ok: true,
       orphan: true,
-      reason: 'to não bate padrão respostas+f{id}+l{id}',
+      reason: 'to não bate padrão Reply-To (customer-service+[test+]f{id}+l{id}@ ou legacy respostas+...)',
     });
   }
 
