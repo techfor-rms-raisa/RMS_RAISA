@@ -32,6 +32,20 @@
  *    respectivos hooks só carregavam sob demanda). Com `stats`
  *    devolvendo os totais agregados no mount, o badge fica sempre
  *    correto sem custo extra de requisições.
+ *  - v1.6 (05/06/2026 - HOTFIX Production): adicionada action
+ *    `promover_corretor_para_campanha` que estava ausente apesar de
+ *    documentada no CHECKPOINT_2026-06-02. Sintoma em Production:
+ *    erro 400 "Ação POST desconhecida: promover_corretor_para_campanha"
+ *    quando a SDR clica em "+ Campanha" no módulo CRECI. Causa
+ *    provável: regressão em algum merge entre 02/06 e 04/06.
+ *    Implementação espelha `promover_para_campanha` adaptada à
+ *    realidade de PF (corretor não tem empresa): empresa_id=null,
+ *    vertical='CRECI', origem='creci', cargo='Corretor de Imóveis'.
+ *    Email priorizado: email_creci > email_pessoal (falha se ambos
+ *    vazios). Marca data_envio_adv no corretor (igual ao Prospect
+ *    Engine marca status='no_crm'). Idempotente: se já existe lead
+ *    com o mesmo email, apenas sincroniza data_envio_adv e retorna
+ *    ja_existia=true.
  *
  * Endpoints:
  * GET  ?action=listar_empresas[&busca=X&setor=X&page=1&limit=20]
@@ -46,6 +60,7 @@
  * POST action=criar_lead
  * POST action=importar_prospects    (importa de prospect_leads → email_leads/email_empresas)
  * POST action=promover_para_campanha (1 prospect → email_leads; marca status='no_crm')
+ * POST action=promover_corretor_para_campanha (🆕 v1.6 — 1 corretor CRECI → email_leads; marca data_envio_adv)
  * PATCH action=atualizar_empresa    (🔧 v1.4 — whitelist de campos)
  * PATCH action=atualizar_lead       (🔧 v1.4 — whitelist de campos)
  * PATCH action=mudar_funil          (muda status funil + registra histórico)
@@ -1036,6 +1051,128 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           lead: novoLead,
           empresa_id: empresaId,
           empresa_criada: empresasResult.empresas_criadas > 0,
+        });
+      }
+
+      // ── PROMOVER CORRETOR CRECI PARA CAMPANHA ─────────────────────────────────
+      // 🆕 v1.6 (05/06/2026) — Promove 1 corretor da tabela `corretores_creci`
+      // para o CRM. Cria registro em `email_leads` com vertical='CRECI' e
+      // empresa_id=null (corretor é PF, sem empresa). Marca `data_envio_adv`
+      // no corretor para que a UI do CreciPage reflita a promoção.
+      // Idempotente: se já existir lead com o mesmo email, apenas sincroniza
+      // data_envio_adv e retorna ja_existia=true.
+      if (action === 'promover_corretor_para_campanha') {
+        const { corretor_id, criado_por } = body;
+
+        if (!corretor_id || !criado_por) {
+          return res.status(400).json({
+            success: false,
+            error: 'corretor_id e criado_por são obrigatórios',
+          });
+        }
+
+        // 1. Buscar o corretor
+        const { data: corretor, error: errCorretor } = await supabase
+          .from('corretores_creci')
+          .select('*')
+          .eq('id', corretor_id)
+          .maybeSingle();
+
+        if (errCorretor) throw errCorretor;
+        if (!corretor) {
+          return res.status(404).json({ success: false, error: 'Corretor não encontrado' });
+        }
+
+        // 2. Determinar email — prioridade: email_creci > email_pessoal
+        const emailRaw = corretor.email_creci || corretor.email_pessoal;
+        if (!emailRaw || !String(emailRaw).trim()) {
+          return res.status(400).json({
+            success: false,
+            error: 'Corretor sem email (email_creci e email_pessoal vazios) — não pode ser promovido para campanha',
+          });
+        }
+        const emailNormalizado = String(emailRaw).toLowerCase().trim();
+
+        // 3. Se já existe lead com o mesmo email, apenas sincronizar data_envio_adv
+        const { data: leadExistente } = await supabase
+          .from('email_leads')
+          .select('id, nome')
+          .eq('email', emailNormalizado)
+          .maybeSingle();
+
+        if (leadExistente) {
+          await supabase
+            .from('corretores_creci')
+            .update({ data_envio_adv: new Date().toISOString() })
+            .eq('id', corretor_id);
+
+          console.log(`ℹ️ [crm-leads] Corretor "${corretor.nome}" já estava no CRM (lead ID ${leadExistente.id}) — data_envio_adv sincronizado`);
+          return res.status(200).json({
+            success: true,
+            lead: leadExistente,
+            ja_existia: true,
+            mensagem: 'Corretor já estava no CRM. data_envio_adv sincronizado.',
+          });
+        }
+
+        // 4. Verificar opt-out global
+        const { data: optout } = await supabase
+          .from('email_optout')
+          .select('id')
+          .eq('email', emailNormalizado)
+          .maybeSingle();
+
+        // 5. Criar email_lead (corretor PF — sem empresa)
+        const { data: novoLead, error: errInsertLead } = await supabase
+          .from('email_leads')
+          .insert({
+            empresa_id: null,                                  // corretor é PF
+            prospect_lead_id: null,                            // não vem do Prospect Engine
+            nome: String(corretor.nome || '').trim() || 'Sem nome',
+            email: emailNormalizado,
+            cargo: 'Corretor de Imóveis',
+            telefone: corretor.celular || null,
+            vertical: 'CRECI',
+            origem: 'creci',
+            criado_por,
+            opt_out: !!optout,
+            opt_out_em: optout ? new Date().toISOString() : null,
+          })
+          .select()
+          .single();
+
+        if (errInsertLead) {
+          return res.status(500).json({
+            success: false,
+            error: `Erro ao criar lead no CRM: ${errInsertLead.message}`,
+          });
+        }
+
+        // 6. Marcar data_envio_adv no corretor (timestamp da promoção)
+        const { error: errUpdate } = await supabase
+          .from('corretores_creci')
+          .update({ data_envio_adv: new Date().toISOString() })
+          .eq('id', corretor_id);
+
+        if (errUpdate) {
+          console.error(`⚠️ [crm-leads] Lead criado mas falhou ao atualizar data_envio_adv do corretor ${corretor_id}: ${errUpdate.message}`);
+          // Não bloqueia — o lead já está no CRM
+        }
+
+        // 7. Registrar no histórico do lead
+        await supabase.from('email_lead_historico').insert({
+          lead_id: novoLead.id,
+          tipo: 'lead_criado',
+          descricao: `Corretor CRECI promovido para CRM (corretor ID ${corretor.id}, CRECI: ${corretor.creci || 's/CRECI'})`,
+          criado_por,
+        });
+
+        console.log(`✅ [crm-leads] Corretor promovido: ${corretor.nome} <${emailNormalizado}> → CRM ID ${novoLead.id}`);
+        return res.status(201).json({
+          success: true,
+          lead: novoLead,
+          ja_existia: false,
+          mensagem: 'Corretor enviado ao CRM com sucesso.',
         });
       }
 
