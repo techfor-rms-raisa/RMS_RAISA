@@ -2,7 +2,7 @@
  * crm.types.ts — Tipos compartilhados do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/types/crm.types.ts
- * Versão: 1.3 (Fase 8-fix2 — 04/06/2026)
+ * Versão: 1.4 (Lead RBAC fix — 05/06/2026)
  *
  * Histórico:
  *  - v1.0 (29/05/2026 — Fase 1B): fonte única de verdade dos tipos.
@@ -20,6 +20,18 @@
  *    agregados — `total_respostas` e `total_invalidos` — para alimentar
  *    os badges das abas Respostas/Inválidos no BaseLeadsPage sem
  *    precisar abrir cada aba.
+ *  - v1.4 (05/06/2026 — Lead RBAC fix): `Lead` agora declara `vertical`
+ *    e `apto_campanha` (já existem no schema do banco e no PATCH/POST
+ *    do backend a partir de v1.7, mas o tipo TS estava defasado). Estes
+ *    são os campos que a action `leads_disponiveis` da campanha checa
+ *    para decidir quais leads aparecem no seletor de vínculo:
+ *      - `apto_campanha = true`
+ *      - `vertical = campanha.tipo`
+ *      - `reservado_por = campanha.responsavel_id` (já tinha)
+ *    Sem esses 3 campos preenchidos, o lead fica invisível para campanhas
+ *    (foi o sintoma reportado pela Débora SDR em 05/06/2026).
+ *    Como `LeadInput = Omit<Lead, ...>`, os 2 campos novos passam
+ *    automaticamente a ser aceitos no payload de criar/editar.
  *
  * Convenção:
  *   - Tipos de domínio (Empresa, Lead, Campanha, etc.) representam
@@ -104,6 +116,12 @@ export interface Lead {
   tipos_campanha_ids?: number[];
   ultima_campanha_em?: string | null;
   reservado_por?: number | null;   // owner (Analista/SDR/Comercial)
+
+  // ── v1.4 (05/06/2026) — Lead RBAC fix ──
+  // Sem esses 3 campos preenchidos corretamente, o lead não aparece no
+  // seletor de vínculo da campanha (action `leads_disponiveis`).
+  vertical?: string | null;         // tipo de campanha (ex.: 'CRECI', 'Alocação')
+  apto_campanha?: boolean;          // true = pode entrar em campanha
 }
 
 export type LeadInput = Omit<
@@ -472,4 +490,17 @@ export interface CurrentUserLite {
   id: number;
   nome_usuario: string;
   tipo_usuario: string;
+}
+
+// ════════════════════════════════════════════════════════════
+// RESPONSÁVEL (lista de usuários elegíveis a serem responsáveis
+//              por leads/campanhas — usado pelo Admin no LeadFormModal)
+// v1.4 (05/06/2026)
+// ════════════════════════════════════════════════════════════
+
+export interface ResponsavelLite {
+  id: number;
+  nome_usuario: string;
+  tipo_usuario: string;     // 'Gestão Comercial' | 'SDR'
+  email_usuario?: string | null;
 }
