@@ -3,6 +3,34 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.8 — 05/06/2026 — Separação de ambientes (Production/Preview) no plus-alias.
+ *   Diagnóstico (05/06/2026, primeira campanha real em Production):
+ *     • Campanha 1 enviada e respondida em Production. Forwards bagunçados
+ *       chegaram em moliveira@techforti.com.br com Reply-To `dsouza@xqqrtecherro.com`
+ *       e `errodenome@techforti.com.br` (emails de testes de PREVIEW de 04/06)
+ *       e `X-Entity-Ref-ID: rms-forward-lead-7` e `rms-forward-lead-9`.
+ *     • Tabela `email_eventos` em Production só tinha 3 filas (campanha 1,
+ *       leads 1/501/502) — incapaz de gerar pelo código v1.7 os IDs 7 e 9
+ *       com aqueles emails.
+ *     • Conclusão: o Resend Inbound dispara `email.received` para TODOS os
+ *       webhooks configurados no painel (Production + Preview + legacy). Como
+ *       Production e Preview têm Supabases SEPARADOS, o webhook de Preview
+ *       processava o evento de Production contra o banco de Preview, onde a
+ *       fila 3 antiga ainda existia apontando para o lead 9 antigo (DEBORA
+ *       TESTES SOUZA / dsouza@xqqrtecherro.com).
+ *   Correção:
+ *     1) `REPLY_TO_PATTERN` ampliada para capturar prefixo opcional
+ *        `(prod|preview)` entre `respostas` e `+f`. Backward compat: sem
+ *        prefixo, assume `prod` (preserva filas já em curso de 05/06).
+ *     2) `parsearReplyTo` agora retorna `{ env, filaId, leadId }`.
+ *     3) `processarEmailRecebido` adiciona guard de ambiente APÓS o parse:
+ *        compara `parsed.env` com `process.env.VERCEL_ENV` e retorna
+ *        `{ status: 'ignored', reason: 'environment_mismatch' }` se não bater.
+ *     Sem mudanças em DNS, MX ou DKIM. Permite manter o webhook de Preview
+ *     ativo no Resend permanentemente.
+ *   Dependência: requer `api/cron/disparar-fila.ts` v1.7 para que envios
+ *     novos já saiam com o prefixo no Reply-To.
+ *
  * v1.7 — 04/06/2026 — Fix do endpoint REST para inbound emails.
  *   Diagnóstico (após nova API key Full Access ativa em preview):
  *     • Log mostrou `GET /emails/{id}` retornando 404 "Email not found"
@@ -229,10 +257,16 @@ const SVIX_TIMESTAMP_TOLERANCE_SEC = 5 * 60;
 
 /**
  * Regex do padrão de Reply-To dinâmico usado pelo cron disparar-fila:
- *   respostas+f{fila_id}+l{lead_id}@{dominio}
- * Match groups: [1]=fila_id  [2]=lead_id
+ *   respostas+{env}+f{fila_id}+l{lead_id}@{dominio}    (v1.7+ — com prefixo)
+ *   respostas+f{fila_id}+l{lead_id}@{dominio}          (v1.6 e antes — sem prefixo)
+ *
+ * 🆕 v1.8 — Prefixo de ambiente (`prod` ou `preview`) opcional entre
+ * `respostas` e `+f`. Backward compat: sem prefixo → assume 'prod' no
+ * `parsearReplyTo` (preserva filas já em curso ao deploy desta versão).
+ *
+ * Match groups: [1]=env (prod|preview|undefined)  [2]=fila_id  [3]=lead_id
  */
-const REPLY_TO_PATTERN = /^respostas\+f(\d+)\+l(\d+)@/i;
+const REPLY_TO_PATTERN = /^respostas(?:\+(prod|preview))?\+f(\d+)\+l(\d+)@/i;
 
 // ────────────────────────────────────────────────────────────────────────
 // HELPER: ler raw body do stream
@@ -311,9 +345,14 @@ function hdr(req: VercelRequest, nome: string): string {
  * O payload do email.received traz "to" como string OU array de strings.
  * Procura entre eles o primeiro que case com o padrão de Reply-To dinâmico.
  *
- * Retorno: { filaId, leadId } se encontrar; null caso contrário.
+ * 🆕 v1.8 — Retorno inclui `env` ('prod' | 'preview'). Quando o plus-alias
+ * vem sem prefixo (formato v1.6 ou antes), assume 'prod' por compat.
+ *
+ * Retorno: { env, filaId, leadId } se encontrar; null caso contrário.
  */
-function parsearReplyTo(toField: any): { filaId: number; leadId: number } | null {
+function parsearReplyTo(
+  toField: any,
+): { env: 'prod' | 'preview'; filaId: number; leadId: number } | null {
   const candidatos: string[] = Array.isArray(toField)
     ? toField.map((x) => String(x || '').trim())
     : [String(toField || '').trim()];
@@ -321,10 +360,13 @@ function parsearReplyTo(toField: any): { filaId: number; leadId: number } | null
   for (const dest of candidatos) {
     const m = dest.match(REPLY_TO_PATTERN);
     if (m) {
-      const filaId = parseInt(m[1], 10);
-      const leadId = parseInt(m[2], 10);
+      // m[1] = 'prod' | 'preview' | undefined (sem prefixo no plus-alias)
+      const env: 'prod' | 'preview' =
+        (m[1]?.toLowerCase() === 'preview' ? 'preview' : 'prod');
+      const filaId = parseInt(m[2], 10);
+      const leadId = parseInt(m[3], 10);
       if (!Number.isNaN(filaId) && !Number.isNaN(leadId)) {
-        return { filaId, leadId };
+        return { env, filaId, leadId };
       }
     }
   }
@@ -1031,6 +1073,33 @@ async function processarEmailRecebido(opts: {
       ok: true,
       orphan: true,
       reason: 'to não bate padrão respostas+f{id}+l{id}',
+    });
+  }
+
+  // 🆕 v1.8 — Guard de ambiente. O Resend Inbound dispara webhook em todos
+  // os endpoints configurados (Production + Preview + legacy). Como Production
+  // e Preview usam Supabases separados, sem este filtro um webhook processaria
+  // eventos do OUTRO ambiente contra seu próprio banco, encontrando IDs de
+  // fila/lead diferentes e gerando forwards bagunçados.
+  //
+  // Comportamento:
+  //   - Evento com prefixo `prod` chega em servidor com VERCEL_ENV='production' → processa
+  //   - Evento com prefixo `preview` chega em servidor com VERCEL_ENV='preview'  → processa
+  //   - Outros cruzamentos → ignora silenciosamente com 200 OK (não polui o banco)
+  //   - Backward compat: eventos SEM prefixo (formato v1.6 e antes) são tratados
+  //     como `prod` no parsearReplyTo — funcionam só no servidor de Production.
+  const ambienteAtual: 'prod' | 'preview' =
+    process.env.VERCEL_ENV === 'production' ? 'prod' : 'preview';
+  if (parsed.env !== ambienteAtual) {
+    console.log(
+      `[crm-webhook] ⏭️ Evento de outro ambiente ignorado: parsed_env=${parsed.env}, server_env=${ambienteAtual}, to=${JSON.stringify(toField)}`,
+    );
+    return res.status(200).json({
+      ok: true,
+      ignored: true,
+      reason: 'environment_mismatch',
+      parsed_env: parsed.env,
+      server_env: ambienteAtual,
     });
   }
 

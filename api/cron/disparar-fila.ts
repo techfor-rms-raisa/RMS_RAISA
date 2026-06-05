@@ -4,6 +4,19 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.7 (05/06/2026 — Separação de ambientes no plus-alias Reply-To):
+ *      Resolvido o problema de webhooks de Production e Preview processando
+ *      eventos do ambiente errado contra bancos Supabase separados, gerando
+ *      forwards bagunçados (lead 7/9 com emails inexistentes, destinatário
+ *      Admin em vez do responsável da campanha).
+ *      Mudança cirúrgica: prefixar o plus-alias com `prod` ou `preview` lido
+ *      de `process.env.VERCEL_ENV`. Resultado:
+ *        Production envia:  respostas+prod+f{id}+l{id}@techfor.com.br
+ *        Preview envia:     respostas+preview+f{id}+l{id}@techfor.com.br
+ *      O `api/crm-webhook.ts` v1.8 compara o prefixo com seu próprio
+ *      `VERCEL_ENV` e ignora silenciosamente eventos de outro ambiente.
+ *      Sem mudanças em DNS, MX, ou verificações DKIM/SPF. Permite manter
+ *      webhook de Preview ativo no Resend permanentemente.
  *  - v1.6 (04/06/2026 — Plano B definitivo): SDK Resend ELIMINADO desta etapa.
  *      Após v1.3 → v1.3.1 → v1.4 → v1.5 falharem em fazer o `Reply-To`
  *      chegar no e-mail enviado (todos os Raw JSONs mostraram `reply_to: []`
@@ -141,6 +154,25 @@ const RATE_LIMIT_MS = 220;
  *  bypassar o SDK do Resend que descarta `replyTo`/`reply_to`/header `Reply-To`
  *  silenciosamente. Body JSON aceita `reply_to` em snake_case nativamente. */
 const RESEND_API_URL = 'https://api.resend.com/emails';
+
+/** Prefixo de ambiente no plus-alias de Reply-To.
+ *  🆕 v1.7 (05/06/2026 — separação Production/Preview):
+ *  O Resend Inbound dispara `email.received` para TODOS os webhooks
+ *  configurados no painel, independentemente do ambiente que originou o
+ *  envio. Como Production e Preview têm Supabases separados, sem este
+ *  prefixo o webhook de Preview processava eventos de Production contra
+ *  o banco de Preview, encontrando filas/leads antigos e gerando forwards
+ *  para destinatários errados.
+ *
+ *  Comportamento:
+ *    - process.env.VERCEL_ENV === 'production' → prefixo = 'prod'
+ *    - qualquer outro valor ('preview', 'development', undefined) → 'preview'
+ *
+ *  O `api/crm-webhook.ts` v1.8 lê este prefixo do plus-alias e compara com
+ *  o próprio `VERCEL_ENV` — eventos de outro ambiente são ignorados (200 OK
+ *  silencioso) sem nenhum side-effect no banco. */
+const PREFIXO_AMBIENTE: 'prod' | 'preview' =
+  process.env.VERCEL_ENV === 'production' ? 'prod' : 'preview';
 
 // ════════════════════════════════════════════════════════════════
 // HELPERS
@@ -531,8 +563,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // do `techforti.com.br`, mantido em outro provedor por política corporativa).
       // Centraliza toda a captura de respostas — campanhas que saem por
       // `techforti.inf.br` continuam tendo as respostas roteadas para cá.
+      //
+      // 🆕 v1.7 — Prefixo de ambiente (`prod` ou `preview`) entre `respostas` e
+      // `+f`. Permite ao webhook de cada ambiente ignorar eventos do outro
+      // (necessário porque Production e Preview têm Supabases separados e o
+      // Resend dispara webhook em TODOS os endpoints configurados).
       const DOMINIO_REPLY_TO = 'techfor.com.br';
-      const replyTo = `respostas+f${item.id}+l${item.lead_id}@${DOMINIO_REPLY_TO}`;
+      const replyTo = `respostas+${PREFIXO_AMBIENTE}+f${item.id}+l${item.lead_id}@${DOMINIO_REPLY_TO}`;
 
       // 🆕 v1.2 — Throttle ENTRE envios (não antes do primeiro). Mantém o ritmo
       // abaixo do rate limit do Resend (5 req/s). Aplicado a partir do segundo
