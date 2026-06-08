@@ -75,6 +75,9 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
     const [selectedConsultantFilter, setSelectedConsultantFilter] = useState<string>('all');
     const [searchQuery, setSearchQuery] = useState<string>('');
     
+    // 🆕 08/06/2026: Filtro de Status (Ativos/Inativos/Todos)
+    const [selectedStatusFilter, setSelectedStatusFilter] = useState<'all' | 'ativo' | 'inativo'>('all');
+    
     // ✅ NOVO: Filtro de ano de vigência (padrão: ano atual)
     const [selectedYearFilter, setSelectedYearFilter] = useState<number>(ANO_ATUAL);
     
@@ -297,20 +300,31 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
         return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
     };
 
-    // Filtros - COM filtro de ano de vigência
-    const filteredConsultants = consultants.filter(c => {
-        // ✅ NOVO: Filtrar pelo ano de vigência
-        const matchesYear = c.ano_vigencia === selectedYearFilter;
-        
-        const clientName = getClientName(c);
-        const matchesClient = selectedClientFilter === 'all' || clientName === selectedClientFilter;
-        const matchesConsultant = selectedConsultantFilter === 'all' || c.nome_consultores === selectedConsultantFilter;
-        const matchesSearch = !searchQuery || 
-            c.nome_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            c.cargo_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            clientName?.toLowerCase().includes(searchQuery.toLowerCase());
-        return matchesYear && matchesClient && matchesConsultant && matchesSearch;
-    });
+    // Filtros - COM filtro de ano de vigência + 🆕 status + 🆕 ordenação alfabética
+    const filteredConsultants = consultants
+        .filter(c => {
+            // ✅ NOVO: Filtrar pelo ano de vigência
+            const matchesYear = c.ano_vigencia === selectedYearFilter;
+            
+            const clientName = getClientName(c);
+            const matchesClient = selectedClientFilter === 'all' || clientName === selectedClientFilter;
+            const matchesConsultant = selectedConsultantFilter === 'all' || c.nome_consultores === selectedConsultantFilter;
+            
+            // 🆕 08/06/2026: Filtro Ativo/Inativo
+            // 'Ativo'                   → Ativo
+            // 'Perdido' ou 'Encerrado'  → Inativo (mesmo padrão do Dashboard.tsx)
+            const matchesStatus = selectedStatusFilter === 'all'
+                || (selectedStatusFilter === 'ativo'   && c.status === 'Ativo')
+                || (selectedStatusFilter === 'inativo' && (c.status === 'Perdido' || c.status === 'Encerrado'));
+            
+            const matchesSearch = !searchQuery || 
+                c.nome_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                c.cargo_consultores?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                clientName?.toLowerCase().includes(searchQuery.toLowerCase());
+            return matchesYear && matchesClient && matchesConsultant && matchesStatus && matchesSearch;
+        })
+        // 🆕 08/06/2026: Ordenação alfabética por nome do consultor (pt-BR)
+        .sort((a, b) => (a.nome_consultores || '').localeCompare(b.nome_consultores || '', 'pt-BR'));
 
     const uniqueClients = [...new Set(consultants.map(c => getClientName(c)))].filter(Boolean).sort();
 
@@ -332,7 +346,7 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
             </div>
 
             {/* Filtros */}
-            <div className="mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-5 gap-4">
                 {/* ✅ NOVO: Dropdown de Ano de Vigência */}
                 <select
                     value={selectedYearFilter}
@@ -359,6 +373,17 @@ const ManageConsultants: React.FC<ManageConsultantsProps> = ({
                     {uniqueClients.map(client => (
                         <option key={client} value={client}>{client}</option>
                     ))}
+                </select>
+                
+                {/* 🆕 08/06/2026: Filtro de Status (Ativos/Inativos) */}
+                <select
+                    value={selectedStatusFilter}
+                    onChange={(e) => setSelectedStatusFilter(e.target.value as 'all' | 'ativo' | 'inativo')}
+                    className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                >
+                    <option value="all">Todos os Status</option>
+                    <option value="ativo">✅ Ativos</option>
+                    <option value="inativo">⛔ Inativos</option>
                 </select>
                 
                 <div className="relative">
