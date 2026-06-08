@@ -603,19 +603,26 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 50 arquivos | 594.0 KB | 11/04/2026 |
-| `src/components/` | 110 arquivos | 921.6 KB | 11/04/2026 |
+| `api/` | 59 arquivos | 850.1 KB | 08/06/2026 |
+| `src/components/` | 161 arquivos | 921.3 KB | 08/06/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 11/04/2026 |
-| `src/types/` | 6 arquivos | 30.3 KB | 11/04/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 11/04/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 11/04/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 08/06/2026 |
+| `src/types/` | 6 arquivos | 30.8 KB | 08/06/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 08/06/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 08/06/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
 - `api/analyze-activity-report.ts`
 - `api/apollo-prospect-test.ts`
 - `api/claude-analyze.ts`
+- `api/creci-capture.ts`
+- `api/crm-analytics.ts`
+- `api/crm-campanhas.ts`
+- `api/crm-config.ts`
+- `api/crm-copys.ts`
+- `api/crm-leads.ts`
+- `api/crm-webhook.ts`
 - `api/cv-generator-docx-bg.ts`
 - `api/cv-generator-docx.ts`
 - `api/debug-env.ts`
@@ -647,6 +654,7 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 - `api/talent-finder-log.ts`
 - `api/talent-finder-search.ts`
 - `api/talent-finder-stats.ts`
+- `api/update-report-meta.ts`
 - `api/upload-audio.ts`
 - `api/vaga-analistas-recomendados.ts`
 - `api/vaga-prioridade.ts`
