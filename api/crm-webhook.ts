@@ -3,6 +3,28 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.11 — 08/06/2026 — BUG FIX CRÍTICO: reply_to do forward como array.
+ *   Diagnóstico (08/06/2026): durante validação prática da Fase C, o lead
+ *   de teste respondeu mas a resposta veio para `mvieira@techfor.com.br`
+ *   (o `from` do envio) em vez do plus-alias esperado
+ *   `customer-service+test+f{id}+l{id}@techfor.com.br`.
+ *   Raw JSON do Resend mostrou `reply_to: []` mesmo com o cron passando
+ *   `reply_to: replyTo` como string. A doc oficial do Resend define o
+ *   parâmetro como `string[]` (array). Quando passado como string única,
+ *   a API descarta silenciosamente.
+ *   Esta mesma classe de bug afeta a função `encaminharRespostaAoGestor`
+ *   deste arquivo: quando o forward é enviado ao gestor, o `reply_to`
+ *   apontava para `opts.leadEmail` como string única — pelo mesmo motivo,
+ *   o Resend descartava e o gestor não conseguiria responder direto ao
+ *   lead (Responder no Outlook iria para `notificacoes@techfortirms.online`
+ *   em vez do lead).
+ *   Não foi notado antes porque os forwards nunca chegaram a ser exercitados
+ *   em produção real (Fase 7-MVP validou apenas estrutural em 04/06; o uso
+ *   prático começou em 08/06 e travou em outro ponto antes do forward).
+ *   Mudança cirúrgica: 1 linha — `reply_to: opts.leadEmail` →
+ *   `reply_to: [opts.leadEmail]`. Mesmo padrão aplicado em
+ *   disparar-fila.ts v1.10 (commitado junto).
+ *
  * v1.10 — 08/06/2026 — FASE C: Pausa automática (LGPD compliance).
  *   Motivação: até a v1.9, quando um lead respondia ou seu e-mail virava
  *   hard bounce / complained, apenas a fila ATUAL daquele evento mudava de
@@ -664,7 +686,17 @@ para ${opts.leadEmail} a partir da sua caixa institucional.`;
       body: JSON.stringify({
         from: fromFormatado,
         to: [usr.email_usuario],
-        reply_to: opts.leadEmail,  // 🔑 Gestor clica "Responder" → vai DIRETO ao lead
+        // 🔧 v1.11 (08/06/2026) — BUG FIX CRÍTICO: reply_to deve ser array.
+        //   Mesmo bug identificado em disparar-fila.ts v1.10. A doc oficial
+        //   do Resend define `reply_to` como `string[]`. Quando passado como
+        //   string única, a API descarta silenciosamente — o gestor recebia
+        //   o forward, mas ao clicar "Responder" no Gmail/Outlook, a resposta
+        //   ia para o `from` (notificacoes@techfortirms.online) em vez do
+        //   `opts.leadEmail`, quebrando o fluxo proposto da Fase 7-MVP.
+        //   Mudança cirúrgica: `reply_to: opts.leadEmail` → `reply_to: [opts.leadEmail]`.
+        //   O comentário "Responder vai DIRETO ao lead" do plano v1.3 só passa
+        //   a ser verdade efetivamente com este fix.
+        reply_to: [opts.leadEmail],
         subject: subjectForward,
         html: htmlForward,
         text: textForward,

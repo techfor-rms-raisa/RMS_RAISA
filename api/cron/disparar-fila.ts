@@ -4,6 +4,30 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.10 (08/06/2026 — BUG FIX CRÍTICO: reply_to como array):
+ *      Diagnóstico (08/06/2026): após entregar a Fase C, validação prática
+ *      revelou que as respostas dos leads de teste não estavam disparando
+ *      o pipeline esperado (forward ao gestor + cancelamento de fila).
+ *      Raw JSON do Resend Sending mostrou:
+ *        "reply_to": []
+ *      mesmo com o cron passando `reply_to: replyTo` (string preenchida).
+ *      Consulta à doc oficial do Resend
+ *      (https://resend.com/docs/api-reference/emails/send-email) confirma:
+ *        `reply_to | string[] | Reply-to addresses`
+ *      O parâmetro DEVE ser array. Quando passado como string única, a API
+ *      descarta SILENCIOSAMENTE (sem erro 4xx), envia o e-mail sem Reply-To,
+ *      e a resposta do lead vai para o `from` original — quebrando todo o
+ *      pipeline de captura de respostas (plus-alias `customer-service+f+l`
+ *      nunca chega ao webhook, evento gravado como órfão, sem forward, sem
+ *      cancelamento da Fase C).
+ *      Provável regressão silenciosa do Resend entre 04/06 (quando string
+ *      única funcionava — validado em CHECKPOINT_2026-06-04_FASE_7_MVP_CONCLUIDA)
+ *      e 08/06 (quando deixou de funcionar).
+ *      Mudança cirúrgica: 1 linha no body do fetch — `reply_to: replyTo`
+ *      → `reply_to: [replyTo]`. Idempotente: a doc define array como
+ *      formato canônico, então a mudança é robusta a qualquer
+ *      reversão futura do comportamento do Resend.
+ *
  *  - v1.9 (08/06/2026 — FASE C: defesa em profundidade contra opt-out tardio):
  *      Motivação: o opt-out (email_optout) e o cancelamento de fila (RPCs
  *      novas em crm-webhook.ts v1.10) são complementares mas o gap temporal
@@ -703,7 +727,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           body: JSON.stringify({
             from,
             to: [item.destinatario_email],
-            reply_to: replyTo, // 🆕 v1.6 — snake_case, formato nativo da REST API
+            // 🔧 v1.10 (08/06/2026) — BUG FIX CRÍTICO: reply_to deve ser array.
+            //   Diagnóstico (08/06/2026): Raw JSON do Resend mostrou `reply_to: []`
+            //   mesmo com o campo preenchido como string. A doc oficial do Resend
+            //   (https://resend.com/docs/api-reference/emails/send-email) define
+            //   `reply_to` como `string[]` (array). Quando recebe string única,
+            //   a API descarta silenciosamente e o e-mail sai sem Reply-To,
+            //   fazendo a resposta do lead voltar para o `from` em vez do
+            //   plus-alias — quebrando todo o pipeline de captura de respostas.
+            //   Provável regressão recente do lado do Resend (string única era
+            //   tolerada antes, validado em 04/06; deixou de ser em algum
+            //   momento entre 04/06 e 08/06).
+            //   Mudança cirúrgica: envolver replyTo em array `[replyTo]`.
+            reply_to: [replyTo],
             subject: step.assunto || '(sem assunto)',
             html: htmlFinal,
             text: textoFinal,
