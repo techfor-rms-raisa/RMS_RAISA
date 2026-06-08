@@ -16,6 +16,12 @@
  *    Validação backend: `data_encerramento` deve ser >= CURRENT_DATE
  *    quando informada (não aceita datas passadas — para encerrar agora,
  *    use `mudar_status` para 'concluida' diretamente).
+ *    BUG FIX simultâneo: corrigidas 4 ocorrências de `funil` para
+ *    `funil_status` nas actions `listar_leads_campanha` e
+ *    `leads_disponiveis` (nome real da coluna em `email_leads`). O bug
+ *    estava latente desde a v1.0 mas só apareceu hoje porque a aba Leads
+ *    do CampanhaWizard chama esses endpoints (PostgREST retornava 500
+ *    com "column email_leads_1.funil does not exist").
  *
  * CRUD completo para:
  * - Campanhas (criar, listar, editar, excluir, mudar status)
@@ -120,7 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .from('email_lead_campanhas')
           .select(`
             id, status, step_atual, adicionado_em,
-            email_leads!inner(id, nome, email, cargo, empresa_id, funil,
+            email_leads!inner(id, nome, email, cargo, empresa_id, funil_status,
               email_empresas(nome))
           `, { count: 'exact' })
           .eq('campanha_id', campanha_id)
@@ -152,15 +158,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Leads disponíveis (excluindo opt-out)
         let query = supabase
           .from('email_leads')
-          .select(`id, nome, email, cargo, funil, email_empresas(nome)`)
-          .not('funil', 'eq', 'perdido')
+          .select(`id, nome, email, cargo, funil_status, email_empresas(nome)`)
+          .not('funil_status', 'eq', 'perdido')
           .order('nome', { ascending: true })
           .limit(parseInt(limit));
 
         if (busca) {
           query = query.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%`);
         }
-        if (funil) query = query.eq('funil', funil);
+        if (funil) query = query.eq('funil_status', funil);
         if (idsVinculados.length > 0) {
           query = query.not('id', 'in', `(${idsVinculados.join(',')})`);
         }
