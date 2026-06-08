@@ -2,6 +2,19 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.10 (08/06/2026 — Fase B): aceita `data_encerramento` (DATE) em
+ *    criar_campanha e atualizar_campanha. Campo declarativo de data
+ *    planejada de fim. Quando atingida, o cron (disparar-fila.ts v1.11)
+ *    marca a campanha como `concluida` automaticamente E cancela todos
+ *    os itens pendentes em email_fila (decisão de produto 08/06 — opção A:
+ *    encerramento limpo).
+ *    Validação backend: `data_encerramento` deve ser >= CURRENT_DATE
+ *    quando informada (não aceita datas passadas — para encerrar agora,
+ *    use `mudar_status` para 'concluida' diretamente). Aceita null para
+ *    limpar a data em atualizar_campanha.
+ *    Pré-requisito SQL: 2026-06-08_crm_evolucao_C_B_D.sql aplicado
+ *    (cria a coluna `data_encerramento DATE` em email_campanhas).
+ *
  *  - v1.9 (04/06/2026 — Fase 7-MVP guard): trava do domínio do remetente.
  *      Causa: incidente de 04/06/2026 — campanha id=1 criada com
  *      `email_remetente=moliveira@techforti.com.br` (domínio institucional,
@@ -718,7 +731,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (action === 'criar_campanha') {
         const { nome, tipo, dominio_envio, email_remetente, nome_remetente,
                 horario_inicio, horario_fim, criado_por, unidade,
-                responsavel_id: responsavelIdBody } = body;
+                responsavel_id: responsavelIdBody,
+                data_encerramento } = body; // 🆕 v1.10 (Fase B - 08/06/2026)
 
         if (!nome || !criado_por) {
           return res.status(400).json({ success: false, error: 'nome e criado_por obrigatórios' });
@@ -734,6 +748,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // o usuário avança); se vier preenchido, EXIGE domínio verificado.
         const valEmail = validarEmailRemetente(email_remetente, { obrigatorio: false });
         if (!valEmail.ok) return res.status(400).json({ success: false, error: valEmail.erro });
+
+        // 🆕 v1.10 (08/06/2026 - Fase B) — validação de data_encerramento.
+        //   Aceita string YYYY-MM-DD ou null/undefined. Se informada,
+        //   deve ser >= hoje (não aceita datas passadas — para encerrar
+        //   imediatamente, use mudar_status com status='concluida').
+        let dataEncerramentoFinal: string | null = null;
+        if (data_encerramento !== undefined && data_encerramento !== null && data_encerramento !== '') {
+          if (typeof data_encerramento !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data_encerramento)) {
+            return res.status(400).json({
+              success: false,
+              error: 'data_encerramento deve estar no formato YYYY-MM-DD',
+            });
+          }
+          const hoje = new Date().toISOString().slice(0, 10);
+          if (data_encerramento < hoje) {
+            return res.status(400).json({
+              success: false,
+              error: `data_encerramento (${data_encerramento}) não pode estar no passado (hoje: ${hoje})`,
+            });
+          }
+          dataEncerramentoFinal = data_encerramento;
+        }
 
 
         // 🆕 Fase B (01/06/2026) — RBAC + atribuição de responsável/assinatura
@@ -786,6 +822,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             nome_remetente: nome_remetente || '',
             horario_inicio: horario_inicio || '08:00',
             horario_fim: horario_fim || '18:00',
+            data_encerramento: dataEncerramentoFinal, // 🆕 v1.10 (Fase B)
             criado_por,
             responsavel_id: responsavelId,
             assinatura_id: assinaturaId,
@@ -990,11 +1027,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Campos permitidos para update via loop genérico.
         // NOTA: `unidade` NÃO entra aqui — é tratada separadamente abaixo
         // (validação + recálculo de assinatura).
+        // 🆕 v1.10 (Fase B): `data_encerramento` adicionado à lista permitida.
         const permitidos = ['nome', 'tipo', 'dominio_envio', 'email_remetente',
-          'nome_remetente', 'horario_inicio', 'horario_fim', 'inicio_envio', 'fim_envio'];
+          'nome_remetente', 'horario_inicio', 'horario_fim', 'inicio_envio', 'fim_envio',
+          'data_encerramento'];
         const updateData: any = { atualizado_em: new Date().toISOString() };
         for (const key of permitidos) {
           if (campos[key] !== undefined) updateData[key] = campos[key];
+        }
+
+        // 🆕 v1.10 (08/06/2026 - Fase B) — validação de data_encerramento.
+        //   Aceita null (para LIMPAR a data) ou string YYYY-MM-DD >= hoje.
+        //   Mesmo regex/validação do criar_campanha.
+        if (updateData.data_encerramento !== undefined &&
+            updateData.data_encerramento !== null &&
+            updateData.data_encerramento !== '') {
+          if (typeof updateData.data_encerramento !== 'string' ||
+              !/^\d{4}-\d{2}-\d{2}$/.test(updateData.data_encerramento)) {
+            return res.status(400).json({
+              success: false,
+              error: 'data_encerramento deve estar no formato YYYY-MM-DD',
+            });
+          }
+          const hoje = new Date().toISOString().slice(0, 10);
+          if (updateData.data_encerramento < hoje) {
+            return res.status(400).json({
+              success: false,
+              error: `data_encerramento (${updateData.data_encerramento}) não pode estar no passado (hoje: ${hoje})`,
+            });
+          }
+        }
+        // Normalizar string vazia → null (para o frontend poder "limpar" a data)
+        if (updateData.data_encerramento === '') {
+          updateData.data_encerramento = null;
         }
 
         // 🆕 Fase E-1 — validar a unidade (se enviada). Aplicada ao updateData
