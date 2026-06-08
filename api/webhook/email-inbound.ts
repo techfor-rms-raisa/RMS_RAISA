@@ -1,6 +1,10 @@
 /**
  * email-inbound.ts - Webhook para processar emails recebidos via Resend
  * 
+ * 🆕 v58.4 (08/06/2026): Migração Gemini — 'gemini-2.0-flash-exp' (descontinuado, dava 404)
+ *                       → 'gemini-2.5-flash' (estável, ativo)
+ *                       Re-aplicação da entrega da sessão 05/06/2026 cujo commit foi perdido.
+ * 
  * 🆕 v58.3: Removido status 'em_selecao' do statusVagaMap
  *        - 'agendamento' agora mapeia para 'em_andamento' (não mais 'em_selecao')
  * 
@@ -168,7 +172,7 @@ Responda APENAS em JSON válido (sem markdown, sem backticks):
 }`;
 
     const response = await gemini.models.generateContent({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-2.5-flash',
       contents: prompt
     });
 

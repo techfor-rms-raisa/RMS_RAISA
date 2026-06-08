@@ -7,8 +7,15 @@
  * - POST { empresa_nome }           → resolve domínio de uma empresa
  * - POST { empresas: string[] }     → resolve em lote (máx 20 por chamada)
  *
- * Versão: 1.0
- * Data: 25/03/2026
+ * 🆕 v1.1 (08/06/2026): Migração Gemini — 'gemini-2.0-flash' (depreciado, desativação 01/06/2026)
+ *                       → 'gemini-2.5-flash' (estável, ativo).
+ *                       Ajustes obrigatórios para gemini-2.5-flash com Search Grounding:
+ *                       - maxOutputTokens: 100 → 8192 (modelo precisa de tokens para "pensar" antes de responder)
+ *                       - thinkingConfig.thinkingBudget: 4096 (obrigatório p/ Search Grounding; sem isso retorna vazio)
+ *                       Re-aplicação da entrega da sessão 05/06/2026 cujo commit foi perdido.
+ *
+ * Versão: 1.1
+ * Data: 25/03/2026 (criação) | 08/06/2026 (migração modelo)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -51,12 +58,13 @@ Responda SOMENTE com JSON:
 
     try {
         const result = await ai.models.generateContent({
-            model: 'gemini-2.0-flash',
+            model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
                 tools: [{ googleSearch: {} }],
                 temperature: 0.1,
-                maxOutputTokens: 100,
+                maxOutputTokens: 8192,
+                thinkingConfig: { thinkingBudget: 4096 },
             } as any,
         });
 
