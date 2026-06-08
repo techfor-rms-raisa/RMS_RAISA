@@ -4,6 +4,10 @@
  * Endpoint para receber dados do LinkedIn (via extensão Chrome)
  * e salvar diretamente na tabela PESSOAS (Banco de Talentos)
  * 
+ * 🆕 v57.17 (08/06/2026): Migração Gemini — 'gemini-2.0-flash' (depreciado, desativação 01/06/2026)
+ *                         → 'gemini-2.5-flash' (estável, ativo)
+ *                         Re-aplicação da entrega da sessão 05/06/2026 cujo commit foi perdido.
+ * 
  * 🔧 v57.16: Busca dedup robusta por username do LinkedIn
  * - ilike('%/in/username%') cobre TODAS as variações de URL
  * - Fallbacks em cascata: username → email → nome
@@ -43,7 +47,7 @@ import { GoogleGenAI } from '@google/genai';
 // CONFIGURAÇÃO GEMINI - Lazy Initialization
 // ============================================
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 
 let aiInstance: GoogleGenAI | null = null;
 

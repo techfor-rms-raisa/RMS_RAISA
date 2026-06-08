@@ -5,6 +5,10 @@
 // Hook React para gerenciar análise de adequação de perfil
 // Inclui cache, loading states e persistência opcional
 // 
+// 🆕 08/06/2026: Fallback de modelo_ia atualizado para 'gemini-2.5-flash'
+//   - Cosmético: o fallback só é usado quando _metadata.modelo está ausente.
+//   - 2 ocorrências atualizadas (bloco UPDATE linha 154 + bloco INSERT linha 187).
+//
 // 🔧 CORREÇÃO 19/02/2026:
 // - salvarAnalise agora aceita resultado como 5º parâmetro
 // 🔧 CORREÇÃO 25/02/2026:
@@ -151,7 +155,7 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
               resumo_executivo: analiseParaSalvar.resumo_executivo,
               avaliacao_final: analiseParaSalvar.avaliacao_final,
               resultado_completo: analiseParaSalvar,
-              modelo_ia: (analiseParaSalvar as any)._metadata?.modelo || 'gemini-2.0-flash',
+              modelo_ia: (analiseParaSalvar as any)._metadata?.modelo || 'gemini-2.5-flash',
               tempo_processamento_ms: (analiseParaSalvar as any)._metadata?.tempo_ms,
               updated_at: new Date().toISOString()
             })
@@ -184,7 +188,7 @@ export function useAnaliseAdequacao(opcoes?: OpcoesHook): UseAnaliseAdequacaoRet
           resumo_executivo: analiseParaSalvar.resumo_executivo,
           avaliacao_final: analiseParaSalvar.avaliacao_final,
           resultado_completo: analiseParaSalvar,
-          modelo_ia: (analiseParaSalvar as any)._metadata?.modelo || 'gemini-2.0-flash',
+          modelo_ia: (analiseParaSalvar as any)._metadata?.modelo || 'gemini-2.5-flash',
           tempo_processamento_ms: (analiseParaSalvar as any)._metadata?.tempo_ms,
           created_by: userId || null
         })

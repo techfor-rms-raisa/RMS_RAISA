@@ -1296,7 +1296,7 @@ const CVImportIA: React.FC<CVImportIAProps> = ({ onImportComplete, onClose }) =>
               {/* Info da API */}
               <div className="mt-6 p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-600">
-                  <span className="text-green-600">✅ API Gemini via backend (gemini-2.0-flash-exp)</span>
+                  <span className="text-green-600">✅ API Gemini via backend (gemini-2.5-flash)</span>
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
                   O processamento é feito no servidor Vercel para maior segurança.

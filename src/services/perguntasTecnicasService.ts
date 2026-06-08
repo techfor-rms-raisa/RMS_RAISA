@@ -1,3 +1,15 @@
+/**
+ * perguntasTecnicasService.ts
+ * Serviço de geração de perguntas técnicas e avaliação de candidatos via Gemini AI
+ *
+ * 🆕 v1.1 (08/06/2026): Migração Gemini — 'gemini-3-flash-preview' (modelo INEXISTENTE, retornava 404)
+ *                       → 'gemini-2.5-flash' (estável, ativo)
+ *                       Aplicado nos 2 callsites: gerarPerguntas() e avaliarCandidato().
+ *                       Re-aplicação da entrega da sessão 05/06/2026 cujo commit foi perdido.
+ *
+ * Caminho: src/services/perguntasTecnicasService.ts
+ */
+
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { AI_MODEL_NAME } from '../constants';
 import { Vaga, PerguntaTecnica, MatrizQualificacao, RespostaCandidato } from '@/types';
@@ -90,7 +102,7 @@ export const perguntasTecnicasService = {
       console.log('🤖 [PERGUNTAS] Gerando perguntas técnicas...');
       
       const ai = getAIClient();
-      const model = 'gemini-3-flash-preview';
+      const model = 'gemini-2.5-flash';
       
       const prompt = `
 Você é um especialista em recrutamento técnico de TI. Gere perguntas técnicas para entrevista.
@@ -163,7 +175,7 @@ Retorne um array de perguntas estruturadas.
       console.log('🤖 [AVALIACAO] Avaliando candidato...');
       
       const ai = getAIClient();
-      const model = 'gemini-3-flash-preview';
+      const model = 'gemini-2.5-flash';
       
       const prompt = `
 Você é um especialista em avaliação técnica de candidatos. Analise o candidato abaixo.
