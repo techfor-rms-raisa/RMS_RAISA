@@ -4,6 +4,28 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.9 (08/06/2026 — FASE C: defesa em profundidade contra opt-out tardio):
+ *      Motivação: o opt-out (email_optout) e o cancelamento de fila (RPCs
+ *      novas em crm-webhook.ts v1.10) são complementares mas o gap temporal
+ *      entre eles pode permitir envios indevidos:
+ *        1. Lead vinculado e enfileirado (Step 2 com agendado_para em D+3).
+ *        2. Lead responde no Step 1 → webhook cancela Steps 2/3/4 via RPC.
+ *        3. ⚠️ Se RPC falhar por qualquer razão (Supabase indisponível, race
+ *           condition), o Step 2 permanece pendente. Mais grave: lead pode ter
+ *           virado opt-out manualmente OU em outra campanha entre enfileiramento
+ *           e disparo — o cron continuava despachando se a RPC anterior tivesse
+ *           falhado.
+ *      Correção (defesa em profundidade):
+ *        1. Após carregar dados ricos, fazer 1 SELECT bulk em email_optout
+ *           contendo apenas os e-mails que estão no lote (eficiente).
+ *        2. No início do loop de processamento (passo 5d, antes de renderizar
+ *           e enviar), verificar se item.destinatario_email está no set de
+ *           opt-outs. Se estiver: marcar fila como 'cancelado' com motivo
+ *           explícito (sem voltar a 'pendente') e contabilizar.
+ *      Não afeta performance: 1 query a mais por execução, e só com os
+ *      e-mails do lote (no máximo LOTE_TAMANHO=10 e-mails na cláusula IN).
+ *      Custo zero quando lote vazio (early return acima evita o SELECT).
+ *
  *  - v1.8 (05/06/2026 — Renomeação comercial do plus-alias):
  *      Trocada a palavra-base do plus-alias de `respostas` para `customer-service`
  *      por ser mais profissional para o lead que vê o Reply-To no cliente
@@ -491,6 +513,41 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const horaSP = horaAtualSP();
 
+    // 🆕 v1.9 (Fase C) — Defesa em profundidade contra opt-out tardio.
+    //   Carrega 1 vez todos os opt-outs cujos e-mails estão no lote atual
+    //   (cláusula IN com até LOTE_TAMANHO=10 e-mails — eficiente). Itens
+    //   da fila cujo destinatário entrou em opt-out APÓS o enfileiramento
+    //   serão cancelados no passo 5d antes de qualquer envio.
+    //   Cenário típico: lead respondeu em outra campanha e foi para opt-out;
+    //   cancelamento via RPC nem sempre alcança todas as filas (race
+    //   condition raro mas possível). Esta camada garante o piso.
+    const emailsDoLote = Array.from(
+      new Set(
+        (lote as any[])
+          .map((it) => (it.destinatario_email || '').toLowerCase().trim())
+          .filter((e) => e.length > 0),
+      ),
+    );
+    const setOptoutLote = new Set<string>();
+    if (emailsDoLote.length > 0) {
+      const { data: optouts, error: errOptout } = await supabase
+        .from('email_optout')
+        .select('email')
+        .in('email', emailsDoLote);
+      if (errOptout) {
+        console.warn(
+          '[disparar-fila] ⚠️ Falha ao carregar opt-outs do lote (segue sem filtro):',
+          errOptout.message,
+        );
+      } else {
+        (optouts || []).forEach((o: any) => {
+          if (o?.email) setOptoutLote.add(o.email.toLowerCase().trim());
+        });
+      }
+    }
+    detalhes.opt_outs_no_lote = setOptoutLote.size;
+    let skipOptoutCount = 0;
+
     // 🆕 v1.2: flag para aplicar throttle ENTRE envios (não antes do primeiro).
     // Marca true após o try/catch do `resend.emails.send`, independente do
     // resultado (sucesso/erro/temporário). Resend conta tentativas mesmo em
@@ -543,6 +600,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           id: item.id,
           resultado: 'skip_campanha_nao_ativa',
           status_campanha: campanha.status,
+        });
+        continue;
+      }
+
+      // 🆕 v1.9 (Fase C) — 5c-bis) Opt-out tardio? (defesa em profundidade).
+      //   Se o e-mail entrou em opt-out DEPOIS do enfileiramento e o webhook
+      //   não conseguiu cancelar via RPC, este filtro impede o envio. Marca
+      //   como 'cancelado' (estado terminal — NÃO volta para 'pendente',
+      //   pois opt-out é permanente até remoção manual).
+      const emailNorm = (item.destinatario_email || '').toLowerCase().trim();
+      if (emailNorm && setOptoutLote.has(emailNorm)) {
+        await supabase.from('email_fila')
+          .update({
+            status: 'cancelado',
+            erro_detalhes: `Auto-cancelado: opt-out detectado pelo cron em ${new Date().toISOString()}`,
+          })
+          .eq('id', item.id);
+        skipOptoutCount++;
+        detalhes.itens.push({
+          id: item.id,
+          resultado: 'skip_optout',
+          email: emailNorm,
         });
         continue;
       }
@@ -714,6 +793,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── 6) STATUS FINAL + HEARTBEAT ─────────────────────────────────
     detalhes.skip_janela = skipJanelaCount;
     detalhes.skip_pausada = skipPausadaCount;
+    detalhes.skip_optout = skipOptoutCount; // 🆕 v1.9 (Fase C)
 
     let statusFinal: 'sucesso' | 'parcial' | 'falha';
     if (errosCount === 0) {
@@ -726,7 +806,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const mensagemFinal =
       `${enviadosCount} enviados, ${errosCount} erros, ` +
-      `${skipJanelaCount} fora de janela, ${skipPausadaCount} pausadas ` +
+      `${skipJanelaCount} fora de janela, ${skipPausadaCount} pausadas, ` +
+      `${skipOptoutCount} opt-out ` +
       `(lote ${lote.length})`;
 
     await supabase.from('cron_execucoes').insert({
@@ -746,6 +827,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       erros: errosCount,
       skip_janela: skipJanelaCount,
       skip_pausada: skipPausadaCount,
+      skip_optout: skipOptoutCount, // 🆕 v1.9 (Fase C)
       duracao_ms: Date.now() - inicioExecucao,
     });
 
