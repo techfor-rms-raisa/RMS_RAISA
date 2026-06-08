@@ -4,6 +4,31 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.11 (08/06/2026 — FASE B: auto-finalização por data_encerramento):
+ *      Motivação: a coluna `email_campanhas.data_encerramento` (criada no
+ *      SQL combinado 2026-06-08_crm_evolucao_C_B_D.sql) permite ao gestor
+ *      planejar a data de fim da campanha. Quando essa data chega, é o
+ *      cron que deve fechar a campanha automaticamente — não faz sentido
+ *      depender de ação humana para encerrar algo já planejado.
+ *
+ *      Comportamento (decisão de produto 08/06 — Opção A):
+ *        1. No início de CADA execução, ANTES de selecionar o lote da fila:
+ *           buscar todas as campanhas com `status='ativa'` e
+ *           `data_encerramento <= CURRENT_DATE`.
+ *        2. Para cada uma:
+ *           a. UPDATE email_campanhas SET status='concluida',
+ *              fim_envio=NOW() — marca encerramento limpo.
+ *           b. UPDATE email_fila SET status='cancelado' onde campanha_id=X
+ *              AND status='pendente' — cancela TODOS os itens futuros
+ *              (LGPD: e-mails agendados após o fim da campanha não devem
+ *              ser disparados; relatórios ficam consistentes com o status).
+ *      Performance: 1 SELECT bulk + 2 UPDATEs por campanha encerrada.
+ *      Custo típico: 0 (campanhas raramente vencem) ou ínfimo. O índice
+ *      parcial `idx_email_campanhas_data_encerramento_ativas` torna o
+ *      SELECT trivial mesmo com milhões de campanhas inativas.
+ *      Auditoria: log explícito por campanha + contadores no heartbeat
+ *      (`campanhas_auto_finalizadas` e `pendentes_cancelados_por_data`).
+ *
  *  - v1.10 (08/06/2026 — BUG FIX CRÍTICO: reply_to como array):
  *      Diagnóstico (08/06/2026): após entregar a Fase C, validação prática
  *      revelou que as respostas dos leads de teste não estavam disparando
@@ -430,6 +455,94 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   };
 
   try {
+    // ── 2.5) AUTO-FINALIZAÇÃO POR DATA — 🆕 v1.11 (Fase B) ──────────
+    // Antes de tentar despachar a fila, verifica se há campanhas que
+    // atingiram `data_encerramento`. Para cada uma:
+    //   1. Marca status='concluida' + fim_envio=NOW()
+    //   2. Cancela todos os itens pendentes em email_fila (LGPD: não
+    //      enviar nada após data planejada).
+    // O índice parcial `idx_email_campanhas_data_encerramento_ativas`
+    // garante que esse SELECT é trivial mesmo com milhões de campanhas.
+    let autoFinalizadasCount = 0;
+    let pendentesCanceladosPorDataCount = 0;
+    try {
+      const hojeDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const { data: campanhasParaEncerrar, error: errEncBusca } = await supabase
+        .from('email_campanhas')
+        .select('id, nome')
+        .eq('status', 'ativa')
+        .not('data_encerramento', 'is', null)
+        .lte('data_encerramento', hojeDate);
+
+      if (errEncBusca) {
+        console.warn(
+          '[disparar-fila] ⚠️ Falha ao buscar campanhas para auto-finalizar (Fase B):',
+          errEncBusca.message,
+        );
+      } else if (campanhasParaEncerrar && campanhasParaEncerrar.length > 0) {
+        console.log(
+          `[disparar-fila] 📅 ${campanhasParaEncerrar.length} campanha(s) atingiram data_encerramento — encerrando…`,
+        );
+        const agoraISO = new Date().toISOString();
+        for (const c of campanhasParaEncerrar as Array<{ id: number; nome: string }>) {
+          // Passo 1: marcar campanha como concluída
+          const { error: errFimCamp } = await supabase
+            .from('email_campanhas')
+            .update({
+              status: 'concluida',
+              fim_envio: agoraISO,
+              atualizado_em: agoraISO,
+            })
+            .eq('id', c.id)
+            .eq('status', 'ativa'); // guard contra race condition
+
+          if (errFimCamp) {
+            console.warn(
+              `[disparar-fila] ⚠️ Falha ao concluir campanha ${c.id}:`,
+              errFimCamp.message,
+            );
+            continue;
+          }
+          autoFinalizadasCount++;
+
+          // Passo 2: cancelar pendentes daquela campanha.
+          // Não usamos a RPC `cancelar_fila_pendente_lead_campanha` aqui
+          // porque ela é por lead — aqui queremos cancelar em massa para
+          // TODOS os leads da campanha. UPDATE direto é mais eficiente.
+          const { data: cancelados, error: errCancelFila } = await supabase
+            .from('email_fila')
+            .update({
+              status: 'cancelado',
+              erro_detalhes: `Auto-cancelado: campanha encerrada por data (${hojeDate}) em ${agoraISO}`,
+            })
+            .eq('campanha_id', c.id)
+            .eq('status', 'pendente')
+            .select('id');
+
+          if (errCancelFila) {
+            console.warn(
+              `[disparar-fila] ⚠️ Falha ao cancelar fila da campanha ${c.id}:`,
+              errCancelFila.message,
+            );
+          } else {
+            const qtdCancelada = cancelados?.length || 0;
+            pendentesCanceladosPorDataCount += qtdCancelada;
+            console.log(
+              `[disparar-fila] ✅ Campanha ${c.id} ("${c.nome}") encerrada — ${qtdCancelada} pendentes cancelados.`,
+            );
+          }
+        }
+      }
+    } catch (errEnc: any) {
+      // Falha aqui é graceful — segue para o despacho da fila normalmente.
+      console.warn(
+        '[disparar-fila] ⚠️ Exceção inesperada na auto-finalização (Fase B):',
+        errEnc?.message || errEnc,
+      );
+    }
+    detalhes.campanhas_auto_finalizadas = autoFinalizadasCount;
+    detalhes.pendentes_cancelados_por_data = pendentesCanceladosPorDataCount;
+
     // ── 3) SELECIONAR LOTE — passo 1: pegar IDs ─────────────────────
     // 🆕 v1.2: segundo critério `id ASC`. Quando muitos itens têm o
     // mesmo `agendado_para` (típico em campanhas com delay=0 em vários
@@ -453,19 +566,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (!candidatos || candidatos.length === 0) {
       // Fila vazia — heartbeat e sair
+      // 🆕 v1.11 (Fase B): mensagem inclui auto-finalização se houve.
+      const msgFimEnvio = autoFinalizadasCount > 0
+        ? `Fila vazia + ${autoFinalizadasCount} campanha(s) auto-finalizada(s) (${pendentesCanceladosPorDataCount} pendentes cancelados)`
+        : 'Fila vazia (nada pendente para agora)';
       await supabase.from('cron_execucoes').insert({
         tipo: TIPO_CRON,
         status: 'sucesso',
         enviados: 0,
         erros: 0,
         duracao_ms: Date.now() - inicioExecucao,
-        mensagem: 'Fila vazia (nada pendente para agora)',
+        mensagem: msgFimEnvio,
         detalhes,
       });
       return res.status(200).json({
         success: true,
         processados: 0,
-        mensagem: 'Fila vazia',
+        campanhas_auto_finalizadas: autoFinalizadasCount, // 🆕 v1.11 (Fase B)
+        pendentes_cancelados_por_data: pendentesCanceladosPorDataCount, // 🆕 v1.11 (Fase B)
+        mensagem: msgFimEnvio,
       });
     }
 
@@ -843,7 +962,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const mensagemFinal =
       `${enviadosCount} enviados, ${errosCount} erros, ` +
       `${skipJanelaCount} fora de janela, ${skipPausadaCount} pausadas, ` +
-      `${skipOptoutCount} opt-out ` +
+      `${skipOptoutCount} opt-out, ` +
+      `${autoFinalizadasCount} auto-finalizadas, ${pendentesCanceladosPorDataCount} canc.por.data ` +
       `(lote ${lote.length})`;
 
     await supabase.from('cron_execucoes').insert({
@@ -864,6 +984,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       skip_janela: skipJanelaCount,
       skip_pausada: skipPausadaCount,
       skip_optout: skipOptoutCount, // 🆕 v1.9 (Fase C)
+      campanhas_auto_finalizadas: autoFinalizadasCount, // 🆕 v1.11 (Fase B)
+      pendentes_cancelados_por_data: pendentesCanceladosPorDataCount, // 🆕 v1.11 (Fase B)
       duracao_ms: Date.now() - inicioExecucao,
     });
 

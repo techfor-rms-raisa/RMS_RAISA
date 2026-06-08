@@ -2,29 +2,12 @@
  * CampanhasPage.tsx — Container principal do módulo de Campanhas
  *
  * Caminho: src/components/crm/campanhas/CampanhasPage.tsx
- * Versão: 1.2 (Fase 7-MVP guard — 04/06/2026)
+ * Versão: 1.0 (Fase 1D — 30/05/2026)
  *
- * Histórico:
- *  - v1.2 (04/06/2026 — Fase 7-MVP guard): NÃO pré-preencher `email_remetente`
- *    em `handleNovaCampanha`. Causa do incidente de 04/06/2026: o `userEmail`
- *    do usuário logado é o e-mail institucional (`@techforti.com.br`), domínio
- *    NÃO verificado no Resend para envio. Como o auto-fill do StepInfo só
- *    sobrescreve campo vazio, o e-mail institucional era mantido e o Resend
- *    devolvia 403 validation_error nos envios. Agora `email_remetente: ''`,
- *    o auto-fill do StepInfo computa um e-mail derivado do `nome_remetente`
- *    + `dominio_envio` (sempre dentro dos domínios verificados). O backend
- *    crm-campanhas.ts v1.9 valida em defesa em profundidade.
- *  - v1.1 (01/06/2026 — Fase 5B-fix): corrige bug crítico do envio do
- *    `criado_por` para o backend de Campanhas. A "Fase 4C-fix" (31/05) tinha
- *    usado `user.nome_usuario` como fallback de email, mas `nome_usuario`
- *    é o nome de EXIBIÇÃO ("Messias Oliveira") em app_users — NÃO um email.
- *    O backend rejeitava com "Criador não encontrado em app_users". Agora
- *    usa o padrão correto da casa: `user.email` ?? `user.email_usuario` ??
- *    fail (visto no AssinaturasPage que funciona em produção).
- *  - v1.0 (30/05/2026 — Fase 1D): substitui o CampaignBuilder.tsx monolítico
- *    (1483 linhas). Orquestra os 5 hooks (campanhas, steps, leads, assinatura,
- *    preview), alterna entre VISTA LISTA e VISTA WIZARD, exibe modal de
- *    assinatura e toast de mensagens.
+ * Substitui o componente monolítico CampaignBuilder.tsx (1483 linhas).
+ * Orquestra os 5 hooks (campanhas, steps, leads, assinatura, preview),
+ * alterna entre VISTA LISTA e VISTA WIZARD, e exibe modal de assinatura
+ * e toast de mensagens.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -60,20 +43,6 @@ export interface CampanhasPageProps {
 const CampanhasPage: React.FC<CampanhasPageProps> = () => {
   const { user } = useAuth();
 
-  // 🔧 Fase 5B-fix (01/06/2026): leitura defensiva do email do usuário
-  // logado. O AuthContext pode expor `email` OU `email_usuario` (campo de
-  // app_users) — depende do contexto e da sessão. NUNCA usar `nome_usuario`
-  // como fallback: é nome de exibição, não email. O backend resolve o
-  // criado_por procurando em app_users.email_usuario.
-  const userEmail =
-    ((user as any)?.email as string | undefined) ||
-    ((user as any)?.email_usuario as string | undefined) ||
-    '';
-  const userNome =
-    ((user as any)?.nome as string | undefined) ||
-    ((user as any)?.nome_usuario as string | undefined) ||
-    '';
-
   // ── View atual ──
   const [view, setView] = useState<'list' | 'editor'>('list');
 
@@ -99,8 +68,8 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
     campanhasH.carregar();
     campanhasH.carregarStats();
     campanhasH.carregarTipos();
-    if (userEmail) {
-      assinaturaH.carregar(userEmail);
+    if (user?.email) {
+      assinaturaH.carregar(user.email);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -121,15 +90,8 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
       tipo: 'Outsourcing',
       status: 'rascunho',
       dominio_envio: '',
-      // 🆕 v1.2 (04/06/2026 — Fase 7-MVP guard): NÃO pré-preencher com userEmail.
-      // O `userEmail` é o e-mail institucional (@techforti.com.br), domínio que
-      // NÃO está verificado no Resend para envio (envios saem por @techfor.com.br
-      // ou @techforti.inf.br). Pré-preencher com o institucional fazia o Resend
-      // devolver 403 validation_error. Deixando vazio aqui, o auto-fill do
-      // StepInfo computa um e-mail derivado de (nome_remetente + dominio_envio),
-      // sempre dentro dos domínios verificados.
-      email_remetente: '',
-      nome_remetente: userNome,
+      email_remetente: user?.email || '',
+      nome_remetente: user?.nome || '',
       horario_inicio: '08:00',
       horario_fim: '18:00',
     });
@@ -166,8 +128,8 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
   };
 
   const handleSalvarAssinatura = async () => {
-    if (!userEmail) return;
-    const ok = await assinaturaH.salvar(userEmail);
+    if (!user?.email) return;
+    const ok = await assinaturaH.salvar(user.email);
     if (ok) {
       setShowAssinatura(false);
       setMensagem({ tipo: 'success', texto: 'Assinatura salva!' });
@@ -289,6 +251,8 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Enviados</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Abertos</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-600">Criado em</th>
+                  {/* 🆕 v1.3 (Fase B) — Encerramento planejado */}
+                  <th className="text-left px-4 py-3 font-medium text-gray-600">Encerra em</th>
                   <th className="text-center px-4 py-3 font-medium text-gray-600">Ações</th>
                 </tr>
               </thead>
@@ -324,6 +288,39 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
                       )}
                     </td>
                     <td className="px-4 py-3 text-gray-500">{formatDate(c.criado_em)}</td>
+                    {/* 🆕 v1.3 (Fase B) — Encerra em (com badge se < 7 dias) */}
+                    <td className="px-4 py-3 text-gray-500">
+                      {(() => {
+                        const de = c.data_encerramento;
+                        if (!de) return <span className="text-gray-300">—</span>;
+                        // Calcular dias até a data (sem horários)
+                        const hoje = new Date();
+                        hoje.setHours(0, 0, 0, 0);
+                        const alvo = new Date(de + 'T00:00:00');
+                        const diffDias = Math.round(
+                          (alvo.getTime() - hoje.getTime()) / (1000 * 60 * 60 * 24)
+                        );
+                        let badgeClass = 'text-gray-600';
+                        let badgeLabel = '';
+                        if (c.status === 'ativa') {
+                          if (diffDias < 0) {
+                            badgeClass = 'bg-red-100 text-red-700';
+                            badgeLabel = ' (vencida)';
+                          } else if (diffDias === 0) {
+                            badgeClass = 'bg-red-100 text-red-700';
+                            badgeLabel = ' (hoje)';
+                          } else if (diffDias <= 7) {
+                            badgeClass = 'bg-orange-100 text-orange-700';
+                            badgeLabel = ` (${diffDias}d)`;
+                          }
+                        }
+                        return (
+                          <span className={`inline-block px-2 py-0.5 rounded text-xs ${badgeClass}`}>
+                            {alvo.toLocaleDateString('pt-BR')}{badgeLabel}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td
                       className="px-4 py-3 text-center"
                       onClick={(e) => e.stopPropagation()}
@@ -360,13 +357,7 @@ const CampanhasPage: React.FC<CampanhasPageProps> = () => {
         renderLista()
       ) : (
         <CampanhaWizard
-          user={{
-            // 🔧 Fase 5B-fix (01/06/2026): substitui a "Fase 4C-fix" que
-            // erroneamente usava `nome_usuario` como fallback de email.
-            // Agora usa o padrão correto da casa: email → email_usuario.
-            email: userEmail,
-            nome: userNome,
-          }}
+          user={{ email: user?.email || '', nome: user?.nome || '' }}
           campanhasHook={campanhasH}
           stepsHook={stepsH}
           leadsHook={leadsH}

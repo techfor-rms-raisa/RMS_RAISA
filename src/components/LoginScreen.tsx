@@ -36,6 +36,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
           nome_usuario: data.nome_usuario,
           nome: data.nome_usuario, // ✅ Alias para compatibilidade com componentes que usam user.nome
           email_usuario: data.email_usuario,
+          email: data.email_usuario, // ✅ 08/06/2026 — Alias para compatibilidade com componentes que usam user.email (CampanhasPage, CampanhaWizard, etc)
           senha_usuario: data.senha_usuario,
           ativo_usuario: data.ativo_usuario,
           tipo_usuario: data.tipo_usuario,

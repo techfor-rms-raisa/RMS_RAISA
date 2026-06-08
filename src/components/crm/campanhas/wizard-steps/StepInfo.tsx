@@ -2,7 +2,7 @@
  * StepInfo.tsx — Passo 1 do wizard: Dados gerais da campanha
  *
  * Caminho: src/components/crm/campanhas/wizard-steps/StepInfo.tsx
- * Versão: 1.2 (Fase 5B-UI — 02/06/2026)
+ * Versão: 1.3 (Fase B — 08/06/2026)
  *
  * Histórico:
  *  - v1.0 (30/05/2026 — Fase 1D): decomposto de CampaignBuilder.tsx.
@@ -21,6 +21,13 @@
  *      • Lista vem por prop (`responsaveis` + `travadoNoProprio`),
  *        carregada uma vez pelo CampanhaWizard via
  *        GET listar_responsaveis_elegiveis (crm-campanhas.ts v1.8).
+ *  - v1.3 (08/06/2026 — Fase B): novo campo "Encerrar em (opcional)"
+ *    abaixo dos horários. Input type=date com min=hoje + botão X para
+ *    limpar. Quando preenchido, o cron disparar-fila.ts v1.11 marca a
+ *    campanha como 'concluida' ao atingir a data E cancela todos os
+ *    pendentes em email_fila (decisão de produto — Opção A: encerramento
+ *    limpo, LGPD-compliant). Backend valida formato YYYY-MM-DD e que a
+ *    data não esteja no passado (crm-campanhas.ts v1.10).
  */
 
 import React from 'react';
@@ -371,6 +378,40 @@ const StepInfo: React.FC<StepInfoProps> = ({
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
           />
         </div>
+      </div>
+
+      {/* 🆕 v1.3 (08/06/2026 — Fase B) — Data de encerramento (opcional).
+          Quando atingida, o cron disparar-fila.ts v1.11 marca a campanha
+          como 'concluida' E cancela todos os steps pendentes em email_fila
+          (Opção A — encerramento limpo, LGPD-compliant). */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Encerrar em (opcional)
+        </label>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            min={new Date().toISOString().slice(0, 10)}
+            value={campanha.data_encerramento || ''}
+            onChange={(e) =>
+              setField('data_encerramento', e.target.value || null)
+            }
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          />
+          {campanha.data_encerramento && (
+            <button
+              type="button"
+              onClick={() => setField('data_encerramento', null)}
+              className="px-3 py-2 text-sm text-gray-500 hover:text-red-600"
+              title="Limpar data de encerramento"
+            >
+              <i className="fa-solid fa-xmark"></i>
+            </button>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-gray-500">
+          Quando a data for atingida, a campanha é automaticamente concluída e os e-mails pendentes são cancelados.
+        </p>
       </div>
 
       {/* Aviso de assinatura */}

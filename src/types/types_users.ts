@@ -17,6 +17,7 @@ export interface User {
   nome_usuario: string;
   nome?: string; // Alias para compatibilidade
   email_usuario: string;
+  email?: string; // ✅ 08/06/2026 — Alias para compatibilidade com componentes que usam user.email (CampanhasPage, CampanhaWizard, etc). Espelho de email_usuario, definido no LoginScreen e atualizações de user.
   senha_usuario: string; 
   ativo_usuario: boolean;
   receber_alertas_email: boolean;
