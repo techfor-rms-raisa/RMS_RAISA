@@ -3,6 +3,58 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.11 — 08/06/2026 — BUG FIX CRÍTICO: reply_to do forward como array.
+ *   Diagnóstico (08/06/2026): durante validação prática da Fase C, o lead
+ *   de teste respondeu mas a resposta veio para `mvieira@techfor.com.br`
+ *   (o `from` do envio) em vez do plus-alias esperado
+ *   `customer-service+test+f{id}+l{id}@techfor.com.br`.
+ *   Raw JSON do Resend mostrou `reply_to: []` mesmo com o cron passando
+ *   `reply_to: replyTo` como string. A doc oficial do Resend define o
+ *   parâmetro como `string[]` (array). Quando passado como string única,
+ *   a API descarta silenciosamente.
+ *   Esta mesma classe de bug afeta a função `encaminharRespostaAoGestor`
+ *   deste arquivo: quando o forward é enviado ao gestor, o `reply_to`
+ *   apontava para `opts.leadEmail` como string única — pelo mesmo motivo,
+ *   o Resend descartava e o gestor não conseguiria responder direto ao
+ *   lead (Responder no Outlook iria para `notificacoes@techfortirms.online`
+ *   em vez do lead).
+ *   Não foi notado antes porque os forwards nunca chegaram a ser exercitados
+ *   em produção real (Fase 7-MVP validou apenas estrutural em 04/06; o uso
+ *   prático começou em 08/06 e travou em outro ponto antes do forward).
+ *   Mudança cirúrgica: 1 linha — `reply_to: opts.leadEmail` →
+ *   `reply_to: [opts.leadEmail]`. Mesmo padrão aplicado em
+ *   disparar-fila.ts v1.10 (commitado junto).
+ *
+ * v1.10 — 08/06/2026 — FASE C: Pausa automática (LGPD compliance).
+ *   Motivação: até a v1.9, quando um lead respondia ou seu e-mail virava
+ *   hard bounce / complained, apenas a fila ATUAL daquele evento mudava de
+ *   status. Os STEPS FUTUROS da mesma campanha (e em outras, no caso de
+ *   bounce) continuavam em `status='pendente'` e o cron os despachava — o
+ *   que é problema de compliance (LGPD), de reputação de domínio e de
+ *   profissionalismo (lead recebe sequência mesmo após responder ou pedir
+ *   para sair).
+ *
+ *   Correção (2 RPCs novas em SQL + 2 chamadas neste webhook):
+ *     1) Ramo `received` (resposta do lead, em processarEmailRecebido):
+ *        após o UPDATE de status='respondido' na fila atual, chama
+ *        `cancelar_fila_pendente_lead_campanha(lead_id, campanha_id)` para
+ *        cancelar todos os steps futuros DAQUELA campanha. Não interfere
+ *        em outras campanhas onde o lead esteja vinculado.
+ *     2) Ramo `bounced` (hard) e `complained` (no fluxo outbound): após o
+ *        upsert em email_optout, chama
+ *        `cancelar_fila_pendente_email_global(email)` para cancelar todos
+ *        os pendentes daquele e-mail em TODAS as campanhas (complementar
+ *        ao auto-opt-out global).
+ *
+ *   Idempotência:
+ *     • Ambas RPCs só atualizam linhas com status='pendente' — segunda
+ *       chamada é no-op (zero linhas afetadas).
+ *     • Não bloqueia o fluxo do webhook se a RPC falhar (graceful: loga
+ *       warning e continua). A resposta/bounce já foi gravada antes.
+ *
+ *   Dependência: requer o SQL `2026-06-08_crm_evolucao_C_B_D.sql` aplicado
+ *     em Production (cria as 2 RPCs).
+ *
  * v1.9 — 05/06/2026 — Renomeação comercial do plus-alias.
  *   Motivação: o Reply-To `respostas+prod+f4+l1@techfor.com.br` aparecia
  *   diretamente no cliente de e-mail do lead. "respostas" é descritivo mas
@@ -634,7 +686,17 @@ para ${opts.leadEmail} a partir da sua caixa institucional.`;
       body: JSON.stringify({
         from: fromFormatado,
         to: [usr.email_usuario],
-        reply_to: opts.leadEmail,  // 🔑 Gestor clica "Responder" → vai DIRETO ao lead
+        // 🔧 v1.11 (08/06/2026) — BUG FIX CRÍTICO: reply_to deve ser array.
+        //   Mesmo bug identificado em disparar-fila.ts v1.10. A doc oficial
+        //   do Resend define `reply_to` como `string[]`. Quando passado como
+        //   string única, a API descarta silenciosamente — o gestor recebia
+        //   o forward, mas ao clicar "Responder" no Gmail/Outlook, a resposta
+        //   ia para o `from` (notificacoes@techfortirms.online) em vez do
+        //   `opts.leadEmail`, quebrando o fluxo proposto da Fase 7-MVP.
+        //   Mudança cirúrgica: `reply_to: opts.leadEmail` → `reply_to: [opts.leadEmail]`.
+        //   O comentário "Responder vai DIRETO ao lead" do plano v1.3 só passa
+        //   a ser verdade efetivamente com este fix.
+        reply_to: [opts.leadEmail],
         subject: subjectForward,
         html: htmlForward,
         text: textForward,
@@ -947,6 +1009,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         { onConflict: 'email', ignoreDuplicates: true },
       );
       console.log(`[crm-webhook] 🚫 Auto opt-out: ${fila.destinatario_email}`);
+
+      // 🆕 v1.10 (Fase C) — Cancela TODOS os itens pendentes em TODAS as
+      //   campanhas para esse e-mail. Complementa o auto-opt-out: o opt-out
+      //   protege envios FUTUROS (cron filtra na hora do disparo, defesa em
+      //   profundidade), e este RPC cancela os JÁ ENFILEIRADOS para a fila
+      //   refletir imediatamente o estado terminal.
+      //   Falha aqui é graceful — opt-out já foi registrado.
+      const motivoCancel =
+        tipoInterno === 'complained' ? 'complaint_spam' : 'hard_bounce';
+      const { data: totCancel, error: errCancel } = await supabase.rpc(
+        'cancelar_fila_pendente_email_global',
+        {
+          p_email: fila.destinatario_email,
+          p_motivo: motivoCancel,
+        },
+      );
+      if (errCancel) {
+        console.warn(
+          `[crm-webhook] ⚠️ Falha ao cancelar fila pendente global de ${fila.destinatario_email}:`,
+          errCancel.message,
+        );
+      } else {
+        console.log(
+          `[crm-webhook] 🛑 Cancelados ${totCancel || 0} pendentes globais (${motivoCancel}) de ${fila.destinatario_email}`,
+        );
+      }
     }
 
     // Recalcular contadores agregados via RPC
@@ -1269,6 +1357,35 @@ async function processarEmailRecebido(opts: {
     .from('email_fila')
     .update({ status: 'respondido' })
     .eq('id', fila.id);
+
+  // 🆕 v1.10 (Fase C) — Cancela steps FUTUROS do lead NESTA campanha.
+  //   Após o UPDATE acima (que muda só o item atual para 'respondido'),
+  //   precisamos interromper a sequência: Steps 2/3/4 já enfileirados
+  //   continuariam disparando mesmo após a resposta do lead — problema
+  //   de compliance e profissionalismo.
+  //   Escopo: APENAS esta campanha. Se o lead estiver em outras campanhas,
+  //   essas continuam normalmente (responder em uma não silencia todas).
+  //   Falha aqui é graceful — a resposta já foi gravada acima.
+  if (fila.lead_id && fila.campanha_id) {
+    const { data: totCancel, error: errCancel } = await supabase.rpc(
+      'cancelar_fila_pendente_lead_campanha',
+      {
+        p_lead_id: fila.lead_id,
+        p_campanha_id: fila.campanha_id,
+        p_motivo: 'lead_respondeu',
+      },
+    );
+    if (errCancel) {
+      console.warn(
+        `[crm-webhook] ⚠️ Falha ao cancelar fila pendente do lead ${fila.lead_id} em campanha ${fila.campanha_id}:`,
+        errCancel.message,
+      );
+    } else {
+      console.log(
+        `[crm-webhook] 🛑 Cancelados ${totCancel || 0} steps futuros do lead ${fila.lead_id} em campanha ${fila.campanha_id} (lead respondeu)`,
+      );
+    }
+  }
 
   // 8. INSERT em email_lead_historico
   await supabase.from('email_lead_historico').insert({
