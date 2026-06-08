@@ -209,6 +209,15 @@ export interface Campanha {
   inicio_envio?: string | null;
   fim_envio?: string | null;
 
+  // 🆕 Fase B (08/06/2026): data planejada de encerramento da campanha.
+  //   Formato: 'YYYY-MM-DD'. Quando atingida, o cron disparar-fila.ts v1.11
+  //   marca a campanha como 'concluida' E cancela todos os pendentes em
+  //   email_fila (Opção A do produto — encerramento limpo).
+  //   Validação backend (crm-campanhas.ts v1.3): deve ser >= CURRENT_DATE
+  //   ao criar/atualizar; para encerrar imediatamente, use mudar_status.
+  //   null = sem encerramento previsto (comportamento default).
+  data_encerramento?: string | null;
+
   // ── Novos campos (Fase 3) — opcionais até a migração ──
   tipo_campanha_id?: number | null;
   delay_minimo_dias?: DelayDias;
