@@ -39,7 +39,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../config/supabase';
-import SelecionarCampanhaModal from '../components/crm/campanhas/SelecionarCampanhaModal';
+import SelecionarCampanhaModal from '../crm/campanhas/SelecionarCampanhaModal';
 
 // ============================================
 // TIPOS
