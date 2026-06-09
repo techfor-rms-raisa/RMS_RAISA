@@ -1,12 +1,29 @@
 /**
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para análise de riscos de consultores
- * 
+ *
+ * v54.3 (09/06/2026) - TESTE EXPERIMENTAL:
+ * - Modelo alterado: gemini-2.5-flash → gemini-3.5-flash
+ * - Motivação: validar hipótese de Messias Vieira (Product Owner) de que
+ *   o bug "Your prepayment credits are depleted" (429 RESOURCE_EXHAUSTED)
+ *   pode ser específico do modelo gemini-2.5-flash, e não da conta Google
+ *   como um todo. Posts no fórum oficial da Google reportam o mesmo
+ *   sintoma majoritariamente em chamadas ao 2.5-flash, e o problema
+ *   começou logo após a migração 2.0-flash → 2.5-flash (08/06/2026) —
+ *   uma semana após a Google desligar o 2.0-flash em 01/06/2026.
+ * - Atenção: 3.5-flash tem custo ~4x maior por chamada
+ *   ($1.50/M input + $9.00/M output vs. $0.30 + $2.50 do 2.5-flash).
+ *   Se o teste validar a hipótese, decidir entre (a) manter 3.5-flash
+ *   pagando o custo extra, (b) migrar para Vertex AI no 2.5-flash, ou
+ *   (c) usar 3.1-flash-lite (modelo intermediário, custo menor).
+ * - Adicionado log de marker "[v54.3 ATIVO]" para confirmar via Vercel
+ *   Logs que o deploy efetivamente pegou o novo modelo.
+ *
  * v54.2 (28/01/2026) - CORREÇÃO:
  * - Modelo atualizado: gemini-2.5-flash-exp → gemini-2.5-flash
  * - O modelo 'exp' foi descontinuado pela Google (404 Not Found)
- * 
- * v54.1 - CORRIGIDO: 
+ *
+ * v54.1 - CORRIGIDO:
  * - Tratamento robusto de JSON malformado da IA
  * - Sanitização de aspas não escapadas (aspas duplas → simples)
  * - trechoOriginal mantém texto COMPLETO (sem limite de caracteres)
@@ -32,11 +49,13 @@ if (!apiKey) {
 // Inicializar cliente no top-level
 const ai = new GoogleGenAI({ apiKey });
 
-// 🔧 v54.2 (28/01/2026): CORREÇÃO - Modelo atualizado (gemini-2.5-flash-exp foi descontinuado)
-const AI_MODEL = 'gemini-2.5-flash';
+// 🧪 v54.3 (09/06/2026): TESTE EXPERIMENTAL — gemini-2.5-flash → gemini-3.5-flash
+// Hipótese a validar: bug 429 "prepayment credits depleted" pode ser
+// específico do modelo 2.5-flash. Se 3.5-flash funcionar, comprovamos.
+const AI_MODEL = 'gemini-3.5-flash';
 
 // Versão da API
-const API_VERSION = 'v54.2';
+const API_VERSION = 'v54.3';
 
 // ========================================
 // CONFIGURAÇÃO DE TIMEOUT PARA VERCEL PRO
@@ -68,6 +87,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   console.log(`\n📥 [REQUEST] ${new Date().toISOString()}`);
   console.log(`📥 [REQUEST] Versão: ${API_VERSION}`);
   console.log(`📥 [REQUEST] Modelo: ${AI_MODEL}`);
+  console.log(`🧪 [v54.3 ATIVO] Teste experimental gemini-3.5-flash em curso`);
 
   try {
     // Verificar API key
@@ -226,7 +246,7 @@ ${reportText}
 ]
 `;
 
-  console.log('📄 Chamando API Gemini com prompt aprimorado v54.2...');
+  console.log('📄 Chamando API Gemini com prompt aprimorado v54.3 (gemini-3.5-flash)...');
   
   // Chamada à API
   const result = await ai.models.generateContent({ 
