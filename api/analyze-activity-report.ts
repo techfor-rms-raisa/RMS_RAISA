@@ -1,12 +1,41 @@
 /**
  * API ENDPOINT: ANÁLISE DE RELATÓRIOS DE ATIVIDADES
  * Usa Gemini AI para análise de riscos de consultores
- * 
+ *
+ * v54.4 (09/06/2026) - REVERSÃO DO TESTE EXPERIMENTAL:
+ * - Modelo restaurado: gemini-3.5-flash → gemini-2.5-flash
+ * - Motivação: a hipótese da v54.3 (bug específico do gemini-2.5-flash)
+ *   foi REFUTADA pelo teste em Preview — o 3.5-flash também falhou
+ *   com 429 RESOURCE_EXHAUSTED. A causa-raiz real foi descoberta:
+ *   o Google AI Studio implementou rollout gradual da exigência de
+ *   "Pré-pagamento obrigatório" (transição iniciada em 23/03/2026),
+ *   atingindo os projetos do RMS-RAISA entre 08/06 e 09/06.
+ * - Solução aplicada (09/06/2026): R$ 200,00 em créditos Prepay
+ *   na conta de faturamento 013642-F6FB26-7A3A85 + recarga automática
+ *   ativada (threshold R$ 40, recarga R$ 100). Saldo agora destrava
+ *   ambos os projetos (TECH FOR TI RMS RAISA + Rms-Raisa Gemini).
+ * - Voltamos ao gemini-2.5-flash porque é 4x mais barato que 3.5-flash
+ *   ($0.30/M input + $2.50/M output vs $1.50 + $9.00) e atende
+ *   plenamente ao caso de uso. O 3.5-flash é mais inteligente, mas
+ *   nossas análises de risco não requerem capacidade frontier.
+ * - Mantida: log "[v54.4 ATIVO]" para confirmar deploy via Vercel Logs.
+ * - Planejamento: migração para Vertex AI fica como Fase 2 (próximas
+ *   1-2 semanas, em ritmo controlado) — solução definitiva que
+ *   elimina dependência do AI Studio Billing.
+ *
+ * v54.3 (09/06/2026) - TESTE EXPERIMENTAL (HIPÓTESE REFUTADA):
+ * - Modelo alterado: gemini-2.5-flash → gemini-3.5-flash
+ * - Motivação: validar hipótese de Messias Vieira de que o bug
+ *   "Your prepayment credits are depleted" (429 RESOURCE_EXHAUSTED)
+ *   poderia ser específico do modelo gemini-2.5-flash.
+ * - Resultado: 3.5-flash também falhou com 429 — hipótese refutada.
+ * - Teste valeu: eliminou uma variável e ajudou a chegar na causa real.
+ *
  * v54.2 (28/01/2026) - CORREÇÃO:
  * - Modelo atualizado: gemini-2.5-flash-exp → gemini-2.5-flash
  * - O modelo 'exp' foi descontinuado pela Google (404 Not Found)
- * 
- * v54.1 - CORRIGIDO: 
+ *
+ * v54.1 - CORRIGIDO:
  * - Tratamento robusto de JSON malformado da IA
  * - Sanitização de aspas não escapadas (aspas duplas → simples)
  * - trechoOriginal mantém texto COMPLETO (sem limite de caracteres)
@@ -32,11 +61,13 @@ if (!apiKey) {
 // Inicializar cliente no top-level
 const ai = new GoogleGenAI({ apiKey });
 
-// 🔧 v54.2 (28/01/2026): CORREÇÃO - Modelo atualizado (gemini-2.5-flash-exp foi descontinuado)
+// 🔧 v54.4 (09/06/2026): RESTAURADO gemini-2.5-flash após resolução do bug Prepay.
+// Bug 429 resolvido via compra de R$ 200 em créditos Prepay + auto-reload.
+// Vide histórico no header para detalhes da investigação.
 const AI_MODEL = 'gemini-2.5-flash';
 
 // Versão da API
-const API_VERSION = 'v54.2';
+const API_VERSION = 'v54.4';
 
 // ========================================
 // CONFIGURAÇÃO DE TIMEOUT PARA VERCEL PRO
@@ -68,6 +99,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   console.log(`\n📥 [REQUEST] ${new Date().toISOString()}`);
   console.log(`📥 [REQUEST] Versão: ${API_VERSION}`);
   console.log(`📥 [REQUEST] Modelo: ${AI_MODEL}`);
+  console.log(`✅ [v54.4 ATIVO] Modelo gemini-2.5-flash restaurado pós-resolução Prepay`);
 
   try {
     // Verificar API key
@@ -226,7 +258,7 @@ ${reportText}
 ]
 `;
 
-  console.log('📄 Chamando API Gemini com prompt aprimorado v54.2...');
+  console.log('📄 Chamando API Gemini com prompt v54.4 (gemini-2.5-flash)...');
   
   // Chamada à API
   const result = await ai.models.generateContent({ 
