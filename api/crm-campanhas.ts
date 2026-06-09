@@ -2,6 +2,28 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.11 (09/06/2026 — Fase A): adiciona action GET
+ *    `listar_campanhas_disponiveis_para_lead`. Recebe `lead_id` ou
+ *    `prospect_id` (pelo menos um obrigatório) + `criado_por` (RBAC).
+ *    Retorna campanhas elegíveis para receber esse lead nos critérios:
+ *      • status IN ('ativa', 'pausada', 'agendada')
+ *      • tipo (vertical) = vertical do lead/prospect
+ *      • responsavel_id = reservado_por do lead/prospect (Fase B trava)
+ *      • data_encerramento >= CURRENT_DATE OR NULL (Fase B - v1.10)
+ *      • exclui campanhas onde o lead já está em status
+ *        ativa/pausada/agendada (decisão de produto 09/06/2026 —
+ *        bloqueia duplicação simultânea para evitar spam ao mesmo
+ *        contato em múltiplas campanhas concorrentes)
+ *    Pré-requisito (defesa em profundidade): lead promovido deve ter
+ *    `reservado_por` populado. Bug histórico em promover_para_campanha
+ *    (crm-leads.ts) que omitia o campo foi corrigido na v1.8 (09/06/2026),
+ *    herdando do prospect_leads.reservado_por. Sem essa correção, todos
+ *    os leads promovidos via Prospect Engine seriam INELEGÍVEIS para
+ *    qualquer campanha (a Fase B exige reservado_por === responsavel_id).
+ *    Quando array vazio retorna campo `motivo` explicativo para a UX.
+ *    Usado pelo SelecionarCampanhaModal.tsx (modal aberto ao clicar no
+ *    botão "Campanhas" da aba Meus Leads Salvos em ProspectSearchPage).
+ *
  *  - v1.10 (08/06/2026 — Fase B): aceita `data_encerramento` (DATE) em
  *    criar_campanha e atualizar_campanha. Campo declarativo de data
  *    planejada de fim. Quando atingida, o cron (disparar-fila.ts v1.11)
@@ -434,6 +456,149 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const filtered = (data || []).filter((l: any) => !emailsOptout.includes(l.email));
 
         return res.status(200).json({ success: true, leads: filtered });
+      }
+
+      // ── 🆕 v1.11 (Fase A — 09/06/2026) — Campanhas elegíveis para um lead/prospect ──
+      // Lista campanhas onde um lead/prospect ESPECÍFICO pode entrar agora.
+      //
+      // Aceita `lead_id` (email_lead já promovido) OU `prospect_id` (prospect_lead
+      // ainda não promovido) — pelo menos um é obrigatório. `criado_por` é o
+      // email do usuário atual (RBAC futuro; hoje apenas exigência consistente
+      // com `listar_responsaveis_elegiveis`).
+      //
+      // Critérios de elegibilidade (interseção de todos):
+      //  • Campanha em status IN ('ativa','pausada','agendada')
+      //  • Campanha.tipo == lead.vertical (Fase B trava por vertical)
+      //  • Campanha.responsavel_id == lead.reservado_por (Fase B trava por dono)
+      //  • Campanha.data_encerramento IS NULL OR >= CURRENT_DATE (Fase B v1.10)
+      //  • Lead NÃO está vinculado a campanha em status ativa/pausada/agendada
+      //    (decisão de produto 09/06/2026 — bloqueia duplicação simultânea).
+      //
+      // Quando o lead já está em email_leads (lead_id informado ou prospect já
+      // promovido com mesmo email), checa duplicação em email_lead_campanhas.
+      // Quando ainda é só prospect (lead_id == null e nenhum email_lead com
+      // o mesmo email), pula a checagem de duplicação — não há vínculos ainda.
+      //
+      // Retorna SEMPRE `success: true`. Quando lista está vazia, `motivo`
+      // explica a razão para a UX poder informar o usuário.
+      if (action === 'listar_campanhas_disponiveis_para_lead') {
+        const leadIdQ = req.query.lead_id as string | undefined;
+        const prospectIdQ = req.query.prospect_id as string | undefined;
+        const criadoPor = (req.query.criado_por as string) || '';
+
+        if (!leadIdQ && !prospectIdQ) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id ou prospect_id obrigatório (pelo menos um)',
+          });
+        }
+        if (!criadoPor) {
+          return res.status(400).json({ success: false, error: 'criado_por obrigatório' });
+        }
+
+        // Resolver dados-chave: vertical, reservado_por, email
+        let vertical: string | null = null;
+        let reservadoPor: number | null = null;
+        let emailNorm: string | null = null;
+
+        if (leadIdQ) {
+          const { data: lead, error: e } = await supabase
+            .from('email_leads')
+            .select('id, email, vertical, reservado_por')
+            .eq('id', leadIdQ)
+            .maybeSingle();
+          if (e) return res.status(500).json({ success: false, error: e.message });
+          if (!lead) return res.status(404).json({ success: false, error: 'Lead não encontrado' });
+          vertical = lead.vertical;
+          reservadoPor = lead.reservado_por;
+          emailNorm = (lead.email || '').toLowerCase().trim() || null;
+        } else if (prospectIdQ) {
+          const { data: prospect, error: e } = await supabase
+            .from('prospect_leads')
+            .select('id, email, vertical, reservado_por')
+            .eq('id', prospectIdQ)
+            .maybeSingle();
+          if (e) return res.status(500).json({ success: false, error: e.message });
+          if (!prospect) return res.status(404).json({ success: false, error: 'Prospect não encontrado' });
+          vertical = prospect.vertical;
+          reservadoPor = prospect.reservado_por;
+          emailNorm = (prospect.email || '').toLowerCase().trim() || null;
+        }
+
+        // Validações de pré-requisitos do lead — devolvem motivo para a UX
+        if (!vertical || !String(vertical).trim()) {
+          return res.status(200).json({
+            success: true,
+            campanhas: [],
+            motivo: 'Lead sem Vertical de Negócios definida — atribua uma vertical antes de vincular a campanhas.',
+          });
+        }
+        if (!reservadoPor) {
+          return res.status(200).json({
+            success: true,
+            campanhas: [],
+            motivo: 'Lead sem responsável definido (reservado_por). Atribua o lead a um GC/SDR.',
+          });
+        }
+
+        // Resolver lead_id real (mesmo se veio prospect_id). Pode existir em
+        // email_leads se um prospect com mesmo email já foi promovido antes.
+        let leadIdReal: number | null = leadIdQ ? Number(leadIdQ) : null;
+        if (!leadIdReal && emailNorm) {
+          const { data: leadExistente } = await supabase
+            .from('email_leads')
+            .select('id')
+            .eq('email', emailNorm)
+            .maybeSingle();
+          if (leadExistente?.id) leadIdReal = leadExistente.id;
+        }
+
+        // Campanhas já vinculadas ao lead (status atual da CAMPANHA é o que
+        // bloqueia, não o status do vínculo). Vínculo cancelado de campanha
+        // concluída/excluída NÃO bloqueia novo vínculo em outra campanha.
+        let campanhasBloqueadas: number[] = [];
+        if (leadIdReal) {
+          const { data: vinculos } = await supabase
+            .from('email_lead_campanhas')
+            .select('campanha_id, email_campanhas!inner(status)')
+            .eq('lead_id', leadIdReal);
+          campanhasBloqueadas = (vinculos || [])
+            .filter((v: any) => ['ativa', 'pausada', 'agendada'].includes(v.email_campanhas?.status))
+            .map((v: any) => v.campanha_id);
+        }
+
+        // Buscar campanhas elegíveis
+        const hoje = new Date().toISOString().slice(0, 10);
+        let query = supabase
+          .from('email_campanhas')
+          .select('id, nome, status, tipo, unidade, inicio_envio, data_encerramento, total_destinatarios, criado_em')
+          .in('status', ['ativa', 'pausada', 'agendada'])
+          .eq('tipo', vertical)
+          .eq('responsavel_id', reservadoPor)
+          .or(`data_encerramento.is.null,data_encerramento.gte.${hoje}`)
+          .order('criado_em', { ascending: false });
+
+        if (campanhasBloqueadas.length > 0) {
+          query = query.not('id', 'in', `(${campanhasBloqueadas.join(',')})`);
+        }
+
+        const { data: campanhas, error: eC } = await query;
+        if (eC) return res.status(500).json({ success: false, error: eC.message });
+
+        const lista = campanhas || [];
+
+        // Sem campanhas → devolver motivo explicativo para a UX
+        if (lista.length === 0) {
+          let motivo: string;
+          if (campanhasBloqueadas.length > 0) {
+            motivo = `Lead já vinculado a ${campanhasBloqueadas.length} campanha(s). Aguarde a conclusão ou desvincule antes de adicionar a outra.`;
+          } else {
+            motivo = `Nenhuma campanha elegível para a vertical "${vertical}" com você como responsável.`;
+          }
+          return res.status(200).json({ success: true, campanhas: [], motivo });
+        }
+
+        return res.status(200).json({ success: true, campanhas: lista });
       }
 
       // ── Assinatura do usuário logado ────────────────────────

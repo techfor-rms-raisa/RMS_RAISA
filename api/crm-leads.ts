@@ -2,6 +2,46 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.8 (09/06/2026 — Fase A): atalho "promover + vincular a campanha"
+ *    em uma única operação. Duas mudanças principais:
+ *
+ *      • Action `promover_para_campanha` agora aceita `campanha_id`
+ *        OPCIONAL no body. Quando informado, o lead criado (ou o lead
+ *        pré-existente, em caso de "ja_existia") é vinculado à campanha
+ *        e — se a campanha já tem inicio_envio (status ativa/pausada) —
+ *        é enfileirado em `email_fila` com a MESMA lógica de delays
+ *        acumulados usada na ativação inicial (crm-campanhas.ts v1.6
+ *        Fase 5A). Para status='agendada' (inicio_envio NULL) o vínculo
+ *        é criado mas o enfileiramento fica a cargo da futura ativação.
+ *        Validações em camadas (defesa em profundidade):
+ *          (a) campanha existe e status IN ('ativa','pausada','agendada');
+ *          (b) data_encerramento IS NULL OR >= hoje (Fase B v1.10);
+ *          (c) campanha.tipo === lead.vertical (Fase B trava);
+ *          (d) campanha.responsavel_id === lead.reservado_por (Fase B);
+ *          (e) lead não está em outra campanha ativa/pausada/agendada
+ *              (regra de duplicação - decisão produto 09/06/2026);
+ *          (f) email não está em opt-out global.
+ *        Helper `vincularLeadACampanha` extraído ao final do arquivo
+ *        para reuso entre o caminho "lead novo" e "lead já existia"
+ *        (no segundo caso, apenas vincula sem criar email_lead).
+ *
+ *      • BUG FIX preexistente: o INSERT em email_leads do
+ *        promover_para_campanha NÃO populava `reservado_por`, o que
+ *        deixava o lead inelegível para qualquer campanha (a Fase B
+ *        trava exige reservado_por === campanha.responsavel_id). Sem
+ *        esse fix, a action `listar_campanhas_disponiveis_para_lead`
+ *        sempre retornaria vazio para leads vindos do Prospect Engine.
+ *        Correção: herda `prospect.reservado_por` (campo já populado
+ *        em prospect_leads desde o salvamento da pesquisa). Também
+ *        populamos `apto_campanha=true` + `apto_campanha_em/por` para
+ *        ficar consistente com a action `criar_lead` (v1.7) — o lead
+ *        promovido nasce apto a campanhas.
+ *
+ *    Frontend complementar: ProspectSearchPage.tsx passa a abrir o
+ *    SelecionarCampanhaModal.tsx antes de chamar esta action; o modal
+ *    consulta `crm-campanhas?action=listar_campanhas_disponiveis_para_lead`
+ *    e devolve `campanha_id` (ou null para "só CRM").
+ *
  *  - v1.0 (13/05/2026): criado como api/campaign-leads.ts
  *  - v1.1 (30/05/2026): adicionada action 'promover_para_campanha' +
  *    UPDATE de prospect_leads.status='no_crm' em importar_prospects
@@ -1021,7 +1061,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       //  - Trata caso "já existe no CRM" como sucesso (sincroniza status)
       // ─────────────────────────────────────────────────────────────────────
       if (action === 'promover_para_campanha') {
-        const { prospect_id, criado_por } = body;
+        // 🆕 v1.8 (Fase A) — campanha_id opcional: quando informado,
+        // o lead promovido é vinculado à campanha em sequência (mesmo
+        // request, defesa em profundidade com rollback lógico em caso
+        // de erro). Quando null/omitido, comportamento legado: lead
+        // vai apenas para o CRM como "apto" (aguarda futura vinculação
+        // pelo wizard de campanha).
+        const { prospect_id, criado_por, campanha_id } = body;
 
         if (!prospect_id || !criado_por) {
           return res.status(400).json({
@@ -1074,11 +1120,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .eq('id', prospect_id);
 
           console.log(`ℹ️ [crm-leads] Lead "${prospect.nome_completo}" já estava no CRM (ID ${leadExistente.id}) — Prospect marcado como 'no_crm'`);
+
+          // 🆕 v1.8 (Fase A) — se foi pedido para vincular a campanha,
+          // executar a vinculação MESMO no lead pré-existente. A função
+          // helper aplica todas as validações (status, vertical, dono,
+          // duplicação, opt-out) + enfileiramento se necessário.
+          let vinculoCampanha: any = null;
+          if (campanha_id) {
+            // Buscar dados completos do lead existente para validação
+            // (vertical e reservado_por podem ter sido editados desde
+            // a criação — não confiar nos dados do prospect).
+            const { data: leadCompleto } = await supabase
+              .from('email_leads')
+              .select('id, nome, email, vertical, reservado_por')
+              .eq('id', leadExistente.id)
+              .maybeSingle();
+
+            if (!leadCompleto) {
+              return res.status(500).json({
+                success: false,
+                error: 'Lead existente desapareceu entre buscas (erro de consistência)',
+              });
+            }
+
+            const resultadoVinculo = await vincularLeadACampanha(
+              supabase,
+              leadCompleto,
+              Number(campanha_id),
+              criado_por
+            );
+            if (!resultadoVinculo.success) {
+              // Importante: prospect já foi marcado como 'no_crm' acima.
+              // Devolvemos erro 400 indicando que a vinculação falhou mas
+              // o lead permanece no CRM. O frontend deve mostrar o erro
+              // e atualizar a lista (lead saiu da aba "Meus Leads Salvos").
+              return res.status(400).json({
+                success: false,
+                ja_existia: true,
+                lead: leadExistente,
+                error: resultadoVinculo.error,
+              });
+            }
+            vinculoCampanha = resultadoVinculo.vinculo;
+          }
+
           return res.status(200).json({
             success: true,
             lead: leadExistente,
             ja_existia: true,
-            mensagem: 'Lead já estava no CRM. Prospect Engine atualizado.',
+            campanha: vinculoCampanha,
+            mensagem: vinculoCampanha
+              ? `Lead já estava no CRM e foi vinculado à campanha "${vinculoCampanha.campanha_nome}".`
+              : 'Lead já estava no CRM. Prospect Engine atualizado.',
           });
         }
 
@@ -1099,6 +1192,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // 5. Criar email_lead no CRM
+        //
+        // 🐛 v1.8 (09/06/2026 — Fase A) — BUG FIX preexistente:
+        //   Antes desta versão, este INSERT não populava `reservado_por`,
+        //   o que tornava o lead INELEGÍVEL para qualquer campanha (a
+        //   Fase B em crm-campanhas.ts trava `lead.reservado_por ===
+        //   campanha.responsavel_id`). Bug histórico que só apareceu
+        //   quando a action `listar_campanhas_disponiveis_para_lead`
+        //   (v1.11) tentou filtrar campanhas elegíveis e sempre
+        //   retornou vazio para leads vindos do Prospect Engine.
+        //   Correção: herdar `prospect.reservado_por` (campo já
+        //   populado em prospect_leads desde a pesquisa). Adicionamos
+        //   também `apto_campanha=true` + auditoria para consistência
+        //   com `criar_lead` (v1.7) — lead promovido nasce apto.
+        const agoraIso = new Date().toISOString();
         const { data: novoLead, error: errInsertLead } = await supabase
           .from('email_leads')
           .insert({
@@ -1111,6 +1218,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             vertical: String(prospect.vertical).trim(),
             origem: 'prospect_engine',
             criado_por,
+            // 🆕 v1.8 — Lead RBAC fix (bug preexistente):
+            reservado_por: prospect.reservado_por || null,
+            reservado_em: prospect.reservado_por ? agoraIso : null,
+            apto_campanha: true,
+            apto_campanha_em: agoraIso,
+            apto_campanha_por: criado_por,
           })
           .select()
           .single();
@@ -1147,11 +1260,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
 
         console.log(`✅ [crm-leads] Lead promovido: ${prospect.nome_completo} <${emailNormalizado}> → CRM ID ${novoLead.id}`);
+
+        // 🆕 v1.8 (Fase A) — vincular a campanha SE solicitado.
+        // O helper aplica validações completas e enfileira em email_fila
+        // quando a campanha já tem inicio_envio (status ativa/pausada).
+        // Falha aqui NÃO desfaz o lead criado — o lead permanece no CRM
+        // e o erro indica que apenas a vinculação falhou (operação parcial
+        // consistente: lead apto a futuras vinculações).
+        let vinculoCampanha: any = null;
+        if (campanha_id) {
+          const resultadoVinculo = await vincularLeadACampanha(
+            supabase,
+            novoLead,
+            Number(campanha_id),
+            criado_por
+          );
+          if (!resultadoVinculo.success) {
+            // Devolve 207 (Multi-Status) — sucesso parcial. O frontend
+            // deve mostrar o lead como criado + alerta da falha de vínculo.
+            return res.status(207).json({
+              success: true,
+              lead: novoLead,
+              empresa_id: empresaId,
+              empresa_criada: empresasResult.empresas_criadas > 0,
+              campanha: null,
+              vinculo_falhou: true,
+              error: resultadoVinculo.error,
+            });
+          }
+          vinculoCampanha = resultadoVinculo.vinculo;
+        }
+
         return res.status(201).json({
           success: true,
           lead: novoLead,
           empresa_id: empresaId,
           empresa_criada: empresasResult.empresas_criadas > 0,
+          campanha: vinculoCampanha,
+          mensagem: vinculoCampanha
+            ? `Lead promovido e vinculado à campanha "${vinculoCampanha.campanha_nome}".`
+            : 'Lead promovido para o CRM.',
         });
       }
 
@@ -1501,4 +1649,247 @@ async function atualizarCountersEmpresa(empresaId: number): Promise<void> {
       atualizado_em: new Date().toISOString(),
     })
     .eq('id', empresaId);
+}
+
+// ════════════════════════════════════════════════════════════════
+// 🆕 v1.8 (09/06/2026 — Fase A) — Helper: vincular lead a campanha
+// ════════════════════════════════════════════════════════════════
+//
+// Encapsula toda a lógica de:
+//  • Validações de elegibilidade da campanha (status, data, vertical, dono)
+//  • Validações do lead (opt-out, duplicação simultânea)
+//  • Insert em email_lead_campanhas
+//  • Enfileiramento em email_fila (se campanha já tem inicio_envio)
+//  • Atualização de total_destinatarios da campanha
+//  • Registro de histórico
+//
+// Retorna `{ success: true, vinculo }` ou `{ success: false, error }`.
+// Não lança exceções — todos os erros são retornados estruturados.
+//
+// Reutilizado por `promover_para_campanha` em dois caminhos:
+//  (1) lead recém-criado (novoLead);
+//  (2) lead pré-existente em email_leads (caso ja_existia=true).
+//
+// IMPORTANTE: a lógica de cálculo de `agendado_para` (step 1 = AGORA,
+// step N = AGORA + delays acumulados) é IDÊNTICA à da ativação inicial
+// em crm-campanhas.ts > mudar_status > 'ativa' (Fase 5A v1.6). Manter
+// alinhamento se uma das duas mudar.
+interface LeadParaVincular {
+  id: number;
+  nome: string;
+  email: string;
+  vertical: string;
+  reservado_por: number;
+}
+
+interface ResultadoVinculo {
+  success: boolean;
+  error?: string;
+  vinculo?: {
+    campanha_id: number;
+    campanha_nome: string;
+    campanha_status: string;
+    enfileirados: number;
+  };
+}
+
+async function vincularLeadACampanha(
+  supabase: any,
+  lead: LeadParaVincular,
+  campanhaId: number,
+  criadoPor: string
+): Promise<ResultadoVinculo> {
+  // 1. Buscar campanha
+  const { data: camp, error: errCamp } = await supabase
+    .from('email_campanhas')
+    .select('id, nome, status, tipo, responsavel_id, inicio_envio, data_encerramento, dominio_envio, unidade')
+    .eq('id', campanhaId)
+    .maybeSingle();
+
+  if (errCamp) return { success: false, error: `Falha ao buscar campanha: ${errCamp.message}` };
+  if (!camp) return { success: false, error: `Campanha ID ${campanhaId} não encontrada` };
+
+  // 2. Validar status
+  if (!['ativa', 'pausada', 'agendada'].includes(camp.status)) {
+    return {
+      success: false,
+      error: `Campanha "${camp.nome}" está em status "${camp.status}" — só aceita novos leads em status ativa/pausada/agendada.`,
+    };
+  }
+
+  // 3. Validar data_encerramento
+  if (camp.data_encerramento) {
+    const hoje = new Date().toISOString().slice(0, 10);
+    if (camp.data_encerramento < hoje) {
+      return {
+        success: false,
+        error: `Campanha "${camp.nome}" já encerrou em ${camp.data_encerramento} — não aceita novos leads.`,
+      };
+    }
+  }
+
+  // 4. Validar match de vertical (Fase B trava)
+  if (camp.tipo !== lead.vertical) {
+    return {
+      success: false,
+      error: `Lead tem vertical "${lead.vertical}" e a campanha é da vertical "${camp.tipo}". Verticais incompatíveis.`,
+    };
+  }
+
+  // 5. Validar match de responsável (Fase B trava)
+  if (camp.responsavel_id !== lead.reservado_por) {
+    return {
+      success: false,
+      error: 'Lead está reservado a outro usuário — não pode entrar em campanha sob responsabilidade diferente.',
+    };
+  }
+
+  // 6. Defesa em profundidade — duplicação simultânea
+  //    (decisão de produto 09/06/2026: bloquear lead em múltiplas
+  //    campanhas ativa/pausada/agendada para evitar spam ao contato).
+  const { data: vinculosExistentes } = await supabase
+    .from('email_lead_campanhas')
+    .select('campanha_id, email_campanhas!inner(status, nome)')
+    .eq('lead_id', lead.id);
+
+  const conflitos = (vinculosExistentes || []).filter(
+    (v: any) => ['ativa', 'pausada', 'agendada'].includes(v.email_campanhas?.status)
+  );
+  if (conflitos.length > 0) {
+    const nomes = conflitos.map((v: any) => `"${v.email_campanhas?.nome}"`).join(', ');
+    return {
+      success: false,
+      error: `Lead já vinculado a campanha em andamento: ${nomes}. Aguarde conclusão ou desvincule antes.`,
+    };
+  }
+
+  // 7. Verificar opt-out global (defesa em profundidade)
+  const { data: optout } = await supabase
+    .from('email_optout')
+    .select('email')
+    .eq('email', lead.email.toLowerCase().trim())
+    .maybeSingle();
+  if (optout) {
+    return {
+      success: false,
+      error: 'Email está em opt-out global — não pode entrar em campanha.',
+    };
+  }
+
+  // 8. Inserir vínculo
+  const { error: errVinc } = await supabase
+    .from('email_lead_campanhas')
+    .insert({
+      lead_id: lead.id,
+      campanha_id: camp.id,
+      status: 'ativa',
+      step_atual: 1,
+    });
+
+  if (errVinc) {
+    return {
+      success: false,
+      error: `Falha ao vincular lead à campanha: ${errVinc.message}`,
+    };
+  }
+
+  // 9. Enfileirar em email_fila SE campanha já está rodando
+  //    (inicio_envio populado = status ativa ou pausada após primeira
+  //    ativação). Status='agendada' tem inicio_envio NULL — o
+  //    enfileiramento ocorre depois, na ativação inicial em
+  //    crm-campanhas.ts > mudar_status. Não precisamos fazer aqui.
+  let enfileirados = 0;
+  if (camp.inicio_envio) {
+    const { data: steps, error: errSteps } = await supabase
+      .from('email_campanha_steps')
+      .select('id, ordem, delay_dias')
+      .eq('campanha_id', camp.id)
+      .eq('ativo', true)
+      .order('ordem', { ascending: true });
+
+    if (errSteps) {
+      // O vínculo foi feito — o lead aparece na campanha mas sem fila.
+      // Manter consistência: retornar erro estruturado.
+      return {
+        success: false,
+        error: `Vínculo criado mas falha ao ler steps para enfileirar: ${errSteps.message}`,
+      };
+    }
+
+    if (steps && steps.length > 0) {
+      const agora = new Date();
+      const stepDates = new Map<number, string>();
+      let cumDays = 0;
+      for (let i = 0; i < steps.length; i++) {
+        const s = steps[i];
+        if (i === 0) {
+          // Primeiro step: envia no início (delay_dias do step 1 é ignorado).
+          stepDates.set(s.id, agora.toISOString());
+        } else {
+          cumDays += Number(s.delay_dias) || 0;
+          const dt = new Date(agora);
+          dt.setDate(dt.getDate() + cumDays);
+          stepDates.set(s.id, dt.toISOString());
+        }
+      }
+
+      const filaRows = steps.map((s: any) => ({
+        campanha_id: camp.id,
+        step_id: s.id,
+        lead_id: lead.id,
+        destinatario_email: lead.email.toLowerCase().trim(),
+        destinatario_nome: lead.nome || null,
+        dominio_usado: camp.dominio_envio || null,
+        status: 'pendente',
+        agendado_para: stepDates.get(s.id),
+      }));
+
+      const { data: ins, error: errFila } = await supabase
+        .from('email_fila')
+        .insert(filaRows)
+        .select('id');
+
+      if (errFila) {
+        return {
+          success: false,
+          error: `Vínculo criado mas falha ao enfileirar: ${errFila.message}`,
+        };
+      }
+      enfileirados = ins?.length || 0;
+    }
+  }
+
+  // 10. Atualizar total_destinatarios da campanha
+  const { count: totalDest } = await supabase
+    .from('email_lead_campanhas')
+    .select('id', { count: 'exact', head: true })
+    .eq('campanha_id', camp.id);
+
+  await supabase
+    .from('email_campanhas')
+    .update({
+      total_destinatarios: totalDest || 0,
+      atualizado_em: new Date().toISOString(),
+    })
+    .eq('id', camp.id);
+
+  // 11. Registrar no histórico do lead
+  await supabase.from('email_lead_historico').insert({
+    lead_id: lead.id,
+    tipo: 'campanha_vinculada',
+    descricao: `Vinculado à campanha "${camp.nome}" (ID ${camp.id})${enfileirados > 0 ? ` — ${enfileirados} envio(s) agendado(s)` : ''}`,
+    criado_por: criadoPor,
+  });
+
+  console.log(`✅ [crm-leads/vincularLeadACampanha] Lead ${lead.id} (${lead.email}) → campanha ${camp.id} (${camp.nome}) [status=${camp.status}, enfileirados=${enfileirados}]`);
+
+  return {
+    success: true,
+    vinculo: {
+      campanha_id: camp.id,
+      campanha_nome: camp.nome,
+      campanha_status: camp.status,
+      enfileirados,
+    },
+  };
 }
