@@ -2,7 +2,21 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.4 (Lead RBAC fix — 05/06/2026)
+ * Versão: 1.5 (Vinculação em Lote — 10/06/2026)
+ *
+ * v1.5 (10/06/2026 — Vinculação em Lote): nova aba "🎯 Vincular em Lote"
+ *   adicionada ao lado de Empresas/Leads/Respostas/Inválidos. Permite ao
+ *   Gestor Comercial/SDR vincular múltiplos leads a uma campanha existente
+ *   (status ativa/pausada/agendada) em uma única operação, com possibilidade
+ *   de alteração de vertical em lote. Substitui o fluxo arriscado de "Editar
+ *   Campanha → adicionar leads".
+ *   🛡️ REGRA CRECI BIDIRECIONAL aplicada: leads CRECI não aparecem nesta aba
+ *   e a vertical CRECI não pode ser destino (defesa em profundidade backend).
+ *   Mudanças aditivas neste arquivo:
+ *    - `abaAtiva` agora aceita 'vincular_em_lote'
+ *    - Import de VincularEmLoteTab
+ *    - Nova entrada no array de tabs (sem badge — não tem listagem persistente)
+ *    - Renderização condicional
  *
  * v1.4 (05/06/2026 — Lead RBAC fix): leads criados via "Novo Lead"
  *   estavam ficando com vertical=NULL, apto_campanha=false,
@@ -70,6 +84,8 @@ import LeadsTab from './LeadsTab';
 // 🆕 v1.2 (Fase 8-Inbox) — componentes das novas abas
 import RespostasTab from './RespostasTab';
 import InvalidosTab from './InvalidosTab';
+// 🆕 v1.5 (Vinculação em Lote — 10/06/2026)
+import VincularEmLoteTab from './VincularEmLoteTab';
 import EmpresaFormModal from './EmpresaFormModal';
 import LeadFormModal from './LeadFormModal';
 import EmpresaDetailDrawer from './EmpresaDetailDrawer';
@@ -108,9 +124,10 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
 }) => {
   // ── Aba ativa ──
   // 🆕 v1.2 (Fase 8-Inbox) — agora aceita 'respostas' e 'invalidos'.
-  const [abaAtiva, setAbaAtiva] = useState<'empresas' | 'leads' | 'respostas' | 'invalidos'>(
-    'empresas'
-  );
+  // 🆕 v1.5 (Vinculação em Lote — 10/06/2026) — agora aceita 'vincular_em_lote'.
+  const [abaAtiva, setAbaAtiva] = useState<
+    'empresas' | 'leads' | 'respostas' | 'invalidos' | 'vincular_em_lote'
+  >('empresas');
 
   // ── Hooks ──
   const empresasH = useEmpresas();
@@ -433,6 +450,15 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
               icon: 'fa-solid fa-circle-exclamation',
               count: stats?.total_invalidos ?? invalidosH.total, // 🆕 v1.3
             },
+            // 🆕 v1.5 (Vinculação em Lote — 10/06/2026)
+            //   Sem badge de contagem — esta aba não exibe uma listagem
+            //   persistente, é uma operação de vinculação ad-hoc.
+            {
+              key: 'vincular_em_lote' as const,
+              label: 'Vincular em Lote',
+              icon: 'fa-solid fa-link',
+              count: null as number | null,
+            },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -452,9 +478,11 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             >
               <i className={tab.icon}></i>
               {tab.label}
-              <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
-                {tab.count}
-              </span>
+              {tab.count !== null && tab.count !== undefined && (
+                <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
+                  {tab.count}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -545,6 +573,11 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             onPaginaChange={invalidosH.setPagina}
             onEditarLead={abrirEditarLeadPorId}
           />
+        )}
+
+        {/* 🆕 v1.5 (Vinculação em Lote — 10/06/2026) — Aba Vincular em Lote */}
+        {abaAtiva === 'vincular_em_lote' && (
+          <VincularEmLoteTab currentUser={currentUser} />
         )}
       </div>
 

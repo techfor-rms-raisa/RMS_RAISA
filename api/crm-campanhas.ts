@@ -2,6 +2,23 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.12 (10/06/2026 — Vinculação em Lote): adiciona action GET
+ *    `listar_campanhas_para_vinculo_em_lote`. Lista campanhas elegíveis
+ *    para receber leads via a nova aba "Vincular em Lote" do form
+ *    Empresas & Leads (BaseLeadsPage.tsx v1.5). Diferente da action
+ *    `listar_campanhas_disponiveis_para_lead` (Fase A), esta NÃO
+ *    depende de um lead específico — filtra por uma vertical de destino
+ *    informada pelo usuário no fluxo em lote.
+ *    Critérios:
+ *      • status IN ('ativa', 'pausada', 'agendada')
+ *      • tipo (vertical) = vertical de destino informada
+ *      • responsavel_id = currentUser.id (RBAC; admin vê todas)
+ *      • data_encerramento IS NULL OR >= CURRENT_DATE
+ *    🛡️ REGRA PERMANENTE — Vertical CRECI é BIDIRECIONALMENTE BLINDADA:
+ *      nenhum lead de outra vertical pode virar CRECI (base CRECI é
+ *      exclusiva de corretores PF). Se vertical='CRECI' for solicitada,
+ *      retorna 400 (defesa em profundidade — o frontend já filtra).
+ *
  *  - v1.11 (09/06/2026 — Fase A): adiciona action GET
  *    `listar_campanhas_disponiveis_para_lead`. Recebe `lead_id` ou
  *    `prospect_id` (pelo menos um obrigatório) + `criado_por` (RBAC).
@@ -867,6 +884,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ── Listar tipos de campanha existentes (para dropdown) ─
+      // ─────────────────────────────────────────────────────────
+      // 🆕 v1.12 (10/06/2026 — Vinculação em Lote) — Lista campanhas
+      // elegíveis para receber leads via aba "Vincular em Lote".
+      // Diferente da action listar_campanhas_disponiveis_para_lead (Fase A),
+      // esta NÃO depende de um lead específico — filtra apenas pela vertical
+      // de destino informada no fluxo em lote.
+      // ─────────────────────────────────────────────────────────
+      if (action === 'listar_campanhas_para_vinculo_em_lote') {
+        const verticalQ = (req.query.vertical as string) || '';
+        const criadoPor = (req.query.criado_por as string) || '';
+        const responsavelIdQ = req.query.responsavel_id as string | undefined;
+
+        if (!verticalQ.trim()) {
+          return res.status(400).json({ success: false, error: 'vertical (de destino) obrigatória' });
+        }
+        if (!criadoPor) {
+          return res.status(400).json({ success: false, error: 'criado_por obrigatório' });
+        }
+
+        // 🛡️ REGRA PERMANENTE — CRECI bidirecionalmente blindada (defesa em profundidade)
+        if (verticalQ === 'CRECI') {
+          return res.status(400).json({
+            success: false,
+            error: 'Vertical CRECI não pode ser destino em vinculação em lote — base CRECI é exclusiva de corretores (PF) e não recebe leads de outras verticais.',
+          });
+        }
+
+        const hoje = new Date().toISOString().slice(0, 10);
+        let query = supabase
+          .from('email_campanhas')
+          .select('id, nome, status, tipo, unidade, inicio_envio, data_encerramento, total_destinatarios, criado_em, responsavel_id')
+          .in('status', ['ativa', 'pausada', 'agendada'])
+          .eq('tipo', verticalQ)
+          .or(`data_encerramento.is.null,data_encerramento.gte.${hoje}`)
+          .order('criado_em', { ascending: false });
+
+        // RBAC — quando responsavel_id é informado, filtra (não-admin)
+        // Quando ausente, lista todas (admin)
+        if (responsavelIdQ) {
+          query = query.eq('responsavel_id', parseInt(responsavelIdQ));
+        }
+
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ success: false, error: error.message });
+
+        return res.status(200).json({ success: true, campanhas: data || [] });
+      }
+
       if (action === 'listar_tipos') {
         const { data, error } = await supabase
           .from('email_campanhas')

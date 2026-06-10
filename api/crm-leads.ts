@@ -2,6 +2,29 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.9 (10/06/2026 — Vinculação em Lote): adiciona 2 actions para a
+ *    nova aba "Vincular em Lote" do form Empresas & Leads
+ *    (BaseLeadsPage.tsx v1.5):
+ *
+ *      • GET `listar_leads_para_vinculo_em_lote` — lista leads aptos,
+ *        não opt-out, não-perdidos e NÃO vinculados a campanhas em
+ *        andamento. RBAC: filtra por reservado_por (se não-admin).
+ *        🛡️ REGRA CRECI BIDIRECIONAL: exclui automaticamente leads
+ *        com vertical='CRECI' (lead CRECI nunca muda de vertical).
+ *
+ *      • POST `vincular_em_lote_a_campanha` — vincula N leads a uma
+ *        campanha em uma única operação:
+ *          1. Valida vertical_destino ≠ 'CRECI' (defesa em profundidade)
+ *          2. Valida campanha.tipo === vertical_destino
+ *          3. Para cada lead:
+ *             a. Bloqueia se lead.vertical === 'CRECI' (não muda)
+ *             b. Se lead.vertical ≠ vertical_destino → UPDATE vertical
+ *                + registra histórico 'vertical_alterada'
+ *             c. Chama helper `vincularLeadACampanha` (Fase A v1.8) com
+ *                as 7 validações + enfileiramento condicional em email_fila
+ *        Resultado estruturado: { sucessos, falhas[], verticais_alteradas }.
+ *        Loop não-transacional — falha individual não bloqueia os demais.
+ *
  *  - v1.8 (09/06/2026 — Fase A): atalho "promover + vincular a campanha"
  *    em uma única operação. Duas mudanças principais:
  *
@@ -772,6 +795,83 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      // ─────────────────────────────────────────────────────────
+      // 🆕 v1.9 (10/06/2026 — Vinculação em Lote) — Lista leads aptos
+      // a vinculação em lote a uma campanha existente.
+      //
+      // Critérios:
+      //  • apto_campanha = true
+      //  • opt_out IS NULL OR false
+      //  • funil_status != 'perdido'
+      //  • vertical != 'CRECI' (🛡️ REGRA PERMANENTE: lead CRECI nunca muda)
+      //  • NÃO vinculado a campanha em status ativa/pausada/agendada
+      //  • reservado_por = responsavel_id (se informado — RBAC para não-admin)
+      //
+      // RBAC: Admin não passa responsavel_id (vê tudo); não-admin passa
+      //       o próprio user.id (vê apenas leads sob sua responsabilidade).
+      // ─────────────────────────────────────────────────────────
+      if (action === 'listar_leads_para_vinculo_em_lote') {
+        const responsavelIdQ = req.query.responsavel_id as string | undefined;
+        const busca = (req.query.busca as string) || '';
+        const limit = parseInt((req.query.limit as string) || '200');
+
+        // Coletar IDs já vinculados a campanhas em status ativa/pausada/agendada
+        // (decisão de produto 09/06/2026 — bloqueia duplicação simultânea).
+        const { data: vinculosAtivos } = await supabase
+          .from('email_lead_campanhas')
+          .select('lead_id, email_campanhas!inner(status)')
+          .in('email_campanhas.status', ['ativa', 'pausada', 'agendada']);
+
+        const idsVinculados = Array.from(
+          new Set((vinculosAtivos || []).map((v: any) => v.lead_id))
+        );
+
+        // Query principal — apto_campanha + filtros
+        let query = supabase
+          .from('email_leads')
+          .select(`
+            id, nome, email, cargo, vertical, reservado_por, funil_status,
+            apto_campanha, opt_out, telefone, linkedin_url,
+            email_empresas(id, nome)
+          `)
+          .eq('apto_campanha', true)
+          .or('opt_out.is.null,opt_out.eq.false')
+          .not('funil_status', 'eq', 'perdido')
+          .not('vertical', 'eq', 'CRECI') // 🛡️ REGRA PERMANENTE CRECI
+          .order('nome', { ascending: true })
+          .limit(limit);
+
+        if (responsavelIdQ) {
+          query = query.eq('reservado_por', parseInt(responsavelIdQ));
+        }
+        if (busca) {
+          query = query.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%,cargo.ilike.%${busca}%`);
+        }
+        if (idsVinculados.length > 0) {
+          query = query.not('id', 'in', `(${idsVinculados.join(',')})`);
+        }
+
+        const { data: leads, error: errLeads } = await query;
+        if (errLeads) return res.status(500).json({ success: false, error: errLeads.message });
+
+        // Filtrar opt-outs globais (defesa em profundidade)
+        const { data: optouts } = await supabase
+          .from('email_optout')
+          .select('email');
+        const emailsOptout = new Set((optouts || []).map((o: any) => (o.email || '').toLowerCase().trim()));
+
+        const filtered = (leads || []).filter(
+          (l: any) => !emailsOptout.has((l.email || '').toLowerCase().trim())
+        );
+
+        return res.status(200).json({
+          success: true,
+          leads: filtered,
+          total: filtered.length,
+          ids_vinculados_bloqueados: idsVinculados.length,
+        });
+      }
+
       return res.status(400).json({ success: false, error: `Ação GET desconhecida: ${action}` });
     }
 
@@ -1422,6 +1522,195 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           lead: novoLead,
           ja_existia: false,
           mensagem: 'Corretor enviado ao CRM com sucesso.',
+        });
+      }
+
+      // ─────────────────────────────────────────────────────────
+      // 🆕 v1.9 (10/06/2026 — Vinculação em Lote) — vincula N leads
+      // a uma campanha em uma única operação, com alteração opcional
+      // de vertical em lote.
+      //
+      // 🛡️ REGRA PERMANENTE — Vertical CRECI é BIDIRECIONALMENTE
+      // BLINDADA: (1) lead CRECI nunca muda; (2) nenhum lead vira
+      // CRECI. Defesa em profundidade (frontend já filtra).
+      //
+      // Body:
+      //   lead_ids: number[]         (obrigatório, ≥ 1)
+      //   campanha_id: number        (obrigatório)
+      //   vertical_destino: string   (obrigatório, ≠ 'CRECI')
+      //   criado_por: string         (obrigatório, email do usuário)
+      //
+      // Processo (não-transacional):
+      //   Para cada lead:
+      //     1. Bloqueia se lead.vertical === 'CRECI'
+      //     2. Se lead.vertical ≠ vertical_destino → UPDATE vertical
+      //        + histórico 'vertical_alterada'
+      //     3. Chama vincularLeadACampanha (Fase A v1.8) — 7 validações
+      //        + enfileiramento condicional em email_fila
+      //     4. Coleta sucesso ou falha estruturada
+      //
+      // Retorno:
+      //   { success, campanha_nome, total, sucessos,
+      //     verticais_alteradas, falhas: [{lead_id, lead_nome, error}] }
+      // ─────────────────────────────────────────────────────────
+      if (action === 'vincular_em_lote_a_campanha') {
+        const { lead_ids, campanha_id, vertical_destino, criado_por } = body;
+
+        // ── Validações de entrada ──────────────────────────────
+        if (!Array.isArray(lead_ids) || lead_ids.length === 0) {
+          return res.status(400).json({ success: false, error: 'lead_ids[] obrigatório (≥ 1 lead)' });
+        }
+        if (!campanha_id) {
+          return res.status(400).json({ success: false, error: 'campanha_id obrigatório' });
+        }
+        if (!vertical_destino || !String(vertical_destino).trim()) {
+          return res.status(400).json({ success: false, error: 'vertical_destino obrigatória' });
+        }
+        if (!criado_por) {
+          return res.status(400).json({ success: false, error: 'criado_por obrigatório' });
+        }
+
+        // 🛡️ REGRA CRECI BIDIRECIONAL — entrada bloqueada
+        if (vertical_destino === 'CRECI') {
+          return res.status(400).json({
+            success: false,
+            error: 'Vertical CRECI não pode ser destino em vinculação em lote — base CRECI é exclusiva de corretores (PF) e não recebe leads de outras verticais.',
+          });
+        }
+
+        // ── Buscar campanha (validações da camada de vinculação ainda rodam por lead) ──
+        const { data: campanha, error: errCamp } = await supabase
+          .from('email_campanhas')
+          .select('id, nome, tipo, status, inicio_envio, data_encerramento')
+          .eq('id', campanha_id)
+          .maybeSingle();
+
+        if (errCamp) throw errCamp;
+        if (!campanha) {
+          return res.status(404).json({ success: false, error: `Campanha ID ${campanha_id} não encontrada` });
+        }
+        if (campanha.tipo !== vertical_destino) {
+          return res.status(400).json({
+            success: false,
+            error: `Inconsistência: vertical_destino="${vertical_destino}" ≠ campanha.tipo="${campanha.tipo}". Recarregue a lista de campanhas.`,
+          });
+        }
+        if (!['ativa', 'pausada', 'agendada'].includes(campanha.status)) {
+          return res.status(400).json({
+            success: false,
+            error: `Campanha "${campanha.nome}" está em status "${campanha.status}" — só aceita novos leads em ativa/pausada/agendada.`,
+          });
+        }
+
+        // ── Buscar leads selecionados ──────────────────────────
+        const { data: leads, error: errLeads } = await supabase
+          .from('email_leads')
+          .select('id, nome, email, vertical, reservado_por, apto_campanha, opt_out, funil_status')
+          .in('id', lead_ids);
+
+        if (errLeads) throw errLeads;
+        if (!leads || leads.length === 0) {
+          return res.status(404).json({ success: false, error: 'Nenhum lead encontrado para os IDs informados' });
+        }
+
+        // ── Loop de processamento ──────────────────────────────
+        const resultados = {
+          total: leads.length,
+          sucessos: 0,
+          verticais_alteradas: 0,
+          falhas: [] as Array<{ lead_id: number; lead_nome: string; error: string }>,
+        };
+
+        for (const lead of leads) {
+          // 🛡️ REGRA CRECI BIDIRECIONAL — saída bloqueada
+          if (lead.vertical === 'CRECI') {
+            resultados.falhas.push({
+              lead_id: lead.id,
+              lead_nome: lead.nome,
+              error: 'Lead CRECI não pode ter sua vertical alterada (regra permanente).',
+            });
+            continue;
+          }
+
+          // Validação adicional — lead apto e não-opt-out
+          if (!lead.apto_campanha) {
+            resultados.falhas.push({
+              lead_id: lead.id,
+              lead_nome: lead.nome,
+              error: 'Lead não está marcado como apto a campanhas (apto_campanha=false).',
+            });
+            continue;
+          }
+
+          let verticalAtualizada = lead.vertical;
+
+          // ── Alteração de vertical (se necessário) ────────────
+          if (lead.vertical !== vertical_destino) {
+            const { error: errUpdate } = await supabase
+              .from('email_leads')
+              .update({
+                vertical: vertical_destino,
+                atualizado_em: new Date().toISOString(),
+              })
+              .eq('id', lead.id);
+
+            if (errUpdate) {
+              resultados.falhas.push({
+                lead_id: lead.id,
+                lead_nome: lead.nome,
+                error: `Falha ao atualizar vertical: ${errUpdate.message}`,
+              });
+              continue;
+            }
+
+            verticalAtualizada = vertical_destino;
+            resultados.verticais_alteradas++;
+
+            // Histórico de mudança de vertical
+            await supabase.from('email_lead_historico').insert({
+              lead_id: lead.id,
+              tipo: 'vertical_alterada',
+              descricao: `Vertical alterada de "${lead.vertical || '—'}" para "${vertical_destino}" (vinculação em lote à campanha "${campanha.nome}")`,
+              criado_por,
+            });
+          }
+
+          // ── Vinculação à campanha (helper reaproveitado) ─────
+          const resultadoVinculo = await vincularLeadACampanha(
+            supabase,
+            {
+              id: lead.id,
+              nome: lead.nome,
+              email: lead.email,
+              vertical: verticalAtualizada,
+              reservado_por: lead.reservado_por,
+            },
+            campanha_id,
+            criado_por
+          );
+
+          if (resultadoVinculo.success) {
+            resultados.sucessos++;
+          } else {
+            resultados.falhas.push({
+              lead_id: lead.id,
+              lead_nome: lead.nome,
+              error: resultadoVinculo.error || 'Erro desconhecido ao vincular',
+            });
+          }
+        }
+
+        console.log(
+          `✅ [crm-leads/vincular_em_lote] ${resultados.sucessos}/${resultados.total} leads vinculados à campanha "${campanha.nome}" ` +
+          `(${resultados.verticais_alteradas} verticais alteradas, ${resultados.falhas.length} falhas)`
+        );
+
+        return res.status(200).json({
+          success: true,
+          campanha_id: campanha.id,
+          campanha_nome: campanha.nome,
+          campanha_status: campanha.status,
+          ...resultados,
         });
       }
 
