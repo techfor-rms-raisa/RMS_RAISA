@@ -3,6 +3,38 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.12.1 — 10/06/2026 — BUG FIX: bounceType do Resend é 'Permanent', não 'hard'.
+ *   Diagnóstico empírico (smoke test 10/06/2026 — lead 8, mvieir5582px@gmail.com):
+ *     • Evento bounced chegou no webhook (registrado em email_eventos)
+ *     • Payload mostrou `bounce.type = "Permanent"` (após .toLowerCase = 'permanent')
+ *     • Código v1.12 verificava `bounceType === 'hard'` — comparação NUNCA bate
+ *     • Resultado: isHardBounce sempre false → blocos A (marcar lead.bounced)
+ *       e C (cancelar fila pendente) nunca executavam
+ *     • Sintomas: email_leads.bounced=false mesmo após bounce real;
+ *       email_fila.status='pendente' persistia para próximos steps
+ *
+ *   Esse bug já existia desde a v1.0 do webhook (o auto-opt-out por bounce
+ *   nunca tinha sido exercitado em produção real — todos os "bounces" anteriores
+ *   eram supressões silenciosas do Resend, sem disparar webhook).
+ *
+ *   Correção cirúrgica (1 expressão, 2 ocorrências unificadas):
+ *     const isHardBounce =
+ *       tipoInterno === 'bounced' &&
+ *       ['hard', 'permanent'].includes((bounceType || '').toLowerCase());
+ *
+ *   Whitelist com ambas as strings: 'permanent' (Resend atual) e 'hard' (legacy
+ *   de outras documentações, mantido por compat defensiva). O .toLowerCase
+ *   redundante (bounceType já vem em lowercase do parsing) é mantido como
+ *   guarda extra para o caso da fonte do payload mudar no futuro.
+ *
+ *   A mesma lógica unifica o cálculo de `tipoBounce` no histórico (que
+ *   também usava `bounceType === 'hard'` na v1.12).
+ *
+ *   Dependência: nenhuma SQL adicional. Apenas redeploy do código.
+ *   Remediação: leads já bounced antes desta correção precisam de
+ *   intervenção manual via SQL (script de remediação fornecido em
+ *   2026-06-10_remediacao_lead_bounced_v1_12_bug.sql).
+ *
  * v1.12 — 10/06/2026 — AUTO-BOUNCE HANDLING + OPT-OUT CASCADING (P1 + P2).
  *   Decisões de produto consolidadas no CHECKPOINT_2026-06-10.md (Prioridades
  *   1 e 2). Mudanças no fluxo de tratamento de eventos terminais:
@@ -1011,10 +1043,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // INSERT email_lead_historico (timeline)
     if (fila.lead_id) {
-      // 🆕 v1.12 — tipo='bounce_permanente' quando bounceType==='hard' (decisão P1).
-      //   Distinção semântica: bounce permanente = lead foi marcado como bounced
-      //   e cascateou cancelamentos. Bounce soft = registro só na fila, sem cascata.
-      const tipoBounce = bounceType === 'hard' ? 'bounce_permanente' : 'bounce';
+      // 🆕 v1.12.1 (10/06/2026) — tipo='bounce_permanente' quando o bounce
+      //   é permanente (decisão P1). O Resend envia bounce.type='Permanent'
+      //   (após toLowerCase fica 'permanent'). Documentações antigas/legacy
+      //   às vezes referenciam 'hard' — aceitamos ambos para robustez.
+      const tipoBounce = ['hard', 'permanent'].includes(bounceType || '') ? 'bounce_permanente' : 'bounce';
       const mapaHistorico: Record<string, { tipo: string; descricao: string }> = {
         sent:              { tipo: 'email_enviado',     descricao: 'E-mail enviado pelo provedor (Resend)' },
         delivered:         { tipo: 'email_entregue',    descricao: 'E-mail entregue na caixa do destinatário' },
@@ -1048,8 +1081,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     //       irreversível) + marca lead.opt_out=true (badge UI).
     //   Ambos cancelam fila pendente globalmente, com motivo_cancelamento
     //   distinto para auditoria ('hard_bounce' vs 'opt_out_spam').
+    //
+    // 🆕 v1.12.1 (10/06/2026) — BUG FIX: o Resend envia bounce.type='Permanent'
+    //   (após toLowerCase = 'permanent'), não 'hard'. A comparação anterior
+    //   `bounceType === 'hard'` nunca batia, deixando isHardBounce sempre
+    //   false e os blocos A e C inertes. Validado empiricamente no smoke
+    //   test 10/06/2026 (lead 8 com mvieir5582px@gmail.com: evento bounced
+    //   chegou e foi gravado em email_eventos, mas cascata não executou).
+    //   Whitelist defensiva aceita ambas as strings conhecidas: a atual do
+    //   Resend ('permanent') e a histórica de outras documentações ('hard').
     // ─────────────────────────────────────────────────────────────
-    const isHardBounce = tipoInterno === 'bounced' && bounceType === 'hard';
+    const isHardBounce =
+      tipoInterno === 'bounced' &&
+      ['hard', 'permanent'].includes((bounceType || '').toLowerCase());
     const isComplained = tipoInterno === 'complained';
     const isTerminalDestrutivo = isHardBounce || isComplained;
 
