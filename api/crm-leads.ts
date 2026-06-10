@@ -2,6 +2,50 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.11 (10/06/2026 — Auto-bounce + Opt-out cascading): suporte às
+ *    decisões consolidadas no CHECKPOINT_2026-06-10.md (Prioridades 1 e 2).
+ *
+ *      • PATCH `atualizar_lead`: detecta mudança do campo `email`. Se mudou
+ *        E o lead estava com `bounced=true`, automaticamente reseta as 3
+ *        colunas (bounced=false, bounced_em=null, bounced_motivo=null) e
+ *        registra no histórico tipo='bounce_resetado'. Análogo ao reset
+ *        natural — o analista corrigiu o endereço, o "estado de bounced"
+ *        do lead anterior não se aplica ao novo email.
+ *        Justificativa P1.1: bounce marca o lead como inválido para o
+ *        endereço que falhou. Ao mudar o endereço, o lead "fica saudável
+ *        de novo" automaticamente — sem precisar de botão manual.
+ *
+ *      • GET `listar_leads_para_vinculo_em_lote`: adicionado filtro
+ *        `bounced != true` (defesa em profundidade contra reuso de lead
+ *        sabidamente inválido). Combina com filtros existentes de
+ *        apto_campanha, opt_out, funil_status!=perdido e CRECI.
+ *
+ *      • Helper `vincularLeadACampanha`: nova validação 7-A entre as
+ *        validações 7 (opt-out) e 8 (insert do vínculo): rejeita o lead
+ *        se `lead.bounced === true`. Mensagem de erro estruturada para o
+ *        frontend (ex.: "Email do lead deu hard bounce — corrija o endereço
+ *        antes de vincular.").
+ *
+ *      • POST `desabilitar_lead` (NOVA action): opt-out manual disparado
+ *        por gestor/admin via UI (LeadDetailDrawer). Cascata completa:
+ *           1. UPDATE email_leads SET opt_out=true, opt_out_em=NOW()
+ *           2. UPSERT email_optout (motivo='opt_out_manual', criado_por)
+ *           3. UPDATE email_fila SET status='cancelado',
+ *              motivo_cancelamento='opt_out_manual' para todos pendentes
+ *              desse email em TODAS as campanhas (decisão P2 cascading)
+ *           4. INSERT email_lead_historico (tipo='opt_out_manual')
+ *        Conforme decisão P2.1 — opt-out é IRREVERSÍVEL (LGPD). Não há
+ *        action de "reativar" — atalho consciente: omitido por contrato.
+ *
+ *      • Helper `vincularLeadACampanha` validação 7 (opt-out) atualizada
+ *        para também consultar `email_leads.opt_out` (defesa em camadas —
+ *        antes consultava apenas email_optout). Ambas as fontes
+ *        bloqueiam o vínculo.
+ *
+ *    Dependência SQL: `2026-06-10_email_leads_bounce_handling.sql`
+ *    (colunas bounced/bounced_em/bounced_motivo em email_leads e
+ *    motivo_cancelamento em email_fila).
+ *
  *  - v1.10 (10/06/2026 — CRECI condicional): refinamento da regra CRECI
  *    em ambas as actions de vinculação em lote, para resolver o problema
  *    do pessoal CRECI ficar IMPEDIDO de vincular leads CRECI a campanhas
@@ -858,6 +902,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         );
 
         // Query principal — apto_campanha + filtros
+        // 🆕 v1.11 (10/06/2026) — Adicionado filtro `bounced != true`:
+        //   leads com hard bounce permanente não aparecem em listagens de
+        //   elegíveis. Decisão P1.2 (CHECKPOINT_2026-06-10.md). Defesa em
+        //   profundidade — o helper vincularLeadACampanha também bloqueia.
         let query = supabase
           .from('email_leads')
           .select(`
@@ -867,6 +915,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `)
           .eq('apto_campanha', true)
           .or('opt_out.is.null,opt_out.eq.false')
+          .or('bounced.is.null,bounced.eq.false')
           .not('funil_status', 'eq', 'perdido')
           .order('nome', { ascending: true })
           .limit(limit);
@@ -1774,6 +1823,164 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      // ─────────────────────────────────────────────────────────
+      // 🆕 v1.11 (10/06/2026) — POST `desabilitar_lead` (opt-out manual)
+      // ─────────────────────────────────────────────────────────
+      //
+      // Aplica opt-out manual em cascata para um lead específico, disparado
+      // por gestor/admin via UI (botão "Desabilitar" no LeadDetailDrawer).
+      //
+      // Decisão de produto (CHECKPOINT_2026-06-10.md):
+      //   • P2.1 — opt-out é IRREVERSÍVEL (LGPD). Esta action NÃO tem
+      //     contraparte de reativação.
+      //   • P2.2 — lead permanece visível na Base de Leads com badge vermelho.
+      //   • Cascata global: cancela fila pendente em TODAS as campanhas.
+      //
+      // Cascata (4 passos transacionais lógicos):
+      //   1. UPDATE email_leads SET opt_out=true, opt_out_em=NOW()
+      //   2. UPSERT email_optout (motivo='opt_out_manual', criado_por)
+      //   3. UPDATE email_fila SET status='cancelado',
+      //      motivo_cancelamento='opt_out_manual' para todos pendentes
+      //   4. INSERT email_lead_historico (tipo='opt_out_manual', dados)
+      //
+      // RBAC: o frontend deve restringir o botão a Administradores e Gestão
+      //   Comercial. Esta action confia no `criado_por` informado.
+      //
+      // Body esperado:
+      //   { lead_id: number, motivo?: string, criado_por: string }
+      //
+      // Retorno: { success: true, lead_id, email, total_cancelados,
+      //            ja_estava_optout }
+      //
+      // Idempotência: se o lead já estava em opt-out (lead.opt_out=true),
+      //   retorna sem erro com `ja_estava_optout=true` (segunda chamada é no-op).
+      //
+      if (action === 'desabilitar_lead') {
+        const { lead_id, motivo, criado_por } = body;
+        if (!lead_id || !criado_por) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id e criado_por são obrigatórios',
+          });
+        }
+
+        // Buscar dados do lead
+        const { data: lead, error: errLead } = await supabase
+          .from('email_leads')
+          .select('id, nome, email, opt_out, empresa_id, funil_status')
+          .eq('id', lead_id)
+          .maybeSingle();
+
+        if (errLead) {
+          return res.status(500).json({
+            success: false,
+            error: `Falha ao buscar lead: ${errLead.message}`,
+          });
+        }
+        if (!lead) {
+          return res.status(404).json({ success: false, error: 'Lead não encontrado' });
+        }
+
+        const emailNorm = String(lead.email || '').toLowerCase().trim();
+        if (!emailNorm) {
+          return res.status(400).json({
+            success: false,
+            error: 'Lead sem email — nada a desabilitar.',
+          });
+        }
+
+        // Idempotência: já estava em opt-out → no-op
+        if (lead.opt_out === true) {
+          return res.status(200).json({
+            success: true,
+            lead_id: lead.id,
+            email: lead.email,
+            ja_estava_optout: true,
+            total_cancelados: 0,
+            mensagem: 'Lead já estava em opt-out.',
+          });
+        }
+
+        const motivoFinal = motivo?.trim() || 'opt_out_manual';
+        const agoraIso = new Date().toISOString();
+
+        // PASSO 1: UPDATE email_leads (opt_out=true)
+        const { error: errUpdLead } = await supabase
+          .from('email_leads')
+          .update({
+            opt_out: true,
+            opt_out_em: agoraIso,
+            atualizado_em: agoraIso,
+          })
+          .eq('id', lead.id);
+
+        if (errUpdLead) {
+          return res.status(500).json({
+            success: false,
+            error: `Falha ao marcar opt_out no lead: ${errUpdLead.message}`,
+          });
+        }
+
+        // PASSO 2: UPSERT email_optout (idempotente — onConflict: 'email')
+        await supabase.from('email_optout').upsert(
+          {
+            email: emailNorm,
+            motivo: motivoFinal,
+            campanha_origem_id: null,
+            criado_em: agoraIso,
+          },
+          { onConflict: 'email', ignoreDuplicates: true },
+        );
+
+        // PASSO 3: UPDATE email_fila — cancela TODAS as pendentes desse email
+        //   em qualquer campanha (decisão P2 cascading global).
+        const { data: cancelados, error: errCancel } = await supabase
+          .from('email_fila')
+          .update({
+            status: 'cancelado',
+            motivo_cancelamento: 'opt_out_manual',
+          })
+          .eq('destinatario_email', emailNorm)
+          .eq('status', 'pendente')
+          .select('id');
+
+        const totalCancelados = cancelados?.length || 0;
+        if (errCancel) {
+          console.warn(
+            `[crm-leads/desabilitar_lead] ⚠️ Falha ao cancelar fila pendente de ${emailNorm}:`,
+            errCancel.message,
+          );
+        }
+
+        // PASSO 4: INSERT email_lead_historico (auditoria LGPD)
+        await supabase.from('email_lead_historico').insert({
+          lead_id: lead.id,
+          tipo: 'opt_out_manual',
+          descricao:
+            `Opt-out manual aplicado por ${criado_por}. Motivo: ${motivoFinal}. ` +
+            `${totalCancelados} envio(s) pendente(s) cancelado(s).`,
+          dados: {
+            motivo: motivoFinal,
+            total_cancelados: totalCancelados,
+            email: emailNorm,
+          },
+          criado_por,
+        });
+
+        console.log(
+          `✅ [crm-leads/desabilitar_lead] Lead ${lead.id} (${emailNorm}) desabilitado por ${criado_por}. ${totalCancelados} pendente(s) cancelado(s).`,
+        );
+
+        return res.status(200).json({
+          success: true,
+          lead_id: lead.id,
+          email: lead.email,
+          ja_estava_optout: false,
+          total_cancelados: totalCancelados,
+          motivo: motivoFinal,
+        });
+      }
+
       return res.status(400).json({ success: false, error: `Ação POST desconhecida: ${action}` });
     }
 
@@ -1823,6 +2030,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (campos.email) campos.email = String(campos.email).toLowerCase().trim();
 
+        // 🆕 v1.11 (10/06/2026) — Reset automático de bounced se email mudou.
+        //   Decisão P1.1 (CHECKPOINT_2026-06-10.md): hard bounce marca o LEAD
+        //   como inválido para o ENDEREÇO que falhou. Ao trocar o endereço,
+        //   o "estado bounced" anterior não se aplica ao novo email — o lead
+        //   volta a ser saudável automaticamente.
+        let bounceResetado = false;
+        let emailAnterior: string | null = null;
+        let bouncedMotivoAnterior: string | null = null;
+
+        if (campos.email) {
+          const { data: leadAtual } = await supabase
+            .from('email_leads')
+            .select('email, bounced, bounced_motivo')
+            .eq('id', id)
+            .maybeSingle();
+
+          if (
+            leadAtual &&
+            leadAtual.bounced === true &&
+            String(leadAtual.email || '').toLowerCase().trim() !== campos.email
+          ) {
+            // Email mudou E lead estava marcado como bounced → reset.
+            campos.bounced = false;
+            campos.bounced_em = null;
+            campos.bounced_motivo = null;
+            bounceResetado = true;
+            emailAnterior = leadAtual.email;
+            bouncedMotivoAnterior = leadAtual.bounced_motivo || null;
+          }
+        }
+
         const { data, error } = await supabase
           .from('email_leads')
           .update(campos)
@@ -1832,8 +2070,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (error) throw error;
 
-        console.log(`✅ [crm-leads] Lead atualizado: ID ${id} (${Object.keys(campos).length - 1} campos)`);
-        return res.status(200).json({ success: true, lead: data });
+        // Registrar no histórico SE houve reset de bounced (auditoria).
+        if (bounceResetado) {
+          await supabase.from('email_lead_historico').insert({
+            lead_id: id,
+            tipo: 'bounce_resetado',
+            descricao:
+              `Bounce resetado automaticamente: email "${emailAnterior}" → "${campos.email}". ` +
+              `Motivo do bounce anterior: ${bouncedMotivoAnterior || 'não registrado'}.`,
+            dados: {
+              email_anterior: emailAnterior,
+              email_novo: campos.email,
+              bounced_motivo_anterior: bouncedMotivoAnterior,
+            },
+            criado_por: body.criado_por || 'sistema_reset_bounce',
+          });
+          console.log(
+            `🔄 [crm-leads] Bounce resetado: lead ${id} "${emailAnterior}" → "${campos.email}"`,
+          );
+        }
+
+        console.log(`✅ [crm-leads] Lead atualizado: ID ${id} (${Object.keys(campos).length - 1} campos${bounceResetado ? ' + reset bounce' : ''})`);
+        return res.status(200).json({
+          success: true,
+          lead: data,
+          bounce_resetado: bounceResetado,
+        });
       }
 
       // ── MUDAR FUNIL ──────────────────────────────
@@ -2029,6 +2291,10 @@ interface LeadParaVincular {
   email: string;
   vertical: string;
   reservado_por: number;
+  // 🆕 v1.11 — Estados terminais (opcionais). Se ausentes, o helper consulta
+  //   diretamente o banco (defesa em profundidade).
+  bounced?: boolean;
+  opt_out?: boolean;
 }
 
 interface ResultadoVinculo {
@@ -2112,7 +2378,45 @@ async function vincularLeadACampanha(
     };
   }
 
-  // 7. Verificar opt-out global (defesa em profundidade)
+  // 7. Verificar opt-out global + bounce (defesa em profundidade)
+  //
+  // 🆕 v1.11 (10/06/2026) — Bloqueia DOIS estados terminais:
+  //   (a) bounce permanente — email inválido reportado pelo Resend
+  //   (b) opt-out — destinatário ou sistema marcou como não enviar mais
+  //
+  // Estratégia: se o caller já passou `lead.bounced`/`lead.opt_out`,
+  // confia nesses valores. Se algum está ausente, consulta diretamente
+  // o banco. Bonus: também consulta email_optout (fonte legacy).
+  // Qualquer um dos sinais → bloqueia.
+  let bouncedFlag = lead.bounced;
+  let optOutFlag = lead.opt_out;
+
+  if (bouncedFlag === undefined || optOutFlag === undefined) {
+    const { data: leadDb } = await supabase
+      .from('email_leads')
+      .select('bounced, opt_out')
+      .eq('id', lead.id)
+      .maybeSingle();
+    if (bouncedFlag === undefined) bouncedFlag = leadDb?.bounced === true;
+    if (optOutFlag === undefined) optOutFlag = leadDb?.opt_out === true;
+  }
+
+  if (bouncedFlag === true) {
+    return {
+      success: false,
+      error:
+        'Email do lead deu hard bounce permanente — corrija o endereço antes de vincular a uma campanha.',
+    };
+  }
+
+  if (optOutFlag === true) {
+    return {
+      success: false,
+      error: 'Lead está em opt-out — não pode entrar em campanha (bloqueio permanente conforme LGPD).',
+    };
+  }
+
+  // Fonte legacy de opt-out (email_optout) — defesa em camadas.
   const { data: optout } = await supabase
     .from('email_optout')
     .select('email')

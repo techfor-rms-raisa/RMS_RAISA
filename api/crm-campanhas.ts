@@ -2,6 +2,33 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.14 (10/06/2026 — Auto-bounce + Opt-out cascading): suporte às
+ *    decisões consolidadas no CHECKPOINT_2026-06-10.md (Prioridades 1 e 2).
+ *    Três pontos de filtro de leads com estados terminais (`bounced=true`
+ *    OU `opt_out=true`) — defesa em profundidade no enfileiramento:
+ *
+ *      • GET `leads_disponiveis` (Wizard "Editar Campanha → Leads"):
+ *        adicionado filtro `bounced != true` (combina com `apto_campanha`,
+ *        `opt_out`, `funil_status!=perdido`).
+ *
+ *      • POST `mudar_status` → ativação: o filtro de leads ativos do
+ *        enfileiramento em lote agora inclui `bounced` no SELECT e ignora
+ *        leads bounced (incrementa counter `bounced_ignorados`). Combina
+ *        com filtros legados de inaptos e opt-out.
+ *
+ *      • POST `vincular_leads` (Wizard add-leads pós-criação): adicionado
+ *        filtro `bounced != true` na validação prévia. Atenua parcialmente
+ *        o bug histórico 🟡 do CHECKPOINT_2026-06-10 (essa action não
+ *        enfileira em campanhas já ativas — refatoração via helper
+ *        permanece em backlog).
+ *
+ *    Justificativa P1.2: lead com hard bounce permanente em qualquer
+ *    campanha não pode ser enfileirado em nenhuma outra campanha enquanto
+ *    o `bounced` não for resetado (o reset é automático via crm-leads.ts
+ *    v1.11 quando o analista corrige o email do lead).
+ *
+ *    Dependência SQL: `2026-06-10_email_leads_bounce_handling.sql` aplicado.
+ *
  *  - v1.13 (10/06/2026 — CRECI condicional): refinamento da regra CRECI
  *    em `listar_campanhas_para_vinculo_em_lote`. Versão anterior (v1.12)
  *    rejeitava qualquer requisição com `vertical='CRECI'` por entender que
@@ -448,11 +475,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 🔧 31/05/2026 (Fase 4C-fix): coluna real é funil_status (não funil);
         // filtro principal apto_campanha=true (migração 2026-05-28); opt_out via boolean.
         // Leads disponíveis = aptos a campanha, não opt-out, funil_status != 'perdido'.
+        // 🆕 v1.14 (10/06/2026) — Adicionado filtro `bounced != true` (decisão
+        //   P1.2 do CHECKPOINT_2026-06-10.md). Defesa em profundidade — leads
+        //   com hard bounce permanente não aparecem em listagens de elegíveis.
         let query = supabase
           .from('email_leads')
           .select(`id, nome, email, cargo, funil:funil_status, email_empresas(nome)`)
           .eq('apto_campanha', true)
           .or('opt_out.is.null,opt_out.eq.false')
+          .or('bounced.is.null,bounced.eq.false')
           .not('funil_status', 'eq', 'perdido')
           .order('nome', { ascending: true })
           .limit(parseInt(limit));
@@ -1152,15 +1183,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const emailsOptout = new Set((optouts || []).map((o: any) => o.email));
 
         // Buscar leads com dados para validação
+        // 🆕 v1.14 — SELECT inclui `bounced` e `opt_out` para filtro defensivo.
         const { data: leads } = await supabase
           .from('email_leads')
-          .select('id, email, reservado_por, vertical, apto_campanha')
+          .select('id, email, reservado_por, vertical, apto_campanha, bounced, opt_out')
           .in('id', lead_ids);
 
-        // Filtrar: não opt-out, apto, do responsável e da mesma vertical
+        // Filtrar: não opt-out, não bounced, apto, do responsável e da mesma vertical.
+        // 🆕 v1.14 — Adicionado `l.bounced !== true` e `l.opt_out !== true` (P1/P2).
         const leadsValidos = (leads || []).filter((l: any) =>
           !emailsOptout.has(l.email) &&
           l.apto_campanha === true &&
+          l.bounced !== true &&
+          l.opt_out !== true &&
           l.reservado_por === camp.responsavel_id &&
           l.vertical === camp.tipo
         );
@@ -1168,7 +1203,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (leadsValidos.length === 0) {
           return res.status(400).json({
             success: false,
-            error: 'Nenhum lead elegível: precisa ser do responsável, da mesma vertical e apto a campanha (e não em opt-out)'
+            error: 'Nenhum lead elegível: precisa ser do responsável, da mesma vertical e apto a campanha (sem opt-out, sem hard bounce)'
           });
         }
 
@@ -1485,7 +1520,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         //
         // Idempotência: pausada→ativa NÃO re-enfileira (inicio_envio já existe).
         // Resume será tratado pelo cron (Fase 5B) — basta ler pendentes.
-        let enfileiramento: { enfileirados: number; opt_outs_ignorados: number; inaptos_ignorados: number } | null = null;
+        let enfileiramento: { enfileirados: number; opt_outs_ignorados: number; inaptos_ignorados: number; bounced_ignorados: number } | null = null;
         if (status === 'ativa' && !campanha.inicio_envio) {
           const agora = new Date();
 
@@ -1503,9 +1538,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           // 2) Leads vinculados com dados completos
+          //   🆕 v1.14 — SELECT inclui `bounced` para filtro defensivo abaixo.
           const { data: vinculos, error: errVinc } = await supabase
             .from('email_lead_campanhas')
-            .select('lead_id, email_leads!inner(id, email, nome, apto_campanha)')
+            .select('lead_id, email_leads!inner(id, email, nome, apto_campanha, bounced, opt_out)')
             .eq('campanha_id', id)
             .eq('status', 'ativa');
 
@@ -1525,11 +1561,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           let inaptos = 0;
           let optOutFiltrados = 0;
+          let bouncedFiltrados = 0;
           const leadsValidos: any[] = [];
           for (const v of vinculos as any[]) {
             const lead = v.email_leads;
             if (!lead || !lead.email) { inaptos++; continue; }
             if (!lead.apto_campanha) { inaptos++; continue; }
+            // 🆕 v1.14 — Filtro adicional: lead com hard bounce permanente
+            //   (decisão P1.2) ou opt_out direto na coluna (defesa em camadas).
+            if (lead.bounced === true) { bouncedFiltrados++; continue; }
+            if (lead.opt_out === true) { optOutFiltrados++; continue; }
             if (setOptout.has(lead.email.toLowerCase().trim())) { optOutFiltrados++; continue; }
             leadsValidos.push(lead);
           }
@@ -1537,7 +1578,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (leadsValidos.length === 0) {
             return res.status(400).json({
               success: false,
-              error: `Todos os leads foram filtrados na ativação (inaptos: ${inaptos}, opt-out: ${optOutFiltrados}). Reveja a base.`,
+              error: `Todos os leads foram filtrados na ativação (inaptos: ${inaptos}, opt-out: ${optOutFiltrados}, bounced: ${bouncedFiltrados}). Reveja a base.`,
             });
           }
 
@@ -1596,6 +1637,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             enfileirados: totalInseridos,
             opt_outs_ignorados: optOutFiltrados,
             inaptos_ignorados: inaptos,
+            bounced_ignorados: bouncedFiltrados,
           };
           updateData.inicio_envio = agora.toISOString();
         }
