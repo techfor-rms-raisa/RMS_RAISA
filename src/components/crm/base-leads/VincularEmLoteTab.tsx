@@ -2,26 +2,41 @@
  * VincularEmLoteTab.tsx — Aba "Vincular em Lote" do form Empresas & Leads
  *
  * Caminho: src/components/crm/base-leads/VincularEmLoteTab.tsx
- * Versão: 1.0 (10/06/2026)
+ * Versão: 1.1 (CRECI condicional — 10/06/2026)
  *
- * Permite ao Gestor Comercial / SDR vincular MÚLTIPLOS leads a uma campanha
- * existente (status ativa/pausada/agendada) em uma única operação, com
- * possibilidade de alteração de vertical em lote.
+ * v1.1 (10/06/2026 — CRECI condicional): refinamento da regra CRECI para
+ *   resolver o caso de uso "pessoal CRECI vinculando leads CRECI a outra
+ *   campanha CRECI" (que a v1.0 inviabilizava ao excluir indiscriminadamente
+ *   leads CRECI). Mudanças:
+ *    - CRECI volta a aparecer no dropdown de "Vertical de destino"
+ *    - Listagem de leads tem filtro dinâmico baseado em vertical_destino:
+ *        • Se destino === 'CRECI': mostra APENAS leads CRECI
+ *        • Se destino ≠ 'CRECI': exclui leads CRECI
+ *    - Coluna "Ação" sempre mostra "Manter" quando destino === 'CRECI'
+ *      (lead CRECI vincula à campanha CRECI sem mudar vertical)
+ *    - Backend (crm-leads.ts v1.10) recebe `vertical_destino` na query
+ *      e aplica o filtro condicional correspondente.
+ *
+ * v1.0 (10/06/2026 — Vinculação em Lote): primeira versão.
+ *   Permite ao Gestor Comercial / SDR vincular MÚLTIPLOS leads a uma campanha
+ *   existente (status ativa/pausada/agendada) em uma única operação, com
+ *   possibilidade de alteração de vertical em lote.
  *
  * Substitui o fluxo arriscado de "Editar Campanha → adicionar leads", que dava
  * acesso TOTAL à configuração da campanha (steps, copys, datas). Separação
  * clara entre CONFIGURAÇÃO (Editar Campanha) e OPERAÇÃO (Vincular em Lote).
  *
- * 🛡️ REGRA PERMANENTE — CRECI BIDIRECIONALMENTE BLINDADA:
- *   (1) Lead com vertical='CRECI' NUNCA aparece nesta aba (saída bloqueada);
- *   (2) Vertical 'CRECI' NUNCA aparece como destino (entrada bloqueada).
- *   Base CRECI é exclusiva de corretores (Pessoa Física). Validação reforçada
- *   no backend em listar_leads_para_vinculo_em_lote e vincular_em_lote_a_campanha
- *   (defesa em profundidade).
+ * 🛡️ REGRA PERMANENTE — CRECI BIDIRECIONALMENTE BLINDADA quanto a MUDANÇA:
+ *   (1) Lead com vertical='CRECI' NUNCA tem sua vertical ALTERADA;
+ *   (2) NENHUM lead de outra vertical pode VIRAR CRECI.
+ *   PORÉM, vincular lead CRECI a campanha CRECI (mesma vertical, sem
+ *   alteração) é permitido — esse é o caso de uso do pessoal CRECI.
+ *   Validação reforçada no backend em listar_leads_para_vinculo_em_lote
+ *   (v1.10) e vincular_em_lote_a_campanha (v1.10) — defesa em profundidade.
  *
  * Fluxo do usuário (3 passos):
  *   PASSO 1: Escolher Vertical de destino + Campanha de destino
- *   PASSO 2: Selecionar leads (lista filtrada por elegibilidade)
+ *   PASSO 2: Selecionar leads (lista filtrada conforme destino — CRECI/não-CRECI)
  *   PASSO 3: Confirmar vinculação (modal de confirmação)
  *
  * Reusa o helper `vincularLeadACampanha` da Fase A (crm-leads.ts v1.8) que
@@ -30,10 +45,11 @@
  * Backend chamado:
  *   • GET  /api/crm-campanhas?action=listar_campanhas_para_vinculo_em_lote
  *   • GET  /api/crm-leads?action=listar_leads_para_vinculo_em_lote
+ *          &vertical_destino={X}  ← v1.1: passa vertical para filtro condicional
  *   • POST /api/crm-leads (action=vincular_em_lote_a_campanha)
  *
  * Hook reusado:
- *   • useTiposCampanha — lista oficial de verticais (filtra CRECI no cliente)
+ *   • useTiposCampanha — lista oficial de verticais (CRECI agora INCLUÍDA)
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -108,21 +124,32 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({ currentUser }) =>
   const [submitting, setSubmitting] = useState(false);
   const [resultadoVinculacao, setResultadoVinculacao] = useState<ResultadoVinculacao | null>(null);
 
-  // ── Hook externo: verticais (filtra CRECI) ────────────────
-  // 🛡️ useTiposCampanha retorna objetos TipoCampanha { id, nome, ativo, descricao }
+  // ── Hook externo: verticais ───────────────────────────────
+  // 🔄 v1.1 — CRECI volta a ser listada no dropdown. A regra "CRECI não
+  //   muda de vertical" é aplicada por filtro CONDICIONAL na listagem
+  //   de leads (vertical_destino → backend) — não mais pela ausência
+  //   da opção. Veja docstring deste arquivo.
+  // useTiposCampanha retorna objetos TipoCampanha { id, nome, ativo, descricao }
   // (não strings) — vide src/components/crm/shared/hooks/useTiposCampanha.ts.
   const tiposCampanhaH = useTiposCampanha();
   const verticaisDisponiveis = tiposCampanhaH.tipos.filter(
-    (t: any) => t.ativo !== false && t.nome !== 'CRECI'
+    (t: any) => t.ativo !== false
   );
+
+  // 🔄 v1.1 — Flag para a UI saber quando o destino é CRECI
+  const destinoEhCreci = verticalDestino === 'CRECI';
 
   const isAdmin = currentUser.tipo_usuario === 'Administrador';
 
   // ── Computeds ─────────────────────────────────────────────
   const totalSelecionados = selecionados.size;
-  const leadsParaAlterar = leads.filter(
-    (l) => selecionados.has(l.id) && l.vertical !== verticalDestino
-  ).length;
+  // 🔄 v1.1 — Quando destino é CRECI, nenhum lead muda de vertical
+  //   (a listagem só traz leads CRECI). Forçamos 0 explicitamente.
+  const leadsParaAlterar = verticalDestino === 'CRECI'
+    ? 0
+    : leads.filter(
+        (l) => selecionados.has(l.id) && l.vertical !== verticalDestino
+      ).length;
   const campanhaEscolhida = campanhas.find((c) => c.id === campanhaDestino) || null;
 
   // ════════════════════════════════════════════════════════════
@@ -195,10 +222,14 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({ currentUser }) =>
     try {
       const responsavelParam = !isAdmin ? `&responsavel_id=${currentUser.id}` : '';
       const buscaParam = busca ? `&busca=${encodeURIComponent(busca)}` : '';
+      // 🔄 v1.1 — Passa vertical_destino para o backend aplicar filtro
+      //   condicional: CRECI→CRECI only, ou não-CRECI exclui CRECI.
+      const verticalDestinoParam = `&vertical_destino=${encodeURIComponent(verticalDestino)}`;
       const url =
         `/api/crm-leads?action=listar_leads_para_vinculo_em_lote` +
         responsavelParam +
         buscaParam +
+        verticalDestinoParam +
         `&limit=200`;
 
       const resp = await fetch(url);
@@ -327,8 +358,9 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({ currentUser }) =>
             </p>
             <p className="text-xs text-amber-700 mt-1">
               <i className="fa-solid fa-shield-halved mr-1"></i>
-              <strong>Regra CRECI:</strong> leads CRECI não aparecem aqui e a vertical CRECI
-              não pode ser destino (base de corretores PF — condição imutável).
+              <strong>Regra CRECI:</strong> leads CRECI só podem ser vinculados a campanhas
+              CRECI (sem alteração de vertical); leads de outras verticais não podem virar
+              CRECI. Base CRECI é exclusiva de corretores (PF) — condição imutável.
             </p>
           </div>
         </div>
@@ -366,10 +398,23 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({ currentUser }) =>
                 </option>
               ))}
             </select>
-            <p className="text-xs text-gray-500 mt-1">
-              <i className="fa-solid fa-shield-halved text-amber-600 mr-1"></i>
-              CRECI não é listada (regra permanente).
-            </p>
+            {/* 🔄 v1.1 — Aviso contextual da regra CRECI */}
+            {destinoEhCreci ? (
+              <p className="text-xs text-indigo-700 mt-1">
+                <i className="fa-solid fa-shield-halved mr-1"></i>
+                Destino CRECI: serão listados apenas leads que JÁ são CRECI (sem alteração de vertical).
+              </p>
+            ) : verticalDestino ? (
+              <p className="text-xs text-gray-500 mt-1">
+                <i className="fa-solid fa-shield-halved text-amber-600 mr-1"></i>
+                Leads CRECI são ocultos (regra permanente — CRECI não muda de vertical).
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500 mt-1">
+                <i className="fa-solid fa-circle-info text-gray-400 mr-1"></i>
+                Selecione uma vertical para listar campanhas disponíveis.
+              </p>
+            )}
           </div>
 
           {/* Campanha de destino */}
@@ -478,8 +523,9 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({ currentUser }) =>
                       <td colSpan={6} className="px-3 py-8 text-center text-gray-500">
                         <p>Nenhum lead disponível.</p>
                         <p className="text-xs mt-2">
-                          Leads CRECI e leads já vinculados a outras campanhas
-                          ativas/pausadas/agendadas não aparecem aqui.
+                          {destinoEhCreci
+                            ? 'Não há leads CRECI elegíveis (sem opt-out, não vinculados a campanhas em andamento).'
+                            : 'Leads CRECI e leads já vinculados a outras campanhas ativas/pausadas/agendadas não aparecem aqui.'}
                         </p>
                       </td>
                     </tr>
@@ -517,7 +563,13 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({ currentUser }) =>
                             </span>
                           </td>
                           <td className="px-3 py-2">
-                            {verticalDiferente ? (
+                            {/* 🔄 v1.1 — Quando destino é CRECI, lead é CRECI (filtro
+                              backend) → sempre "Manter" (sem alteração de vertical) */}
+                            {destinoEhCreci ? (
+                              <span className="text-xs text-green-700 inline-flex items-center gap-1">
+                                <i className="fa-solid fa-check"></i> Manter (CRECI → CRECI)
+                              </span>
+                            ) : verticalDiferente ? (
                               <span className="text-xs text-amber-700 inline-flex items-center gap-1">
                                 <i className="fa-solid fa-arrow-right"></i> Alterar p/{' '}
                                 <strong>{verticalDestino}</strong>
