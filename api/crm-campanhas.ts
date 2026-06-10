@@ -2,6 +2,19 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.13 (10/06/2026 — CRECI condicional): refinamento da regra CRECI
+ *    em `listar_campanhas_para_vinculo_em_lote`. Versão anterior (v1.12)
+ *    rejeitava qualquer requisição com `vertical='CRECI'` por entender que
+ *    CRECI nunca poderia ser destino. Isso INVIABILIZAVA o caso legítimo:
+ *    "vincular um lead CRECI a outra campanha CRECI" (mesma vertical, sem
+ *    alteração — bem dentro da regra de "não muda vertical"). A regra
+ *    PERMANENTE continua: CRECI ↔ outra vertical permanece BLOQUEADO; mas
+ *    CRECI → CRECI passa a ser PERMITIDO. Agora `vertical=CRECI` é aceito
+ *    e retorna campanhas CRECI elegíveis normalmente. A garantia de não-
+ *    mudança fica em `crm-leads.ts > vincular_em_lote_a_campanha` (v1.10),
+ *    que não dispara UPDATE em email_leads.vertical quando destino=CRECI
+ *    (já são CRECI; nada a alterar).
+ *
  *  - v1.12 (10/06/2026 — Vinculação em Lote): adiciona action GET
  *    `listar_campanhas_para_vinculo_em_lote`. Lista campanhas elegíveis
  *    para receber leads via a nova aba "Vincular em Lote" do form
@@ -14,10 +27,6 @@
  *      • tipo (vertical) = vertical de destino informada
  *      • responsavel_id = currentUser.id (RBAC; admin vê todas)
  *      • data_encerramento IS NULL OR >= CURRENT_DATE
- *    🛡️ REGRA PERMANENTE — Vertical CRECI é BIDIRECIONALMENTE BLINDADA:
- *      nenhum lead de outra vertical pode virar CRECI (base CRECI é
- *      exclusiva de corretores PF). Se vertical='CRECI' for solicitada,
- *      retorna 400 (defesa em profundidade — o frontend já filtra).
  *
  *  - v1.11 (09/06/2026 — Fase A): adiciona action GET
  *    `listar_campanhas_disponiveis_para_lead`. Recebe `lead_id` ou
@@ -887,6 +896,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ─────────────────────────────────────────────────────────
       // 🆕 v1.12 (10/06/2026 — Vinculação em Lote) — Lista campanhas
       // elegíveis para receber leads via aba "Vincular em Lote".
+      // 🔄 v1.13 (10/06/2026 — CRECI condicional) — CRECI agora é
+      // aceito como vertical de destino. A regra permanente "CRECI
+      // não muda de vertical" continua válida; mas vincular lead CRECI
+      // a outra campanha CRECI (mesma vertical, sem alteração) é uma
+      // operação legítima e necessária para o pessoal do CRECI.
       // Diferente da action listar_campanhas_disponiveis_para_lead (Fase A),
       // esta NÃO depende de um lead específico — filtra apenas pela vertical
       // de destino informada no fluxo em lote.
@@ -903,13 +917,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(400).json({ success: false, error: 'criado_por obrigatório' });
         }
 
-        // 🛡️ REGRA PERMANENTE — CRECI bidirecionalmente blindada (defesa em profundidade)
-        if (verticalQ === 'CRECI') {
-          return res.status(400).json({
-            success: false,
-            error: 'Vertical CRECI não pode ser destino em vinculação em lote — base CRECI é exclusiva de corretores (PF) e não recebe leads de outras verticais.',
-          });
-        }
+        // 🔄 v1.13 — CRECI passa a ser aceito como vertical de destino.
+        // A garantia de "CRECI não muda de vertical" é aplicada por lead em
+        // crm-leads.ts > vincular_em_lote_a_campanha (v1.10). Aqui apenas
+        // listamos as campanhas CRECI elegíveis para o pessoal CRECI usar
+        // o fluxo de vinculação em lote (que antes ficava bloqueado).
 
         const hoje = new Date().toISOString().slice(0, 10);
         let query = supabase

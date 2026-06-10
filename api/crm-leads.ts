@@ -2,6 +2,30 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.10 (10/06/2026 — CRECI condicional): refinamento da regra CRECI
+ *    em ambas as actions de vinculação em lote, para resolver o problema
+ *    do pessoal CRECI ficar IMPEDIDO de vincular leads CRECI a campanhas
+ *    CRECI via essa aba (a v1.9 excluía indiscriminadamente todos leads
+ *    CRECI). A regra "CRECI não muda de vertical" continua bidirecional:
+ *
+ *      • GET `listar_leads_para_vinculo_em_lote`: agora aceita query
+ *        param `vertical_destino`:
+ *          - Se vertical_destino === 'CRECI': filtra `vertical = 'CRECI'`
+ *            (mostra APENAS leads CRECI — vincula sem alteração)
+ *          - Se vertical_destino ≠ 'CRECI': filtra `vertical != 'CRECI'`
+ *            (exclui CRECI — leads CRECI não podem virar outra vertical)
+ *          - Se vertical_destino ausente: comportamento de fallback v1.9
+ *            (exclui CRECI — para retrocompatibilidade defensiva)
+ *
+ *      • POST `vincular_em_lote_a_campanha`:
+ *          - Quando vertical_destino === 'CRECI':
+ *              * Rejeita leads com vertical ≠ 'CRECI' ("não pode virar CRECI")
+ *              * NÃO dispara UPDATE em email_leads.vertical (já são CRECI)
+ *              * NÃO conta como "vertical_alterada" no resultado
+ *          - Quando vertical_destino ≠ 'CRECI':
+ *              * Rejeita leads com vertical === 'CRECI' (já fazia em v1.9)
+ *              * Altera vertical normalmente se diferente
+ *
  *  - v1.9 (10/06/2026 — Vinculação em Lote): adiciona 2 actions para a
  *    nova aba "Vincular em Lote" do form Empresas & Leads
  *    (BaseLeadsPage.tsx v1.5):
@@ -798,12 +822,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ─────────────────────────────────────────────────────────
       // 🆕 v1.9 (10/06/2026 — Vinculação em Lote) — Lista leads aptos
       // a vinculação em lote a uma campanha existente.
+      // 🔄 v1.10 (10/06/2026 — CRECI condicional) — comportamento do
+      // filtro de vertical agora depende do parâmetro vertical_destino:
+      //  • vertical_destino === 'CRECI': mostra APENAS leads CRECI
+      //    (caso de uso: pessoal CRECI vinculando a outra campanha CRECI)
+      //  • vertical_destino !== 'CRECI' (e informado): exclui CRECI
+      //    (caso PJ: leads CRECI não podem virar outra vertical)
+      //  • vertical_destino ausente: exclui CRECI (fallback defensivo)
       //
-      // Critérios:
+      // Critérios mantidos:
       //  • apto_campanha = true
       //  • opt_out IS NULL OR false
       //  • funil_status != 'perdido'
-      //  • vertical != 'CRECI' (🛡️ REGRA PERMANENTE: lead CRECI nunca muda)
       //  • NÃO vinculado a campanha em status ativa/pausada/agendada
       //  • reservado_por = responsavel_id (se informado — RBAC para não-admin)
       //
@@ -812,6 +842,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // ─────────────────────────────────────────────────────────
       if (action === 'listar_leads_para_vinculo_em_lote') {
         const responsavelIdQ = req.query.responsavel_id as string | undefined;
+        const verticalDestinoQ = (req.query.vertical_destino as string) || '';
         const busca = (req.query.busca as string) || '';
         const limit = parseInt((req.query.limit as string) || '200');
 
@@ -837,9 +868,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('apto_campanha', true)
           .or('opt_out.is.null,opt_out.eq.false')
           .not('funil_status', 'eq', 'perdido')
-          .not('vertical', 'eq', 'CRECI') // 🛡️ REGRA PERMANENTE CRECI
           .order('nome', { ascending: true })
           .limit(limit);
+
+        // 🔄 v1.10 — Filtro de vertical condicional (regra CRECI bidirecional):
+        if (verticalDestinoQ === 'CRECI') {
+          // Destino CRECI → mostra APENAS leads CRECI (vincula sem alteração)
+          query = query.eq('vertical', 'CRECI');
+        } else {
+          // Destino ≠ CRECI ou ausente → exclui CRECI (não vira outra vertical)
+          query = query.not('vertical', 'eq', 'CRECI');
+        }
 
         if (responsavelIdQ) {
           query = query.eq('reservado_por', parseInt(responsavelIdQ));
@@ -869,6 +908,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           leads: filtered,
           total: filtered.length,
           ids_vinculados_bloqueados: idsVinculados.length,
+          vertical_destino_aplicado: verticalDestinoQ || null,
         });
       }
 
@@ -1529,22 +1569,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // 🆕 v1.9 (10/06/2026 — Vinculação em Lote) — vincula N leads
       // a uma campanha em uma única operação, com alteração opcional
       // de vertical em lote.
+      // 🔄 v1.10 (10/06/2026 — CRECI condicional) — tratamento bidirecional:
+      //   - vertical_destino === 'CRECI':
+      //       Rejeita leads com vertical ≠ CRECI ("não vira CRECI");
+      //       NÃO altera vertical dos leads CRECI (já são CRECI).
+      //   - vertical_destino ≠ 'CRECI':
+      //       Rejeita leads com vertical === CRECI (já fazia em v1.9);
+      //       Altera vertical normalmente se diferente.
       //
-      // 🛡️ REGRA PERMANENTE — Vertical CRECI é BIDIRECIONALMENTE
-      // BLINDADA: (1) lead CRECI nunca muda; (2) nenhum lead vira
-      // CRECI. Defesa em profundidade (frontend já filtra).
+      // 🛡️ REGRA PERMANENTE — A garantia "CRECI não muda de vertical" é
+      //   mantida nos DOIS casos: nenhum UPDATE em email_leads.vertical
+      //   é disparado quando o lead já é CRECI (apenas vincula).
       //
       // Body:
       //   lead_ids: number[]         (obrigatório, ≥ 1)
       //   campanha_id: number        (obrigatório)
-      //   vertical_destino: string   (obrigatório, ≠ 'CRECI')
+      //   vertical_destino: string   (obrigatório — qualquer vertical, inclusive CRECI)
       //   criado_por: string         (obrigatório, email do usuário)
       //
       // Processo (não-transacional):
       //   Para cada lead:
-      //     1. Bloqueia se lead.vertical === 'CRECI'
+      //     1. Validar compatibilidade CRECI (vide tabela bidirecional acima)
       //     2. Se lead.vertical ≠ vertical_destino → UPDATE vertical
-      //        + histórico 'vertical_alterada'
+      //        + histórico 'vertical_alterada' (não ocorre quando ambos=CRECI)
       //     3. Chama vincularLeadACampanha (Fase A v1.8) — 7 validações
       //        + enfileiramento condicional em email_fila
       //     4. Coleta sucesso ou falha estruturada
@@ -1570,13 +1617,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(400).json({ success: false, error: 'criado_por obrigatório' });
         }
 
-        // 🛡️ REGRA CRECI BIDIRECIONAL — entrada bloqueada
-        if (vertical_destino === 'CRECI') {
-          return res.status(400).json({
-            success: false,
-            error: 'Vertical CRECI não pode ser destino em vinculação em lote — base CRECI é exclusiva de corretores (PF) e não recebe leads de outras verticais.',
-          });
-        }
+        // 🔄 v1.10 — CRECI agora é aceito como destino, mas com regra
+        //   especial: só permite leads que JÁ sejam CRECI (loop por lead).
+        const destinoEhCreci = vertical_destino === 'CRECI';
 
         // ── Buscar campanha (validações da camada de vinculação ainda rodam por lead) ──
         const { data: campanha, error: errCamp } = await supabase
@@ -1622,14 +1665,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         };
 
         for (const lead of leads) {
-          // 🛡️ REGRA CRECI BIDIRECIONAL — saída bloqueada
-          if (lead.vertical === 'CRECI') {
-            resultados.falhas.push({
-              lead_id: lead.id,
-              lead_nome: lead.nome,
-              error: 'Lead CRECI não pode ter sua vertical alterada (regra permanente).',
-            });
-            continue;
+          // 🛡️ REGRA CRECI BIDIRECIONAL (v1.10 — condicional pelo destino)
+          if (destinoEhCreci) {
+            // Destino CRECI → só aceita leads que JÁ são CRECI.
+            // Lead não-CRECI não pode virar CRECI (entrada bloqueada).
+            if (lead.vertical !== 'CRECI') {
+              resultados.falhas.push({
+                lead_id: lead.id,
+                lead_nome: lead.nome,
+                error: `Lead de vertical "${lead.vertical || '—'}" não pode ser vinculado a campanha CRECI — apenas leads CRECI vinculam a campanhas CRECI (regra permanente).`,
+              });
+              continue;
+            }
+            // OK: lead.vertical === 'CRECI' e destino === 'CRECI' → vincula sem alterar
+          } else {
+            // Destino não-CRECI → bloqueia leads CRECI (saída bloqueada)
+            if (lead.vertical === 'CRECI') {
+              resultados.falhas.push({
+                lead_id: lead.id,
+                lead_nome: lead.nome,
+                error: 'Lead CRECI não pode ter sua vertical alterada para outra (regra permanente).',
+              });
+              continue;
+            }
           }
 
           // Validação adicional — lead apto e não-opt-out
@@ -1645,6 +1703,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           let verticalAtualizada = lead.vertical;
 
           // ── Alteração de vertical (se necessário) ────────────
+          // 🔄 v1.10 — Quando destinoEhCreci=true e lead.vertical==='CRECI',
+          //   esta condição é falsa → NÃO dispara UPDATE (já são iguais).
           if (lead.vertical !== vertical_destino) {
             const { error: errUpdate } = await supabase
               .from('email_leads')
@@ -1702,7 +1762,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         console.log(
           `✅ [crm-leads/vincular_em_lote] ${resultados.sucessos}/${resultados.total} leads vinculados à campanha "${campanha.nome}" ` +
-          `(${resultados.verticais_alteradas} verticais alteradas, ${resultados.falhas.length} falhas)`
+          `(${resultados.verticais_alteradas} verticais alteradas, ${resultados.falhas.length} falhas) [destino=${vertical_destino}]`
         );
 
         return res.status(200).json({
