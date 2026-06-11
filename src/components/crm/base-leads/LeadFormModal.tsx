@@ -2,7 +2,16 @@
  * LeadFormModal.tsx — Modal de criar/editar lead
  *
  * Caminho: src/components/crm/base-leads/LeadFormModal.tsx
- * Versão: 1.2 (Opt-out manual — 11/06/2026)
+ * Versão: 1.2.1 (HOTFIX JSX — 11/06/2026)
+ *
+ * v1.2.1 (11/06/2026 — HOTFIX JSX): adicionado `</div>` faltante para fechar
+ *   o overlay externo `<div className="fixed inset-0...">` do modal principal
+ *   (aberto na linha 182, antes não tinha fechamento). Sintoma do bug:
+ *   "Unexpected end of file before a closing fragment tag" no build do Vite
+ *   em Preview/Production. Causa: durante a v1.2 anterior, o wrapping em
+ *   React Fragment `<>...</>` foi adicionado para acomodar o modal de
+ *   confirmação ao lado do modal principal, mas a árvore JSX ficou
+ *   desbalanceada (27 `<div>` abertos vs. 26 `</div>` fechados).
  *
  * v1.2 (11/06/2026 — Opt-out manual / Bloco 4 do plano OPT-OUT 100%):
  *   Adicionado botão vermelho "Opt-Out" no rodapé do modal de EDIÇÃO,
@@ -497,6 +506,7 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
           </div>
         </div>
       )}
+      </div>
     </>
   );
 };
