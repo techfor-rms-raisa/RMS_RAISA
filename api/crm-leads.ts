@@ -2,6 +2,17 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.12 (11/06/2026 — Bloco 1 do plano OPT-OUT 100%): REFACTOR cirúrgico
+ *    da action POST `desabilitar_lead`. Os 4 passos da cascata foram
+ *    extraídos para o helper compartilhado `api/_helpers/aplicar-opt-out.ts`.
+ *    A action agora apenas valida parâmetros e delega ao helper com
+ *    origem='manual'. Comportamento externo PRESERVADO — o frontend
+ *    (LeadFormModal v1.2 / useLeads v1.1) continua recebendo {success,
+ *    lead_id, email, ja_estava_optout, total_cancelados, motivo}.
+ *    Motivação: o mesmo helper serve os outros 3 caminhos de opt-out
+ *    (webhook complained, POST RFC 8058, GET link rodapé). Elimina
+ *    duplicação e garante consistência da auditoria LGPD.
+ *
  *  - v1.11 (10/06/2026 — Auto-bounce + Opt-out cascading): suporte às
  *    decisões consolidadas no CHECKPOINT_2026-06-10.md (Prioridades 1 e 2).
  *
@@ -223,6 +234,8 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+// 🆕 v1.12 — Helper compartilhado de opt-out (Bloco 1 OPT-OUT 100%)
+import { aplicarOptOut } from './_helpers/aplicar-opt-out';
 
 export const config = { maxDuration: 30 };
 
@@ -1825,10 +1838,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ─────────────────────────────────────────────────────────
       // 🆕 v1.11 (10/06/2026) — POST `desabilitar_lead` (opt-out manual)
+      // 🔧 v1.12 (11/06/2026 — Bloco 1 OPT-OUT 100%): REFATORADO para
+      //   delegar a cascata ao helper compartilhado aplicarOptOut.
       // ─────────────────────────────────────────────────────────
       //
       // Aplica opt-out manual em cascata para um lead específico, disparado
-      // por gestor/admin via UI (botão "Desabilitar" no LeadDetailDrawer).
+      // por gestor/admin/SDR via UI (botão "Opt-Out" no LeadFormModal v1.2).
       //
       // Decisão de produto (CHECKPOINT_2026-06-10.md):
       //   • P2.1 — opt-out é IRREVERSÍVEL (LGPD). Esta action NÃO tem
@@ -1836,24 +1851,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       //   • P2.2 — lead permanece visível na Base de Leads com badge vermelho.
       //   • Cascata global: cancela fila pendente em TODAS as campanhas.
       //
-      // Cascata (4 passos transacionais lógicos):
+      // Cascata (executada pelo helper aplicarOptOut, origem='manual'):
       //   1. UPDATE email_leads SET opt_out=true, opt_out_em=NOW()
-      //   2. UPSERT email_optout (motivo='opt_out_manual', criado_por)
+      //   2. UPSERT email_optout (motivo, criado_por)
       //   3. UPDATE email_fila SET status='cancelado',
       //      motivo_cancelamento='opt_out_manual' para todos pendentes
       //   4. INSERT email_lead_historico (tipo='opt_out_manual', dados)
       //
-      // RBAC: o frontend deve restringir o botão a Administradores e Gestão
-      //   Comercial. Esta action confia no `criado_por` informado.
+      // RBAC: o frontend deve restringir o botão a Administrador / Gestão
+      //   Comercial / SDR (decisão 11/06/2026). Esta action confia no
+      //   `criado_por` informado (auditoria, não autorização).
       //
       // Body esperado:
       //   { lead_id: number, motivo?: string, criado_por: string }
       //
       // Retorno: { success: true, lead_id, email, total_cancelados,
-      //            ja_estava_optout }
+      //            ja_estava_optout, motivo }
       //
       // Idempotência: se o lead já estava em opt-out (lead.opt_out=true),
-      //   retorna sem erro com `ja_estava_optout=true` (segunda chamada é no-op).
+      //   o helper retorna `ja_estava_optout=true` sem repetir a cascata.
       //
       if (action === 'desabilitar_lead') {
         const { lead_id, motivo, criado_por } = body;
@@ -1864,10 +1880,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
         }
 
-        // Buscar dados do lead
+        // Buscar email do lead (validação prévia + retorno na resposta).
+        // O helper aceita lead_id mas precisamos do email para retornar ao
+        // frontend (ele exibe o email no toast pós-ação).
         const { data: lead, error: errLead } = await supabase
           .from('email_leads')
-          .select('id, nome, email, opt_out, empresa_id, funil_status')
+          .select('id, nome, email')
           .eq('id', lead_id)
           .maybeSingle();
 
@@ -1889,96 +1907,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           });
         }
 
-        // Idempotência: já estava em opt-out → no-op
-        if (lead.opt_out === true) {
-          return res.status(200).json({
-            success: true,
-            lead_id: lead.id,
-            email: lead.email,
-            ja_estava_optout: true,
-            total_cancelados: 0,
-            mensagem: 'Lead já estava em opt-out.',
-          });
-        }
+        // 🆕 v1.12 — Delegação ao helper compartilhado.
+        const resultado = await aplicarOptOut({
+          supabase,
+          lead_id: lead.id,
+          email: emailNorm,
+          origem: 'manual',
+          motivo: motivo?.trim() || null,
+          criado_por,
+          campanha_origem_id: null, // opt-out manual não é vinculado a campanha
+        });
 
-        const motivoFinal = motivo?.trim() || 'opt_out_manual';
-        const agoraIso = new Date().toISOString();
-
-        // PASSO 1: UPDATE email_leads (opt_out=true)
-        const { error: errUpdLead } = await supabase
-          .from('email_leads')
-          .update({
-            opt_out: true,
-            opt_out_em: agoraIso,
-            atualizado_em: agoraIso,
-          })
-          .eq('id', lead.id);
-
-        if (errUpdLead) {
+        if (!resultado.ok) {
           return res.status(500).json({
             success: false,
-            error: `Falha ao marcar opt_out no lead: ${errUpdLead.message}`,
+            error: resultado.error || 'Falha ao aplicar opt-out',
           });
         }
 
-        // PASSO 2: UPSERT email_optout (idempotente — onConflict: 'email')
-        await supabase.from('email_optout').upsert(
-          {
-            email: emailNorm,
-            motivo: motivoFinal,
-            campanha_origem_id: null,
-            criado_em: agoraIso,
-          },
-          { onConflict: 'email', ignoreDuplicates: true },
-        );
-
-        // PASSO 3: UPDATE email_fila — cancela TODAS as pendentes desse email
-        //   em qualquer campanha (decisão P2 cascading global).
-        const { data: cancelados, error: errCancel } = await supabase
-          .from('email_fila')
-          .update({
-            status: 'cancelado',
-            motivo_cancelamento: 'opt_out_manual',
-          })
-          .eq('destinatario_email', emailNorm)
-          .eq('status', 'pendente')
-          .select('id');
-
-        const totalCancelados = cancelados?.length || 0;
-        if (errCancel) {
-          console.warn(
-            `[crm-leads/desabilitar_lead] ⚠️ Falha ao cancelar fila pendente de ${emailNorm}:`,
-            errCancel.message,
-          );
+        // Resposta retrocompatível com o frontend (LeadFormModal v1.2 / useLeads v1.1):
+        //   - `motivo` sempre presente (motivo customizado ou 'opt_out_manual')
+        //   - `mensagem` opcional quando ja_estava_optout=true
+        const responsePayload: any = {
+          success: true,
+          lead_id: resultado.lead_id,
+          email: lead.email,
+          ja_estava_optout: resultado.ja_estava_optout,
+          total_cancelados: resultado.total_cancelados,
+          motivo: motivo?.trim() || 'opt_out_manual',
+        };
+        if (resultado.ja_estava_optout) {
+          responsePayload.mensagem = 'Lead já estava em opt-out.';
         }
 
-        // PASSO 4: INSERT email_lead_historico (auditoria LGPD)
-        await supabase.from('email_lead_historico').insert({
-          lead_id: lead.id,
-          tipo: 'opt_out_manual',
-          descricao:
-            `Opt-out manual aplicado por ${criado_por}. Motivo: ${motivoFinal}. ` +
-            `${totalCancelados} envio(s) pendente(s) cancelado(s).`,
-          dados: {
-            motivo: motivoFinal,
-            total_cancelados: totalCancelados,
-            email: emailNorm,
-          },
-          criado_por,
-        });
-
-        console.log(
-          `✅ [crm-leads/desabilitar_lead] Lead ${lead.id} (${emailNorm}) desabilitado por ${criado_por}. ${totalCancelados} pendente(s) cancelado(s).`,
-        );
-
-        return res.status(200).json({
-          success: true,
-          lead_id: lead.id,
-          email: lead.email,
-          ja_estava_optout: false,
-          total_cancelados: totalCancelados,
-          motivo: motivoFinal,
-        });
+        return res.status(200).json(responsePayload);
       }
 
       return res.status(400).json({ success: false, error: `Ação POST desconhecida: ${action}` });
