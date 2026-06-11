@@ -3,6 +3,10 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.13.1 — 11/06/2026 — HOTFIX ESM: adicionada extensão `.js` no import
+ *   `'./_helpers/aplicar-opt-out'` → `'./_helpers/aplicar-opt-out.js'`.
+ *   Mesmo problema de ESM strict do crm-leads.ts v1.12.1.
+ *
  * v1.13 — 11/06/2026 — REFACTOR Bloco 1 do plano OPT-OUT 100%.
  *   Os blocos B (complained → opt_out) e C (cancelamento global da fila)
  *   foram refatorados para delegar ao helper compartilhado
@@ -386,7 +390,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 // 🆕 v1.13 — Helper compartilhado de opt-out (Bloco 1 OPT-OUT 100%)
-import { aplicarOptOut } from './_helpers/aplicar-opt-out';
+// 🔧 v1.13.1 — Extensão .js obrigatória no path (Node.js ESM strict — Vercel runtime)
+import { aplicarOptOut } from './_helpers/aplicar-opt-out.js';
 // 🆕 v1.3 (04/06/2026 — Plano B): SDK Resend REMOVIDO deste arquivo. A
 // função `encaminharRespostaAoGestor()` chama a API REST do Resend via
 // `fetch` direto. Razão: o SDK descarta `replyTo`/`reply_to`/header `Reply-To`

@@ -2,6 +2,13 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.12.1 (11/06/2026 — HOTFIX ESM): adicionada extensão `.js` no
+ *    import relativo `'./_helpers/aplicar-opt-out'` → `'./_helpers/aplicar-opt-out.js'`.
+ *    Node.js em ESM strict mode (runtime Vercel) exige extensão explícita.
+ *    Sem ela, o módulo crasha com ERR_MODULE_NOT_FOUND e TODAS as actions
+ *    do endpoint param de funcionar — incluindo `listar_responsaveis_lead`
+ *    que alimenta o select "Reservado para" do LeadFormModal.
+ *
  *  - v1.12 (11/06/2026 — Bloco 1 do plano OPT-OUT 100%): REFACTOR cirúrgico
  *    da action POST `desabilitar_lead`. Os 4 passos da cascata foram
  *    extraídos para o helper compartilhado `api/_helpers/aplicar-opt-out.ts`.
@@ -235,7 +242,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 // 🆕 v1.12 — Helper compartilhado de opt-out (Bloco 1 OPT-OUT 100%)
-import { aplicarOptOut } from './_helpers/aplicar-opt-out';
+// 🔧 v1.12.1 — Extensão .js obrigatória no path (Node.js ESM strict — Vercel runtime)
+import { aplicarOptOut } from './_helpers/aplicar-opt-out.js';
 
 export const config = { maxDuration: 30 };
 

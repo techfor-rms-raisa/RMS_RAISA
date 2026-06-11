@@ -2,7 +2,13 @@
  * api/unsubscribe.ts — Endpoint público de descadastramento
  *
  * Caminho: api/unsubscribe.ts
- * Versão: 1.0 (Bloco 2 do plano OPT-OUT 100% — 11/06/2026)
+ * Versão: 1.0.1 (HOTFIX ESM — 11/06/2026)
+ *
+ * v1.0.1 (11/06/2026 — HOTFIX ESM): adicionada extensão `.js` nos imports
+ *   `'./_helpers/unsubscribe-token'` e `'./_helpers/aplicar-opt-out'`.
+ *   Node.js em ESM strict mode (runtime Vercel) exige extensão explícita.
+ *
+ * v1.0 (Bloco 2 do plano OPT-OUT 100% — 11/06/2026)
  *
  * URL pública (Production):  https://unsubscribe.techfortirms.online/api/unsubscribe
  * URL pública (Preview):     https://<deploy-preview-url>.vercel.app/api/unsubscribe
@@ -86,8 +92,9 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { validarTokenUnsubscribe } from './_helpers/unsubscribe-token';
-import { aplicarOptOut, type OrigemOptOut } from './_helpers/aplicar-opt-out';
+// 🔧 v1.0.1 — Extensão .js obrigatória nos paths (Node.js ESM strict — Vercel runtime)
+import { validarTokenUnsubscribe } from './_helpers/unsubscribe-token.js';
+import { aplicarOptOut, type OrigemOptOut } from './_helpers/aplicar-opt-out.js';
 
 export const config = { maxDuration: 15 };
 

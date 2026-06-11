@@ -4,6 +4,10 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.12.1 (11/06/2026 — HOTFIX ESM): adicionada extensão `.js` no import
+ *    `'../_helpers/unsubscribe-token'` → `'../_helpers/unsubscribe-token.js'`.
+ *    Mesmo problema de ESM strict que crm-leads e crm-webhook.
+ *
  *  - v1.12 (11/06/2026 — Bloco 3 do plano OPT-OUT 100%):
  *      Adicionado suporte aos dois caminhos automáticos de opt-out:
  *
@@ -255,7 +259,8 @@ import { createClient } from '@supabase/supabase-js';
 //   Usado para: (a) montar a URL pública no header SMTP `List-Unsubscribe`
 //   (RFC 8058 one-click) e (b) injetar como href na palavra "SAIR" do
 //   rodapé HTML da renderAssinatura.
-import { montarUrlUnsubscribe } from '../_helpers/unsubscribe-token';
+// 🔧 v1.12.1 — Extensão .js obrigatória no path (Node.js ESM strict — Vercel runtime)
+import { montarUrlUnsubscribe } from '../_helpers/unsubscribe-token.js';
 // 🆕 v1.6 (04/06/2026 — Plano B): SDK Resend REMOVIDO. Após v1.3.1 → v1.4 →
 // v1.5 falharem (SDK descarta `replyTo`/`reply_to`/header `Reply-To` no campo
 // `headers`), partimos para chamada `fetch` direta à API REST do Resend, onde
