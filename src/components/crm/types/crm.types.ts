@@ -218,6 +218,15 @@ export interface Campanha {
   //   null = sem encerramento previsto (comportamento default).
   data_encerramento?: string | null;
 
+  // 🆕 Prioridade 1 (11/06/2026): BCC nas respostas da campanha.
+  //   Lista de até 3 endereços que recebem cópia quando o LEAD RESPONDE
+  //   (forward disparado por crm-webhook → encaminharRespostaAoGestor).
+  //   NÃO é cópia no envio inicial — apenas no forward de respostas.
+  //   Validação backend (crm-campanhas.ts v1.15): max 3 emails, formato
+  //   válido, sem duplicar com email_remetente nem entre si.
+  //   [] ou null = sem BCC (forward vai apenas para o responsável).
+  bcc_emails?: string[] | null;
+
   // ── Novos campos (Fase 3) — opcionais até a migração ──
   tipo_campanha_id?: number | null;
   delay_minimo_dias?: DelayDias;

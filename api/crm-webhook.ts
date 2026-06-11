@@ -3,6 +3,34 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.13.2 — 11/06/2026 — Prioridade 1: BCC nas respostas da campanha.
+ *   Quando o lead RESPONDE a uma campanha (ramo `email.received`), o
+ *   forward montado por `encaminharRespostaAoGestor` passa a incluir
+ *   até 3 endereços em cópia (campo `bcc` do Resend), lidos da coluna
+ *   nova `email_campanhas.bcc_emails`.
+ *
+ *   NÃO afeta o envio inicial dos steps (disparar-fila.ts intocado).
+ *   Apenas o ramo `received` propaga a cópia.
+ *
+ *   Mudanças cirúrgicas:
+ *     • SELECT da campanha no `processarEmailRecebido` passa a buscar
+ *       também `bcc_emails` (era `id, nome, responsavel_id`).
+ *     • Assinatura de `encaminharRespostaAoGestor` ganha
+ *       `bccEmails?: string[]` (opcional, default não enviar).
+ *     • Sanitização defensiva interna: filtra strings vazias / formato
+ *       inválido / duplicação com responsável ou com o próprio lead /
+ *       limita a 3. Garante que valores espúrios na coluna não vazem
+ *       no payload do Resend.
+ *     • Body do fetch só inclui `bcc` se a lista limpa tiver pelo menos
+ *       1 item (não envia chave bcc vazia).
+ *     • Log de auditoria do forward agora mostra a lista BCC efetivamente
+ *       enviada (ou `[]`).
+ *
+ *   Dependências:
+ *     • SQL: `2026-06-11_email_campanhas_bcc_emails.sql` aplicado.
+ *     • Backend: `api/crm-campanhas.ts` v1.15 (validação na criação/edição).
+ *     • Frontend: `StepInfo.tsx` v1.4 + `crm.types.ts` (interface Campanha).
+ *
  * v1.13.1 — 11/06/2026 — HOTFIX ESM: adicionada extensão `.js` no import
  *   `'./_helpers/aplicar-opt-out'` → `'./_helpers/aplicar-opt-out.js'`.
  *   Mesmo problema de ESM strict do crm-leads.ts v1.12.1.
@@ -664,6 +692,7 @@ async function encaminharRespostaAoGestor(opts: {
   assunto: string | null;
   corpoTexto: string | null;
   corpoHtml: string | null;          // 🆕 v1.2 — HTML completo do lead
+  bccEmails?: string[];              // 🆕 v1.13.2 (Prioridade 1 — 11/06/2026) — até 3 endereços em cópia
 }): Promise<void> {
   if (!opts.responsavelId) {
     console.log('[crm-webhook] ⚠️ Campanha sem responsavel_id — encaminhamento não enviado');
@@ -781,8 +810,35 @@ para ${opts.leadEmail} a partir da sua caixa institucional.`;
     // o `From` (`notificacoes@techfortirms.online`) em vez de ir direto para
     // o lead (`opts.leadEmail`), quebrando o fluxo proposto.
     // Solução: chamada direta à REST API com `reply_to` em snake_case.
+    //
+    // 🆕 v1.13.2 (Prioridade 1 — 11/06/2026) — sanitização defensiva do BCC.
+    //    O backend de `crm-campanhas` já valida (helper validarBccEmails),
+    //    mas re-aplicamos aqui as garantias mínimas porque a fonte da lista
+    //    é uma coluna do banco (pode ter sido populada por scripts ad-hoc):
+    //      • filtra valores não-string / vazios
+    //      • normaliza para lowercase
+    //      • remove o próprio responsável (evita duplicar — ele já está em `to`)
+    //      • remove o próprio lead (defesa contra erro humano no cadastro)
+    //      • limita a 3 itens (espelho da CHECK constraint do banco)
+    //    O resultado SÓ é incluído no body do Resend se houver pelo menos 1
+    //    item válido restante, evitando enviar `bcc: []` (Resend aceita, mas
+    //    economiza payload).
+    const responsavelEmailLower = (usr.email_usuario || '').trim().toLowerCase();
+    const leadEmailLower = (opts.leadEmail || '').trim().toLowerCase();
+    const bccLimpo: string[] = Array.isArray(opts.bccEmails)
+      ? opts.bccEmails
+          .filter((e): e is string => typeof e === 'string')
+          .map((e) => e.trim().toLowerCase())
+          .filter((e) => e.length > 0)
+          .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
+          .filter((e) => e !== responsavelEmailLower)
+          .filter((e) => e !== leadEmailLower)
+          .slice(0, 3)
+      : [];
+    const bccDedupe = Array.from(new Set(bccLimpo));
+
     console.log(
-      `[crm-webhook] 📤 forward fila_lead=${opts.leadId} to="${usr.email_usuario}" reply_to="${opts.leadEmail}"`
+      `[crm-webhook] 📤 forward fila_lead=${opts.leadId} to="${usr.email_usuario}" reply_to="${opts.leadEmail}" bcc=${bccDedupe.length > 0 ? JSON.stringify(bccDedupe) : '[]'}`
     );
 
     const respFetch = await fetch('https://api.resend.com/emails', {
@@ -794,6 +850,9 @@ para ${opts.leadEmail} a partir da sua caixa institucional.`;
       body: JSON.stringify({
         from: fromFormatado,
         to: [usr.email_usuario],
+        // 🆕 v1.13.2 (Prioridade 1 — 11/06/2026): incluir BCC somente se
+        // houver pelo menos 1 endereço válido (não envia chave bcc vazia).
+        ...(bccDedupe.length > 0 && { bcc: bccDedupe }),
         // 🔧 v1.11 (08/06/2026) — BUG FIX CRÍTICO: reply_to deve ser array.
         //   Mesmo bug identificado em disparar-fila.ts v1.10. A doc oficial
         //   do Resend define `reply_to` como `string[]`. Quando passado como
@@ -1480,9 +1539,12 @@ async function processarEmailRecebido(opts: {
   }
 
   // 3. Buscar dados da campanha para o alerta
+  //    🆕 v1.13.2 (Prioridade 1 — 11/06/2026): trazer também `bcc_emails`
+  //    (array de até 3 endereços) — usado pelo forward para incluir cópia
+  //    aos destinatários extras configurados na campanha.
   const { data: campanha } = await supabase
     .from('email_campanhas')
-    .select('id, nome, responsavel_id')
+    .select('id, nome, responsavel_id, bcc_emails')
     .eq('id', fila.campanha_id)
     .maybeSingle();
 
@@ -1698,6 +1760,7 @@ async function processarEmailRecebido(opts: {
         assunto,
         corpoTexto,
         corpoHtml, // 🆕 v1.2 — HTML completo preservado
+        bccEmails: campanha?.bcc_emails || [], // 🆕 v1.13.2 (Prioridade 1 — 11/06/2026)
       });
     }
   }
