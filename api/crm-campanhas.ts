@@ -2,6 +2,81 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.14 (10/06/2026 — Auto-bounce + Opt-out cascading): suporte às
+ *    decisões consolidadas no CHECKPOINT_2026-06-10.md (Prioridades 1 e 2).
+ *    Três pontos de filtro de leads com estados terminais (`bounced=true`
+ *    OU `opt_out=true`) — defesa em profundidade no enfileiramento:
+ *
+ *      • GET `leads_disponiveis` (Wizard "Editar Campanha → Leads"):
+ *        adicionado filtro `bounced != true` (combina com `apto_campanha`,
+ *        `opt_out`, `funil_status!=perdido`).
+ *
+ *      • POST `mudar_status` → ativação: o filtro de leads ativos do
+ *        enfileiramento em lote agora inclui `bounced` no SELECT e ignora
+ *        leads bounced (incrementa counter `bounced_ignorados`). Combina
+ *        com filtros legados de inaptos e opt-out.
+ *
+ *      • POST `vincular_leads` (Wizard add-leads pós-criação): adicionado
+ *        filtro `bounced != true` na validação prévia. Atenua parcialmente
+ *        o bug histórico 🟡 do CHECKPOINT_2026-06-10 (essa action não
+ *        enfileira em campanhas já ativas — refatoração via helper
+ *        permanece em backlog).
+ *
+ *    Justificativa P1.2: lead com hard bounce permanente em qualquer
+ *    campanha não pode ser enfileirado em nenhuma outra campanha enquanto
+ *    o `bounced` não for resetado (o reset é automático via crm-leads.ts
+ *    v1.11 quando o analista corrige o email do lead).
+ *
+ *    Dependência SQL: `2026-06-10_email_leads_bounce_handling.sql` aplicado.
+ *
+ *  - v1.13 (10/06/2026 — CRECI condicional): refinamento da regra CRECI
+ *    em `listar_campanhas_para_vinculo_em_lote`. Versão anterior (v1.12)
+ *    rejeitava qualquer requisição com `vertical='CRECI'` por entender que
+ *    CRECI nunca poderia ser destino. Isso INVIABILIZAVA o caso legítimo:
+ *    "vincular um lead CRECI a outra campanha CRECI" (mesma vertical, sem
+ *    alteração — bem dentro da regra de "não muda vertical"). A regra
+ *    PERMANENTE continua: CRECI ↔ outra vertical permanece BLOQUEADO; mas
+ *    CRECI → CRECI passa a ser PERMITIDO. Agora `vertical=CRECI` é aceito
+ *    e retorna campanhas CRECI elegíveis normalmente. A garantia de não-
+ *    mudança fica em `crm-leads.ts > vincular_em_lote_a_campanha` (v1.10),
+ *    que não dispara UPDATE em email_leads.vertical quando destino=CRECI
+ *    (já são CRECI; nada a alterar).
+ *
+ *  - v1.12 (10/06/2026 — Vinculação em Lote): adiciona action GET
+ *    `listar_campanhas_para_vinculo_em_lote`. Lista campanhas elegíveis
+ *    para receber leads via a nova aba "Vincular em Lote" do form
+ *    Empresas & Leads (BaseLeadsPage.tsx v1.5). Diferente da action
+ *    `listar_campanhas_disponiveis_para_lead` (Fase A), esta NÃO
+ *    depende de um lead específico — filtra por uma vertical de destino
+ *    informada pelo usuário no fluxo em lote.
+ *    Critérios:
+ *      • status IN ('ativa', 'pausada', 'agendada')
+ *      • tipo (vertical) = vertical de destino informada
+ *      • responsavel_id = currentUser.id (RBAC; admin vê todas)
+ *      • data_encerramento IS NULL OR >= CURRENT_DATE
+ *
+ *  - v1.11 (09/06/2026 — Fase A): adiciona action GET
+ *    `listar_campanhas_disponiveis_para_lead`. Recebe `lead_id` ou
+ *    `prospect_id` (pelo menos um obrigatório) + `criado_por` (RBAC).
+ *    Retorna campanhas elegíveis para receber esse lead nos critérios:
+ *      • status IN ('ativa', 'pausada', 'agendada')
+ *      • tipo (vertical) = vertical do lead/prospect
+ *      • responsavel_id = reservado_por do lead/prospect (Fase B trava)
+ *      • data_encerramento >= CURRENT_DATE OR NULL (Fase B - v1.10)
+ *      • exclui campanhas onde o lead já está em status
+ *        ativa/pausada/agendada (decisão de produto 09/06/2026 —
+ *        bloqueia duplicação simultânea para evitar spam ao mesmo
+ *        contato em múltiplas campanhas concorrentes)
+ *    Pré-requisito (defesa em profundidade): lead promovido deve ter
+ *    `reservado_por` populado. Bug histórico em promover_para_campanha
+ *    (crm-leads.ts) que omitia o campo foi corrigido na v1.8 (09/06/2026),
+ *    herdando do prospect_leads.reservado_por. Sem essa correção, todos
+ *    os leads promovidos via Prospect Engine seriam INELEGÍVEIS para
+ *    qualquer campanha (a Fase B exige reservado_por === responsavel_id).
+ *    Quando array vazio retorna campo `motivo` explicativo para a UX.
+ *    Usado pelo SelecionarCampanhaModal.tsx (modal aberto ao clicar no
+ *    botão "Campanhas" da aba Meus Leads Salvos em ProspectSearchPage).
+ *
  *  - v1.10 (08/06/2026 — Fase B): aceita `data_encerramento` (DATE) em
  *    criar_campanha e atualizar_campanha. Campo declarativo de data
  *    planejada de fim. Quando atingida, o cron (disparar-fila.ts v1.11)
@@ -400,11 +475,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 🔧 31/05/2026 (Fase 4C-fix): coluna real é funil_status (não funil);
         // filtro principal apto_campanha=true (migração 2026-05-28); opt_out via boolean.
         // Leads disponíveis = aptos a campanha, não opt-out, funil_status != 'perdido'.
+        // 🆕 v1.14 (10/06/2026) — Adicionado filtro `bounced != true` (decisão
+        //   P1.2 do CHECKPOINT_2026-06-10.md). Defesa em profundidade — leads
+        //   com hard bounce permanente não aparecem em listagens de elegíveis.
         let query = supabase
           .from('email_leads')
           .select(`id, nome, email, cargo, funil:funil_status, email_empresas(nome)`)
           .eq('apto_campanha', true)
           .or('opt_out.is.null,opt_out.eq.false')
+          .or('bounced.is.null,bounced.eq.false')
           .not('funil_status', 'eq', 'perdido')
           .order('nome', { ascending: true })
           .limit(parseInt(limit));
@@ -434,6 +513,149 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const filtered = (data || []).filter((l: any) => !emailsOptout.includes(l.email));
 
         return res.status(200).json({ success: true, leads: filtered });
+      }
+
+      // ── 🆕 v1.11 (Fase A — 09/06/2026) — Campanhas elegíveis para um lead/prospect ──
+      // Lista campanhas onde um lead/prospect ESPECÍFICO pode entrar agora.
+      //
+      // Aceita `lead_id` (email_lead já promovido) OU `prospect_id` (prospect_lead
+      // ainda não promovido) — pelo menos um é obrigatório. `criado_por` é o
+      // email do usuário atual (RBAC futuro; hoje apenas exigência consistente
+      // com `listar_responsaveis_elegiveis`).
+      //
+      // Critérios de elegibilidade (interseção de todos):
+      //  • Campanha em status IN ('ativa','pausada','agendada')
+      //  • Campanha.tipo == lead.vertical (Fase B trava por vertical)
+      //  • Campanha.responsavel_id == lead.reservado_por (Fase B trava por dono)
+      //  • Campanha.data_encerramento IS NULL OR >= CURRENT_DATE (Fase B v1.10)
+      //  • Lead NÃO está vinculado a campanha em status ativa/pausada/agendada
+      //    (decisão de produto 09/06/2026 — bloqueia duplicação simultânea).
+      //
+      // Quando o lead já está em email_leads (lead_id informado ou prospect já
+      // promovido com mesmo email), checa duplicação em email_lead_campanhas.
+      // Quando ainda é só prospect (lead_id == null e nenhum email_lead com
+      // o mesmo email), pula a checagem de duplicação — não há vínculos ainda.
+      //
+      // Retorna SEMPRE `success: true`. Quando lista está vazia, `motivo`
+      // explica a razão para a UX poder informar o usuário.
+      if (action === 'listar_campanhas_disponiveis_para_lead') {
+        const leadIdQ = req.query.lead_id as string | undefined;
+        const prospectIdQ = req.query.prospect_id as string | undefined;
+        const criadoPor = (req.query.criado_por as string) || '';
+
+        if (!leadIdQ && !prospectIdQ) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id ou prospect_id obrigatório (pelo menos um)',
+          });
+        }
+        if (!criadoPor) {
+          return res.status(400).json({ success: false, error: 'criado_por obrigatório' });
+        }
+
+        // Resolver dados-chave: vertical, reservado_por, email
+        let vertical: string | null = null;
+        let reservadoPor: number | null = null;
+        let emailNorm: string | null = null;
+
+        if (leadIdQ) {
+          const { data: lead, error: e } = await supabase
+            .from('email_leads')
+            .select('id, email, vertical, reservado_por')
+            .eq('id', leadIdQ)
+            .maybeSingle();
+          if (e) return res.status(500).json({ success: false, error: e.message });
+          if (!lead) return res.status(404).json({ success: false, error: 'Lead não encontrado' });
+          vertical = lead.vertical;
+          reservadoPor = lead.reservado_por;
+          emailNorm = (lead.email || '').toLowerCase().trim() || null;
+        } else if (prospectIdQ) {
+          const { data: prospect, error: e } = await supabase
+            .from('prospect_leads')
+            .select('id, email, vertical, reservado_por')
+            .eq('id', prospectIdQ)
+            .maybeSingle();
+          if (e) return res.status(500).json({ success: false, error: e.message });
+          if (!prospect) return res.status(404).json({ success: false, error: 'Prospect não encontrado' });
+          vertical = prospect.vertical;
+          reservadoPor = prospect.reservado_por;
+          emailNorm = (prospect.email || '').toLowerCase().trim() || null;
+        }
+
+        // Validações de pré-requisitos do lead — devolvem motivo para a UX
+        if (!vertical || !String(vertical).trim()) {
+          return res.status(200).json({
+            success: true,
+            campanhas: [],
+            motivo: 'Lead sem Vertical de Negócios definida — atribua uma vertical antes de vincular a campanhas.',
+          });
+        }
+        if (!reservadoPor) {
+          return res.status(200).json({
+            success: true,
+            campanhas: [],
+            motivo: 'Lead sem responsável definido (reservado_por). Atribua o lead a um GC/SDR.',
+          });
+        }
+
+        // Resolver lead_id real (mesmo se veio prospect_id). Pode existir em
+        // email_leads se um prospect com mesmo email já foi promovido antes.
+        let leadIdReal: number | null = leadIdQ ? Number(leadIdQ) : null;
+        if (!leadIdReal && emailNorm) {
+          const { data: leadExistente } = await supabase
+            .from('email_leads')
+            .select('id')
+            .eq('email', emailNorm)
+            .maybeSingle();
+          if (leadExistente?.id) leadIdReal = leadExistente.id;
+        }
+
+        // Campanhas já vinculadas ao lead (status atual da CAMPANHA é o que
+        // bloqueia, não o status do vínculo). Vínculo cancelado de campanha
+        // concluída/excluída NÃO bloqueia novo vínculo em outra campanha.
+        let campanhasBloqueadas: number[] = [];
+        if (leadIdReal) {
+          const { data: vinculos } = await supabase
+            .from('email_lead_campanhas')
+            .select('campanha_id, email_campanhas!inner(status)')
+            .eq('lead_id', leadIdReal);
+          campanhasBloqueadas = (vinculos || [])
+            .filter((v: any) => ['ativa', 'pausada', 'agendada'].includes(v.email_campanhas?.status))
+            .map((v: any) => v.campanha_id);
+        }
+
+        // Buscar campanhas elegíveis
+        const hoje = new Date().toISOString().slice(0, 10);
+        let query = supabase
+          .from('email_campanhas')
+          .select('id, nome, status, tipo, unidade, inicio_envio, data_encerramento, total_destinatarios, criado_em')
+          .in('status', ['ativa', 'pausada', 'agendada'])
+          .eq('tipo', vertical)
+          .eq('responsavel_id', reservadoPor)
+          .or(`data_encerramento.is.null,data_encerramento.gte.${hoje}`)
+          .order('criado_em', { ascending: false });
+
+        if (campanhasBloqueadas.length > 0) {
+          query = query.not('id', 'in', `(${campanhasBloqueadas.join(',')})`);
+        }
+
+        const { data: campanhas, error: eC } = await query;
+        if (eC) return res.status(500).json({ success: false, error: eC.message });
+
+        const lista = campanhas || [];
+
+        // Sem campanhas → devolver motivo explicativo para a UX
+        if (lista.length === 0) {
+          let motivo: string;
+          if (campanhasBloqueadas.length > 0) {
+            motivo = `Lead já vinculado a ${campanhasBloqueadas.length} campanha(s). Aguarde a conclusão ou desvincule antes de adicionar a outra.`;
+          } else {
+            motivo = `Nenhuma campanha elegível para a vertical "${vertical}" com você como responsável.`;
+          }
+          return res.status(200).json({ success: true, campanhas: [], motivo });
+        }
+
+        return res.status(200).json({ success: true, campanhas: lista });
       }
 
       // ── Assinatura do usuário logado ────────────────────────
@@ -702,6 +924,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ── Listar tipos de campanha existentes (para dropdown) ─
+      // ─────────────────────────────────────────────────────────
+      // 🆕 v1.12 (10/06/2026 — Vinculação em Lote) — Lista campanhas
+      // elegíveis para receber leads via aba "Vincular em Lote".
+      // 🔄 v1.13 (10/06/2026 — CRECI condicional) — CRECI agora é
+      // aceito como vertical de destino. A regra permanente "CRECI
+      // não muda de vertical" continua válida; mas vincular lead CRECI
+      // a outra campanha CRECI (mesma vertical, sem alteração) é uma
+      // operação legítima e necessária para o pessoal do CRECI.
+      // Diferente da action listar_campanhas_disponiveis_para_lead (Fase A),
+      // esta NÃO depende de um lead específico — filtra apenas pela vertical
+      // de destino informada no fluxo em lote.
+      // ─────────────────────────────────────────────────────────
+      if (action === 'listar_campanhas_para_vinculo_em_lote') {
+        const verticalQ = (req.query.vertical as string) || '';
+        const criadoPor = (req.query.criado_por as string) || '';
+        const responsavelIdQ = req.query.responsavel_id as string | undefined;
+
+        if (!verticalQ.trim()) {
+          return res.status(400).json({ success: false, error: 'vertical (de destino) obrigatória' });
+        }
+        if (!criadoPor) {
+          return res.status(400).json({ success: false, error: 'criado_por obrigatório' });
+        }
+
+        // 🔄 v1.13 — CRECI passa a ser aceito como vertical de destino.
+        // A garantia de "CRECI não muda de vertical" é aplicada por lead em
+        // crm-leads.ts > vincular_em_lote_a_campanha (v1.10). Aqui apenas
+        // listamos as campanhas CRECI elegíveis para o pessoal CRECI usar
+        // o fluxo de vinculação em lote (que antes ficava bloqueado).
+
+        const hoje = new Date().toISOString().slice(0, 10);
+        let query = supabase
+          .from('email_campanhas')
+          .select('id, nome, status, tipo, unidade, inicio_envio, data_encerramento, total_destinatarios, criado_em, responsavel_id')
+          .in('status', ['ativa', 'pausada', 'agendada'])
+          .eq('tipo', verticalQ)
+          .or(`data_encerramento.is.null,data_encerramento.gte.${hoje}`)
+          .order('criado_em', { ascending: false });
+
+        // RBAC — quando responsavel_id é informado, filtra (não-admin)
+        // Quando ausente, lista todas (admin)
+        if (responsavelIdQ) {
+          query = query.eq('responsavel_id', parseInt(responsavelIdQ));
+        }
+
+        const { data, error } = await query;
+        if (error) return res.status(500).json({ success: false, error: error.message });
+
+        return res.status(200).json({ success: true, campanhas: data || [] });
+      }
+
       if (action === 'listar_tipos') {
         const { data, error } = await supabase
           .from('email_campanhas')
@@ -910,15 +1183,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const emailsOptout = new Set((optouts || []).map((o: any) => o.email));
 
         // Buscar leads com dados para validação
+        // 🆕 v1.14 — SELECT inclui `bounced` e `opt_out` para filtro defensivo.
         const { data: leads } = await supabase
           .from('email_leads')
-          .select('id, email, reservado_por, vertical, apto_campanha')
+          .select('id, email, reservado_por, vertical, apto_campanha, bounced, opt_out')
           .in('id', lead_ids);
 
-        // Filtrar: não opt-out, apto, do responsável e da mesma vertical
+        // Filtrar: não opt-out, não bounced, apto, do responsável e da mesma vertical.
+        // 🆕 v1.14 — Adicionado `l.bounced !== true` e `l.opt_out !== true` (P1/P2).
         const leadsValidos = (leads || []).filter((l: any) =>
           !emailsOptout.has(l.email) &&
           l.apto_campanha === true &&
+          l.bounced !== true &&
+          l.opt_out !== true &&
           l.reservado_por === camp.responsavel_id &&
           l.vertical === camp.tipo
         );
@@ -926,7 +1203,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (leadsValidos.length === 0) {
           return res.status(400).json({
             success: false,
-            error: 'Nenhum lead elegível: precisa ser do responsável, da mesma vertical e apto a campanha (e não em opt-out)'
+            error: 'Nenhum lead elegível: precisa ser do responsável, da mesma vertical e apto a campanha (sem opt-out, sem hard bounce)'
           });
         }
 
@@ -1243,7 +1520,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         //
         // Idempotência: pausada→ativa NÃO re-enfileira (inicio_envio já existe).
         // Resume será tratado pelo cron (Fase 5B) — basta ler pendentes.
-        let enfileiramento: { enfileirados: number; opt_outs_ignorados: number; inaptos_ignorados: number } | null = null;
+        let enfileiramento: { enfileirados: number; opt_outs_ignorados: number; inaptos_ignorados: number; bounced_ignorados: number } | null = null;
         if (status === 'ativa' && !campanha.inicio_envio) {
           const agora = new Date();
 
@@ -1261,9 +1538,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
 
           // 2) Leads vinculados com dados completos
+          //   🆕 v1.14 — SELECT inclui `bounced` para filtro defensivo abaixo.
           const { data: vinculos, error: errVinc } = await supabase
             .from('email_lead_campanhas')
-            .select('lead_id, email_leads!inner(id, email, nome, apto_campanha)')
+            .select('lead_id, email_leads!inner(id, email, nome, apto_campanha, bounced, opt_out)')
             .eq('campanha_id', id)
             .eq('status', 'ativa');
 
@@ -1283,11 +1561,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           let inaptos = 0;
           let optOutFiltrados = 0;
+          let bouncedFiltrados = 0;
           const leadsValidos: any[] = [];
           for (const v of vinculos as any[]) {
             const lead = v.email_leads;
             if (!lead || !lead.email) { inaptos++; continue; }
             if (!lead.apto_campanha) { inaptos++; continue; }
+            // 🆕 v1.14 — Filtro adicional: lead com hard bounce permanente
+            //   (decisão P1.2) ou opt_out direto na coluna (defesa em camadas).
+            if (lead.bounced === true) { bouncedFiltrados++; continue; }
+            if (lead.opt_out === true) { optOutFiltrados++; continue; }
             if (setOptout.has(lead.email.toLowerCase().trim())) { optOutFiltrados++; continue; }
             leadsValidos.push(lead);
           }
@@ -1295,7 +1578,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (leadsValidos.length === 0) {
             return res.status(400).json({
               success: false,
-              error: `Todos os leads foram filtrados na ativação (inaptos: ${inaptos}, opt-out: ${optOutFiltrados}). Reveja a base.`,
+              error: `Todos os leads foram filtrados na ativação (inaptos: ${inaptos}, opt-out: ${optOutFiltrados}, bounced: ${bouncedFiltrados}). Reveja a base.`,
             });
           }
 
@@ -1354,6 +1637,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             enfileirados: totalInseridos,
             opt_outs_ignorados: optOutFiltrados,
             inaptos_ignorados: inaptos,
+            bounced_ignorados: bouncedFiltrados,
           };
           updateData.inicio_envio = agora.toISOString();
         }

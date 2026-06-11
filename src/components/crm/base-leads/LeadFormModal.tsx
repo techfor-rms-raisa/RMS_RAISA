@@ -2,7 +2,37 @@
  * LeadFormModal.tsx — Modal de criar/editar lead
  *
  * Caminho: src/components/crm/base-leads/LeadFormModal.tsx
- * Versão: 1.1 (Lead RBAC fix — 05/06/2026)
+ * Versão: 1.2.1 (HOTFIX JSX — 11/06/2026)
+ *
+ * v1.2.1 (11/06/2026 — HOTFIX JSX): adicionado `</div>` faltante para fechar
+ *   o overlay externo `<div className="fixed inset-0...">` do modal principal
+ *   (aberto na linha 182, antes não tinha fechamento). Sintoma do bug:
+ *   "Unexpected end of file before a closing fragment tag" no build do Vite
+ *   em Preview/Production. Causa: durante a v1.2 anterior, o wrapping em
+ *   React Fragment `<>...</>` foi adicionado para acomodar o modal de
+ *   confirmação ao lado do modal principal, mas a árvore JSX ficou
+ *   desbalanceada (27 `<div>` abertos vs. 26 `</div>` fechados).
+ *
+ * v1.2 (11/06/2026 — Opt-out manual / Bloco 4 do plano OPT-OUT 100%):
+ *   Adicionado botão vermelho "Opt-Out" no rodapé do modal de EDIÇÃO,
+ *   com modal de confirmação dupla obrigatório.
+ *   - Disparado por gestor/SDR quando o lead solicita descadastro por
+ *     canal informal (resposta em texto, ligação, contato direto).
+ *   - Visível apenas em modo='editar' E para tipos de usuário com
+ *     permissão (Administrador, Gestão Comercial, SDR — decisão Messias
+ *     11/06/2026; R&S e Consulta não acionam opt-out).
+ *   - Se o lead já está em opt-out, o botão é substituído por um
+ *     indicador cinza desabilitado "Em opt-out" (sem ação possível —
+ *     LGPD irreversível, conforme P2.1).
+ *   - O modal de confirmação dupla traz: aviso explícito de
+ *     irreversibilidade, lista do que acontece em cascata, e campo
+ *     opcional de motivo (texto livre — auditoria em
+ *     email_lead_historico).
+ *   - Ao confirmar, dispara a prop `onDesabilitar(motivo)` que o
+ *     container (BaseLeadsPage) implementa chamando o hook useLeads.
+ *   - Reaproveita a prop `loading` existente para desabilitar o botão
+ *     "Confirmar Opt-Out" durante a requisição. Botão Salvar também
+ *     fica desabilitado nesse intervalo (consistência).
  *
  * v1.1 (05/06/2026 — Lead RBAC fix): adicionados 3 campos no form
  *   para garantir que leads criados manualmente apareçam corretamente
@@ -18,7 +48,7 @@
  *   (linhas 799-859).
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import type {
   Empresa,
   Lead,
@@ -46,6 +76,14 @@ export interface LeadFormModalProps {
   onChange: (next: Partial<Lead>) => void;
   onSalvar: () => void;
   onFechar: () => void;
+  /**
+   * 🆕 v1.2 — Callback chamado quando o usuário confirma o opt-out
+   * manual no modal de confirmação dupla. Recebe o motivo digitado
+   * (ou null se o campo ficou vazio). O componente pai (BaseLeadsPage)
+   * implementa chamando `useLeads.desabilitar()`. Se omitido, o botão
+   * "Opt-Out" não é renderizado — preserva compat com chamadas legacy.
+   */
+  onDesabilitar?: (motivo: string | null) => Promise<void>;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -63,7 +101,11 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
   onChange,
   onSalvar,
   onFechar,
+  onDesabilitar,
 }) => {
+  // 🆕 v1.2 — States do fluxo de opt-out manual (modal de confirmação dupla)
+  const [modalConfirmOptOut, setModalConfirmOptOut] = useState(false);
+  const [motivoOptOut, setMotivoOptOut] = useState('');
   // ────────────────────────────────────────────────────────
   // 🆕 v1.1 — defaults na entrada do modal "criar"
   //   Garante que apto_campanha entre como true e reservado_por
@@ -111,9 +153,43 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
   // 🆕 v1.1 — Texto informativo do responsável travado (não-admin)
   const nomeResponsavelTravado = !isAdmin ? currentUser.nome_usuario : null;
 
+  // ────────────────────────────────────────────────────────
+  // 🆕 v1.2 — Visibilidade e estado do botão "Opt-Out"
+  // ────────────────────────────────────────────────────────
+  //
+  // Aparece apenas em modo='editar' (criar não tem lead persistido) e
+  // se o componente pai forneceu o callback (onDesabilitar).
+  //
+  // Permissão (decisão Messias 11/06/2026):
+  //   - Administrador, Gestão Comercial, SDR → podem acionar
+  //   - R&S, Gestão de Pessoas, Consulta, Cliente → não veem o botão
+  //
+  // Se o lead já está em opt-out (form.opt_out === true), o botão é
+  // substituído por um indicador cinza "Em opt-out" — LGPD irreversível
+  // (decisão P2.1 do CHECKPOINT_2026-06-10_P1_VALIDADA.md).
+  const tiposPermitidosOptOut = ['Administrador', 'Gestão Comercial', 'SDR'];
+  const podeMostrarOptOut =
+    modo === 'editar' &&
+    typeof onDesabilitar === 'function' &&
+    tiposPermitidosOptOut.includes(currentUser.tipo_usuario);
+  const jaEmOptOut = form.opt_out === true;
+
+  // Confirma e dispara o opt-out. Chamado a partir do modal de
+  // confirmação dupla. Após o callback resolver, fecha o modal e
+  // limpa o motivo. O fechamento do modal principal (LeadFormModal)
+  // é responsabilidade do BaseLeadsPage (após recarregar a lista).
+  const confirmarOptOut = async () => {
+    if (!onDesabilitar) return;
+    const motivoTrim = motivoOptOut.trim();
+    await onDesabilitar(motivoTrim || null);
+    setModalConfirmOptOut(false);
+    setMotivoOptOut('');
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+    <>
+      <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b">
           <h2 className="text-lg font-bold text-gray-800">
@@ -296,23 +372,142 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 px-6 py-4 border-t bg-gray-50">
-          <button
-            onClick={onFechar}
-            className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={onSalvar}
-            disabled={!podeSalvar}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
-          >
-            {loading ? 'Salvando...' : 'Salvar'}
-          </button>
+        {/* 🆕 v1.2 — Footer dividido:                                  */}
+        {/*   • Esquerda: botão "Opt-Out" (só em editar + permissão)    */}
+        {/*   • Direita:  Cancelar + Salvar                             */}
+        <div className="flex items-center px-6 py-4 border-t bg-gray-50">
+          {/* ── Lado esquerdo: opt-out ──────────────────────── */}
+          {podeMostrarOptOut && (
+            jaEmOptOut ? (
+              <div
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-500 rounded-lg text-sm cursor-not-allowed select-none"
+                title="Este lead já está na lista de opt-out (LGPD — irreversível)"
+              >
+                <i className="fa-solid fa-ban"></i>
+                <span>Em opt-out</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setModalConfirmOptOut(true)}
+                disabled={loading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors"
+                title="Marcar este lead como opt-out e cancelar envios pendentes em todas as campanhas"
+              >
+                <i className="fa-solid fa-ban"></i>
+                <span>Opt-Out</span>
+              </button>
+            )
+          )}
+
+          {/* ── Lado direito: cancelar + salvar ──────────────── */}
+          <div className="flex justify-end gap-2 ml-auto">
+            <button
+              onClick={onFechar}
+              className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg"
+            >
+              Cancelar
+            </button>
+            <button
+              onClick={onSalvar}
+              disabled={!podeSalvar}
+              className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {loading ? 'Salvando...' : 'Salvar'}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* ════════════════════════════════════════════════════════════ */}
+      {/* 🆕 v1.2 — MODAL: CONFIRMAÇÃO DUPLA DE OPT-OUT                 */}
+      {/* ════════════════════════════════════════════════════════════ */}
+      {/* Aviso explícito de irreversibilidade (LGPD) + lista do que    */}
+      {/* acontece em cascata + campo opcional de motivo. Padrão visual */}
+      {/* alinhado ao modal "Alterar Funil" do LeadDetailDrawer.        */}
+      {modalConfirmOptOut && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+            <div className="px-6 py-4 border-b bg-red-50">
+              <h2 className="text-lg font-bold text-red-800 flex items-center gap-2">
+                <i className="fa-solid fa-triangle-exclamation"></i>
+                Confirmar Opt-Out
+              </h2>
+              <p className="text-sm text-red-700 mt-1">
+                {form.nome} — {form.email}
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                <p className="text-sm text-red-800 font-semibold mb-2">
+                  ⚠️ Esta ação é IRREVERSÍVEL (LGPD)
+                </p>
+                <p className="text-xs text-red-700 mb-2">
+                  Ao confirmar, o sistema executará em cascata:
+                </p>
+                <ul className="text-xs text-red-700 ml-4 list-disc space-y-1">
+                  <li>
+                    Adicionar o e-mail à lista permanente de opt-out
+                  </li>
+                  <li>
+                    <strong>Cancelar todos os envios pendentes</strong> em
+                    campanhas ativas, pausadas e agendadas
+                  </li>
+                  <li>
+                    Marcar o lead com badge vermelho "Opt-out" na listagem
+                  </li>
+                  <li>
+                    Registrar o evento no histórico do lead para auditoria
+                  </li>
+                </ul>
+                <p className="text-xs text-red-700 mt-2 italic">
+                  Não há fluxo de reativação — conforme LGPD, opt-out é
+                  permanente.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Motivo (opcional)
+                </label>
+                <input
+                  value={motivoOptOut}
+                  onChange={(e) => setMotivoOptOut(e.target.value)}
+                  placeholder="Ex.: Lead solicitou descadastro via email do dia 10/06"
+                  className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-red-400 focus:outline-none"
+                  maxLength={200}
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Se deixado em branco, será registrado como "opt_out_manual".
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t bg-gray-50">
+              <button
+                type="button"
+                onClick={() => {
+                  setModalConfirmOptOut(false);
+                  setMotivoOptOut('');
+                }}
+                disabled={loading}
+                className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmarOptOut}
+                disabled={loading}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+              >
+                {loading ? 'Aplicando...' : 'Confirmar Opt-Out'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
+    </>
   );
 };
 

@@ -3,6 +3,111 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.13.1 — 11/06/2026 — HOTFIX ESM: adicionada extensão `.js` no import
+ *   `'./_helpers/aplicar-opt-out'` → `'./_helpers/aplicar-opt-out.js'`.
+ *   Mesmo problema de ESM strict do crm-leads.ts v1.12.1.
+ *
+ * v1.13 — 11/06/2026 — REFACTOR Bloco 1 do plano OPT-OUT 100%.
+ *   Os blocos B (complained → opt_out) e C (cancelamento global da fila)
+ *   foram refatorados para delegar ao helper compartilhado
+ *   `api/_helpers/aplicar-opt-out.ts` (origem='spam_complaint').
+ *
+ *   ⚠️ O bloco A (hard bounce) NÃO usa o helper. Hard bounce marca
+ *      lead.bounced=true (não lead.opt_out=true) e tem cascata própria.
+ *      Decisão P1.3 — bounce ≠ opt-out, fluxos distintos.
+ *
+ *   Motivação do refactor: o mesmo helper passa a servir os outros
+ *   3 caminhos de opt-out (manual via UI, POST RFC 8058, GET link rodapé).
+ *   Elimina duplicação da cascata (que existia em 2 lugares — webhook +
+ *   crm-leads/desabilitar_lead) e garante consistência da auditoria LGPD
+ *   entre todos os caminhos.
+ *
+ *   Comportamento externo PRESERVADO:
+ *     • Resposta HTTP idêntica ao Resend
+ *     • Mesmos efeitos no banco (email_leads, email_optout, email_fila,
+ *       email_lead_historico)
+ *     • motivo_cancelamento='opt_out_spam' mantido por compat com
+ *       histórico/auditoria
+ *
+ * v1.12.1 — 10/06/2026 — BUG FIX: bounceType do Resend é 'Permanent', não 'hard'.
+ *   Diagnóstico empírico (smoke test 10/06/2026 — lead 8, mvieir5582px@gmail.com):
+ *     • Evento bounced chegou no webhook (registrado em email_eventos)
+ *     • Payload mostrou `bounce.type = "Permanent"` (após .toLowerCase = 'permanent')
+ *     • Código v1.12 verificava `bounceType === 'hard'` — comparação NUNCA bate
+ *     • Resultado: isHardBounce sempre false → blocos A (marcar lead.bounced)
+ *       e C (cancelar fila pendente) nunca executavam
+ *     • Sintomas: email_leads.bounced=false mesmo após bounce real;
+ *       email_fila.status='pendente' persistia para próximos steps
+ *
+ *   Esse bug já existia desde a v1.0 do webhook (o auto-opt-out por bounce
+ *   nunca tinha sido exercitado em produção real — todos os "bounces" anteriores
+ *   eram supressões silenciosas do Resend, sem disparar webhook).
+ *
+ *   Correção cirúrgica (1 expressão, 2 ocorrências unificadas):
+ *     const isHardBounce =
+ *       tipoInterno === 'bounced' &&
+ *       ['hard', 'permanent'].includes((bounceType || '').toLowerCase());
+ *
+ *   Whitelist com ambas as strings: 'permanent' (Resend atual) e 'hard' (legacy
+ *   de outras documentações, mantido por compat defensiva). O .toLowerCase
+ *   redundante (bounceType já vem em lowercase do parsing) é mantido como
+ *   guarda extra para o caso da fonte do payload mudar no futuro.
+ *
+ *   A mesma lógica unifica o cálculo de `tipoBounce` no histórico (que
+ *   também usava `bounceType === 'hard'` na v1.12).
+ *
+ *   Dependência: nenhuma SQL adicional. Apenas redeploy do código.
+ *   Remediação: leads já bounced antes desta correção precisam de
+ *   intervenção manual via SQL (script de remediação fornecido em
+ *   2026-06-10_remediacao_lead_bounced_v1_12_bug.sql).
+ *
+ * v1.12 — 10/06/2026 — AUTO-BOUNCE HANDLING + OPT-OUT CASCADING (P1 + P2).
+ *   Decisões de produto consolidadas no CHECKPOINT_2026-06-10.md (Prioridades
+ *   1 e 2). Mudanças no fluxo de tratamento de eventos terminais:
+ *
+ *   ── Hard bounce (email.bounced com bounceType='hard') ──
+ *     • ANTES (v1.11): inseria em `email_optout` + chamava RPC global de
+ *       cancelamento de fila. Histórico tipo='opt_out' (genérico).
+ *     • AGORA: NÃO insere em email_optout (decisão P1.3 — bounce ≠ opt-out).
+ *       UPDATE em email_leads SET bounced=true, bounced_em=NOW(),
+ *       bounced_motivo=mensagem_resend (decisão P1.1 — marcar, não deletar).
+ *       Cancela fila pendente em TODAS as campanhas globalmente (P1.2),
+ *       gravando motivo_cancelamento='hard_bounce' nos registros. Histórico
+ *       tipo='bounce_permanente'.
+ *     • Justificativa: hard bounce indica email inválido (mailbox does not
+ *       exist, etc) — não é manifestação do destinatário. O analista pode
+ *       corrigir o email, e o backend reseta `bounced` automaticamente
+ *       no PATCH atualizar_lead (crm-leads.ts v1.11).
+ *
+ *   ── Complained (email.complained — marcou como spam) ──
+ *     • ANTES (v1.11): upsert em email_optout + cancelamento global. UPDATE
+ *       fila status='unsubscribed'.
+ *     • AGORA: mantém upsert em email_optout (complained É opt-out genuíno —
+ *       decisão P2.1: irreversível por LGPD), PLUS UPDATE em email_leads
+ *       SET opt_out=true, opt_out_em=NOW() (decisão P2.2 — badge visível na
+ *       Base de Leads). Cancela fila com motivo_cancelamento='opt_out_spam'.
+ *
+ *   ── Substituição da RPC `cancelar_fila_pendente_email_global` ──
+ *     • Antes: RPC SQL externa.
+ *     • Agora: UPDATE direto no email_fila com filtro por destinatario_email
+ *       + status='pendente', escrevendo motivo_cancelamento atomicamente.
+ *     • Razão: garantir que motivo_cancelamento (coluna nova adicionada em
+ *       2026-06-10_email_leads_bounce_handling.sql) seja sempre escrito, sem
+ *       depender de uma versão atualizada da RPC. A RPC original continua
+ *       existindo no banco; pode ser usada por outras integrações no futuro.
+ *
+ *   ── Dependência SQL ──
+ *     • Requer `2026-06-10_email_leads_bounce_handling.sql` aplicado em
+ *       Preview e Production. Sem ele, o UPDATE em email_leads/email_fila
+ *       falhará por coluna inexistente.
+ *
+ *   ── Idempotência ──
+ *     • UPDATE em email_leads.bounced é idempotente (já era true → continua
+ *       true; bounced_em só atualiza se ainda for NULL — preserva o primeiro
+ *       bounce reportado).
+ *     • UPDATE em email_fila com filtro `status='pendente'` é naturalmente
+ *       idempotente (segunda passada → 0 linhas afetadas).
+ *
  * v1.11 — 08/06/2026 — BUG FIX CRÍTICO: reply_to do forward como array.
  *   Diagnóstico (08/06/2026): durante validação prática da Fase C, o lead
  *   de teste respondeu mas a resposta veio para `mvieira@techfor.com.br`
@@ -284,6 +389,9 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+// 🆕 v1.13 — Helper compartilhado de opt-out (Bloco 1 OPT-OUT 100%)
+// 🔧 v1.13.1 — Extensão .js obrigatória no path (Node.js ESM strict — Vercel runtime)
+import { aplicarOptOut } from './_helpers/aplicar-opt-out.js';
 // 🆕 v1.3 (04/06/2026 — Plano B): SDK Resend REMOVIDO deste arquivo. A
 // função `encaminharRespostaAoGestor()` chama a API REST do Resend via
 // `fetch` direto. Razão: o SDK descarta `replyTo`/`reply_to`/header `Reply-To`
@@ -964,13 +1072,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // INSERT email_lead_historico (timeline)
     if (fila.lead_id) {
+      // 🆕 v1.12.1 (10/06/2026) — tipo='bounce_permanente' quando o bounce
+      //   é permanente (decisão P1). O Resend envia bounce.type='Permanent'
+      //   (após toLowerCase fica 'permanent'). Documentações antigas/legacy
+      //   às vezes referenciam 'hard' — aceitamos ambos para robustez.
+      const tipoBounce = ['hard', 'permanent'].includes(bounceType || '') ? 'bounce_permanente' : 'bounce';
       const mapaHistorico: Record<string, { tipo: string; descricao: string }> = {
         sent:              { tipo: 'email_enviado',     descricao: 'E-mail enviado pelo provedor (Resend)' },
         delivered:         { tipo: 'email_entregue',    descricao: 'E-mail entregue na caixa do destinatário' },
         delivery_delayed:  { tipo: 'email_atrasado',    descricao: 'Entrega temporariamente atrasada' },
         opened:            { tipo: 'email_aberto',      descricao: 'Destinatário abriu o e-mail' },
         clicked:           { tipo: 'email_clicado',     descricao: linkClicado ? `Clicou no link: ${linkClicado}` : 'Clicou em um link do e-mail' },
-        bounced:           { tipo: 'bounce',            descricao: `Bounce ${bounceType || ''}: ${bounceMessage || 'sem detalhes'}`.trim() },
+        bounced:           { tipo: tipoBounce,          descricao: `Bounce ${bounceType || ''}: ${bounceMessage || 'sem detalhes'}`.trim() },
         complained:        { tipo: 'opt_out',           descricao: 'Marcado como spam (auto opt-out)' },
       };
       const hist = mapaHistorico[tipoInterno];
@@ -989,53 +1102,158 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Auto-opt-out (hard bounce + complaint)
-    const deveOptOut =
-      (tipoInterno === 'bounced' && bounceType === 'hard') ||
-      tipoInterno === 'complained';
+    // ─────────────────────────────────────────────────────────────
+    // 🆕 v1.12 (10/06/2026) — Tratamento separado de bounce vs complained.
+    //   Decisões CHECKPOINT_2026-06-10.md (P1 e P2):
+    //     • Hard bounce → marca lead.bounced=true, NÃO entra em email_optout.
+    //     • Complained  → entra em email_optout (opt-out genuíno, LGPD
+    //       irreversível) + marca lead.opt_out=true (badge UI).
+    //   Ambos cancelam fila pendente globalmente, com motivo_cancelamento
+    //   distinto para auditoria ('hard_bounce' vs 'opt_out_spam').
+    //
+    // 🆕 v1.12.1 (10/06/2026) — BUG FIX: o Resend envia bounce.type='Permanent'
+    //   (após toLowerCase = 'permanent'), não 'hard'. A comparação anterior
+    //   `bounceType === 'hard'` nunca batia, deixando isHardBounce sempre
+    //   false e os blocos A e C inertes. Validado empiricamente no smoke
+    //   test 10/06/2026 (lead 8 com mvieir5582px@gmail.com: evento bounced
+    //   chegou e foi gravado em email_eventos, mas cascata não executou).
+    //   Whitelist defensiva aceita ambas as strings conhecidas: a atual do
+    //   Resend ('permanent') e a histórica de outras documentações ('hard').
+    // ─────────────────────────────────────────────────────────────
+    const isHardBounce =
+      tipoInterno === 'bounced' &&
+      ['hard', 'permanent'].includes((bounceType || '').toLowerCase());
+    const isComplained = tipoInterno === 'complained';
+    // 🔧 v1.13 — variável `isTerminalDestrutivo` removida: blocos B (complained)
+    //   e C-bounce (hard bounce) agora são tratados em ramos separados,
+    //   cada um com seu próprio guard (`isHardBounce` / `isComplained`).
 
-    if (deveOptOut && fila.destinatario_email) {
-      const motivo =
-        tipoInterno === 'complained'
-          ? 'Marcou como spam (auto opt-out via webhook)'
-          : `Hard bounce: ${bounceMessage || 'destinatário inexistente'}`;
-      await supabase.from('email_optout').upsert(
-        {
-          email: fila.destinatario_email.toLowerCase().trim(),
-          motivo,
-          campanha_origem_id: fila.campanha_id,
-          criado_em: new Date().toISOString(),
-        },
-        { onConflict: 'email', ignoreDuplicates: true },
-      );
-      console.log(`[crm-webhook] 🚫 Auto opt-out: ${fila.destinatario_email}`);
+    // ── (A) Hard bounce — marca o LEAD como bounced (decisão P1.1) ──
+    if (isHardBounce && fila.lead_id) {
+      const motivoBounce = bounceMessage || `Hard bounce (${bounceType || 'unknown'})`;
 
-      // 🆕 v1.10 (Fase C) — Cancela TODOS os itens pendentes em TODAS as
-      //   campanhas para esse e-mail. Complementa o auto-opt-out: o opt-out
-      //   protege envios FUTUROS (cron filtra na hora do disparo, defesa em
-      //   profundidade), e este RPC cancela os JÁ ENFILEIRADOS para a fila
-      //   refletir imediatamente o estado terminal.
-      //   Falha aqui é graceful — opt-out já foi registrado.
-      const motivoCancel =
-        tipoInterno === 'complained' ? 'complaint_spam' : 'hard_bounce';
-      const { data: totCancel, error: errCancel } = await supabase.rpc(
-        'cancelar_fila_pendente_email_global',
-        {
-          p_email: fila.destinatario_email,
-          p_motivo: motivoCancel,
-        },
-      );
-      if (errCancel) {
-        console.warn(
-          `[crm-webhook] ⚠️ Falha ao cancelar fila pendente global de ${fila.destinatario_email}:`,
-          errCancel.message,
+      // Lê o estado atual para preservar o PRIMEIRO bounced_em (idempotência).
+      const { data: leadAtual } = await supabase
+        .from('email_leads')
+        .select('bounced, bounced_em')
+        .eq('id', fila.lead_id)
+        .maybeSingle();
+
+      const updateLead: Record<string, any> = {
+        bounced: true,
+        bounced_motivo: motivoBounce,
+        atualizado_em: new Date().toISOString(),
+      };
+      // bounced_em só é gravado na PRIMEIRA ocorrência (preserva timestamp original).
+      if (!leadAtual?.bounced_em) {
+        updateLead.bounced_em = createdAtResend || new Date().toISOString();
+      }
+
+      const { error: errBounce } = await supabase
+        .from('email_leads')
+        .update(updateLead)
+        .eq('id', fila.lead_id);
+
+      if (errBounce) {
+        console.error(
+          `[crm-webhook] ❌ Falha ao marcar lead ${fila.lead_id} como bounced:`,
+          errBounce.message,
         );
       } else {
         console.log(
-          `[crm-webhook] 🛑 Cancelados ${totCancel || 0} pendentes globais (${motivoCancel}) de ${fila.destinatario_email}`,
+          `[crm-webhook] 📛 Lead ${fila.lead_id} (${fila.destinatario_email}) marcado como bounced. Motivo: ${motivoBounce}`,
         );
       }
     }
+
+    // ── (B) Complained — entra em email_optout (LGPD irreversível) ──
+    // ── (C) Cancelamento global da fila pendente — bounce OU complained ──
+    //
+    // 🔧 v1.13 (11/06/2026 — Bloco 1 OPT-OUT 100%): blocos B e C foram
+    //   unificados em uma única chamada ao helper compartilhado
+    //   aplicarOptOut (origem='spam_complaint'). O helper executa:
+    //     1. UPDATE email_leads.opt_out=true (PASSO 1 — equivale ao
+    //        UPDATE manual que o bloco B fazia)
+    //     2. UPSERT email_optout (PASSO 2 — idempotente)
+    //     3. UPDATE email_fila SET status='cancelado',
+    //        motivo_cancelamento='opt_out_spam' WHERE destinatario_email
+    //        AND status='pendente' (PASSO 3 — equivale ao UPDATE direto
+    //        que o bloco C fazia para complained)
+    //     4. INSERT email_lead_historico (PASSO 4 — adicional do helper,
+    //        registra a origem='spam_complaint' para auditoria)
+    //
+    //   Resultado idêntico ao código v1.12.1 mais o INSERT histórico
+    //   (que antes só era feito pelo mapaHistorico do bloco anterior
+    //   ao tratamento terminal, agora consolidado no helper).
+    //
+    //   ⚠️ HARD BOUNCE continua sendo tratado SEPARADAMENTE no bloco A
+    //   (acima desta seção) — bounce ≠ opt-out (decisão P1.3).
+    //   O cancelamento de fila para HARD BOUNCE é feito a seguir (bloco C
+    //   restante apenas para o caso de bounce).
+    if (isComplained && fila.destinatario_email) {
+      const resultado = await aplicarOptOut({
+        supabase,
+        lead_id: fila.lead_id ?? null,
+        email: fila.destinatario_email,
+        origem: 'spam_complaint',
+        motivo: 'Marcou como spam (auto opt-out via webhook)',
+        criado_por: null, // auto, sem usuário humano
+        campanha_origem_id: fila.campanha_id,
+      });
+
+      if (resultado.ok) {
+        if (resultado.ja_estava_optout) {
+          console.log(
+            `[crm-webhook] ℹ️ Complained recebido mas ${fila.destinatario_email} já estava em opt-out (no-op)`,
+          );
+        } else {
+          console.log(
+            `[crm-webhook] 🚫 Auto opt-out (complained): ${fila.destinatario_email} ` +
+              `→ ${resultado.total_cancelados} pendente(s) cancelado(s)`,
+          );
+        }
+      } else {
+        console.error(
+          `[crm-webhook] ❌ Falha no aplicarOptOut(spam_complaint) para ${fila.destinatario_email}:`,
+          resultado.error,
+        );
+      }
+    }
+
+    // ── (C-bounce) Cancelamento global da fila APENAS para hard bounce ──
+    //   v1.13 cirúrgica: o cancelamento para `complained` foi para o
+    //   helper acima. Aqui permanece apenas o caminho de hard bounce,
+    //   que NÃO é opt-out (não entra em email_optout — decisão P1.3) mas
+    //   AINDA precisa cancelar a fila pendente do email com
+    //   motivo_cancelamento='hard_bounce'.
+    if (isHardBounce && fila.destinatario_email) {
+      const emailNorm = fila.destinatario_email.toLowerCase().trim();
+
+      const { data: cancelados, error: errCancel } = await supabase
+        .from('email_fila')
+        .update({
+          status: 'cancelado',
+          motivo_cancelamento: 'hard_bounce',
+        })
+        .eq('destinatario_email', emailNorm)
+        .eq('status', 'pendente')
+        .select('id');
+
+      if (errCancel) {
+        console.warn(
+          `[crm-webhook] ⚠️ Falha ao cancelar fila pendente (hard bounce) de ${emailNorm}:`,
+          errCancel.message,
+        );
+      } else {
+        const total = cancelados?.length || 0;
+        console.log(
+          `[crm-webhook] 🛑 Cancelados ${total} pendente(s) globais (hard_bounce) de ${emailNorm}`,
+        );
+      }
+    }
+
+    // Variável legacy mantida para compatibilidade do response payload abaixo.
+    const deveOptOut = isComplained; // hard bounce não mais entra em opt-out (v1.12)
 
     // Recalcular contadores agregados via RPC
     if (fila.campanha_id) {

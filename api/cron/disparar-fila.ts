@@ -4,6 +4,55 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.12.1 (11/06/2026 — HOTFIX ESM): adicionada extensão `.js` no import
+ *    `'../_helpers/unsubscribe-token'` → `'../_helpers/unsubscribe-token.js'`.
+ *    Mesmo problema de ESM strict que crm-leads e crm-webhook.
+ *
+ *  - v1.12 (11/06/2026 — Bloco 3 do plano OPT-OUT 100%):
+ *      Adicionado suporte aos dois caminhos automáticos de opt-out:
+ *
+ *        CAMINHO #2 — One-click RFC 8058 (Gmail/Outlook)
+ *          • Headers SMTP `List-Unsubscribe` e `List-Unsubscribe-Post: One-Click`
+ *            injetados em cada envio, apontando para a URL pública
+ *            https://unsubscribe.techfortirms.online/api/unsubscribe?token=XYZ
+ *            (Production) ou https://<vercel-url>/api/unsubscribe?token=XYZ
+ *            (Preview, via fallback automático em PUBLIC_BASE_URL).
+ *          • Token único por destinatário, gerado em tempo de envio via
+ *            HMAC-SHA256 (helper api/_helpers/unsubscribe-token.ts).
+ *          • Gmail/Outlook detectam o header e expõem botão "Unsubscribe"
+ *            na barra superior do cliente de email. Clique → POST direto
+ *            na URL → cascata automática via aplicarOptOut (origem
+ *            'list_unsubscribe').
+ *          • Atende RFC 8058 e bulk-sending requirements de Gmail/Yahoo
+ *            (obrigatório para senders >5k msg/dia desde fev/2024).
+ *
+ *        CAMINHO #3 — Link clicável "SAIR" no rodapé HTML
+ *          • A palavra "SAIR" no rodapé LGPD da renderAssinatura agora é
+ *            um link clicável apontando para a MESMA URL (mesmo token).
+ *          • Antes era apenas texto plano forçando o destinatário a
+ *            responder o email — fluxo que dependia de leitura manual
+ *            pelo SDR (caminho #4 manual).
+ *          • Clique → GET → página HTML branded de confirmação +
+ *            cascata via aplicarOptOut (origem 'link_rodape').
+ *
+ *      Mudanças cirúrgicas:
+ *        • Import de `montarUrlUnsubscribe` do helper unsubscribe-token.
+ *        • `renderAssinatura` aceita novo parâmetro opcional
+ *          `unsubscribeUrl?: string`. Quando presente, a palavra "SAIR"
+ *          vira `<a href="...">SAIR</a>`. Quando ausente (fallback
+ *          defensivo, ex.: env var faltando), mantém texto plano.
+ *        • No loop de envio, antes de chamar fetch do Resend:
+ *            - try/catch ao redor de `montarUrlUnsubscribe({lead_id,
+ *              destinatario_email})` — se gerar erro (segredo ausente),
+ *              segue sem URL (não bloqueia o envio).
+ *            - Passa URL para renderAssinatura.
+ *            - Adiciona headers SMTP no body do fetch.
+ *
+ *      Ambiente de Preview: a env var `PUBLIC_BASE_URL` NÃO é definida em
+ *      Preview (decisão Messias 11/06/2026). O helper cai automaticamente
+ *      no fallback `https://${VERCEL_URL}` — URLs únicas por deploy preview.
+ *      Tokens emitidos em Preview usam o segredo Preview; só válidos lá.
+ *
  *  - v1.11 (08/06/2026 — FASE B: auto-finalização por data_encerramento):
  *      Motivação: a coluna `email_campanhas.data_encerramento` (criada no
  *      SQL combinado 2026-06-08_crm_evolucao_C_B_D.sql) permite ao gestor
@@ -206,6 +255,12 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+// 🆕 v1.12 — Helper de geração de URL de unsubscribe (Bloco 3 OPT-OUT 100%).
+//   Usado para: (a) montar a URL pública no header SMTP `List-Unsubscribe`
+//   (RFC 8058 one-click) e (b) injetar como href na palavra "SAIR" do
+//   rodapé HTML da renderAssinatura.
+// 🔧 v1.12.1 — Extensão .js obrigatória no path (Node.js ESM strict — Vercel runtime)
+import { montarUrlUnsubscribe } from '../_helpers/unsubscribe-token.js';
 // 🆕 v1.6 (04/06/2026 — Plano B): SDK Resend REMOVIDO. Após v1.3.1 → v1.4 →
 // v1.5 falharem (SDK descarta `replyTo`/`reply_to`/header `Reply-To` no campo
 // `headers`), partimos para chamada `fetch` direta à API REST do Resend, onde
@@ -302,10 +357,25 @@ function classificarErroResend(err: any): 'temporario' | 'definitivo' {
 
 /**
  * Renderiza a assinatura em HTML — padrão corporativo TechForTI.
+ *
  * ⚠️ DUPLICADO de api/crm-campanhas.ts (v1.7+). Quando consolidar, mover
  *   para api/_lib/render-assinatura.ts e importar nos dois lados.
+ *
+ * 🆕 v1.12 (11/06/2026 — Bloco 3 OPT-OUT 100%): adicionado parâmetro opcional
+ *   `unsubscribeUrl`. Quando presente, a palavra "SAIR" no parágrafo LGPD do
+ *   rodapé vira um link clicável (`<a href="unsubscribeUrl">SAIR</a>`),
+ *   ativando o caminho #3 do plano OPT-OUT 100% (clique no rodapé).
+ *
+ *   Quando `unsubscribeUrl` está ausente (ex.: env var faltando, geração
+ *   falhou em runtime), o texto plano antigo é preservado como FALLBACK
+ *   DEFENSIVO — o envio não é bloqueado, e o caminho #4 manual (responder
+ *   o email) continua sendo a alternativa para o destinatário.
+ *
+ *   IMPORTANTE: este parâmetro deve ser gerado por destinatário (token
+ *   HMAC único — ver montarUrlUnsubscribe em api/_helpers/unsubscribe-token.ts).
+ *   Não reusar a mesma URL entre destinatários distintos.
  */
-function renderAssinatura(a: any): string {
+function renderAssinatura(a: any, unsubscribeUrl?: string): string {
   const COR_NOME = '#A33022';
   const COR_LINK = '#1a73e8';
   const COR_TEXTO = '#333333';
@@ -327,6 +397,13 @@ function renderAssinatura(a: any): string {
     ? `<a href="${politicaUrl}" style="color:${COR_LINK};text-decoration:underline">Política de Privacidade</a>`
     : 'Política de Privacidade';
 
+  // 🆕 v1.12 — Render condicional da palavra "SAIR".
+  //   • Com URL: link clicável `<a href="...">SAIR</a>` (caminho #3 ativo)
+  //   • Sem URL: texto plano antigo (fallback defensivo)
+  const sairTermo = unsubscribeUrl
+    ? `<a href="${unsubscribeUrl}" style="color:${COR_LINK};text-decoration:underline;font-weight:bold">SAIR</a>`
+    : 'SAIR';
+
   return `
 <div style="font-family:Arial,sans-serif;font-size:13px;color:${COR_TEXTO};line-height:1.5">
   <p style="margin:0;color:${COR_NOME};font-weight:bold;font-size:14px">${a.nome_completo}</p>
@@ -337,7 +414,7 @@ function renderAssinatura(a: any): string {
   <div style="margin-top:14px;font-size:11px;color:${COR_LGPD};line-height:1.5">
     <p style="margin:0">Estamos entrando em contato contigo para lhe apresentar uma oportunidade, que entendemos ser do seu interesse, nos termos da Lei Geral de Proteção de Dados (LGPD).</p>
     <p style="margin:0">Isso quer dizer que coletamos, tratamos e armazenamos dados pessoais com todo o cuidado e zelo. Leia atentamente a nossa ${linkPolitica} e, se tiver alguma dúvida, entre em contato com o nosso Encarregado de Dados (Data Protection Officer - DPO) no seguinte e-mail: <a href="mailto:dpo@techforti.com.br" style="color:${COR_LINK};text-decoration:underline">dpo@techforti.com.br</a>.</p>
-    <p style="margin:0">Se não tiver mais interesse em receber nossas mensagens, que foi baseado no legítimo interesse da LGPD, responda este e-mail solicitando o descadastramento (opt out) SAIR.</p>
+    <p style="margin:0">Se não tiver mais interesse em receber nossas mensagens, que foi baseado no legítimo interesse da LGPD, responda este e-mail solicitando o descadastramento (opt out) ou clique em ${sairTermo}.</p>
   </div>
 </div>`.trim();
 }
@@ -776,7 +853,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const primeiroNome = (item.destinatario_nome || '').split(' ')[0] || 'time';
       const corpoNormalizado = normalizarCorpoEmail(step.corpo_html || '');
       const corpoMerged = corpoNormalizado.replace(/\{\{name\}\}/gi, primeiroNome);
-      const assinaturaHtml = assinatura ? renderAssinatura(assinatura) : '';
+
+      // 🆕 v1.12 — Bloco 3 OPT-OUT 100%: gera URL única de unsubscribe
+      //   por destinatário. Usada em DOIS lugares:
+      //     1. Link clicável na palavra "SAIR" do rodapé HTML
+      //        (renderAssinatura abaixo recebe a URL como parâmetro)
+      //     2. Header SMTP `List-Unsubscribe` no fetch do Resend
+      //        (linha ~895, abaixo)
+      //
+      //   Try/catch defensivo: se a env var UNSUBSCRIBE_TOKEN_SECRET não
+      //   estiver configurada (ou PUBLIC_BASE_URL/VERCEL_URL ausentes em
+      //   ambiente local), o envio NÃO é bloqueado. Continua com o
+      //   comportamento legado (texto plano + caminho #4 manual via
+      //   resposta de email).
+      let unsubscribeUrl: string | null = null;
+      try {
+        if (item.lead_id && item.destinatario_email) {
+          unsubscribeUrl = montarUrlUnsubscribe({
+            lead_id: item.lead_id,
+            email: item.destinatario_email,
+          });
+        }
+      } catch (errUrl: any) {
+        console.warn(
+          `[disparar-fila] ⚠️ Falha ao gerar unsubscribe URL para fila=${item.id} ` +
+            `(lead=${item.lead_id}, email=${item.destinatario_email}). ` +
+            `Envio prossegue sem List-Unsubscribe. Causa: ${errUrl?.message}`,
+        );
+      }
+
+      const assinaturaHtml = assinatura
+        ? renderAssinatura(assinatura, unsubscribeUrl || undefined)
+        : '';
       const htmlFinal = `${corpoMerged}\n\n${assinaturaHtml}`;
       const textoFinal: string | undefined = step.corpo_texto
         ? step.corpo_texto.replace(/\{\{name\}\}/gi, primeiroNome)
@@ -864,6 +972,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             text: textoFinal,
             headers: {
               'X-Entity-Ref-ID': `rms-fila-${item.id}`,
+              // 🆕 v1.12 — Bloco 3 OPT-OUT 100%: headers RFC 8058 para
+              //   one-click unsubscribe (Gmail, Outlook, Yahoo).
+              //   Só incluímos se a URL foi gerada com sucesso acima
+              //   (try/catch defensivo). Se faltou (segredo ausente, etc),
+              //   o email sai sem List-Unsubscribe — comportamento legado.
+              //
+              //   List-Unsubscribe: <URL>           → cliente faz POST direto
+              //   List-Unsubscribe-Post: One-Click  → sinaliza RFC 8058
+              //
+              //   Quando o cliente (Gmail/Outlook) detecta esses dois
+              //   headers em conjunto, expõe botão "Unsubscribe" na barra
+              //   superior do email. Clique → POST silencioso para a URL,
+              //   sem confirmação visual do usuário no cliente — apenas o
+              //   POST e a resposta 200 OK do nosso endpoint.
+              //
+              //   Atende bulk-sending requirements de Gmail/Yahoo (Feb 2024,
+              //   obrigatório para senders >5k msg/dia).
+              ...(unsubscribeUrl
+                ? {
+                    'List-Unsubscribe': `<${unsubscribeUrl}>`,
+                    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+                  }
+                : {}),
             },
           }),
         });

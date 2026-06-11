@@ -2,7 +2,30 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.4 (Lead RBAC fix — 05/06/2026)
+ * Versão: 1.6 (Opt-out manual — 11/06/2026)
+ *
+ * v1.6 (11/06/2026 — Opt-out manual / Bloco 4 do plano OPT-OUT 100%):
+ *   Plugado o callback `onDesabilitar` no LeadFormModal. Handler
+ *   `handleDesabilitarLead` chama o novo método `useLeads.desabilitar`
+ *   (v1.1), exibe feedback ao usuário (toast/alert com total cancelado),
+ *   fecha o modal e recarrega listagem + stats para refletir o badge
+ *   "Opt-out" e a saída do lead das contagens.
+ *   - Não-bloqueante: se o callback ficasse desinstalado (ex.: futura
+ *     mudança), o LeadFormModal v1.2 simplesmente não renderiza o botão.
+ *
+ * v1.5 (10/06/2026 — Vinculação em Lote): nova aba "🎯 Vincular em Lote"
+ *   adicionada ao lado de Empresas/Leads/Respostas/Inválidos. Permite ao
+ *   Gestor Comercial/SDR vincular múltiplos leads a uma campanha existente
+ *   (status ativa/pausada/agendada) em uma única operação, com possibilidade
+ *   de alteração de vertical em lote. Substitui o fluxo arriscado de "Editar
+ *   Campanha → adicionar leads".
+ *   🛡️ REGRA CRECI BIDIRECIONAL aplicada: leads CRECI não aparecem nesta aba
+ *   e a vertical CRECI não pode ser destino (defesa em profundidade backend).
+ *   Mudanças aditivas neste arquivo:
+ *    - `abaAtiva` agora aceita 'vincular_em_lote'
+ *    - Import de VincularEmLoteTab
+ *    - Nova entrada no array de tabs (sem badge — não tem listagem persistente)
+ *    - Renderização condicional
  *
  * v1.4 (05/06/2026 — Lead RBAC fix): leads criados via "Novo Lead"
  *   estavam ficando com vertical=NULL, apto_campanha=false,
@@ -70,6 +93,8 @@ import LeadsTab from './LeadsTab';
 // 🆕 v1.2 (Fase 8-Inbox) — componentes das novas abas
 import RespostasTab from './RespostasTab';
 import InvalidosTab from './InvalidosTab';
+// 🆕 v1.5 (Vinculação em Lote — 10/06/2026)
+import VincularEmLoteTab from './VincularEmLoteTab';
 import EmpresaFormModal from './EmpresaFormModal';
 import LeadFormModal from './LeadFormModal';
 import EmpresaDetailDrawer from './EmpresaDetailDrawer';
@@ -108,9 +133,10 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
 }) => {
   // ── Aba ativa ──
   // 🆕 v1.2 (Fase 8-Inbox) — agora aceita 'respostas' e 'invalidos'.
-  const [abaAtiva, setAbaAtiva] = useState<'empresas' | 'leads' | 'respostas' | 'invalidos'>(
-    'empresas'
-  );
+  // 🆕 v1.5 (Vinculação em Lote — 10/06/2026) — agora aceita 'vincular_em_lote'.
+  const [abaAtiva, setAbaAtiva] = useState<
+    'empresas' | 'leads' | 'respostas' | 'invalidos' | 'vincular_em_lote'
+  >('empresas');
 
   // ── Hooks ──
   const empresasH = useEmpresas();
@@ -274,6 +300,54 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     }
   };
 
+  // ════════════════════════════════════════════════════════════
+  // 🆕 v1.6 — OPT-OUT MANUAL (Bloco 4 do plano OPT-OUT 100%)
+  // ════════════════════════════════════════════════════════════
+  //
+  // Disparado pelo modal de confirmação dupla do LeadFormModal (v1.2),
+  // após o gestor/SDR clicar em "Confirmar Opt-Out". Chama o método
+  // `useLeads.desabilitar` (v1.1), que por sua vez aciona a action
+  // POST `desabilitar_lead` em /api/crm-leads (v1.11) com a cascata
+  // completa em 4 passos (opt_out + email_optout + cancela fila
+  // global + histórico).
+  //
+  // Após sucesso:
+  //   • Mostra alert com total de envios cancelados (feedback explícito
+  //     ao usuário — útil porque um lead pode estar em várias campanhas).
+  //   • Fecha o modal de edição e limpa o formLead.
+  //   • Recarrega listagem + stats (badge "Opt-out" aparece imediatamente
+  //     e contador "OPT-OUT" do KPI no topo é atualizado).
+  //   • Se `ja_estava_optout=true` (idempotência — cliquezinho duplo),
+  //     mostra mensagem informativa em vez de "X cancelados".
+  //
+  // Em caso de falha, o hook `useLeads.desabilitar` já exibe um alert
+  // com o erro retornado pelo backend, então aqui só verificamos `ok`.
+  const handleDesabilitarLead = async (motivo: string | null): Promise<void> => {
+    if (!formLead.id) return;
+    const resultado = await leadsH.desabilitar(
+      formLead.id,
+      motivo,
+      currentUser.nome_usuario
+    );
+    if (!resultado.ok) return;
+
+    if (resultado.ja_estava_optout) {
+      alert('ℹ️ Este lead já estava em opt-out. Nenhuma ação adicional foi necessária.');
+    } else {
+      const plural = resultado.total_cancelados === 1 ? '' : 's';
+      alert(
+        `✅ Lead em opt-out.\n` +
+          `${resultado.total_cancelados} envio${plural} pendente${plural} ` +
+          `cancelado${plural} em campanhas ativas, pausadas e agendadas.`
+      );
+    }
+
+    setModalLead(null);
+    setFormLead({});
+    leadsH.carregar();
+    leadsH.carregarStats();
+  };
+
   const abrirDetalheLead = (id: number) => {
     // Se o drawer de empresa estiver aberto, fechar para evitar overlap.
     if (empresasH.detalhe) empresasH.fecharDetalhe();
@@ -433,6 +507,15 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
               icon: 'fa-solid fa-circle-exclamation',
               count: stats?.total_invalidos ?? invalidosH.total, // 🆕 v1.3
             },
+            // 🆕 v1.5 (Vinculação em Lote — 10/06/2026)
+            //   Sem badge de contagem — esta aba não exibe uma listagem
+            //   persistente, é uma operação de vinculação ad-hoc.
+            {
+              key: 'vincular_em_lote' as const,
+              label: 'Vincular em Lote',
+              icon: 'fa-solid fa-link',
+              count: null as number | null,
+            },
           ].map((tab) => (
             <button
               key={tab.key}
@@ -452,9 +535,11 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             >
               <i className={tab.icon}></i>
               {tab.label}
-              <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
-                {tab.count}
-              </span>
+              {tab.count !== null && tab.count !== undefined && (
+                <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-xs">
+                  {tab.count}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -546,6 +631,11 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             onEditarLead={abrirEditarLeadPorId}
           />
         )}
+
+        {/* 🆕 v1.5 (Vinculação em Lote — 10/06/2026) — Aba Vincular em Lote */}
+        {abaAtiva === 'vincular_em_lote' && (
+          <VincularEmLoteTab currentUser={currentUser} />
+        )}
       </div>
 
       {/* ════════════════════════════════════════════════════════════ */}
@@ -572,6 +662,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
         onChange={setFormLead}
         onSalvar={salvarLead}
         onFechar={() => setModalLead(null)}
+        onDesabilitar={handleDesabilitarLead}
       />
 
       <ImportProspectsModal

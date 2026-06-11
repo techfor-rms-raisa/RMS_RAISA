@@ -9,8 +9,8 @@
  * 2. Hunter.io enriquece com email verificado
  * 3. Salvar selecionados no Supabase
  *
- * Versão: 4.1
- * Data: 15/03/2026
+ * Versão: 4.2
+ * Data: 09/06/2026
  *
  * v4.0:
  * - Motor principal: Gemini + Google Search Grounding
@@ -21,11 +21,25 @@
  * v4.1:
  * - Coluna "ORIGEM E-MAIL" na tabela de resultados (Hunter Finder / Hunter Domain / Snov.io)
  * - motor_email propagado no buscarEmailIndividual (botão por linha)
+ *
+ * v4.2 (09/06/2026 — Fase A do CRM):
+ * - Botão "Campanhas" da aba "Meus Leads Salvos" agora abre o
+ *   SelecionarCampanhaModal antes de promover, permitindo o usuário
+ *   escolher entre "Apenas para o CRM" (comportamento legado) OU
+ *   uma campanha ativa/pausada/agendada elegível para o lead.
+ * - Quando uma campanha é escolhida, o backend `promover_para_campanha`
+ *   recebe `campanha_id` e faz a vinculação + enfileiramento (se
+ *   campanha já tem `inicio_envio`) em uma única operação.
+ * - O modal consulta `crm-campanhas?action=listar_campanhas_disponiveis_para_lead`
+ *   passando `prospect_id` para descobrir as campanhas elegíveis pelos
+ *   critérios da Fase B (vertical + responsável + status + data_encerramento)
+ *   e da regra de duplicação (não exibe campanhas onde o lead já está).
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../config/supabase';
+import SelecionarCampanhaModal from '../crm/campanhas/SelecionarCampanhaModal';
 
 // ============================================
 // TIPOS
@@ -599,11 +613,29 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     }, [filtroLeadsEmpresa, filtroLeadsStatus, currentUser, podeVerTodosLeads]);
 
     // ============================================
-    // PROMOVER PARA CAMPANHA (v1.1) — botão "Campanhas" da aba "Meus Leads Salvos"
-    // Promove o prospect_lead → email_lead (apto_campanha=true) e marca o
-    // prospect_lead com status='em_campanha', fazendo-o sumir desta lista.
+    // PROMOVER PARA CAMPANHA (v4.2 — Fase A do CRM, 09/06/2026)
+    // O botão "Campanhas" abre o SelecionarCampanhaModal, que permite ao
+    // usuário escolher entre "Apenas para o CRM" (comportamento legado da
+    // v1.1 do componente) OU vincular o lead a uma campanha já existente
+    // em status ativa/pausada/agendada.
+    //
+    // - `promoverParaCampanha`: valida o lead (vertical obrigatória) e
+    //   abre o modal.
+    // - `executarPromocao`: chamada pelo modal com `campanha_id` (number
+    //   da campanha escolhida) ou `null` (escolha "Apenas para o CRM").
+    //   Faz o POST para /api/crm-leads com o campo opcional `campanha_id`
+    //   e mostra feedback consolidado (toast OK / erro).
     // ============================================
     const [promovendoIds, setPromovendoIds] = useState<Set<number>>(new Set());
+
+    // 🆕 v4.2 — estado do modal de seleção de campanha. Quando não-nulo,
+    // o modal aparece. `leadAlvo` carrega os dados necessários para o
+    // modal consultar campanhas elegíveis (prospect_id + vertical).
+    const [selecaoCampanhaAberta, setSelecaoCampanhaAberta] = useState<{
+        leadId: number;
+        leadNome: string;
+        leadVertical: string;
+    } | null>(null);
 
     const promoverParaCampanha = useCallback(async (leadId: number, leadNome: string) => {
         if (!currentUser?.id) return;
@@ -617,6 +649,22 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             return;
         }
 
+        // 🆕 v4.2 (Fase A) — abrir modal em vez de chamar API direto.
+        // O modal pergunta "Só CRM" ou qual campanha vincular junto,
+        // e em seguida invoca `executarPromocao` com a escolha.
+        setSelecaoCampanhaAberta({
+            leadId,
+            leadNome,
+            leadVertical: leadAlvo.vertical.trim(),
+        });
+    }, [currentUser, promovendoIds, meusLeads]);
+
+    // 🆕 v4.2 (Fase A) — executa o POST de promoção. Recebe `campanhaId`
+    // do modal: `null` = "Apenas CRM" (legado); número = vincula à campanha.
+    const executarPromocao = useCallback(async (campanhaId: number | null) => {
+        if (!selecaoCampanhaAberta || !currentUser?.id) return;
+        const { leadId, leadNome } = selecaoCampanhaAberta;
+
         setPromovendoIds(prev => new Set(prev).add(leadId));
         try {
             const resp = await fetch('/api/crm-leads', {
@@ -626,23 +674,43 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                     action: 'promover_para_campanha',
                     prospect_id: leadId,
                     criado_por: currentUser.nome_usuario,
+                    campanha_id: campanhaId, // 🆕 v4.2 — null ou number
                 }),
             });
             const data = await resp.json();
             if (data.success) {
-                setToastMsg({
-                    tipo: 'ok',
-                    msg: `"${leadNome}" enviado ao CRM (apto a campanhas).`,
-                });
-                setTimeout(() => setToastMsg(null), 3500);
-                // Some da lista atual — recarrega para refletir o novo status='em_campanha'
+                // Mensagem consolidada: distingue "só CRM" de "CRM + campanha vinculada"
+                let msg = `"${leadNome}" enviado ao CRM`;
+                if (data.campanha?.campanha_nome) {
+                    const enf = data.campanha.enfileirados || 0;
+                    const sufixo = enf > 0
+                        ? ` (${enf} envio${enf === 1 ? '' : 's'} agendado${enf === 1 ? '' : 's'})`
+                        : ' (campanha agendada — envios começam na ativação)';
+                    msg += ` e vinculado à campanha "${data.campanha.campanha_nome}"${sufixo}.`;
+                } else {
+                    msg += ' (apto a campanhas).';
+                }
+                setToastMsg({ tipo: 'ok', msg });
+                setTimeout(() => setToastMsg(null), 4500);
+                // Some da lista atual — recarrega para refletir o novo status='no_crm'
                 await carregarMeusLeads();
+                setSelecaoCampanhaAberta(null);
+            } else if (data.vinculo_falhou) {
+                // 🆕 v4.2 — Sucesso parcial (HTTP 207): lead foi promovido
+                // mas a vinculação falhou. Lead permanece no CRM.
+                setToastMsg({
+                    tipo: 'erro',
+                    msg: `"${leadNome}" foi para o CRM, mas a vinculação à campanha falhou: ${data.error || 'erro desconhecido'}`,
+                });
+                setTimeout(() => setToastMsg(null), 6000);
+                await carregarMeusLeads();
+                setSelecaoCampanhaAberta(null);
             } else {
                 setToastMsg({
                     tipo: 'erro',
                     msg: data.error || 'Erro ao enviar lead para o CRM.',
                 });
-                setTimeout(() => setToastMsg(null), 4000);
+                setTimeout(() => setToastMsg(null), 4500);
             }
         } catch (err: any) {
             setToastMsg({ tipo: 'erro', msg: `Erro: ${err.message}` });
@@ -654,7 +722,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                 return next;
             });
         }
-    }, [currentUser, carregarMeusLeads, promovendoIds, meusLeads]);
+    }, [selecaoCampanhaAberta, currentUser, carregarMeusLeads]);
 
     // ============================================
     // 🆕 31/05/2026 — VERTICAIS DE NEGÓCIO
@@ -3213,6 +3281,18 @@ A empresa ficará disponível para a equipe.`)) return;
                 </div>
             </div>
         </div>
+    )}
+    {/* 🆕 v4.2 (Fase A — 09/06/2026) — Modal de seleção de campanha ao promover */}
+    {selecaoCampanhaAberta && currentUser?.email_usuario && (
+        <SelecionarCampanhaModal
+            prospectId={selecaoCampanhaAberta.leadId}
+            leadNome={selecaoCampanhaAberta.leadNome}
+            leadVertical={selecaoCampanhaAberta.leadVertical}
+            criadoPorEmail={currentUser.email_usuario}
+            isLoading={promovendoIds.has(selecaoCampanhaAberta.leadId)}
+            onClose={() => setSelecaoCampanhaAberta(null)}
+            onConfirm={executarPromocao}
+        />
     )}
     </div>
     </>
