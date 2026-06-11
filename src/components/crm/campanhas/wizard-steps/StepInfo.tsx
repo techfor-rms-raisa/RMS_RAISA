@@ -2,7 +2,7 @@
  * StepInfo.tsx — Passo 1 do wizard: Dados gerais da campanha
  *
  * Caminho: src/components/crm/campanhas/wizard-steps/StepInfo.tsx
- * Versão: 1.3 (Fase B — 08/06/2026)
+ * Versão: 1.4 (Prioridade 1 — 11/06/2026)
  *
  * Histórico:
  *  - v1.0 (30/05/2026 — Fase 1D): decomposto de CampaignBuilder.tsx.
@@ -28,6 +28,19 @@
  *    pendentes em email_fila (decisão de produto — Opção A: encerramento
  *    limpo, LGPD-compliant). Backend valida formato YYYY-MM-DD e que a
  *    data não esteja no passado (crm-campanhas.ts v1.10).
+ *  - v1.4 (11/06/2026 — Prioridade 1): novo bloco "Receber cópia das
+ *    respostas (BCC)" entre Responsável e Domínio. 3 inputs opcionais.
+ *    Quando o lead RESPONDE à campanha, estes endereços recebem cópia
+ *    do encaminhamento (forward via crm-webhook v1.13.2). NÃO afeta o
+ *    envio inicial dos steps.
+ *      • Persistido em email_campanhas.bcc_emails (text[]), validado
+ *        pelo backend (crm-campanhas.ts v1.15 → validarBccEmails):
+ *        máximo 3, formato válido, sem duplicar entre si nem com o
+ *        remetente da campanha.
+ *      • Validação inline (useMemo) por slot — formato + duplicidade.
+ *        Vazio é válido. O Próximo não é bloqueado por erros inline
+ *        (mantém o padrão do step, que aceita rascunho parcial).
+ *      • Dedupe e remoção de strings vazias acontecem no servidor.
  */
 
 import React from 'react';
@@ -174,6 +187,71 @@ const StepInfo: React.FC<StepInfoProps> = ({
     onChange(proximaCampanha);
   };
 
+  // ════════════════════════════════════════════════════════════
+  // 🆕 v1.4 (11/06/2026 — Prioridade 1) — BCC nas respostas da campanha.
+  //
+  // O array `campanha.bcc_emails` é a fonte de verdade. Quando vem do
+  // banco já está enxuto (só com endereços válidos). Durante a edição
+  // mantemos slots vazios para que os 3 inputs sempre tenham um valor
+  // controlado. O backend (crm-campanhas v1.15 → validarBccEmails)
+  // descarta strings vazias e deduplica no INSERT/UPDATE.
+  // ════════════════════════════════════════════════════════════
+
+  /** Atualiza o slot `idx` (0..2) do array bcc_emails. */
+  const setBccEmail = (idx: number, valor: string) => {
+    const lista: string[] = [...((campanha.bcc_emails as string[]) || [])];
+    while (lista.length < 3) lista.push('');
+    lista[idx] = valor;
+    // Limita a 3 slots (defesa contra payload corrompido vindo do banco)
+    setField('bcc_emails', lista.slice(0, 3));
+  };
+
+  /**
+   * Erros inline por slot (formato inválido, duplicação com o remetente,
+   * duplicação entre BCCs). Vazio nunca gera erro — o BCC é opcional.
+   * Cálculo memoizado: recalcula apenas quando bcc_emails ou
+   * email_remetente mudam.
+   */
+  const bccErros = React.useMemo<(string | null)[]>(() => {
+    const erros: (string | null)[] = [null, null, null];
+    const lista = (campanha.bcc_emails as string[]) || [];
+    const remetente = (campanha.email_remetente || '').trim().toLowerCase();
+    const regexEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    const lowerList = [0, 1, 2].map((i) => (lista[i] || '').trim().toLowerCase());
+
+    for (let i = 0; i < 3; i++) {
+      const valor = lowerList[i];
+      if (!valor) continue; // vazio é válido (BCC é opcional)
+
+      if (!regexEmail.test(valor)) {
+        erros[i] = 'Formato de e-mail inválido';
+        continue;
+      }
+
+      if (remetente && valor === remetente) {
+        erros[i] = 'Não pode ser igual ao remetente da campanha';
+        continue;
+      }
+
+      // Duplicação entre BCCs: o primeiro a aparecer passa; os seguintes erram.
+      for (let j = 0; j < i; j++) {
+        if (lowerList[j] && lowerList[j] === valor) {
+          erros[i] = 'E-mail duplicado';
+          break;
+        }
+      }
+    }
+
+    return erros;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    (campanha.bcc_emails || [])[0],
+    (campanha.bcc_emails || [])[1],
+    (campanha.bcc_emails || [])[2],
+    campanha.email_remetente,
+  ]);
+
   return (
     <div className="space-y-5 max-w-2xl">
       {/* Nome */}
@@ -298,6 +376,48 @@ const StepInfo: React.FC<StepInfoProps> = ({
           {travadoNoProprio
             ? 'Gestão Comercial atribui campanhas para si mesmo.'
             : 'Quem responde pelos envios. A assinatura usada será a dele, na unidade da campanha. Obrigatório para ativar a campanha.'}
+        </p>
+      </div>
+
+      {/* 🆕 v1.4 (11/06/2026 — Prioridade 1) — BCC nas respostas da campanha.
+          Até 3 endereços que recebem cópia quando o LEAD RESPONDE
+          (forward via crm-webhook → encaminharRespostaAoGestor).
+          NÃO é cópia no envio inicial dos steps. Persistido em
+          email_campanhas.bcc_emails (text[]), validado no backend
+          por validarBccEmails (crm-campanhas.ts v1.15). */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Receber cópia das respostas (BCC) — opcional, até 3
+        </label>
+        <div className="space-y-2">
+          {[0, 1, 2].map((idx) => {
+            const valorAtual = (campanha.bcc_emails || [])[idx] || '';
+            const erro = bccErros[idx];
+            return (
+              <div key={idx}>
+                <input
+                  type="email"
+                  value={valorAtual}
+                  onChange={(e) => setBccEmail(idx, e.target.value)}
+                  placeholder={`BCC ${idx + 1} — opcional (ex: gestor@techforti.com.br)`}
+                  className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 ${
+                    erro
+                      ? 'border-red-400 focus:border-red-500'
+                      : 'border-gray-300 focus:border-blue-500'
+                  }`}
+                />
+                {erro && (
+                  <p className="text-xs text-red-600 mt-1">
+                    <i className="fa-solid fa-circle-exclamation mr-1"></i>
+                    {erro}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        <p className="text-xs text-gray-400 mt-1">
+          Quando o lead responder à campanha, estes endereços receberão cópia (BCC) do encaminhamento. Não afeta o envio inicial.
         </p>
       </div>
 

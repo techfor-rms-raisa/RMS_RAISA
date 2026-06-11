@@ -2,6 +2,28 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.15 (11/06/2026 — Prioridade 1: BCC nas respostas da campanha):
+ *    novo campo opcional `bcc_emails` (text[]) em `email_campanhas`.
+ *    Lista de até 3 endereços que recebem cópia quando o LEAD RESPONDE
+ *    (forward disparado por crm-webhook → encaminharRespostaAoGestor).
+ *    NÃO é cópia no envio inicial; aplica-se apenas ao forward de respostas.
+ *
+ *    Mudanças neste arquivo:
+ *      • Novo helper `validarBccEmails(bcc, emailRemetente)`: aceita
+ *        undefined/null como vazio, valida array de strings, max 3,
+ *        formato de e-mail, sem duplicar entre si nem com o remetente
+ *        da própria campanha (evita loop de forward). Retorna a lista
+ *        normalizada (trim + lowercase + dedupe).
+ *      • action `criar_campanha`: desestrutura `bcc_emails` do body,
+ *        valida via helper, persiste no INSERT.
+ *      • action `atualizar_campanha`: adiciona `bcc_emails` à whitelist
+ *        `permitidos`, valida via helper antes do UPDATE. Se o payload
+ *        não incluir `email_remetente`, busca o atual no banco para a
+ *        regra anti-loop (apenas 1 SELECT extra, somente quando necessário).
+ *
+ *    Dependência SQL: `2026-06-11_email_campanhas_bcc_emails.sql` aplicado
+ *    (ALTER TABLE + CHECK constraint email_campanhas_bcc_max_3).
+ *
  *  - v1.14 (10/06/2026 — Auto-bounce + Opt-out cascading): suporte às
  *    decisões consolidadas no CHECKPOINT_2026-06-10.md (Prioridades 1 e 2).
  *    Três pontos de filtro de leads com estados terminais (`bounced=true`
@@ -323,6 +345,86 @@ function validarEmailRemetente(
   }
 
   return { ok: true };
+}
+
+/**
+ * 🆕 v1.15 (11/06/2026 — Prioridade 1) — Valida e normaliza a lista de
+ * BCC emails da campanha.
+ *
+ * Aceita:
+ *   - undefined / null → array vazio (campanha sem BCC, válido)
+ *   - string[]         → valida cada item, descarta vazios, retorna lista limpa
+ *   - qualquer outra coisa → erro (payload corrompido)
+ *
+ * Regras:
+ *   - Máximo 3 endereços (limite de produto, espelhado na CHECK constraint do banco)
+ *   - Cada item: formato de e-mail válido (regex básica)
+ *   - Sem duplicar entre si (case-insensitive)
+ *   - Sem duplicar com email_remetente da própria campanha (evita o forward
+ *     bater no FROM e gerar loop)
+ *
+ * NÃO valida o domínio dos destinatários: BCC pode ser qualquer endereço
+ * externo (o gestor pode querer copiar um cliente, um diretor, um endereço
+ * pessoal). Diferente do FROM, que exige domínio verificado no Resend.
+ *
+ * Em caso de sucesso, retorna { ok: true, valor: string[] } com a lista
+ * normalizada (minúscula, trim, deduplicada). Vazio = "sem BCC".
+ */
+function validarBccEmails(
+  bcc: unknown,
+  emailRemetente: string | null | undefined,
+): { ok: true; valor: string[] } | { ok: false; erro: string } {
+  // Campo opcional — undefined/null tratados como ausência
+  if (bcc === undefined || bcc === null) {
+    return { ok: true, valor: [] };
+  }
+
+  if (!Array.isArray(bcc)) {
+    return { ok: false, erro: 'bcc_emails deve ser uma lista de e-mails' };
+  }
+
+  // Normaliza: trim + lowercase + descarta strings vazias
+  const candidatos: string[] = [];
+  for (const item of bcc) {
+    if (typeof item !== 'string') {
+      return { ok: false, erro: 'bcc_emails: cada item deve ser uma string' };
+    }
+    const limpo = item.trim().toLowerCase();
+    if (limpo) candidatos.push(limpo);
+  }
+
+  // Tudo vazio = sem BCC (válido)
+  if (candidatos.length === 0) {
+    return { ok: true, valor: [] };
+  }
+
+  if (candidatos.length > 3) {
+    return { ok: false, erro: 'BCC aceita no máximo 3 endereços de e-mail.' };
+  }
+
+  // Formato + duplicidade entre si
+  const vistos = new Set<string>();
+  const regexEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  for (const e of candidatos) {
+    if (!regexEmail.test(e)) {
+      return { ok: false, erro: `BCC: e-mail inválido "${e}".` };
+    }
+    if (vistos.has(e)) {
+      return { ok: false, erro: `BCC: e-mail duplicado "${e}".` };
+    }
+    vistos.add(e);
+  }
+
+  // Não duplicar com o remetente (forward jamais deve voltar ao FROM)
+  const remetenteLimpo = (emailRemetente || '').trim().toLowerCase();
+  if (remetenteLimpo && vistos.has(remetenteLimpo)) {
+    return {
+      ok: false,
+      erro: `BCC não pode conter o e-mail do remetente da campanha ("${remetenteLimpo}").`,
+    };
+  }
+
+  return { ok: true, valor: candidatos };
 }
 
 interface AppUserLite {
@@ -1005,7 +1107,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { nome, tipo, dominio_envio, email_remetente, nome_remetente,
                 horario_inicio, horario_fim, criado_por, unidade,
                 responsavel_id: responsavelIdBody,
-                data_encerramento } = body; // 🆕 v1.10 (Fase B - 08/06/2026)
+                data_encerramento,
+                bcc_emails } = body; // 🆕 v1.15 (Prioridade 1 — 11/06/2026)
 
         if (!nome || !criado_por) {
           return res.status(400).json({ success: false, error: 'nome e criado_por obrigatórios' });
@@ -1043,6 +1146,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
           dataEncerramentoFinal = data_encerramento;
         }
+
+        // 🆕 v1.15 (11/06/2026 — Prioridade 1) — validação de bcc_emails.
+        //   Helper retorna a lista já normalizada (trim + lowercase + dedupe).
+        //   Vazio = sem BCC (forward irá apenas para o responsavel_id).
+        const valBcc = validarBccEmails(bcc_emails, email_remetente);
+        if (!valBcc.ok) return res.status(400).json({ success: false, error: valBcc.erro });
+        const bccEmailsFinal: string[] = valBcc.valor;
 
 
         // 🆕 Fase B (01/06/2026) — RBAC + atribuição de responsável/assinatura
@@ -1096,6 +1206,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             horario_inicio: horario_inicio || '08:00',
             horario_fim: horario_fim || '18:00',
             data_encerramento: dataEncerramentoFinal, // 🆕 v1.10 (Fase B)
+            bcc_emails: bccEmailsFinal,                // 🆕 v1.15 (Prioridade 1)
             criado_por,
             responsavel_id: responsavelId,
             assinatura_id: assinaturaId,
@@ -1305,9 +1416,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // NOTA: `unidade` NÃO entra aqui — é tratada separadamente abaixo
         // (validação + recálculo de assinatura).
         // 🆕 v1.10 (Fase B): `data_encerramento` adicionado à lista permitida.
+        // 🆕 v1.15 (Prioridade 1 — 11/06/2026): `bcc_emails` adicionado.
+        //   Validado e normalizado abaixo (depois do loop, antes do UPDATE).
         const permitidos = ['nome', 'tipo', 'dominio_envio', 'email_remetente',
           'nome_remetente', 'horario_inicio', 'horario_fim', 'inicio_envio', 'fim_envio',
-          'data_encerramento'];
+          'data_encerramento', 'bcc_emails'];
         const updateData: any = { atualizado_em: new Date().toISOString() };
         for (const key of permitidos) {
           if (campos[key] !== undefined) updateData[key] = campos[key];
@@ -1337,6 +1450,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Normalizar string vazia → null (para o frontend poder "limpar" a data)
         if (updateData.data_encerramento === '') {
           updateData.data_encerramento = null;
+        }
+
+        // 🆕 v1.15 (11/06/2026 — Prioridade 1) — validação de bcc_emails.
+        //   Só valida se o campo veio no payload (campo opcional + whitelist).
+        //   O email_remetente usado para evitar duplicação é o do payload (se
+        //   foi alterado nesta requisição) ou o atual no banco (se não veio).
+        //   Lê do banco apenas quando necessário, para não custar SELECT à toa.
+        if (campos.bcc_emails !== undefined) {
+          let emailRemetenteParaValidacao: string | null | undefined =
+            campos.email_remetente;
+          if (emailRemetenteParaValidacao === undefined) {
+            const { data: campAtualBcc } = await supabase
+              .from('email_campanhas')
+              .select('email_remetente')
+              .eq('id', id)
+              .maybeSingle();
+            emailRemetenteParaValidacao = campAtualBcc?.email_remetente ?? null;
+          }
+          const valBcc = validarBccEmails(campos.bcc_emails, emailRemetenteParaValidacao);
+          if (!valBcc.ok) return res.status(400).json({ success: false, error: valBcc.erro });
+          updateData.bcc_emails = valBcc.valor;
         }
 
         // 🆕 Fase E-1 — validar a unidade (se enviada). Aplicada ao updateData
