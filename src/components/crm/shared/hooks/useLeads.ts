@@ -2,12 +2,25 @@
  * useLeads.ts — Hook de gestão de Leads
  *
  * Caminho: src/components/crm/shared/hooks/useLeads.ts
- * Versão: 1.0 (Fase 1C — 29/05/2026)
+ * Versão: 1.1 (Opt-out manual — 11/06/2026)
  *
- * Responsabilidade:
- *  - Listagem, filtros, paginação, CRUD, detalhe e mudança de funil.
- *  - Comportamento idêntico ao EmpresasLeadsCRM.tsx original
- *    (linhas 218-240 + 298-380).
+ * v1.1 (11/06/2026 — Opt-out manual / Bloco 4 do plano OPT-OUT 100%):
+ *   adicionado método `desabilitar(leadId, motivo, criadoPor)` que
+ *   chama a action POST `desabilitar_lead` da API (crm-leads.ts v1.11).
+ *   A cascata em 4 passos roda no backend:
+ *     1. UPDATE email_leads.opt_out=true
+ *     2. UPSERT email_optout (LGPD irreversível)
+ *     3. UPDATE email_fila SET status='cancelado' em TODAS as campanhas
+ *        ativas/pausadas/agendadas com pendentes desse email
+ *     4. INSERT email_lead_historico (tipo='opt_out_manual')
+ *   Retorna `{ ok, total_cancelados, ja_estava_optout }` para que o
+ *   chamador (BaseLeadsPage) possa mostrar feedback adequado ao usuário.
+ *
+ * v1.0 (Fase 1C — 29/05/2026):
+ *   Responsabilidade:
+ *    - Listagem, filtros, paginação, CRUD, detalhe e mudança de funil.
+ *    - Comportamento idêntico ao EmpresasLeadsCRM.tsx original
+ *      (linhas 218-240 + 298-380).
  */
 
 import { useCallback, useState } from 'react';
@@ -39,6 +52,30 @@ interface SalvarLeadResponse {
   lead?: Lead;
   opt_out_warning?: boolean;
   error?: string;
+}
+
+// 🆕 v1.1 — Resposta da action POST `desabilitar_lead` em crm-leads.ts v1.11.
+//   Retorna o número de itens da fila cancelados em todas as campanhas
+//   (ativas, pausadas e agendadas), além da flag de idempotência
+//   `ja_estava_optout` (true → no-op, segunda chamada na mesma sessão).
+interface DesabilitarLeadResponse {
+  success: boolean;
+  lead_id?: number;
+  email?: string;
+  ja_estava_optout?: boolean;
+  total_cancelados?: number;
+  motivo?: string;
+  mensagem?: string;
+  error?: string;
+}
+
+// 🆕 v1.1 — Retorno do método `desabilitar` para o chamador.
+//   `ok` indica sucesso operacional; os outros campos alimentam o
+//   feedback ao usuário no toast/alert pós-ação.
+export interface DesabilitarLeadResult {
+  ok: boolean;
+  total_cancelados: number;
+  ja_estava_optout: boolean;
 }
 
 interface StatsResponse {
@@ -220,6 +257,58 @@ export function useLeads(options: UseLeadsOptions = {}) {
   );
 
   // ════════════════════════════════════════════════════════════
+  // 🆕 v1.1 — DESABILITAR (opt-out manual)
+  // ════════════════════════════════════════════════════════════
+  //
+  // Chama a action POST `desabilitar_lead` da API. A cascata completa
+  // (4 passos: opt_out + email_optout + cancela fila global + histórico)
+  // é executada no backend (crm-leads.ts v1.11).
+  //
+  // Decisão de produto (CHECKPOINT_2026-06-10_P1_VALIDADA.md P2.1):
+  //   Opt-out é IRREVERSÍVEL conforme LGPD. Não há método contraparte
+  //   `reabilitar` neste hook por design.
+  //
+  // Parâmetros:
+  //   - leadId: id do lead em email_leads
+  //   - motivo: texto livre opcional (ex.: "lead pediu por email"); se
+  //     null/vazio, o backend grava 'opt_out_manual' como motivo padrão
+  //   - criadoPor: nome do usuário logado (auditoria; vai para
+  //     email_lead_historico.criado_por)
+  //
+  // Retorno: ver DesabilitarLeadResult acima.
+  const desabilitar = useCallback(
+    async (
+      leadId: number,
+      motivo: string | null,
+      criadoPor: string
+    ): Promise<DesabilitarLeadResult> => {
+      setLoading(true);
+      try {
+        const resp = await api.post<DesabilitarLeadResponse>(
+          'desabilitar_lead',
+          {
+            lead_id: leadId,
+            motivo: motivo || undefined,
+            criado_por: criadoPor,
+          }
+        );
+        if (!resp.ok || !resp.data?.success) {
+          alert(resp.data?.error || resp.error || 'Erro ao desabilitar lead');
+          return { ok: false, total_cancelados: 0, ja_estava_optout: false };
+        }
+        return {
+          ok: true,
+          total_cancelados: resp.data.total_cancelados ?? 0,
+          ja_estava_optout: !!resp.data.ja_estava_optout,
+        };
+      } finally {
+        setLoading(false);
+      }
+    },
+    [api]
+  );
+
+  // ════════════════════════════════════════════════════════════
   // RETURN
   // ════════════════════════════════════════════════════════════
 
@@ -250,6 +339,8 @@ export function useLeads(options: UseLeadsOptions = {}) {
     fecharDetalhe,
     // Funil
     mudarFunil,
+    // 🆕 v1.1 — Opt-out manual
+    desabilitar,
   };
 }
 

@@ -2,7 +2,16 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.5 (Vinculação em Lote — 10/06/2026)
+ * Versão: 1.6 (Opt-out manual — 11/06/2026)
+ *
+ * v1.6 (11/06/2026 — Opt-out manual / Bloco 4 do plano OPT-OUT 100%):
+ *   Plugado o callback `onDesabilitar` no LeadFormModal. Handler
+ *   `handleDesabilitarLead` chama o novo método `useLeads.desabilitar`
+ *   (v1.1), exibe feedback ao usuário (toast/alert com total cancelado),
+ *   fecha o modal e recarrega listagem + stats para refletir o badge
+ *   "Opt-out" e a saída do lead das contagens.
+ *   - Não-bloqueante: se o callback ficasse desinstalado (ex.: futura
+ *     mudança), o LeadFormModal v1.2 simplesmente não renderiza o botão.
  *
  * v1.5 (10/06/2026 — Vinculação em Lote): nova aba "🎯 Vincular em Lote"
  *   adicionada ao lado de Empresas/Leads/Respostas/Inválidos. Permite ao
@@ -289,6 +298,54 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       if (abaAtiva === 'respostas') respostasH.carregar();
       if (abaAtiva === 'invalidos') invalidosH.carregar();
     }
+  };
+
+  // ════════════════════════════════════════════════════════════
+  // 🆕 v1.6 — OPT-OUT MANUAL (Bloco 4 do plano OPT-OUT 100%)
+  // ════════════════════════════════════════════════════════════
+  //
+  // Disparado pelo modal de confirmação dupla do LeadFormModal (v1.2),
+  // após o gestor/SDR clicar em "Confirmar Opt-Out". Chama o método
+  // `useLeads.desabilitar` (v1.1), que por sua vez aciona a action
+  // POST `desabilitar_lead` em /api/crm-leads (v1.11) com a cascata
+  // completa em 4 passos (opt_out + email_optout + cancela fila
+  // global + histórico).
+  //
+  // Após sucesso:
+  //   • Mostra alert com total de envios cancelados (feedback explícito
+  //     ao usuário — útil porque um lead pode estar em várias campanhas).
+  //   • Fecha o modal de edição e limpa o formLead.
+  //   • Recarrega listagem + stats (badge "Opt-out" aparece imediatamente
+  //     e contador "OPT-OUT" do KPI no topo é atualizado).
+  //   • Se `ja_estava_optout=true` (idempotência — cliquezinho duplo),
+  //     mostra mensagem informativa em vez de "X cancelados".
+  //
+  // Em caso de falha, o hook `useLeads.desabilitar` já exibe um alert
+  // com o erro retornado pelo backend, então aqui só verificamos `ok`.
+  const handleDesabilitarLead = async (motivo: string | null): Promise<void> => {
+    if (!formLead.id) return;
+    const resultado = await leadsH.desabilitar(
+      formLead.id,
+      motivo,
+      currentUser.nome_usuario
+    );
+    if (!resultado.ok) return;
+
+    if (resultado.ja_estava_optout) {
+      alert('ℹ️ Este lead já estava em opt-out. Nenhuma ação adicional foi necessária.');
+    } else {
+      const plural = resultado.total_cancelados === 1 ? '' : 's';
+      alert(
+        `✅ Lead em opt-out.\n` +
+          `${resultado.total_cancelados} envio${plural} pendente${plural} ` +
+          `cancelado${plural} em campanhas ativas, pausadas e agendadas.`
+      );
+    }
+
+    setModalLead(null);
+    setFormLead({});
+    leadsH.carregar();
+    leadsH.carregarStats();
   };
 
   const abrirDetalheLead = (id: number) => {
@@ -605,6 +662,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
         onChange={setFormLead}
         onSalvar={salvarLead}
         onFechar={() => setModalLead(null)}
+        onDesabilitar={handleDesabilitarLead}
       />
 
       <ImportProspectsModal
