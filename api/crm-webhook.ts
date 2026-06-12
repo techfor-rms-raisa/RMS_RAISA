@@ -3,6 +3,54 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.14 — 12/06/2026 — P3: popular `email_fila.respondido_em` no UPDATE
+ *   do ramo `email.received`.
+ *
+ *   Bug histórico: o CHECKPOINT_2026-06-04_FASE_7_MVP_CONCLUIDA.md documentou
+ *   que a v1.1.1 atualizava `status='respondido', respondido_em=NOW()` no
+ *   mesmo UPDATE da fila. Em alguma refatoração subsequente (provavelmente
+ *   entre v1.4 e v1.10, durante as evoluções de Fase C e auto-opt-out), a
+ *   coluna `respondido_em` foi removida do payload do UPDATE, ficando NULL
+ *   para todas as filas respondidas.
+ *
+ *   Sintoma diagnosticado em 11/06/2026 (CHECKPOINT_2026-06-11_BCC_PRODUCTION_
+ *   E_DIAGNOSTICO_METRICAS.md): motor de métricas no dashboard de Acompanhamento
+ *   mostrava `taxa_resposta=0%` mesmo com respostas reais gravadas em
+ *   `email_respostas` (lead 8 respondeu, fila marcava 0 respondido_em).
+ *
+ *   Correção cirúrgica (1 UPDATE alterado em `processarEmailRecebido`):
+ *     ANTES:
+ *       .update({ status: 'respondido' })
+ *     DEPOIS:
+ *       .update({
+ *         status: 'respondido',
+ *         respondido_em: createdAtResend || new Date().toISOString(),
+ *       })
+ *
+ *   Padrão idêntico aos outros casos do switch outbound (entregue_em,
+ *   aberto_em, clicado_em, bounce_em): usa `createdAtResend` (timestamp
+ *   do evento fornecido pelo Resend) com fallback para NOW() local —
+ *   preserva o tempo real do evento mesmo em retries.
+ *
+ *   ⚠️ Bugs P2/P4/P5 do mesmo checkpoint NÃO são tratados nesta versão:
+ *     • P2 (bounce_em) — código v1.13.2 já popula corretamente no switch
+ *       outbound (linha do case 'bounced'). Diagnóstico de 11/06 indicava
+ *       9 bounces sem bounce_em — investigação SQL pendente para confirmar
+ *       se é caso de órfãos ou bounces antigos antes do código atual.
+ *     • P4 (status='pendente' não evolui para 'enviado') — correção fica
+ *       em `api/cron/disparar-fila.ts`, não neste arquivo.
+ *     • P5 (step_atual não avança) — correção também em `disparar-fila.ts`
+ *       (ou neste webhook no ramo delivered, dependendo de decisão de
+ *       produto pendente).
+ *
+ *   Idempotência: o UPDATE é o mesmo de antes, apenas adiciona um campo
+ *   ao payload. Múltiplas chamadas com o mesmo `createdAtResend` produzem
+ *   o mesmo resultado (last-write-wins é o comportamento esperado para
+ *   responde do Resend que reenvia o mesmo evento).
+ *
+ *   Dependência: nenhuma SQL adicional. Coluna `respondido_em` já existe
+ *   em `email_fila` desde a criação da tabela (Fase 5B).
+ *
  * v1.13.2 — 11/06/2026 — Prioridade 1: BCC nas respostas da campanha.
  *   Quando o lead RESPONDE a uma campanha (ramo `email.received`), o
  *   forward montado por `encaminharRespostaAoGestor` passa a incluir
@@ -1632,10 +1680,21 @@ async function processarEmailRecebido(opts: {
 
   console.log(`[crm-webhook] 💬 Resposta gravada: id=${novaResposta?.id} lead=${fila.lead_id} campanha=${fila.campanha_id}`);
 
-  // 7. UPDATE em email_fila — status='respondido'
+  // 7. UPDATE em email_fila — status='respondido' + respondido_em
+  //   🔧 v1.14 (12/06/2026 — P3): popular `respondido_em` no MESMO UPDATE.
+  //     Bug regredido entre v1.1.1 e v1.13.2 — a coluna ficava NULL em todas
+  //     as filas que recebiam resposta, quebrando o motor de métricas
+  //     (taxa_resposta zerada no dashboard de Acompanhamento). Diagnóstico
+  //     em CHECKPOINT_2026-06-11_BCC_PRODUCTION_E_DIAGNOSTICO_METRICAS.md.
+  //     Padrão idêntico aos outros casos do switch (entregue_em, aberto_em,
+  //     clicado_em, bounce_em): usa `createdAtResend` (timestamp do evento
+  //     fornecido pelo Resend) com fallback para NOW() local.
   await supabase
     .from('email_fila')
-    .update({ status: 'respondido' })
+    .update({
+      status: 'respondido',
+      respondido_em: createdAtResend || new Date().toISOString(),
+    })
     .eq('id', fila.id);
 
   // 🆕 v1.10 (Fase C) — Cancela steps FUTUROS do lead NESTA campanha.
