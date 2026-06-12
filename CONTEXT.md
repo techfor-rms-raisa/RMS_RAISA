@@ -603,13 +603,13 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 59 arquivos | 862.2 KB | 11/06/2026 |
-| `src/components/` | 161 arquivos | 923.0 KB | 11/06/2026 |
+| `api/` | 62 arquivos | 961.7 KB | 12/06/2026 |
+| `src/components/` | 163 arquivos | 923.0 KB | 12/06/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 11/06/2026 |
-| `src/types/` | 6 arquivos | 31.0 KB | 11/06/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 11/06/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 11/06/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 12/06/2026 |
+| `src/types/` | 6 arquivos | 31.0 KB | 12/06/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 12/06/2026 |
+| `scripts/` | 1 arquivos | 6.8 KB | 12/06/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -654,6 +654,7 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 - `api/talent-finder-log.ts`
 - `api/talent-finder-search.ts`
 - `api/talent-finder-stats.ts`
+- `api/unsubscribe.ts`
 - `api/update-report-meta.ts`
 - `api/upload-audio.ts`
 - `api/vaga-analistas-recomendados.ts`
