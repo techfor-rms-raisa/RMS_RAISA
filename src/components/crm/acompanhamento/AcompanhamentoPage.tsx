@@ -2,7 +2,28 @@
  * AcompanhamentoPage.tsx — Página de Acompanhamento (Dashboard CRM)
  *
  * Caminho: src/components/crm/acompanhamento/AcompanhamentoPage.tsx
- * Versão: 2.0 (Fase 8-fix2 — 04/06/2026)
+ * Versão: 2.1 (12/06/2026)
+ *
+ * v2.1 (12/06/2026): substituição do KPI "Taxa clique" por "Taxa resposta"
+ *   conforme decisão de produto (12/06/2026). Em campanhas de prospecção
+ *   B2B, "clique" tem baixa relevância (templates não dependem de CTA);
+ *   "resposta" é a métrica que efetivamente mede conversão para conversa.
+ *   Adicionalmente, mostrar "Abertura > 0 mas Clique = 0" gerava confusão
+ *   ("se abriram, deveriam ter clicado") — clique técnico (link wrapping
+ *   do Resend) ≠ abrir o email no cliente.
+ *
+ *   Mudanças cirúrgicas, layout intocado:
+ *     - Interface `CampanhaAtiva.taxa_clique` → `taxa_resposta`.
+ *     - Interface `DashboardStats.engajamento.taxa_clique` → `taxa_resposta`.
+ *     - KPI card: label "Taxa clique" → "Taxa resposta"; ícone cursor
+ *       (`fa-arrow-pointer`) → balão de fala (`fa-reply`); subtítulo
+ *       "cliques / enviados" → "respondidos / enviados".
+ *     - Thresholds de cor recalibrados para prospecção B2B (5% verde,
+ *       2% amber, < 2% gray — clique era 3%/1%/0% que não cabe para reply).
+ *     - Tabela "Campanhas em andamento": coluna "TAXAS" continua com 2
+ *       valores "abertura / X" — agora X é resposta, não clique.
+ *
+ *   Backend correspondente: `api/crm-analytics.ts` v2.1 (mesma sessão).
  *
  * v2.0 (04/06/2026 — Fase 8-fix2): cards de Engajamento & Entregabilidade
  *   foram CONECTADOS aos dados reais. Antes (v1.0) eles eram placeholders
@@ -13,7 +34,7 @@
  *   engajamento`). Agora a UI honra:
  *     - `stats.engajamento.total_enviado`     → valor do card "Total enviado"
  *     - `stats.engajamento.taxa_abertura`     → valor do card "Taxa abertura" (%)
- *     - `stats.engajamento.taxa_clique`       → valor do card "Taxa clique"   (%)
+ *     - `stats.engajamento.taxa_resposta`     → valor do card "Taxa resposta" (%)  ← v2.1
  *     - `stats.engajamento.taxa_bounce`       → valor do card "Taxa bounce"   (%)
  *   O badge "aguardando motor" continua respeitando a flag
  *   `stats.engajamento.aguardando_motor` do backend: aparece SÓ quando
@@ -23,9 +44,9 @@
  * v1.0 (Fase 8 — 01/06/2026): primeira versão.
  *   - 6 KPIs de status (Total, Ativas, Agendadas, Em rascunho, Pausadas,
  *     Concluídas) — DADOS REAIS hoje.
- *   - 4 KPIs de engajamento (Enviado / Abertura / Clique / Bounce) com
+ *   - 4 KPIs de engajamento (Enviado / Abertura / Resposta / Bounce) com
  *     badge "aguardando motor de disparo" (placeholder) — populam quando
- *     os webhooks existirem.
+ *     os webhooks existirem.   (v2.1: Clique → Resposta)
  *   - Distribuição por responsável / vertical / domínio (3 tabelas).
  *   - Lista de campanhas em andamento (até 20).
  *   - Saúde da base: opt-outs, leads aptos, e alerta se há leads SEM
@@ -86,7 +107,7 @@ interface CampanhaAtiva {
   responsavel: string;
   dias_rodando: number | null;
   taxa_abertura: number | null;
-  taxa_clique: number | null;
+  taxa_resposta: number | null;   // 🆕 v2.1 — substituiu taxa_clique
   aguardando_motor: boolean;
 }
 
@@ -105,7 +126,7 @@ interface DashboardStats {
   engajamento: {
     total_enviado: number;
     taxa_abertura: number;
-    taxa_clique: number;
+    taxa_resposta: number;   // 🆕 v2.1 — substituiu taxa_clique
     taxa_bounce: number;
     aguardando_motor: boolean;
   };
@@ -314,25 +335,25 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
                 }
               />
               <KpiCard
-                label="Taxa clique"
+                label="Taxa resposta"
                 valor={
                   stats.engajamento.aguardando_motor
                     ? '—'
-                    : stats.engajamento.taxa_clique.toFixed(1)
+                    : stats.engajamento.taxa_resposta.toFixed(1)
                 }
-                icon="fa-solid fa-arrow-pointer"
+                icon="fa-solid fa-reply"
                 cor={
                   stats.engajamento.aguardando_motor
                     ? 'gray'
-                    : stats.engajamento.taxa_clique >= 3
+                    : stats.engajamento.taxa_resposta >= 5
                     ? 'green'
-                    : stats.engajamento.taxa_clique >= 1
+                    : stats.engajamento.taxa_resposta >= 2
                     ? 'amber'
                     : 'gray'
                 }
                 sufixo="%"
                 detalhe={
-                  stats.engajamento.aguardando_motor ? 'aguardando motor' : 'cliques / enviados'
+                  stats.engajamento.aguardando_motor ? 'aguardando motor' : 'respondidos / enviados'
                 }
               />
               <KpiCard
@@ -425,7 +446,7 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
                             </span>
                           ) : (
                             <span className="text-xs text-gray-700">
-                              {(c.taxa_abertura ?? 0).toFixed(1)}% / {(c.taxa_clique ?? 0).toFixed(1)}%
+                              {(c.taxa_abertura ?? 0).toFixed(1)}% / {(c.taxa_resposta ?? 0).toFixed(1)}%
                             </span>
                           )}
                         </td>
