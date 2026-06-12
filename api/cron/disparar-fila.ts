@@ -4,6 +4,57 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.13 (12/06/2026 — P5: avançar email_lead_campanhas.step_atual
+ *      no momento do envio).
+ *
+ *      Bug histórico: nem o cron nem o webhook tocavam em
+ *      email_lead_campanhas.step_atual após o INSERT inicial (step_atual=1).
+ *      Resultado registrado no CHECKPOINT_2026-06-11_BCC_PRODUCTION_E_
+ *      DIAGNOSTICO_METRICAS.md: 254 leads em Production permaneciam em
+ *      step_atual=1 mesmo após dezenas terem recebido os steps 2 e 3.
+ *      O backfill 2026-06-11 corrigiu o estado existente (1 → 204, 2 → 2,
+ *      3 → 48), mas SEM esta correção a divergência voltaria a cada
+ *      novo envio.
+ *
+ *      Decisão de produto (12/06/2026 — Opção A): cron grava step_atual
+ *      no momento do envio (não no webhook delivered). Semântica:
+ *      step_atual = "última tentativa de envio feita" (factual).
+ *      Idêntico ao critério usado pelo backfill, mantém consistência
+ *      com os dados já corrigidos em Production.
+ *
+ *      Trade-off aceito (decisão Messias 12/06): se o e-mail bouncear
+ *      segundos depois, step_atual mostra avanço mesmo sem entrega
+ *      bem-sucedida. Isso é aceitável porque bounce/falha são
+ *      informações ortogonais (registradas em bounce_em / entregue_em
+ *      / erro_detalhes) e detectáveis para drill-down sem regredir
+ *      step_atual.
+ *
+ *      Mudanças cirúrgicas (2 pontos, 0 regressão):
+ *        1. SELECT do step ganha coluna `ordem` (linha ~715) — antes
+ *           só trazia id/assunto/corpo. A `ordem` é o número usado
+ *           em step_atual (1, 2, 3, 4...).
+ *        2. Após o UPDATE de status='enviado' (linha ~1045), bloco
+ *           novo de UPDATE em email_lead_campanhas via lookup no
+ *           mapaSteps já carregado. Falha aqui é GRACEFUL (loga
+ *           warning, não bloqueia o fluxo — o envio já foi gravado).
+ *
+ *      Idempotência: chamadas repetidas com o mesmo step_atual são
+ *      no-op (UPDATE sobrescreve o mesmo valor). Cron processa em
+ *      ordem cronológica (agendado_para ASC), então não há regressão.
+ *
+ *      Defesa contra dados ausentes: guard `if (stepOrdem && lead_id
+ *      && campanha_id)` previne UPDATE com valores nulos. Itens com
+ *      step_id desconhecido (não esperado em fluxo normal) são
+ *      pulados silenciosamente.
+ *
+ *      P4 (status='pendente' não evolui) foi REAVALIADO nesta sessão
+ *      e classificado como FALSO ALARME: o código v1.12.1 já atualiza
+ *      status='enviado' corretamente no UPDATE após envio bem-sucedido
+ *      (linha ~1045). O sintoma observado em 11/06 deve ter sido
+ *      causado por uma versão anterior do código ou por janelas raras
+ *      onde o webhook delivered chegou antes do UPDATE final do cron.
+ *      Nenhuma alteração necessária para P4.
+ *
  *  - v1.12.1 (11/06/2026 — HOTFIX ESM): adicionada extensão `.js` no import
  *    `'../_helpers/unsubscribe-token'` → `'../_helpers/unsubscribe-token.js'`.
  *    Mesmo problema de ESM strict que crm-leads e crm-webhook.
@@ -712,7 +763,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const { data: steps } = await supabase
       .from('email_campanha_steps')
-      .select('id, assunto, corpo_html, corpo_texto')
+      .select('id, ordem, assunto, corpo_html, corpo_texto')
       .in('id', stepIds);
     const mapaSteps = new Map<number, any>();
     (steps || []).forEach((s: any) => mapaSteps.set(s.id, s));
@@ -1043,6 +1094,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           enviado_em: new Date().toISOString(),
           resend_message_id: resendId,
         }).eq('id', item.id);
+
+        // 🆕 v1.13 (12/06/2026 — P5): Avançar step_atual no vínculo lead-campanha.
+        //   Decisão de produto (12/06/2026 — Opção A): step_atual reflete a
+        //   ÚLTIMA tentativa de envio (factual). Idêntico à semântica do
+        //   backfill aplicado em Production em 11/06/2026.
+        //
+        //   Causa-raiz do bug histórico: nem o cron nem o webhook tocavam em
+        //   email_lead_campanhas.step_atual após o INSERT inicial (step_atual=1).
+        //   Resultado: 254 leads ficaram em step_atual=1 mesmo após dezenas
+        //   terem recebido os steps 2 e 3 (backfill arrumou os dados, mas
+        //   sem esta correção a divergência voltaria em cada novo envio).
+        //
+        //   Por que aqui (após status='enviado') e não no webhook delivered:
+        //     - Cron já tem todos os dados em mãos (lead_id, campanha_id,
+        //       step.ordem via mapaSteps) — zero queries extras de lookup.
+        //     - "Tentativa feita" é o sinal acionável para o dashboard de
+        //       Acompanhamento — não precisamos esperar o webhook.
+        //     - Bounce/falha de entrega são informações ortogonais
+        //       (registradas em bounce_em / entregue_em / erro_detalhes) —
+        //       não precisam regredir step_atual.
+        //
+        //   Falha aqui é GRACEFUL: o envio já foi gravado com sucesso. Loga
+        //   warning e segue. step_atual divergente será capturado pelo
+        //   backfill de manutenção (caso vire necessário no futuro).
+        //
+        //   Idempotência: chamadas repetidas com o mesmo step_atual são
+        //   no-op (UPDATE sobrescreve o mesmo valor). Não há regressão
+        //   porque o cron processa steps em ordem cronológica (delay_dias
+        //   acumulativo no agendado_para garante isso).
+        const stepInfo = mapaSteps.get(item.step_id);
+        const stepOrdem = stepInfo?.ordem;
+        if (stepOrdem && item.lead_id && item.campanha_id) {
+          const { error: errStepAtual } = await supabase
+            .from('email_lead_campanhas')
+            .update({ step_atual: stepOrdem })
+            .eq('lead_id', item.lead_id)
+            .eq('campanha_id', item.campanha_id);
+          if (errStepAtual) {
+            console.warn(
+              `[disparar-fila] ⚠️ Falha ao avançar step_atual do lead ${item.lead_id} ` +
+              `em campanha ${item.campanha_id} para step ${stepOrdem}:`,
+              errStepAtual.message,
+            );
+          } else {
+            console.log(
+              `[disparar-fila] 📊 step_atual avançado: lead=${item.lead_id} ` +
+              `campanha=${item.campanha_id} step=${stepOrdem}`,
+            );
+          }
+        }
+
         enviadosCount++;
         detalhes.itens.push({
           id: item.id,
