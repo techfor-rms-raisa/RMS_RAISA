@@ -2,18 +2,62 @@
  * LeadDetailDrawer.tsx — Drawer de detalhe do lead
  *
  * Caminho: src/components/crm/base-leads/LeadDetailDrawer.tsx
- * Versão: 1.0 (Fase 1C — 29/05/2026)
+ * Versão: 1.1 (Fase 2 / F5 — 12/06/2026)
  *
- * Decomposto de EmpresasLeadsCRM.tsx (linhas 926-1109).
- * Mostra dados do lead + campanhas + respostas + timeline,
- * com modal "Alterar Funil" embutido (sempre invocado a
- * partir daqui no fluxo original).
+ * v1.1 — Recovery Pipeline UI (F5 — Fase 2 do Email Recovery Pipeline):
+ *   - Badge "Inválido" no header (vermelho) quando bounced/motivo_invalidacao
+ *   - Nova seção "Recuperação de E-mail" entre Dados e Campanhas
+ *     (visível só quando lead invalidado)
+ *   - Botão "Tentar Recovery" → POST /api/campaign-email-recovery?action=recover_lead
+ *     (orquestra MX + padrão da empresa + Snov.io)
+ *   - Edição manual + "Validar e Reativar" → POST .../?action=manual_revalidate
+ *     (MX obrigatório + Snov.io opcional via checkbox)
+ *   - Indicador de tentativas restantes (D9: máx 3)
+ *   - Feedback visual de cada operação (sucesso verde / erro vermelho)
+ *   - useEffect carrega status do Recovery ao abrir o drawer
+ *   - 2 props novas opcionais: criadoPor, onRecoveryConcluido (zero impacto no caller)
+ *
+ *   ⚠️ NADA do layout original foi modificado — apenas adições aditivas.
+ *
+ * v1.0 (Fase 1C — 29/05/2026): versão original
+ *   - Header, dados do lead, campanhas, respostas, timeline
+ *   - Modal "Alterar Funil"
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { FUNIL_LABELS } from '../shared/components/FunilBadge';
 import { HISTORICO_ICONS, formatDateTime } from '../types/crm.constants';
 import type { Lead, HistoricoItem } from '../types/crm.types';
+
+// ════════════════════════════════════════════════════════════
+// 🆕 v1.1 — TIPOS DO RECOVERY (locais ao componente)
+// ════════════════════════════════════════════════════════════
+
+interface RecoveryLeadInfo {
+  id: number;
+  email: string;
+  nome?: string;
+  bounced: boolean;
+  bounced_em: string | null;
+  bounced_motivo: string | null;
+  apto_campanha: boolean;
+  tentativas_recovery: number;
+  motivo_invalidacao: string | null;
+  recovery_em: string | null;
+}
+
+interface RecoveryStatusResponse {
+  success: boolean;
+  lead: RecoveryLeadInfo;
+  pode_tentar_recovery: boolean;
+  tentativas_restantes: number;
+  modo_sugerido: 'auto' | 'manual' | null;
+}
+
+interface RecoveryMessage {
+  type: 'success' | 'error';
+  text: string;
+}
 
 // ════════════════════════════════════════════════════════════
 // PROPS
@@ -31,6 +75,18 @@ export interface LeadDetailDrawerProps {
    * O componente pai (BaseLeadsPage) cuida do reload via hook.
    */
   onConfirmarFunil: (novoStatus: string, motivoPerda: string | null) => Promise<boolean>;
+  /**
+   * 🆕 v1.1 — Identificador do operador atual (email do usuário logado).
+   * Enviado como `criado_por` nas chamadas de Recovery e gravado no histórico.
+   * Default: 'desconhecido' (compatibilidade com caller atual).
+   */
+  criadoPor?: string;
+  /**
+   * 🆕 v1.1 — Callback opcional disparado após Recovery bem-sucedido OU
+   * edição manual validada. O pai pode usar para recarregar a lista de leads
+   * e refletir o novo estado (email atualizado, bounced=false, etc.).
+   */
+  onRecoveryConcluido?: () => void;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -45,14 +101,154 @@ const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
   loadingFunil,
   onFechar,
   onConfirmarFunil,
+  criadoPor = 'desconhecido',
+  onRecoveryConcluido,
 }) => {
+  // ── Estado original (preservado intacto) ─────────────
   const [modalFunil, setModalFunil] = useState(false);
   const [novoFunil, setNovoFunil] = useState('');
   const [motivoPerda, setMotivoPerda] = useState('');
 
+  // ── 🆕 v1.1: Estado do Recovery ──────────────────────
+  const [recoveryStatus, setRecoveryStatus] = useState<RecoveryStatusResponse | null>(null);
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [isManualValidating, setIsManualValidating] = useState(false);
+  const [novoEmailManual, setNovoEmailManual] = useState('');
+  const [validarComSnovio, setValidarComSnovio] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState<RecoveryMessage | null>(null);
+
+  // ── 🆕 v1.1: Carregar status do Recovery ao abrir/trocar lead ─
+  const carregarRecoveryStatus = useCallback(async (leadId: number) => {
+    try {
+      const r = await fetch(
+        `/api/campaign-email-recovery?action=lead_status&lead_id=${leadId}`
+      );
+      const json = await r.json();
+      if (json && json.success) {
+        setRecoveryStatus(json);
+      } else {
+        setRecoveryStatus(null);
+      }
+    } catch (err) {
+      // Falha silenciosa — UI degrada graciosamente (badge usa lead.bounced direto)
+      console.error('[LeadDetailDrawer] Erro ao carregar status do Recovery:', err);
+      setRecoveryStatus(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (lead?.id) {
+      carregarRecoveryStatus(lead.id);
+      // Reset estados locais ao mudar de lead
+      setNovoEmailManual('');
+      setValidarComSnovio(false);
+      setRecoveryMessage(null);
+    }
+  }, [lead?.id, carregarRecoveryStatus]);
+
+  // ── 🆕 v1.1: Ações do Recovery ───────────────────────
+  const acionarRecovery = async () => {
+    if (!lead) return;
+    setIsRecovering(true);
+    setRecoveryMessage(null);
+    try {
+      const r = await fetch('/api/campaign-email-recovery?action=recover_lead', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lead_id: lead.id, criado_por: criadoPor }),
+      });
+      const json = await r.json();
+      if (json.success) {
+        setRecoveryMessage({
+          type: 'success',
+          text: `E-mail recuperado: ${json.email_recuperado}. ${json.campanhas_re_enfileiradas || 0} campanha(s) reativada(s).`,
+        });
+        onRecoveryConcluido?.();
+      } else {
+        const detalhe =
+          json.status === 'invalid_mx'
+            ? `MX inválido (${json.mx_erro || 'sem detalhes'})`
+            : json.status === 'no_match'
+            ? `Nenhum padrão válido encontrado em ${json.candidatos_testados || 0} testes`
+            : json.status === 'limit_reached'
+            ? 'Limite de 3 tentativas atingido — lead definitivamente irrecuperável'
+            : json.error || `Recovery falhou (${json.status})`;
+        setRecoveryMessage({ type: 'error', text: detalhe });
+      }
+      // Recarregar status (sucesso ou falha, o tentativas_recovery muda)
+      await carregarRecoveryStatus(lead.id);
+    } catch (err: any) {
+      setRecoveryMessage({
+        type: 'error',
+        text: err?.message || 'Erro de comunicação com o servidor',
+      });
+    } finally {
+      setIsRecovering(false);
+    }
+  };
+
+  const acionarManualRevalidate = async () => {
+    if (!lead || !novoEmailManual.trim()) return;
+    setIsManualValidating(true);
+    setRecoveryMessage(null);
+    try {
+      const r = await fetch('/api/campaign-email-recovery?action=manual_revalidate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lead_id: lead.id,
+          novo_email: novoEmailManual.trim(),
+          criado_por: criadoPor,
+          validar_snovio: validarComSnovio,
+        }),
+      });
+      const json = await r.json();
+      if (json.success) {
+        setRecoveryMessage({
+          type: 'success',
+          text: `Reativado com sucesso: ${json.email_novo}. ${json.campanhas_re_enfileiradas || 0} campanha(s) reativada(s).`,
+        });
+        setNovoEmailManual('');
+        onRecoveryConcluido?.();
+      } else {
+        const detalhe =
+          json.status === 'invalid_mx'
+            ? `Domínio sem MX válido (${json.mx_erro || 'sem detalhes'})`
+            : json.status === 'snovio_rejected'
+            ? `Snov.io rejeitou: ${json.snovio_status || 'sem detalhes'}`
+            : json.status === 'limit_reached'
+            ? 'Limite de 3 tentativas atingido'
+            : json.error || 'Validação falhou';
+        setRecoveryMessage({ type: 'error', text: detalhe });
+      }
+      await carregarRecoveryStatus(lead.id);
+    } catch (err: any) {
+      setRecoveryMessage({
+        type: 'error',
+        text: err?.message || 'Erro de comunicação com o servidor',
+      });
+    } finally {
+      setIsManualValidating(false);
+    }
+  };
+
   if (!lead) return null;
 
   const funilAtual = FUNIL_LABELS[lead.funil_status] || FUNIL_LABELS.lead;
+
+  // 🆕 v1.1: derivados do recovery status
+  // Considera invalidado se: (a) já temos status fresh, OU (b) lead.bounced do prop (fallback)
+  const leadInvalidado = !!(
+    recoveryStatus?.lead?.bounced ||
+    recoveryStatus?.lead?.motivo_invalidacao ||
+    (lead as any).bounced // fallback caso o tipo Lead já tenha o campo
+  );
+  const podeTentarRecovery = recoveryStatus?.pode_tentar_recovery === true;
+  const tentativasUsadas = recoveryStatus?.lead?.tentativas_recovery ?? 0;
+  const tentativasRestantes = recoveryStatus?.tentativas_restantes ?? 3;
+  const modoSugerido = recoveryStatus?.modo_sugerido;
+  const motivoInvalidacao = recoveryStatus?.lead?.motivo_invalidacao;
+  const limiteAtingido = tentativasUsadas >= 3;
 
   const abrirModalFunil = () => {
     setNovoFunil('');
@@ -86,7 +282,20 @@ const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
               </p>
             </div>
             <div className="flex items-center gap-2">
-              {/* Badge funil clicável → abre modal */}
+              {/* 🆕 v1.1: Badge "Inválido" — antes do badge funil */}
+              {leadInvalidado && (
+                <span
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-700 border border-red-200"
+                  title={
+                    motivoInvalidacao
+                      ? `Inválido — motivo: ${motivoInvalidacao}`
+                      : 'E-mail com bounce'
+                  }
+                >
+                  <i className="fa-solid fa-triangle-exclamation"></i> Inválido
+                </span>
+              )}
+              {/* Badge funil clicável → abre modal (preservado) */}
               <button
                 onClick={abrirModalFunil}
                 className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-medium ${funilAtual.cor} hover:opacity-80 transition-opacity cursor-pointer`}
@@ -176,6 +385,165 @@ const LeadDetailDrawer: React.FC<LeadDetailDrawerProps> = ({
               </div>
             )}
           </div>
+
+          {/* ════════════════════════════════════════════════════════════ */}
+          {/* 🆕 v1.1: SEÇÃO RECUPERAÇÃO DE E-MAIL                         */}
+          {/*    Visível APENAS quando lead invalidado (bounce ou MX)       */}
+          {/* ════════════════════════════════════════════════════════════ */}
+          {leadInvalidado && (
+            <div className="p-6 border-b bg-red-50/30">
+              <h3 className="text-sm font-bold text-red-700 mb-3 flex items-center gap-2">
+                <i className="fa-solid fa-envelope-circle-check text-red-600"></i>
+                Recuperação de E-mail
+              </h3>
+
+              {/* Status atual do Recovery */}
+              <div className="bg-white border border-red-200 rounded-lg p-3 mb-3 text-sm">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <span className="text-gray-500">Tentativas usadas:</span>{' '}
+                    <span className="font-medium">{tentativasUsadas}/3</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Restantes:</span>{' '}
+                    <span
+                      className={`font-medium ${
+                        tentativasRestantes === 0
+                          ? 'text-red-600'
+                          : tentativasRestantes === 1
+                          ? 'text-amber-600'
+                          : 'text-green-600'
+                      }`}
+                    >
+                      {tentativasRestantes}
+                    </span>
+                  </div>
+                  {motivoInvalidacao && (
+                    <div className="col-span-2">
+                      <span className="text-gray-500">Motivo da invalidação:</span>{' '}
+                      <span className="font-medium">{motivoInvalidacao}</span>
+                    </div>
+                  )}
+                  {modoSugerido && podeTentarRecovery && (
+                    <div className="col-span-2">
+                      <span className="text-gray-500">Modo sugerido:</span>{' '}
+                      <span className="font-medium">
+                        {modoSugerido === 'auto'
+                          ? 'Automático (padrão conhecido — 1 verificação)'
+                          : 'Manual (testa até 30 padrões)'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Feedback da última operação */}
+              {recoveryMessage && (
+                <div
+                  className={`mb-3 px-3 py-2 rounded-lg text-sm flex items-start gap-2 ${
+                    recoveryMessage.type === 'success'
+                      ? 'bg-green-50 border border-green-200 text-green-700'
+                      : 'bg-red-50 border border-red-200 text-red-700'
+                  }`}
+                >
+                  <i
+                    className={`fa-solid ${
+                      recoveryMessage.type === 'success'
+                        ? 'fa-circle-check'
+                        : 'fa-circle-xmark'
+                    } mt-0.5`}
+                  ></i>
+                  <span className="flex-1">{recoveryMessage.text}</span>
+                </div>
+              )}
+
+              {/* Botão Recovery automático + edição manual (se ainda pode tentar) */}
+              {podeTentarRecovery ? (
+                <>
+                  <button
+                    onClick={acionarRecovery}
+                    disabled={isRecovering || isManualValidating}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    title={
+                      modoSugerido === 'auto'
+                        ? 'Padrão de e-mail da empresa já é conhecido — vai testar 1 padrão (~1 crédito Snov.io)'
+                        : 'Sem padrão conhecido — vai testar até 30 padrões (~30 créditos Snov.io)'
+                    }
+                  >
+                    {isRecovering ? (
+                      <>
+                        <i className="fa-solid fa-spinner fa-spin"></i> Tentando
+                        recovery... (pode demorar até 30s)
+                      </>
+                    ) : (
+                      <>
+                        <i className="fa-solid fa-rotate"></i> Tentar Recovery
+                        {modoSugerido === 'auto' ? ' (1 padrão)' : ' (até 30 padrões)'}
+                      </>
+                    )}
+                  </button>
+
+                  <div className="my-3 text-xs text-gray-400 text-center">— ou —</div>
+
+                  {/* Edição manual */}
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                      Novo e-mail (edição manual)
+                    </label>
+                    <input
+                      type="email"
+                      value={novoEmailManual}
+                      onChange={(e) => setNovoEmailManual(e.target.value)}
+                      placeholder="ex: novo.email@empresa.com.br"
+                      className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none mb-2"
+                      disabled={isRecovering || isManualValidating}
+                    />
+                    <label className="flex items-center gap-2 text-xs text-gray-600 mb-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={validarComSnovio}
+                        onChange={(e) => setValidarComSnovio(e.target.checked)}
+                        disabled={isRecovering || isManualValidating}
+                      />
+                      Validar também com Snov.io (consome 1 crédito ~$0.004)
+                    </label>
+                    <button
+                      onClick={acionarManualRevalidate}
+                      disabled={
+                        !novoEmailManual.trim() ||
+                        !novoEmailManual.includes('@') ||
+                        isRecovering ||
+                        isManualValidating
+                      }
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {isManualValidating ? (
+                        <>
+                          <i className="fa-solid fa-spinner fa-spin"></i> Validando...
+                        </>
+                      ) : (
+                        <>
+                          <i className="fa-solid fa-circle-check"></i> Validar e Reativar
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                // Recovery indisponível (limite, ainda carregando, ou outro motivo)
+                <div className="bg-gray-100 border border-gray-200 text-gray-600 px-3 py-3 rounded-lg text-sm flex items-center gap-2">
+                  <i className="fa-solid fa-ban"></i>
+                  <span>
+                    {!recoveryStatus
+                      ? 'Carregando status do Recovery...'
+                      : limiteAtingido
+                      ? 'Limite de 3 tentativas atingido. Lead definitivamente irrecuperável.'
+                      : 'Recovery indisponível no momento.'}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Campanhas do lead */}
           {campanhas.length > 0 && (
