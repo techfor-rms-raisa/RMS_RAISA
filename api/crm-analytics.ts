@@ -2,7 +2,33 @@
  * api/crm-analytics.ts — Endpoint do Dashboard de Acompanhamento
  *
  * Caminho: api/crm-analytics.ts
- * Versão: 2.0 (Fase 8-fix2 — 04/06/2026)
+ * Versão: 2.1 (12/06/2026)
+ *
+ * v2.1 (12/06/2026): substituição de TAXA CLIQUE por TAXA RESPOSTA no
+ *   dashboard. Decisão de produto (12/06/2026) — em campanha de prospecção
+ *   B2B, "clique" tem baixa relevância (templates não dependem de CTA);
+ *   "resposta" é a métrica que efetivamente mede conversão para conversa.
+ *   Adicionalmente, "abertura > 0 mas clique = 0" causava confusão UX
+ *   ("se abriram, deveriam ter clicado").
+ *
+ *   Mudanças cirúrgicas:
+ *     1) `calcularEngajamento`: adicionado `filtrar('respondido_em')` ao
+ *        Promise.all (agora 5 counts paralelos); substituído `taxa_clique`
+ *        por `taxa_resposta` no objeto de retorno.
+ *     2) `calcularTaxasPorCampanha`: SELECT agora traz `respondido_em` em
+ *        vez de `clicado_em`; agregação interna substitui `total_clicado`
+ *        por `total_respondido`.
+ *     3) `listarAtivas`: campo por-campanha `taxa_clique` → `taxa_resposta`.
+ *     4) `dashboardVazio`: idem no payload de fallback.
+ *
+ *   Banco: NENHUMA mudança. `email_fila.clicado_em` continua sendo populado
+ *   pelo webhook v1.13.2+ (case 'clicked'). A métrica simplesmente não é
+ *   mais exibida no dashboard — pode ser retomada no futuro se templates
+ *   passarem a ter CTA forte.
+ *
+ *   Pré-requisito: `crm-webhook.ts` v1.14 em Production (popula
+ *   `respondido_em`) + backfill SQL retroativo (popular respondido_em a
+ *   partir de email_respostas.recebido_em). Ambos concluídos em 12/06/2026.
  *
  * v2.0 (04/06/2026 — Fase 8-fix2): conectado às fontes reais de envio.
  *   A v1.0 entregou o esqueleto com `engajamento` zerado e
@@ -255,9 +281,10 @@ async function listarAtivas(supabase: any, filtro: { responsavel_id?: number }) 
     const inicio = c.inicio_envio ? new Date(c.inicio_envio).getTime() : null;
     const diasRodando = inicio ? Math.floor((agora - inicio) / (1000 * 60 * 60 * 24)) : null;
 
-    const t = taxasPorCampanha.get(c.id) || { total_enviado: 0, total_aberto: 0, total_clicado: 0 };
+    const t = taxasPorCampanha.get(c.id) || { total_enviado: 0, total_aberto: 0, total_respondido: 0 };
     const taxaAbertura = t.total_enviado > 0 ? Number(((t.total_aberto / t.total_enviado) * 100).toFixed(2)) : null;
-    const taxaClique = t.total_enviado > 0 ? Number(((t.total_clicado / t.total_enviado) * 100).toFixed(2)) : null;
+    // 🆕 v2.1 — substituído `taxa_clique` por `taxa_resposta` (mais relevante para prospecção B2B).
+    const taxaResposta = t.total_enviado > 0 ? Number(((t.total_respondido / t.total_enviado) * 100).toFixed(2)) : null;
 
     return {
       id: c.id,
@@ -267,9 +294,9 @@ async function listarAtivas(supabase: any, filtro: { responsavel_id?: number }) 
       total_destinatarios: c.total_destinatarios || 0,
       responsavel: c.responsavel_id ? nomesResp.get(c.responsavel_id) || `#${c.responsavel_id}` : '—',
       dias_rodando: diasRodando,
-      // 🆕 v2.0 — taxas reais (ou null/true quando ainda sem envios)
+      // 🆕 v2.1 — taxas reais (taxa_clique substituída por taxa_resposta)
       taxa_abertura: taxaAbertura,
-      taxa_clique: taxaClique,
+      taxa_resposta: taxaResposta,
       aguardando_motor: t.total_enviado === 0,
     };
   });
@@ -303,14 +330,15 @@ async function calcularEngajamento(
     return {
       total_enviado: 0,
       taxa_abertura: 0,
-      taxa_clique: 0,
+      taxa_resposta: 0,
       taxa_bounce: 0,
       aguardando_motor: true,
     };
   }
 
   // 2) Constrói uma query base e aplica filtro de período em CADA campo
-  //    datetime relevante (enviado_em / aberto_em / clicado_em / bounce_em).
+  //    datetime relevante (enviado_em / aberto_em / respondido_em / bounce_em).
+  //    🆕 v2.1: `respondido_em` substitui `clicado_em` no quadrante engajamento.
   //    Para `periodo='total'` o início é Unix epoch ('1970-01-01...'), o
   //    que efetivamente desliga o filtro temporal.
   const usaPeriodo = inicioPeriodo !== '1970-01-01T00:00:00Z';
@@ -324,16 +352,16 @@ async function calcularEngajamento(
     return q;
   };
 
-  const [enviadoR, abertoR, clicadoR, bounceR] = await Promise.all([
+  const [enviadoR, abertoR, respondidoR, bounceR] = await Promise.all([
     filtrar('enviado_em'),
     filtrar('aberto_em'),
-    filtrar('clicado_em'),
+    filtrar('respondido_em'),
     filtrar('bounce_em'),
   ]);
 
   const tEnviado = enviadoR.count || 0;
   const tAberto = abertoR.count || 0;
-  const tClicado = clicadoR.count || 0;
+  const tRespondido = respondidoR.count || 0;
   const tBounce = bounceR.count || 0;
 
   const pct = (n: number) =>
@@ -342,7 +370,7 @@ async function calcularEngajamento(
   return {
     total_enviado: tEnviado,
     taxa_abertura: pct(tAberto),
-    taxa_clique: pct(tClicado),
+    taxa_resposta: pct(tRespondido),
     taxa_bounce: pct(tBounce),
     aguardando_motor: tEnviado === 0,
   };
@@ -357,22 +385,23 @@ async function calcularEngajamento(
 async function calcularTaxasPorCampanha(
   supabase: any,
   ids: number[],
-): Promise<Map<number, { total_enviado: number; total_aberto: number; total_clicado: number }>> {
+): Promise<Map<number, { total_enviado: number; total_aberto: number; total_respondido: number }>> {
   if (ids.length === 0) return new Map();
 
+  // 🆕 v2.1 — `respondido_em` substitui `clicado_em` no SELECT.
   const { data } = await supabase
     .from('email_fila')
-    .select('campanha_id, enviado_em, aberto_em, clicado_em')
+    .select('campanha_id, enviado_em, aberto_em, respondido_em')
     .in('campanha_id', ids);
 
-  const m = new Map<number, { total_enviado: number; total_aberto: number; total_clicado: number }>();
+  const m = new Map<number, { total_enviado: number; total_aberto: number; total_respondido: number }>();
   for (const r of (data || []) as any[]) {
     const cur =
       m.get(r.campanha_id) ||
-      { total_enviado: 0, total_aberto: 0, total_clicado: 0 };
+      { total_enviado: 0, total_aberto: 0, total_respondido: 0 };
     if (r.enviado_em) cur.total_enviado++;
     if (r.aberto_em) cur.total_aberto++;
-    if (r.clicado_em) cur.total_clicado++;
+    if (r.respondido_em) cur.total_respondido++;
     m.set(r.campanha_id, cur);
   }
   return m;
@@ -406,7 +435,7 @@ function dashboardVazio(periodo: string, autorizado: boolean) {
     periodo,
     inicio_periodo: '1970-01-01T00:00:00Z',
     status_campanhas: { rascunho: 0, agendada: 0, ativa: 0, pausada: 0, concluida: 0, total: 0 },
-    engajamento: { total_enviado: 0, taxa_abertura: 0, taxa_clique: 0, taxa_bounce: 0, aguardando_motor: true },
+    engajamento: { total_enviado: 0, taxa_abertura: 0, taxa_resposta: 0, taxa_bounce: 0, aguardando_motor: true },
     distribuicao: {
       por_responsavel: { _label: 'Responsável', itens: [] },
       por_vertical: { _label: 'Vertical', itens: [] },
