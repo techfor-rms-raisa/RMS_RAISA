@@ -2,7 +2,16 @@
  * useLeads.ts — Hook de gestão de Leads
  *
  * Caminho: src/components/crm/shared/hooks/useLeads.ts
- * Versão: 1.1 (Opt-out manual — 11/06/2026)
+ * Versão: 1.2 (Ordenação configurável — 13/06/2026)
+ *
+ * v1.2 (13/06/2026 — Reorganização Prospect/Lead):
+ *   Adicionado estado `ordenarPor` para alimentar o novo dropdown
+ *   "Ordenar por" da LeadsTab v1.1. Aceita valores 'recentes' (default),
+ *   'empresa', 'nome', 'cargo' — propagados ao backend como query
+ *   param `ordenar_por` (crm-leads.ts v1.14, action `listar_leads`).
+ *   `useEffect` da BaseLeadsPage v1.8 inclui `ordenarPor` na dep array
+ *   para recarregar ao trocar a ordem. Mudança aditiva — não quebra
+ *   chamadas existentes.
  *
  * v1.1 (11/06/2026 — Opt-out manual / Bloco 4 do plano OPT-OUT 100%):
  *   adicionado método `desabilitar(leadId, motivo, criadoPor)` que
@@ -105,6 +114,9 @@ export function useLeads(options: UseLeadsOptions = {}) {
   const [pagina, setPagina] = useState(1);
   const [busca, setBusca] = useState('');
   const [filtroFunil, setFiltroFunil] = useState('');
+  // 🆕 v1.2 — Ordenação configurável (whitelist: recentes/empresa/nome/cargo).
+  //   Default 'recentes' = criado_em desc (comportamento legado preservado).
+  const [ordenarPor, setOrdenarPor] = useState<string>('recentes');
   const [loading, setLoading] = useState(false);
 
   // Estado de detalhe
@@ -129,6 +141,9 @@ export function useLeads(options: UseLeadsOptions = {}) {
       };
       if (busca) params.busca = busca;
       if (filtroFunil) params.funil = filtroFunil;
+      // 🆕 v1.2 — propagar ordenação para o backend (action listar_leads
+      //   do crm-leads.ts v1.14). Whitelist validada no servidor.
+      if (ordenarPor) params.ordenar_por = ordenarPor;
 
       const resp = await api.get<ListarLeadsResponse>('listar_leads', params);
       if (resp.ok && resp.data?.success) {
@@ -140,7 +155,7 @@ export function useLeads(options: UseLeadsOptions = {}) {
     } finally {
       setLoading(false);
     }
-  }, [api, pagina, pageSize, busca, filtroFunil]);
+  }, [api, pagina, pageSize, busca, filtroFunil, ordenarPor]);
 
   // ════════════════════════════════════════════════════════════
   // STATS
@@ -322,6 +337,9 @@ export function useLeads(options: UseLeadsOptions = {}) {
     setBusca,
     filtroFunil,
     setFiltroFunil,
+    // 🆕 v1.2 — Ordenação configurável
+    ordenarPor,
+    setOrdenarPor,
     loading,
     carregar,
     pageSize,

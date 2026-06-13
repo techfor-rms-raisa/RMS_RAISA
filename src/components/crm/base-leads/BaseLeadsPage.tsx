@@ -2,7 +2,22 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.7 (Reorganização Prospect/Lead — 13/06/2026)
+ * Versão: 1.8 (Coluna ANALISTA + ordenação configurável — 13/06/2026)
+ *
+ * v1.8 (13/06/2026 — Coluna ANALISTA + ordenação configurável):
+ *   Continuação da reorganização Prospect/Lead (v1.7). Plugado o novo
+ *   estado de ordenação do hook `useLeads` v1.2 na tabela "Meus Leads":
+ *
+ *    - `useEffect` da aba 'leads' ganha `leadsH.ordenarPor` na dep array
+ *      → recarrega a lista quando o usuário troca a ordem no dropdown.
+ *    - Novo handler `onOrdenarPorChange` faz duas coisas em sequência:
+ *        1. Reseta paginação para a página 1 (UX coerente — ao mudar
+ *           ordem, faz sentido começar do topo).
+ *        2. Atualiza o estado `ordenarPor` no hook.
+ *    - `<LeadsTab>` recebe 2 props novas: `ordenarPor` e
+ *      `onOrdenarPorChange` (consumidos pelo dropdown da v1.1).
+ *
+ *   Sem mudança em outros pontos do container. Cirurgia mínima.
  *
  * v1.7 (13/06/2026 — Fase 1 da reorganização Prospect/Lead):
  *   Reorganização visual e funcional das sub-abas para alinhar o
@@ -231,7 +246,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       leadsH.carregar();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abaAtiva, leadsH.pagina, leadsH.busca, leadsH.filtroFunil]);
+  }, [abaAtiva, leadsH.pagina, leadsH.busca, leadsH.filtroFunil, leadsH.ordenarPor]);
 
   // 🆕 v1.2 (Fase 8-Inbox) — carregamento das novas abas sob demanda
   useEffect(() => {
@@ -649,10 +664,18 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             pageSize={leadsH.pageSize}
             busca={leadsH.busca}
             filtroFunil={leadsH.filtroFunil}
+            // 🆕 v1.8 (13/06/2026) — Ordenação configurável
+            ordenarPor={leadsH.ordenarPor}
             loading={leadsH.loading}
             onBuscaChange={leadsH.setBusca}
             onFiltroFunilChange={(v) => {
               leadsH.setFiltroFunil(v);
+              leadsH.setPagina(1);
+            }}
+            // 🆕 v1.8 — Ao mudar ordenação, volta para a 1ª página
+            //   (UX coerente: faz sentido começar do topo após reordenar).
+            onOrdenarPorChange={(v) => {
+              leadsH.setOrdenarPor(v);
               leadsH.setPagina(1);
             }}
             onBuscar={() => {
