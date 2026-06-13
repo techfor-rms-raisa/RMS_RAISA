@@ -2,7 +2,7 @@
  * crm.types.ts — Tipos compartilhados do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/types/crm.types.ts
- * Versão: 1.4 (Lead RBAC fix — 05/06/2026)
+ * Versão: 1.5 (Reorganização Prospect/Lead — 13/06/2026)
  *
  * Histórico:
  *  - v1.0 (29/05/2026 — Fase 1B): fonte única de verdade dos tipos.
@@ -32,6 +32,15 @@
  *    (foi o sintoma reportado pela Débora SDR em 05/06/2026).
  *    Como `LeadInput = Omit<Lead, ...>`, os 2 campos novos passam
  *    automaticamente a ser aceitos no payload de criar/editar.
+ *  - v1.5 (13/06/2026 — Reorganização Prospect/Lead):
+ *    `Lead` ganha o campo opcional `reservado_por_nome`, ANEXADO PELO
+ *    BACKEND (crm-leads.ts v1.14, action `listar_leads`) via batch
+ *    lookup em `app_users` a partir do `reservado_por`. Este campo NÃO
+ *    existe no banco — é uma projeção computada para alimentar a
+ *    coluna ANALISTA da nova tabela em `LeadsTab` v1.1 sem precisar
+ *    de joins SQL ou requisições adicionais no frontend.
+ *    Por estar no `Lead` (não em um tipo derivado), `LeadInput` o
+ *    omite automaticamente — não vai pro payload de criar/editar.
  *
  * Convenção:
  *   - Tipos de domínio (Empresa, Lead, Campanha, etc.) representam
@@ -122,6 +131,14 @@ export interface Lead {
   // seletor de vínculo da campanha (action `leads_disponiveis`).
   vertical?: string | null;         // tipo de campanha (ex.: 'CRECI', 'Alocação')
   apto_campanha?: boolean;          // true = pode entrar em campanha
+
+  // ── v1.5 (13/06/2026) — Reorganização Prospect/Lead ──
+  // Projeção computada (NÃO está no banco). Anexada pelo backend
+  // (crm-leads.ts v1.14) via batch lookup em app_users a partir
+  // de `reservado_por`. Alimenta a coluna ANALISTA da nova tabela
+  // em LeadsTab v1.1. NULL quando `reservado_por` é NULL ou quando
+  // o usuário referenciado foi removido.
+  reservado_por_nome?: string | null;
 }
 
 export type LeadInput = Omit<

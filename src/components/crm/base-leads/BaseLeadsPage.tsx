@@ -2,7 +2,58 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.6 (Opt-out manual — 11/06/2026)
+ * Versão: 1.8 (Coluna ANALISTA + ordenação configurável — 13/06/2026)
+ *
+ * v1.8 (13/06/2026 — Coluna ANALISTA + ordenação configurável):
+ *   Continuação da reorganização Prospect/Lead (v1.7). Plugado o novo
+ *   estado de ordenação do hook `useLeads` v1.2 na tabela "Meus Leads":
+ *
+ *    - `useEffect` da aba 'leads' ganha `leadsH.ordenarPor` na dep array
+ *      → recarrega a lista quando o usuário troca a ordem no dropdown.
+ *    - Novo handler `onOrdenarPorChange` faz duas coisas em sequência:
+ *        1. Reseta paginação para a página 1 (UX coerente — ao mudar
+ *           ordem, faz sentido começar do topo).
+ *        2. Atualiza o estado `ordenarPor` no hook.
+ *    - `<LeadsTab>` recebe 2 props novas: `ordenarPor` e
+ *      `onOrdenarPorChange` (consumidos pelo dropdown da v1.1).
+ *
+ *   Sem mudança em outros pontos do container. Cirurgia mínima.
+ *
+ * v1.7 (13/06/2026 — Fase 1 da reorganização Prospect/Lead):
+ *   Reorganização visual e funcional das sub-abas para alinhar o
+ *   funil com o vocabulário real (Prospect → Lead → Campanha → saídas):
+ *
+ *   ORDEM NOVA (6 abas):
+ *     1. 🏢 Minhas Empresas    (rename de "Empresas")
+ *     2. 👥 Meus Leads          (rename de "Leads")
+ *     3. 🔗 Vincular em Lote    (sem mudança)
+ *     4. 💬 Respostas Campanhas (rename de "Respostas")
+ *     5. ⚠️ E-mails Inválidos   (rename de "Inválidos")
+ *     6. 🚫 Opt-Out              (NOVA — movida das Configurações)
+ *
+ *   Mudanças aditivas:
+ *    - `abaAtiva` agora aceita 'opt_out' (chave interna; literal exibida
+ *      é "Opt-Out").
+ *    - Import do novo OptOutTab local (src/components/crm/base-leads/),
+ *      com RBAC contextual: Admin/GR&S vê todos; GC/SDR vê apenas
+ *      opt-outs cujos leads são deles (filtro por reservado_por feito
+ *      no backend crm-config v1.1).
+ *    - Header da página renomeado de "Empresas & Leads" para
+ *      "Base de Leads" — consistência com o item do menu lateral
+ *      e neutralidade em relação ao crescimento de abas (Respostas,
+ *      Inválidos, Opt-Out são saídas, não entidades).
+ *    - Labels visuais das abas existentes renomeados conforme a tabela
+ *      acima. NENHUMA mudança nas chaves internas (`empresas`, `leads`,
+ *      `respostas`, `invalidos`, `vincular_em_lote`) para preservar
+ *      compat com deep-links, telemetria e código a jusante.
+ *
+ *   Sem impacto em:
+ *    - KPI cards (continuam com label compacto: Empresas, Leads,
+ *      Prospects, Clientes, Opt-Out — mantém leitura rápida).
+ *    - Hooks (useEmpresas, useLeads, useRespostas, useInvalidos —
+ *      inalterados).
+ *    - Endpoints existentes (apenas crm-config.ts ganhou filtro
+ *      reservado_por; ver v1.1).
  *
  * v1.6 (11/06/2026 — Opt-out manual / Bloco 4 do plano OPT-OUT 100%):
  *   Plugado o callback `onDesabilitar` no LeadFormModal. Handler
@@ -95,6 +146,13 @@ import RespostasTab from './RespostasTab';
 import InvalidosTab from './InvalidosTab';
 // 🆕 v1.5 (Vinculação em Lote — 10/06/2026)
 import VincularEmLoteTab from './VincularEmLoteTab';
+// 🆕 v1.7 (Reorganização Prospect/Lead — 13/06/2026)
+//   OptOutTab movido das Configurações para a Base de Leads.
+//   Esta é a versão local com RBAC contextual (filtra por
+//   reservado_por para GC/SDR). O OptOutTab antigo de
+//   src/components/crm/configuracoes/ continua no repo apenas
+//   para preservar histórico Git — não é mais importado.
+import OptOutTab from './OptOutTab';
 import EmpresaFormModal from './EmpresaFormModal';
 import LeadFormModal from './LeadFormModal';
 import EmpresaDetailDrawer from './EmpresaDetailDrawer';
@@ -134,8 +192,9 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   // ── Aba ativa ──
   // 🆕 v1.2 (Fase 8-Inbox) — agora aceita 'respostas' e 'invalidos'.
   // 🆕 v1.5 (Vinculação em Lote — 10/06/2026) — agora aceita 'vincular_em_lote'.
+  // 🆕 v1.7 (Reorganização Prospect/Lead — 13/06/2026) — agora aceita 'opt_out'.
   const [abaAtiva, setAbaAtiva] = useState<
-    'empresas' | 'leads' | 'respostas' | 'invalidos' | 'vincular_em_lote'
+    'empresas' | 'leads' | 'respostas' | 'invalidos' | 'vincular_em_lote' | 'opt_out'
   >('empresas');
 
   // ── Hooks ──
@@ -187,7 +246,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       leadsH.carregar();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abaAtiva, leadsH.pagina, leadsH.busca, leadsH.filtroFunil]);
+  }, [abaAtiva, leadsH.pagina, leadsH.busca, leadsH.filtroFunil, leadsH.ordenarPor]);
 
   // 🆕 v1.2 (Fase 8-Inbox) — carregamento das novas abas sob demanda
   useEffect(() => {
@@ -410,11 +469,11 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
           <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-            <i className="fa-solid fa-building text-indigo-600"></i>
-            Empresas & Leads
+            <i className="fa-solid fa-building-user text-indigo-600"></i>
+            Base de Leads
           </h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            Gestão do funil de prospecção e campanhas de email
+            Gestão do funil de prospecção, respostas e saídas LGPD
           </p>
         </div>
         <div className="flex gap-2">
@@ -470,12 +529,24 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       )}
 
       {/* ── Abas ── */}
+      {/*
+       * 🆕 v1.7 (13/06/2026) — Nova ordem das abas (6 entradas):
+       *   1. Minhas Empresas         (key='empresas')
+       *   2. Meus Leads              (key='leads')
+       *   3. Vincular em Lote        (key='vincular_em_lote')
+       *   4. Respostas Campanhas     (key='respostas')
+       *   5. E-mails Inválidos       (key='invalidos')
+       *   6. Opt-Out                 (key='opt_out')  ← NOVA
+       *
+       * Mantemos as chaves internas para preservar compat (deep-links,
+       * useEffect dependentes, telemetria). Só os labels mudam.
+       */}
       <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
         <div className="flex border-b overflow-x-auto">
           {[
             {
               key: 'empresas' as const,
-              label: 'Empresas',
+              label: 'Minhas Empresas',
               icon: 'fa-solid fa-building',
               // 🆕 v1.3 — `stats` (carregado no mount) tem o total agregado;
               //   `empresasH.total` só fica preenchido após a primeira
@@ -485,7 +556,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             },
             {
               key: 'leads' as const,
-              label: 'Leads',
+              label: 'Meus Leads',
               icon: 'fa-solid fa-users',
               // 🆕 v1.3 — somatório de leads + prospects + clientes
               //   (o `total_leads` do stats filtra só funil_status='lead',
@@ -494,27 +565,41 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
                 ? stats.total_leads + stats.total_prospects + stats.total_clientes
                 : leadsH.total,
             },
-            // 🆕 v1.2 (Fase 8-Inbox)
-            {
-              key: 'respostas' as const,
-              label: 'Respostas',
-              icon: 'fa-solid fa-reply',
-              count: stats?.total_respostas ?? respostasH.total, // 🆕 v1.3
-            },
-            {
-              key: 'invalidos' as const,
-              label: 'Inválidos',
-              icon: 'fa-solid fa-circle-exclamation',
-              count: stats?.total_invalidos ?? invalidosH.total, // 🆕 v1.3
-            },
             // 🆕 v1.5 (Vinculação em Lote — 10/06/2026)
             //   Sem badge de contagem — esta aba não exibe uma listagem
             //   persistente, é uma operação de vinculação ad-hoc.
+            //   🆕 v1.7 — promovida para a 3ª posição (entre Leads e
+            //   Respostas), pois é a ponte ativos→campanha no funil.
             {
               key: 'vincular_em_lote' as const,
               label: 'Vincular em Lote',
               icon: 'fa-solid fa-link',
               count: null as number | null,
+            },
+            // 🆕 v1.2 (Fase 8-Inbox)
+            {
+              key: 'respostas' as const,
+              label: 'Respostas Campanhas',
+              icon: 'fa-solid fa-reply',
+              count: stats?.total_respostas ?? respostasH.total, // 🆕 v1.3
+            },
+            {
+              key: 'invalidos' as const,
+              label: 'E-mails Inválidos',
+              icon: 'fa-solid fa-circle-exclamation',
+              count: stats?.total_invalidos ?? invalidosH.total, // 🆕 v1.3
+            },
+            // 🆕 v1.7 (13/06/2026) — Opt-Out movido das Configurações.
+            //   Badge usa stats.total_optout (já vinha do crm-leads stats).
+            //   Para GC/SDR, o backend (crm-config v1.1) filtra a listagem
+            //   por leads do ator; o contador global no card KPI continua
+            //   refletindo o universo do RBAC do usuário pelo mesmo
+            //   mecanismo do stats.
+            {
+              key: 'opt_out' as const,
+              label: 'Opt-Out',
+              icon: 'fa-solid fa-ban',
+              count: stats?.total_optout ?? null,
             },
           ].map((tab) => (
             <button
@@ -526,6 +611,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
                 else if (tab.key === 'leads') leadsH.setPagina(1);
                 else if (tab.key === 'respostas') respostasH.setPagina(1);
                 else if (tab.key === 'invalidos') invalidosH.setPagina(1);
+                // 🆕 v1.7 — 'opt_out' gerencia paginação internamente
+                //          (o OptOutTab não usa hook compartilhado).
               }}
               className={`flex-1 md:flex-none px-6 py-3 text-sm font-medium flex items-center justify-center gap-2 border-b-2 transition-colors whitespace-nowrap ${
                 abaAtiva === tab.key
@@ -577,10 +664,18 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             pageSize={leadsH.pageSize}
             busca={leadsH.busca}
             filtroFunil={leadsH.filtroFunil}
+            // 🆕 v1.8 (13/06/2026) — Ordenação configurável
+            ordenarPor={leadsH.ordenarPor}
             loading={leadsH.loading}
             onBuscaChange={leadsH.setBusca}
             onFiltroFunilChange={(v) => {
               leadsH.setFiltroFunil(v);
+              leadsH.setPagina(1);
+            }}
+            // 🆕 v1.8 — Ao mudar ordenação, volta para a 1ª página
+            //   (UX coerente: faz sentido começar do topo após reordenar).
+            onOrdenarPorChange={(v) => {
+              leadsH.setOrdenarPor(v);
               leadsH.setPagina(1);
             }}
             onBuscar={() => {
@@ -635,6 +730,11 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
         {/* 🆕 v1.5 (Vinculação em Lote — 10/06/2026) — Aba Vincular em Lote */}
         {abaAtiva === 'vincular_em_lote' && (
           <VincularEmLoteTab currentUser={currentUser} />
+        )}
+
+        {/* 🆕 v1.7 (Reorganização Prospect/Lead — 13/06/2026) — Aba Opt-Out */}
+        {abaAtiva === 'opt_out' && (
+          <OptOutTab currentUser={currentUser} />
         )}
       </div>
 

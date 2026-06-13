@@ -20,8 +20,14 @@
  * - CRM & CAMPANHAS: 4 itens (Base de Leads, CRM & Campanhas, Acompanhamento, Configurações)
  *   - "Configurações" restrito a Administrador + Gestão de R&S
  * - CRMLayout passa a conter apenas 3 abas internas (Campanhas, Copys, Assinaturas)
- * 
- * Data: 30/05/2026
+ *
+ * 🆕 v62.0 (13/06/2026 — Fase 1 da reorganização Prospect/Lead):
+ * - PROSPECT: rename do item "Buscar Leads" → "Buscar Prospects" para
+ *   alinhar a literal com o estágio real do funil (Prospect Engine entrega
+ *   prospects; Leads vivem na Base de Leads do CRM). Sem mudança de view
+ *   (continua 'prospect_search') e sem mudança de RBAC.
+ *
+ * Data: 13/06/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -348,7 +354,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
     const prospectItems = [
         { 
             view: 'prospect_search', 
-            label: 'Buscar Leads', 
+            label: 'Buscar Prospects', 
             icon: 'fa-solid fa-magnifying-glass-dollar', 
             roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
         },

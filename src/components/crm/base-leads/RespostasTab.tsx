@@ -1,23 +1,34 @@
 /**
- * RespostasTab.tsx — Aba "Respostas" (Inbox unificado)
+ * RespostasTab.tsx — Aba "Respostas Campanhas" (Inbox de replies)
  *
  * Caminho: src/components/crm/base-leads/RespostasTab.tsx
- * Versão: 1.0 (Fase 8-Inbox — 04/06/2026)
+ * Versão: 1.1 (13/06/2026)
  *
- * Lista respostas dos leads (`email_respostas`) + opt-outs (`email_optout`)
- * em um feed único ordenado por data desc, no estilo de inbox de e-mail.
+ * v1.1 (13/06/2026 — Reorganização Prospect/Lead):
+ *   Decisão histórica de 04/06/2026 (exibir opt-outs aqui) foi REVERTIDA.
+ *   Agora a aba "Respostas Campanhas" mostra APENAS respostas reais
+ *   (replies de leads aos disparos), e os opt-outs vivem em sua aba
+ *   dedicada — coerente com a regra LGPD permanente:
+ *     • Opt-out é eterno (lead NUNCA é deletado).
+ *     • Opt-outs (manuais E automáticos) ficam centralizados na aba
+ *       "Opt-Out" da Base de Leads.
  *
- * Decisão de produto (04/06/2026 — Messias):
- *   • Opt-outs são exibidos AQUI (não na aba Inválidos) porque exigem
- *     ação imediata: remover do mailing. Visualmente destacados em vermelho
- *     com badge "URGENTE".
- *   • Respostas normais: badge da classificação (pendente / interessado /
- *     etc.) + preview do corpo (até 400 chars vindos do backend).
+ *   Mudanças nesta v1.1:
+ *     - Header atualizado para refletir o escopo correto.
+ *     - EmptyState: removida menção "ou pedirem opt-out".
+ *     - Helpers `badgeOptOut` e ramos `isOptOut` permanecem no código
+ *       como DEFESA EM CAMADAS (caso o backend volte a enviar `tipo:'opt_out'`
+ *       por bug/cache antigo, a UI degrada graciosamente). Backend v1.13
+ *       (crm-leads) já não envia mais itens desse tipo.
+ *
+ * v1.0 (Fase 8-Inbox — 04/06/2026):
+ *   Versão inicial. Listava respostas dos leads + opt-outs em um feed
+ *   único ordenado por data desc, no estilo inbox de e-mail.
  *
  * Comportamento:
  *   • Card clicável → quando lead_id existe, abre o LeadDetailDrawer.
- *   • Card de opt-out sem lead correspondente: clicável mas inerte
- *     (apenas visual; futura iteração pode oferecer "criar lead").
+ *   • Badges de classificação (pendente / interessado / etc.) + preview
+ *     do corpo (até 400 chars vindos do backend).
  */
 
 import React from 'react';
@@ -130,7 +141,7 @@ const RespostasTab: React.FC<RespostasTabProps> = ({
         <EmptyState
           icon="fa-regular fa-envelope-open"
           titulo="Nenhuma resposta ainda"
-          descricao="Quando seus leads responderem aos e-mails das campanhas — ou pedirem opt-out — os itens aparecem aqui."
+          descricao="Quando seus leads responderem aos e-mails das campanhas, os itens aparecem aqui. Descadastros são centralizados na aba Opt-Out."
         />
       ) : (
         <div className="space-y-2">

@@ -2,6 +2,56 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.14 (13/06/2026 — Coluna ANALISTA + ordenação configurável):
+ *    Continuação da reorganização Prospect/Lead. Action `listar_leads`
+ *    ganha 2 capacidades para alimentar a nova tabela LeadsTab v1.1:
+ *
+ *      • Parâmetro `ordenar_por` (query string): aceita 'recentes'
+ *        (default — criado_em desc), 'empresa' (email_empresas.nome asc),
+ *        'nome' (email_leads.nome asc), 'cargo' (cargo asc com NULLs
+ *        no final). Mapa de ordenações usa whitelist — qualquer valor
+ *        desconhecido cai no default 'recentes'.
+ *
+ *      • Batch lookup de responsáveis: após buscar a página de leads,
+ *        coleta os `reservado_por` únicos e faz UM SELECT em `app_users`
+ *        (id, nome_usuario). Cada lead é enriquecido com
+ *        `reservado_por_nome` (string | null) antes da resposta.
+ *        Custo: 1 query extra por página, sem N+1. Alinhado com o
+ *        padrão usado em `listar_respostas` para empresa/campanha.
+ *
+ *    Sem mudança de schema, sem migration. Sem impacto em outras
+ *    actions.
+ *
+ *  - v1.13 (13/06/2026 — Reorganização Prospect/Lead + LGPD eterna):
+ *    Três cirurgias para alinhar o backend com a nova organização de abas
+ *    da Base de Leads (BaseLeadsPage v1.7) e com a regra LGPD permanente
+ *    de que lead em opt-out NUNCA é deletado, apenas omitido das
+ *    listagens "ativas":
+ *
+ *      • Action `listar_leads`: passa a filtrar `opt_out IS NOT TRUE`
+ *        (defesa de NULL embutida via `.not('opt_out', 'is', true)`).
+ *        Resultado: aba "Meus Leads" mostra somente a base ATIVA;
+ *        leads em opt-out continuam vivos no banco mas invisíveis nessa
+ *        listagem. Eles aparecem APENAS na aba "Opt-Out" dedicada
+ *        (consumida via /api/crm-config v1.1).
+ *
+ *      • Action `stats`: contadores `total_leads`, `total_prospects` e
+ *        `total_clientes` passam a EXCLUIR opt-outs (mesmo filtro acima).
+ *        Reflete a base operacional disponível para campanhas.
+ *        `total_optout` continua somando `email_optout` integralmente.
+ *
+ *      • Action `listar_respostas`: REMOVIDO o merge histórico que
+ *        incluía entradas de `email_optout` no feed. Agora a aba
+ *        "Respostas Campanhas" mostra exclusivamente itens de
+ *        `email_respostas` (replies reais). Centraliza opt-outs
+ *        (manuais e automáticos) na aba "Opt-Out".
+ *
+ *    Sem mudança de schema, sem migration. Sem impacto em endpoints
+ *    de cron/webhook. Tipo `ItemInbox` mantém 'opt_out' no union por
+ *    defesa em camadas (clientes antigos podem ter cache), mas
+ *    nenhum item desse tipo é produzido pelo backend a partir desta
+ *    versão.
+ *
  *  - v1.12.1 (11/06/2026 — HOTFIX ESM): adicionada extensão `.js` no
  *    import relativo `'./_helpers/aplicar-opt-out'` → `'./_helpers/aplicar-opt-out.js'`.
  *    Node.js em ESM strict mode (runtime Vercel) exige extensão explícita.
@@ -420,14 +470,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── LISTAR LEADS ─────────────────────────────
       if (action === 'listar_leads') {
-        const { empresa_id, funil, busca, tags, page = '1', limit = '30' } = req.query as Record<string, string>;
+        const {
+          empresa_id,
+          funil,
+          busca,
+          tags,
+          page = '1',
+          limit = '30',
+          ordenar_por = 'recentes',          // 🆕 v1.14
+        } = req.query as Record<string, string>;
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
         let query = supabase
           .from('email_leads')
           .select('*, email_empresas(id, nome, dominio, setor)', { count: 'exact' })
-          .order('criado_em', { ascending: false })
           .range(offset, offset + parseInt(limit) - 1);
+
+        // 🆕 v1.13 (13/06/2026 — Reorganização Prospect/Lead + LGPD):
+        //   Excluir leads em opt-out da listagem "Meus Leads".
+        //   Eles continuam vivos na base (regra LGPD permanente — opt-out
+        //   é eterno, jamais deletado), mas aparecem APENAS na aba "Opt-Out".
+        query = query.not('opt_out', 'is', true);
+
+        // 🆕 v1.14 (13/06/2026) — Ordenação configurável.
+        //   Whitelist defensiva — qualquer valor desconhecido em
+        //   `ordenar_por` cai no default 'recentes'.
+        //   • 'recentes' → criado_em desc (default)
+        //   • 'empresa'  → email_empresas.nome asc (foreignTable)
+        //   • 'nome'     → email_leads.nome asc
+        //   • 'cargo'    → cargo asc (NULLs no final)
+        switch (ordenar_por) {
+          case 'empresa':
+            query = query.order('nome', {
+              ascending: true,
+              foreignTable: 'email_empresas',
+              nullsFirst: false,
+            });
+            break;
+          case 'nome':
+            query = query.order('nome', { ascending: true });
+            break;
+          case 'cargo':
+            query = query.order('cargo', { ascending: true, nullsFirst: false });
+            break;
+          case 'recentes':
+          default:
+            query = query.order('criado_em', { ascending: false });
+            break;
+        }
 
         if (empresa_id) query = query.eq('empresa_id', empresa_id);
         if (funil) query = query.eq('funil_status', funil);
@@ -442,9 +532,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { data, error, count } = await query;
         if (error) throw error;
 
+        // 🆕 v1.14 (13/06/2026) — Batch lookup de responsáveis.
+        //   Coleta `reservado_por` únicos da página atual e faz 1 SELECT
+        //   em `app_users`. Cada lead recebe `reservado_por_nome` como
+        //   projeção computada (não persistida) — consumida pela coluna
+        //   ANALISTA da LeadsTab v1.1.
+        const responsavelIds = Array.from(
+          new Set((data || []).map((l: any) => l.reservado_por).filter(Boolean))
+        ) as number[];
+
+        const responsaveisPorId: Record<number, string> = {};
+        if (responsavelIds.length > 0) {
+          const { data: resps, error: errResp } = await supabase
+            .from('app_users')
+            .select('id, nome_usuario')
+            .in('id', responsavelIds);
+          // Falha aqui é não-fatal — degrada graciosamente para "—" na UI.
+          if (!errResp) {
+            for (const r of resps || []) responsaveisPorId[r.id] = r.nome_usuario;
+          } else {
+            console.warn('[listar_leads] Falha ao resolver responsáveis:', errResp.message);
+          }
+        }
+
+        const leadsEnriquecidos = (data || []).map((l: any) => ({
+          ...l,
+          reservado_por_nome:
+            l.reservado_por != null ? responsaveisPorId[l.reservado_por] ?? null : null,
+        }));
+
         return res.status(200).json({
           success: true,
-          leads: data || [],
+          leads: leadsEnriquecidos,
           total: count || 0,
           page: parseInt(page),
           limit: parseInt(limit),
@@ -544,17 +663,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { count: totalEmpresas } = await supabase
           .from('email_empresas').select('id', { count: 'exact', head: true });
 
+        // 🆕 v1.13 (13/06/2026 — Reorganização Prospect/Lead + LGPD):
+        //   Os 3 contadores de funil agora EXCLUEM leads em opt-out
+        //   para refletir a base ATIVA (que efetivamente pode receber
+        //   campanhas). O contador total_optout abaixo continua mostrando
+        //   o universo de descadastros (vivos eternamente — LGPD).
         const { count: totalLeads } = await supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
-          .eq('funil_status', 'lead');
+          .eq('funil_status', 'lead')
+          .not('opt_out', 'is', true);
 
         const { count: totalProspects } = await supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
-          .eq('funil_status', 'prospect');
+          .eq('funil_status', 'prospect')
+          .not('opt_out', 'is', true);
 
         const { count: totalClientes } = await supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
-          .eq('funil_status', 'cliente');
+          .eq('funil_status', 'cliente')
+          .not('opt_out', 'is', true);
 
         const { count: totalOptOut } = await supabase
           .from('email_optout').select('id', { count: 'exact', head: true });
@@ -588,12 +715,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ════════════════════════════════════════════════════════════
-      // 🆕 v1.3 — INBOX DE RESPOSTAS (Aba "Respostas" do Form Empresas)
+      // 🆕 v1.3 — INBOX DE RESPOSTAS (Aba "Respostas Campanhas" da Base de Leads)
       // ════════════════════════════════════════════════════════════
-      // UNION em camada Node de email_respostas + email_optout, ordenado
-      // por data DESC. Lookup de lead/empresa/campanha em batch (1 query
-      // por tabela), evitando N+1. Filtro de busca aplica em pós-merge
-      // sobre nome do lead, e-mail e assunto.
+      //
+      // 🆕 v1.13 (13/06/2026 — Reorganização Prospect/Lead):
+      //   O MERGE de opt-outs FOI REMOVIDO desta action. Agora a aba
+      //   "Respostas Campanhas" mostra APENAS respostas reais (`email_respostas`).
+      //   Opt-outs (manuais e automáticos) vivem em sua aba própria
+      //   "Opt-Out" (consumida via /api/crm-config?action=listar_optout
+      //   com RBAC contextual). Decisão de produto + LGPD: centralizar
+      //   descadastros na aba dedicada, sem ruído no inbox.
       //
       // Parâmetros aceitos:
       //   - busca: string (nome, email, assunto) — opcional, ilike
@@ -605,12 +736,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const limitNum = Math.max(1, Math.min(parseInt(limit) || 30, 200));
         const pageNum = Math.max(1, parseInt(page) || 1);
 
-        // Trazemos um teto generoso (500 mais recentes) de cada fonte e
-        // paginamos no Node após o merge. Para volumes maiores, migramos
-        // para uma VIEW SQL `vw_crm_inbox_respostas` com paginação real.
+        // Trazemos um teto generoso (500 mais recentes) e paginamos no Node.
+        // Para volumes maiores, migramos para uma VIEW SQL
+        // `vw_crm_inbox_respostas` com paginação real.
         const TETO_POR_FONTE = 500;
 
-        // ── Respostas ──
+        // ── Respostas (única fonte do feed após v1.13) ──
         const { data: respostas, error: errR } = await supabase
           .from('email_respostas')
           .select('id, lead_id, campanha_id, de_email, de_nome, assunto, corpo_texto, classificacao, lido, recebido_em')
@@ -618,46 +749,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .limit(TETO_POR_FONTE);
         if (errR) throw errR;
 
-        // ── Opt-outs ──
-        const { data: optouts, error: errO } = await supabase
-          .from('email_optout')
-          .select('id, email, motivo, campanha_origem_id, criado_em')
-          .order('criado_em', { ascending: false })
-          .limit(TETO_POR_FONTE);
-        if (errO) throw errO;
-
-        // ── Lookups em batch ──
-        const leadIds = Array.from(new Set([
-          ...((respostas || []).map(r => r.lead_id).filter(Boolean) as number[]),
-        ]));
-        const optoutEmails = Array.from(new Set(
-          (optouts || []).map(o => (o.email || '').toLowerCase().trim()).filter(Boolean)
+        // ── Lookups em batch (apenas respostas após v1.13) ──
+        const leadIds = Array.from(new Set(
+          ((respostas || []).map(r => r.lead_id).filter(Boolean) as number[])
         ));
-        const campanhaIds = Array.from(new Set([
-          ...((respostas || []).map(r => r.campanha_id).filter(Boolean) as number[]),
-          ...((optouts || []).map(o => o.campanha_origem_id).filter(Boolean) as number[]),
-        ]));
+        const campanhaIds = Array.from(new Set(
+          ((respostas || []).map(r => r.campanha_id).filter(Boolean) as number[])
+        ));
 
-        // Lead lookup (por id E por email — opt-out muitas vezes só tem email)
+        // Lead lookup (por id apenas — opt-outs deixaram de existir aqui)
         const leadsPorId: Record<number, any> = {};
-        const leadsPorEmail: Record<string, any> = {};
-        if (leadIds.length > 0 || optoutEmails.length > 0) {
-          let q = supabase.from('email_leads').select('id, nome, email, empresa_id');
-          if (leadIds.length > 0 && optoutEmails.length > 0) {
-            // OR composto: id IN (...) OR email IN (...)
-            const idsCSV = leadIds.join(',');
-            const emailsCSV = optoutEmails.map(e => `"${e}"`).join(',');
-            q = q.or(`id.in.(${idsCSV}),email.in.(${emailsCSV})`);
-          } else if (leadIds.length > 0) {
-            q = q.in('id', leadIds);
-          } else {
-            q = q.in('email', optoutEmails);
-          }
-          const { data: leadsData, error: errL } = await q;
+        if (leadIds.length > 0) {
+          const { data: leadsData, error: errL } = await supabase
+            .from('email_leads')
+            .select('id, nome, email, empresa_id')
+            .in('id', leadIds);
           if (errL) throw errL;
           for (const lead of leadsData || []) {
             leadsPorId[lead.id] = lead;
-            if (lead.email) leadsPorEmail[lead.email.toLowerCase()] = lead;
           }
         }
 
@@ -686,7 +795,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           for (const c of camps || []) campanhasPorId[c.id] = c;
         }
 
-        // ── Montar itens unificados ──
+        // ── Montar itens ──
+        //
+        // 🆕 v1.13: o tipo 'opt_out' ainda existe no enum por defesa
+        //   em camadas (alguns clientes podem ter cache antigo), mas
+        //   nenhum item desse tipo é produzido por esta action.
         type ItemInbox = {
           tipo: 'resposta' | 'opt_out';
           id: number;
@@ -728,30 +841,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             classificacao: r.classificacao || 'pendente',
             lido: !!r.lido,
             motivo_optout: null,
-          });
-        }
-
-        for (const o of optouts || []) {
-          const emailKey = (o.email || '').toLowerCase().trim();
-          const lead = emailKey ? leadsPorEmail[emailKey] : null;
-          const empresa = lead?.empresa_id ? empresasPorId[lead.empresa_id] : null;
-          const camp = o.campanha_origem_id ? campanhasPorId[o.campanha_origem_id] : null;
-          itens.push({
-            tipo: 'opt_out',
-            id: o.id,
-            data_evento: o.criado_em,
-            lead_id: lead?.id ?? null,
-            lead_nome: lead?.nome ?? null,
-            lead_email: o.email,
-            empresa_id: lead?.empresa_id ?? null,
-            empresa_nome: empresa?.nome ?? null,
-            campanha_id: o.campanha_origem_id,
-            campanha_nome: camp?.nome ?? null,
-            assunto: null,
-            corpo_texto: null,
-            classificacao: null,
-            lido: true,
-            motivo_optout: o.motivo || 'Opt-out',
           });
         }
 
