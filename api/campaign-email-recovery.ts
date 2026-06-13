@@ -1,24 +1,69 @@
 /**
  * api/campaign-email-recovery.ts
  *
- * EMAIL RECOVERY PIPELINE — v1.0
- * Fase 2 (F3 + F6) — Endpoint orquestrador do Recovery
- * Data: 12/06/2026
+ * EMAIL RECOVERY PIPELINE — v2.0
+ * Fase 3.A — Camada Gemini (expansão do motor)
+ * Data: 13/06/2026
  *
- * Decisões de produto alinhadas (12/06/2026):
- *  D1 — Escopo Completo (8 frentes)
- *  D2 — Trigger Híbrido (auto se padrão conhecido, manual se desconhecido)
- *  D3 — Limiar de confiança: padrão "estável" = confianca >= 3
- *  D4 — Re-enfileiramento: recomeça do step 1 (e-mail novo = destinatário novo)
- *  D5 — Fluxo manual testa todos os 30+ padrões
- *  D6 — F7 + aba "Leads Inválidos" (unificada)
- *  D7 — Aba Inválidos: F7 + bounce + MX (motivo_invalidacao registra a origem)
- *  D8 — RBAC: Admin + Gestão Comercial + SDR (validação na UI)
- *  D9 — Máximo 3 tentativas totais por lead, depois "definitivamente irrecuperável"
- *  D10 — Edição manual: campo livre + clique "Validar e Reativar" (MX + Snov.io opcional)
+ * v2.0 (13/06/2026) — Sub-fase 3.A — CAMADA GEMINI INSERIDA NA CASCATA
+ *
+ *   Decisões de produto desta sub-fase (alinhadas 13/06/2026):
+ *    A.1 — Gemini ANTES do Snov.io (mais barato; valida hallucination depois)
+ *    A.2 — Discovery (C.1) + Ranker (C.2) em sequência
+ *    A.3 — Validação dupla anti-hallucination (Snov.io + SMTP probe)
+ *    A.4 — SMTP probe SELETIVO (pula Microsoft/Google, aplica em domínios próprios)
+ *    A.5 — Cap simples: 2 chamadas/lead (design) + 200/dia global
+ *
+ *   Nova cascata recover_lead:
+ *    1. Carrega lead (com JOIN para email_empresas.nome — contexto p/ Gemini)
+ *    2. Valida pré-condições + tentativas_recovery < 3
+ *    3. Separa nome/sobrenome
+ *    4. Extrai domínio e valida MX
+ *    5. ★ ETAPA 5.5 NOVA — Gemini Discovery (C.1) com Search Grounding
+ *       - Se Gemini propõe email → validação dupla:
+ *         · Snov.io Verifier OBRIGATÓRIO (cap anti-hallucination)
+ *         · SMTP probe seletivo (só se provider != Microsoft/Google)
+ *       - Ambos aprovam → SUCESSO direto (pula etapas 6-8)
+ *       - Discordância → registra histórico e segue para etapa 6
+ *    6. Consulta padrão estável (confianca >= 3)
+ *    7. Gera candidatos (auto = 1, manual = 32)
+ *    8. ★ ETAPA 7.5 NOVA — Gemini Ranker (C.2)
+ *       - Só ranqueia se modo=manual e candidatos > 1
+ *       - Reordena lista do mais ao menos provável
+ *       - Falha grácil → mantém ordem original
+ *    9. Snov.io testa em ordem ranqueada (early-exit no 1º valid)
+ *   10. Sucesso → UPDATE email_leads + aprenderPadrao() + re-enfileira
+ *   11. Falha   → incrementa tentativas_recovery; se chegou em 3, motivo='no_match'
+ *
+ *   Custo unitário aproximado por lead:
+ *    - Gemini Discovery acerta (alto perfil público): ~$0.005
+ *      ($0.001 Gemini + $0.004 Snov.io validação + SMTP probe grátis)
+ *    - Gemini Discovery erra + Ranker + Snov.io top: ~$0.022
+ *      ($0.001 Gemini + $0.0005 Ranker + $0.020 Snov.io × 5 candidatos)
+ *    - Cap atingido / Gemini desligado: ~$0.064 (cascata tradicional 16 médio)
+ *
+ *   Falha grácil em TODA a camada Gemini:
+ *    - Cap diário atingido (200/dia) → pula Gemini, segue para Snov.io
+ *    - API_KEY não configurada → erro logado, segue para Snov.io
+ *    - Gemini retorna JSON inválido → segue para Snov.io
+ *    - Validação dupla rejeita → registra histórico, segue para Ranker + Snov.io
+ *
+ * v1.0 (12/06/2026) — Fase 2 — base original (Snov.io puro)
+ *
+ *   Decisões originais (preservadas):
+ *    D1 — Escopo Completo (8 frentes)
+ *    D2 — Trigger Híbrido (auto se padrão conhecido, manual se desconhecido)
+ *    D3 — Limiar de confiança: padrão "estável" = confianca >= 3
+ *    D4 — Re-enfileiramento: recomeça do step 1
+ *    D5 — Fluxo manual testa todos os 30+ padrões
+ *    D6 — F7 + aba "Leads Inválidos" (unificada)
+ *    D7 — Aba Inválidos: F7 + bounce + MX
+ *    D8 — RBAC: Admin + Gestão Comercial + SDR
+ *    D9 — Máximo 3 tentativas totais por lead
+ *    D10 — Edição manual: campo livre + clique "Validar e Reativar"
  *
  * ACTIONS:
- *  POST  ?action=recover_lead       → F3+F6 orquestração completa
+ *  POST  ?action=recover_lead       → F3+F6 orquestração completa (com Gemini)
  *    body: { lead_id, criado_por }
  *
  *  POST  ?action=manual_revalidate  → D10 — analista editou o e-mail e quer reativar
@@ -27,20 +72,14 @@
  *  GET   ?action=lead_status        → consulta status de Recovery (UI usa para botão)
  *    query: lead_id
  *
- * FLUXO recover_lead (resumo):
- *  1. Carrega lead; valida tentativas_recovery < 3
- *  2. Valida MX do domínio atual → se falha, marca motivo='mx', incrementa, retorna
- *  3. Consulta email_padroes_empresa pelo domínio:
- *     - HIT  (confianca >= 3) → modo AUTO: gera 1 candidato com gerarPorPadrao
- *     - MISS                  → modo MANUAL: gera 30+ candidatos com gerarVariacoes
- *  4. Verifica via Snov.io Email Verifier (early-exit no primeiro válido)
- *  5. Sucesso → UPDATE email_leads + aprenderPadrao() + re-enfileira em campanhas
- *  6. Falha   → incrementa tentativas_recovery; se chegou em 3, motivo='no_match'
+ * DEPENDÊNCIAS:
+ *  - Tabela `email_padroes_empresa` (Migration 12/06/2026)
+ *  - Colunas em email_leads: tentativas_recovery, motivo_invalidacao, recovery_em (Migration 12/06/2026)
+ *  - Tabela `gemini_daily_counter` (Migration 13/06/2026 — NOVA, Sub-fase 3.A)
  *
- * RE-ENFILEIRAMENTO INLINE (F6):
+ * RE-ENFILEIRAMENTO INLINE (F6) — preservado da v1.0:
  *  - NÃO usa vincularLeadACampanha do crm-leads (esse helper BLOQUEIA lead já
- *    vinculado a campanha em andamento). No Recovery o lead CONTINUA vinculado
- *    em email_lead_campanhas (só a email_fila pendente foi cancelada via P1.2).
+ *    vinculado a campanha em andamento).
  *  - Re-cria entradas em email_fila para TODAS as campanhas em status
  *    ativa/pausada onde o lead estava vinculado. Reset step_atual=1.
  */
@@ -57,6 +96,11 @@ import {
   verificarLoteAteValido,
   verificarEmail,
 } from './_utils/snovio-verifier.js';
+// ── v2.0 (13/06/2026) — Camada Gemini ────────────────────────────────────
+import { detectarProvider } from './_utils/provider-detector.js';
+import { smtpProbe } from './_utils/smtp-probe.js';
+import { descobrirEmail } from './_utils/gemini-discovery.js';
+import { rankearCandidatos } from './_utils/gemini-ranker.js';
 
 export const config = { maxDuration: 60 };
 
@@ -385,11 +429,13 @@ async function handleRecoverLead(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ success: false, error: 'criado_por obrigatório' });
   }
 
-  // 1. Carregar lead
+  // 1. Carregar lead + nome da empresa (contexto p/ Gemini — v2.0)
   const { data: lead, error: errLead } = await supabase
     .from('email_leads')
     .select(
-      'id, nome, email, vertical, bounced, apto_campanha, tentativas_recovery, motivo_invalidacao'
+      `id, nome, email, vertical, bounced, apto_campanha,
+       tentativas_recovery, motivo_invalidacao,
+       empresa_id, email_empresas(nome)`
     )
     .eq('id', lead_id)
     .maybeSingle();
@@ -465,6 +511,152 @@ async function handleRecoverLead(req: VercelRequest, res: VercelResponse) {
     });
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // ★ ETAPA 5.5 (v2.0 — 13/06/2026) — Gemini Discovery + Validação Dupla
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  // Tenta descobrir o email diretamente via Gemini Search Grounding (C.1).
+  // Se Gemini propõe um email, valida com Snov.io OBRIGATORIAMENTE +
+  // SMTP probe SELETIVO (só se provider != Microsoft/Google). Ambos devem
+  // aprovar para gravar o email — proteção anti-hallucination (Decisão A.3=D).
+  //
+  // Em caso de sucesso, é um ATALHO total: não consulta padrão, não gera
+  // candidatos, não chama Snov.io para os 32 (economia máxima).
+  //
+  // Em caso de Gemini não achar OU validação dupla rejeitar, registra
+  // histórico e segue normalmente para etapas 6+.
+  //
+  // Falha grácil: cap diário atingido, API_KEY ausente, erro de rede →
+  // pula silenciosamente para etapas 6+.
+
+  const provider = detectarProvider(mxResult.mx_records, dominioCompleto);
+  const empresaNome =
+    ((lead as any).email_empresas?.nome || '').toString().trim() || dominioCompleto;
+
+  const discovery = await descobrirEmail({
+    nome,
+    sobrenome,
+    empresa: empresaNome,
+    dominio: dominioCompleto,
+    cargo: null, // schema atual de email_leads não tem coluna cargo — fica null
+  });
+
+  if (discovery.email) {
+    // ── Validação 1/2 — Snov.io OBRIGATÓRIO (anti-hallucination) ───────
+    const snovioCheck = await verificarEmail(discovery.email);
+    const snovioOk = snovioCheck.valido;
+
+    // ── Validação 2/2 — SMTP probe SELETIVO (Decisão A.4) ──────────────
+    let smtpCheck: Awaited<ReturnType<typeof smtpProbe>> | null = null;
+    let smtpOk = true; // default ok = pulado
+    if (provider.confiavel_no_smtp_probe) {
+      smtpCheck = await smtpProbe(discovery.email, mxResult.mx_records);
+      // SMTP só BLOQUEIA se respondeu rejeição definitiva (5xx).
+      // 'inconclusive' (timeout/4xx/conn err) NÃO bloqueia — Snov.io decide.
+      smtpOk = smtpCheck.resultado !== 'reject';
+    }
+
+    if (snovioOk && smtpOk) {
+      // ★★★ SUCESSO via Gemini Discovery ★★★
+      const novasT = lead.tentativas_recovery + 1;
+
+      const updResult = await aplicarSucessoNoLead(
+        lead.id,
+        discovery.email,
+        novasT,
+        criado_por
+      );
+      if (updResult.error) {
+        return res.status(500).json({
+          success: false,
+          error: `Gemini Discovery encontrou "${discovery.email}" mas falhou ao atualizar lead: ${updResult.error}`,
+        });
+      }
+
+      // Aprender padrão (se template detectável)
+      let templateDetectado: string | null = null;
+      let extensaoDetectada: Extensao | null = null;
+      const tpl = detectarTemplate(discovery.email, nome, sobrenome);
+      if (tpl) {
+        await aprenderPadrao(dominioCompleto, tpl.template, tpl.extensao);
+        templateDetectado = tpl.template;
+        extensaoDetectada = tpl.extensao;
+      }
+
+      const enfileiramento = await reEnfileirarEmCampanhasAtivas(
+        lead.id,
+        discovery.email,
+        lead.nome
+      );
+
+      await registrarHistorico(
+        lead.id,
+        'recovery_sucesso_gemini',
+        `Recovery via Gemini Discovery — ${lead.email} → ${discovery.email}. ` +
+          `Confiança Gemini: ${discovery.confianca_gemini}%. ` +
+          `Validação dupla: Snov.io OK` +
+          (provider.confiavel_no_smtp_probe
+            ? ` + SMTP probe ${smtpCheck?.resultado}`
+            : ` (SMTP pulado: provider=${provider.tipo})`) +
+          `. ${enfileiramento.campanhas_re_enfileiradas} campanha(s) reativada(s), ` +
+          `${enfileiramento.envios_agendados} envio(s) agendado(s). ` +
+          `Raciocínio Gemini: ${discovery.raciocinio.slice(0, 200)}`,
+        criado_por
+      );
+
+      return res.status(200).json({
+        success: true,
+        status: 'recovered',
+        modo: 'gemini_discovery',
+        email_anterior: lead.email,
+        email_recuperado: discovery.email,
+        template_detectado: templateDetectado,
+        extensao: extensaoDetectada,
+        candidatos_testados: 1,
+        creditos_consumidos: snovioCheck.creditos,
+        tentativas_consumidas: novasT,
+        campanhas_re_enfileiradas: enfileiramento.campanhas_re_enfileiradas,
+        envios_agendados: enfileiramento.envios_agendados,
+        erros_enfileiramento: enfileiramento.erros,
+        gemini: {
+          discovery_chamado: discovery.gemini_chamado,
+          confianca_gemini: discovery.confianca_gemini,
+          raciocinio: discovery.raciocinio,
+          provider_detectado: provider.tipo,
+          smtp_probe_executado: provider.confiavel_no_smtp_probe,
+          smtp_probe_resultado: smtpCheck?.resultado || null,
+          smtp_probe_codigo: smtpCheck?.smtp_code || null,
+        },
+      });
+    }
+
+    // ── Validação dupla rejeitou → registra e segue para etapas 6+ ─────
+    // Gemini Discovery NÃO consome tentativa do D9 (não foi cascata
+    // exaustiva, foi 1 tentativa pontual descartada). O incremento de
+    // tentativas_recovery acontece apenas no fluxo Snov.io tradicional.
+    await registrarHistorico(
+      lead.id,
+      'gemini_discovery_rejeitado',
+      `Gemini Discovery propôs "${discovery.email}" (confiança ${discovery.confianca_gemini}%) ` +
+        `mas validação dupla rejeitou — Snov.io: ${snovioCheck.status}` +
+        (provider.confiavel_no_smtp_probe
+          ? `, SMTP probe: ${smtpCheck?.resultado} (${smtpCheck?.smtp_code || 'n/a'})`
+          : ', SMTP pulado') +
+        `. Seguindo para cascata padrão (Ranker + Snov.io).`,
+      criado_por
+    );
+  } else if (discovery.gemini_chamado) {
+    // Gemini foi chamado mas não achou email — registra para auditoria
+    await registrarHistorico(
+      lead.id,
+      'gemini_discovery_sem_match',
+      `Gemini Discovery não encontrou email para ${nome} ${sobrenome} @ ${empresaNome}. ` +
+        `Raciocínio: ${discovery.raciocinio.slice(0, 200)}. Seguindo para cascata padrão.`,
+      criado_por
+    );
+  }
+  // Se gemini_chamado=false (cap atingido), segue silenciosamente
+
   // 6. Consultar padrão estável da empresa (D3 — confianca >= 3)
   const baseDom = baseDoDominio(dominioCompleto);
   const { data: padraoEstavel } = await supabase
@@ -514,9 +706,66 @@ async function handleRecoverLead(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  // 8. Verificar via Snov.io (early-exit no primeiro válido)
+  // ═══════════════════════════════════════════════════════════════════════
+  // ★ ETAPA 7.5 (v2.0 — 13/06/2026) — Gemini Ranker (C.2)
+  // ═══════════════════════════════════════════════════════════════════════
+  //
+  // Reordena os 32 candidatos do MAIS provável ao MENOS, dado o contexto da
+  // empresa (segmento, porte, provider de email). Snov.io faz early-exit
+  // muito mais rápido — testa 3-7 candidatos em vez de 16 em média.
+  //
+  // Só executa no modo MANUAL (auto já tem 1 candidato).
+  // Falha grácil: cap atingido / JSON inválido → mantém ordem original.
+
+  let candidatosOrdenados = candidatos;
+  let rankerInfo: {
+    chamado: boolean;
+    raciocinio: string | null;
+    tempo_ms: number;
+    erro: string | null;
+  } | null = null;
+
+  if (modo === 'manual' && candidatos.length > 1) {
+    const ranker = await rankearCandidatos({
+      candidatos: candidatos.map(c => c.email),
+      nome,
+      sobrenome,
+      empresa: empresaNome,
+      dominio: dominioCompleto,
+      cargo: null,
+    });
+
+    rankerInfo = {
+      chamado: ranker.gemini_chamado,
+      raciocinio: ranker.raciocinio || null,
+      tempo_ms: ranker.tempo_ms,
+      erro: ranker.erro || null,
+    };
+
+    // Reconstrói candidatos respeitando a ordem do Ranker, sem perder dados.
+    // O helper já garante invariante de completude, então confiamos cegamente.
+    if (
+      ranker.gemini_chamado &&
+      ranker.ordenados.length === candidatos.length
+    ) {
+      const mapaPorEmail = new Map(candidatos.map(c => [c.email, c]));
+      candidatosOrdenados = ranker.ordenados
+        .map(e => mapaPorEmail.get(e))
+        .filter((c): c is NonNullable<typeof c> => Boolean(c));
+
+      // Cinto+suspensórios: se algum item se perdeu por bug, completa
+      if (candidatosOrdenados.length < candidatos.length) {
+        const jaIncluidos = new Set(candidatosOrdenados.map(c => c.email));
+        for (const c of candidatos) {
+          if (!jaIncluidos.has(c.email)) candidatosOrdenados.push(c);
+        }
+      }
+    }
+  }
+
+  // 8. Verificar via Snov.io (early-exit no primeiro válido) — em ordem ranqueada
   const { encontrado, todos, creditos_totais } = await verificarLoteAteValido(
-    candidatos.map(c => c.email),
+    candidatosOrdenados.map(c => c.email),
     { concorrencia: 3 }
   );
 
@@ -545,7 +794,7 @@ async function handleRecoverLead(req: VercelRequest, res: VercelResponse) {
   }
 
   // 10. SUCESSO — UPDATE lead + aprender padrão + re-enfileirar
-  const candidatoVencedor = candidatos.find(c => c.email === encontrado.email)!;
+  const candidatoVencedor = candidatosOrdenados.find(c => c.email === encontrado.email)!;
   const novasT = lead.tentativas_recovery + 1;
 
   const updResult = await aplicarSucessoNoLead(lead.id, encontrado.email, novasT, criado_por);
@@ -564,10 +813,20 @@ async function handleRecoverLead(req: VercelRequest, res: VercelResponse) {
     lead.nome
   );
 
+  // Posição do match na lista ranqueada (informativo — mede ROI do Ranker)
+  const posicaoNoRanking =
+    candidatosOrdenados.findIndex(c => c.email === encontrado.email) + 1;
+
   await registrarHistorico(
     lead.id,
     'recovery_sucesso',
-    `Recovery (${modo}) — e-mail recuperado: ${lead.email} → ${encontrado.email}. Padrão "${candidatoVencedor.template}${candidatoVencedor.extensao}". ${creditos_totais} créditos. ${enfileiramento.campanhas_re_enfileiradas} campanha(s) reativada(s), ${enfileiramento.envios_agendados} envio(s) agendado(s).`,
+    `Recovery (${modo}) — e-mail recuperado: ${lead.email} → ${encontrado.email}. ` +
+      `Padrão "${candidatoVencedor.template}${candidatoVencedor.extensao}". ` +
+      `Posição no ranking: ${posicaoNoRanking}/${candidatosOrdenados.length} ` +
+      `(${rankerInfo?.chamado ? 'Ranker chamado' : 'Ranker pulado'}). ` +
+      `${creditos_totais} créditos. ` +
+      `${enfileiramento.campanhas_re_enfileiradas} campanha(s) reativada(s), ` +
+      `${enfileiramento.envios_agendados} envio(s) agendado(s).`,
     criado_por
   );
 
@@ -580,11 +839,20 @@ async function handleRecoverLead(req: VercelRequest, res: VercelResponse) {
     template_detectado: candidatoVencedor.template,
     extensao: candidatoVencedor.extensao,
     candidatos_testados: todos.length,
+    posicao_no_ranking: posicaoNoRanking,
     creditos_consumidos: creditos_totais,
     tentativas_consumidas: novasT,
     campanhas_re_enfileiradas: enfileiramento.campanhas_re_enfileiradas,
     envios_agendados: enfileiramento.envios_agendados,
     erros_enfileiramento: enfileiramento.erros,
+    gemini: {
+      discovery_chamado: discovery.gemini_chamado,
+      discovery_email_proposto: discovery.email,
+      discovery_confianca: discovery.confianca_gemini,
+      ranker_chamado: rankerInfo?.chamado ?? false,
+      ranker_raciocinio: rankerInfo?.raciocinio ?? null,
+      provider_detectado: provider.tipo,
+    },
   });
 }
 
