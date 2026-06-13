@@ -2,6 +2,26 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.14 (13/06/2026 — Coluna ANALISTA + ordenação configurável):
+ *    Continuação da reorganização Prospect/Lead. Action `listar_leads`
+ *    ganha 2 capacidades para alimentar a nova tabela LeadsTab v1.1:
+ *
+ *      • Parâmetro `ordenar_por` (query string): aceita 'recentes'
+ *        (default — criado_em desc), 'empresa' (email_empresas.nome asc),
+ *        'nome' (email_leads.nome asc), 'cargo' (cargo asc com NULLs
+ *        no final). Mapa de ordenações usa whitelist — qualquer valor
+ *        desconhecido cai no default 'recentes'.
+ *
+ *      • Batch lookup de responsáveis: após buscar a página de leads,
+ *        coleta os `reservado_por` únicos e faz UM SELECT em `app_users`
+ *        (id, nome_usuario). Cada lead é enriquecido com
+ *        `reservado_por_nome` (string | null) antes da resposta.
+ *        Custo: 1 query extra por página, sem N+1. Alinhado com o
+ *        padrão usado em `listar_respostas` para empresa/campanha.
+ *
+ *    Sem mudança de schema, sem migration. Sem impacto em outras
+ *    actions.
+ *
  *  - v1.13 (13/06/2026 — Reorganização Prospect/Lead + LGPD eterna):
  *    Três cirurgias para alinhar o backend com a nova organização de abas
  *    da Base de Leads (BaseLeadsPage v1.7) e com a regra LGPD permanente
@@ -450,23 +470,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── LISTAR LEADS ─────────────────────────────
       if (action === 'listar_leads') {
-        const { empresa_id, funil, busca, tags, page = '1', limit = '30' } = req.query as Record<string, string>;
+        const {
+          empresa_id,
+          funil,
+          busca,
+          tags,
+          page = '1',
+          limit = '30',
+          ordenar_por = 'recentes',          // 🆕 v1.14
+        } = req.query as Record<string, string>;
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
         let query = supabase
           .from('email_leads')
           .select('*, email_empresas(id, nome, dominio, setor)', { count: 'exact' })
-          .order('criado_em', { ascending: false })
           .range(offset, offset + parseInt(limit) - 1);
 
         // 🆕 v1.13 (13/06/2026 — Reorganização Prospect/Lead + LGPD):
         //   Excluir leads em opt-out da listagem "Meus Leads".
         //   Eles continuam vivos na base (regra LGPD permanente — opt-out
         //   é eterno, jamais deletado), mas aparecem APENAS na aba "Opt-Out".
-        //   Usamos `not('opt_out', 'is', true)` em vez de `eq('opt_out', false)`
-        //   para tratar NULL como "ativo" (defesa em camadas: leads antigos
-        //   podem ter a coluna NULL e não devem ser ocultados por isso).
         query = query.not('opt_out', 'is', true);
+
+        // 🆕 v1.14 (13/06/2026) — Ordenação configurável.
+        //   Whitelist defensiva — qualquer valor desconhecido em
+        //   `ordenar_por` cai no default 'recentes'.
+        //   • 'recentes' → criado_em desc (default)
+        //   • 'empresa'  → email_empresas.nome asc (foreignTable)
+        //   • 'nome'     → email_leads.nome asc
+        //   • 'cargo'    → cargo asc (NULLs no final)
+        switch (ordenar_por) {
+          case 'empresa':
+            query = query.order('nome', {
+              ascending: true,
+              foreignTable: 'email_empresas',
+              nullsFirst: false,
+            });
+            break;
+          case 'nome':
+            query = query.order('nome', { ascending: true });
+            break;
+          case 'cargo':
+            query = query.order('cargo', { ascending: true, nullsFirst: false });
+            break;
+          case 'recentes':
+          default:
+            query = query.order('criado_em', { ascending: false });
+            break;
+        }
 
         if (empresa_id) query = query.eq('empresa_id', empresa_id);
         if (funil) query = query.eq('funil_status', funil);
@@ -481,9 +532,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { data, error, count } = await query;
         if (error) throw error;
 
+        // 🆕 v1.14 (13/06/2026) — Batch lookup de responsáveis.
+        //   Coleta `reservado_por` únicos da página atual e faz 1 SELECT
+        //   em `app_users`. Cada lead recebe `reservado_por_nome` como
+        //   projeção computada (não persistida) — consumida pela coluna
+        //   ANALISTA da LeadsTab v1.1.
+        const responsavelIds = Array.from(
+          new Set((data || []).map((l: any) => l.reservado_por).filter(Boolean))
+        ) as number[];
+
+        const responsaveisPorId: Record<number, string> = {};
+        if (responsavelIds.length > 0) {
+          const { data: resps, error: errResp } = await supabase
+            .from('app_users')
+            .select('id, nome_usuario')
+            .in('id', responsavelIds);
+          // Falha aqui é não-fatal — degrada graciosamente para "—" na UI.
+          if (!errResp) {
+            for (const r of resps || []) responsaveisPorId[r.id] = r.nome_usuario;
+          } else {
+            console.warn('[listar_leads] Falha ao resolver responsáveis:', errResp.message);
+          }
+        }
+
+        const leadsEnriquecidos = (data || []).map((l: any) => ({
+          ...l,
+          reservado_por_nome:
+            l.reservado_por != null ? responsaveisPorId[l.reservado_por] ?? null : null,
+        }));
+
         return res.status(200).json({
           success: true,
-          leads: data || [],
+          leads: leadsEnriquecidos,
           total: count || 0,
           page: parseInt(page),
           limit: parseInt(limit),
