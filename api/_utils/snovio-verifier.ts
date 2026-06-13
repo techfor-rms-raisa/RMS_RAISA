@@ -1,7 +1,42 @@
 /**
- * SNOV.IO EMAIL VERIFIER — v1.0
- * Fase 2 — Email Recovery Pipeline
- * Data: 12/06/2026
+ * SNOV.IO EMAIL VERIFIER — v1.3
+ * Fase 2 — Email Recovery Pipeline + Sub-fase 3.A — Camada Gemini
+ * Data: 13/06/2026 (v1.3 — correção do parser da resposta v1)
+ *
+ * v1.3 (13/06/2026) — CORREÇÃO DO PARSER DE RESPOSTA
+ *   Diagnóstico via teste direto ao Snov.io revelou o formato REAL da
+ *   resposta v1 — diferente do que assumimos na v1.2:
+ *
+ *   FORMATO REAL (objeto com o email como chave dinâmica):
+ *     {
+ *       "success": true,
+ *       "<email>": {
+ *         "status": { "identifier": "in_progress|complete|error", ... },
+ *         "data": [] | {
+ *           "email": "<email>",
+ *           "smtpStatus": "valid|invalid|catch_all|...",
+ *           "isCatchall": boolean,
+ *           "isDisposable": boolean,
+ *           "isGreylist": boolean,
+ *           ...
+ *         }
+ *       }
+ *     }
+ *
+ *   FORMATO ASSUMIDO (errado) na v1.2:
+ *     { "data": [{ "email", "result", ... }] }  // não existe
+ *
+ *   Sem mudanças no shape de retorno do helper para o caller.
+ *   Logs v1.1 mantidos integralmente.
+ *
+ *   ADD response também usa formato com chave dinâmica:
+ *     { "success": true, "<email>": { "sent": true } }
+ *
+ *   Polling típico: 2-3 polls × 2s = 4-6s total por email (medido).
+ *
+ * v1.2 (13/06/2026) — Endpoint corrigido para API v1 (eram v2 quebrados)
+ * v1.1 (13/06/2026) — Logs cirúrgicos em todos os pontos de falha
+ * v1.0 (12/06/2026) — Implementação inicial (endpoint v2 estava errado)
  *
  * Helper para verificar se um endereço de e-mail é válido via Snov.io
  * Email Verifier API. Diferente do prospect-snovio-search.ts (que busca
@@ -21,8 +56,9 @@
  *   const lote = await verificarLote(['e1@x.com', 'e2@x.com'], 3);
  *
  * CUSTO:
- *  - 1 crédito Snov.io (~$0.004) por verificação
- *  - Tarefa em background no Snov.io: 1-3s típicos por verificação
+ *  - Email Verifier consome TOKENS no Snov.io (diferente de Credits/Recipients)
+ *  - ~1 token por verificação ($0.004 equivalente)
+ *  - Verificação típica: 4-6s total por email
  *
  * INTERPRETAÇÃO DOS STATUS:
  *  - 'valid'      → entregável (alta confiança)
@@ -77,8 +113,16 @@ async function obterToken(): Promise<string> {
   const userId = process.env.SNOVIO_USER_ID;
   const apiSecret = process.env.SNOVIO_API_SECRET;
   if (!userId || !apiSecret) {
+    console.error('[snovio-verifier] ❌ ENV VARS AUSENTES — SNOVIO_USER_ID ou SNOVIO_API_SECRET não configurados');
     throw new Error('SNOVIO_USER_ID ou SNOVIO_API_SECRET não configurados');
   }
+
+  // Log defensivo: detectar whitespace ou tamanho anômalo em env vars (sem expor o valor)
+  const userIdLen = userId.length;
+  const secretLen = apiSecret.length;
+  const userIdTrimmed = userId.trim().length === userIdLen;
+  const secretTrimmed = apiSecret.trim().length === secretLen;
+  console.log(`[snovio-verifier] 🔑 Obtendo token: USER_ID len=${userIdLen} trimmed=${userIdTrimmed}, SECRET len=${secretLen} trimmed=${secretTrimmed}`);
 
   const params = new URLSearchParams();
   params.append('grant_type', 'client_credentials');
@@ -91,31 +135,36 @@ async function obterToken(): Promise<string> {
     body: params.toString(),
   });
   if (!res.ok) {
-    throw new Error(`Auth Snov.io falhou: ${res.status} — ${await res.text()}`);
+    const respText = await res.text();
+    console.error(`[snovio-verifier] ❌ AUTH FAIL ${res.status}: ${respText.slice(0, 300)}`);
+    throw new Error(`Auth Snov.io falhou: ${res.status} — ${respText}`);
   }
 
   const data = await res.json();
   if (!data.access_token) {
+    console.error(`[snovio-verifier] ❌ AUTH OK mas sem access_token no body: ${JSON.stringify(data).slice(0, 300)}`);
     throw new Error(`Token não retornado: ${JSON.stringify(data)}`);
   }
 
   cachedToken = data.access_token;
   tokenExpiresAt = now + 50 * 60 * 1000; // 50min
+  console.log(`[snovio-verifier] ✅ Token obtido, válido por 50min`);
   return cachedToken!;
 }
 
 // ============================================================================
-// VERIFICAÇÃO UNITÁRIA — POST /v2/email-verifier
+// VERIFICAÇÃO UNITÁRIA — API v1 do Snov.io
 // ============================================================================
 
 /**
- * Verifica um e-mail via Snov.io. Faz 1 chamada start + polling até resultado.
+ * Verifica um e-mail via Snov.io. Faz 1 chamada add + polling até resultado.
  *
- * Snov.io v2 API:
- *  1. POST /v2/emails-verifier/start  body: { email }      → { task_hash }
- *  2. GET  /v2/emails-verifier/result/:task_hash           → { status, data: { result, ... } }
+ * Snov.io v1 API (estável, documentada):
+ *  1. POST /v1/add-emails-to-verification     body: emails[]=email     → { success, data: [{email, status}] }
+ *  2. POST /v1/get-emails-verification-status body: emails[]=email     → { success, data: [{email, result, ...}] }
  *
  * Polling: até 10×2s = 20s máx por verificação.
+ * Resultado vazio/ausente = ainda processando → continua polling.
  */
 export async function verificarEmail(
   email: string,
@@ -142,87 +191,143 @@ export async function verificarEmail(
   try {
     const token = await obterToken();
 
-    // 1. START — POST com body urlencoded
-    const params = new URLSearchParams();
-    params.append('email', emailNormalizado);
+    // ════════════════════════════════════════════════════════════════════
+    // 1. ADD — POST /v1/add-emails-to-verification
+    //    Body: emails[]=email@example.com
+    //    Resposta REAL: { success: true, "<email>": { sent: true } }
+    // ════════════════════════════════════════════════════════════════════
+    const addParams = new URLSearchParams();
+    addParams.append('emails[]', emailNormalizado);
 
-    const startRes = await fetch(`${SNOVIO_BASE_URL}/v2/emails-verifier/start`, {
+    const addRes = await fetch(`${SNOVIO_BASE_URL}/v1/add-emails-to-verification`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: params.toString(),
+      body: addParams.toString(),
     });
 
-    if (!startRes.ok) {
-      const errText = await startRes.text();
+    if (!addRes.ok) {
+      const errText = await addRes.text();
+      console.warn(`[snovio-verifier] ⚠️ ADD_${addRes.status} para ${emailNormalizado}: ${errText.slice(0, 200)}`);
       return {
         email: emailNormalizado,
         valido: false,
         status: 'erro',
         creditos: 0,
         tempo_ms: Date.now() - inicio,
-        erro: `START_${startRes.status}: ${errText.slice(0, 120)}`,
+        erro: `ADD_${addRes.status}: ${errText.slice(0, 120)}`,
       };
     }
 
-    const startData = await startRes.json();
-    const taskHash = startData?.meta?.task_hash || startData?.data?.task_hash;
-    if (!taskHash) {
+    const addData = await addRes.json();
+    if (addData?.success === false) {
+      console.warn(`[snovio-verifier] ⚠️ ADD_API_FAIL para ${emailNormalizado}: ${JSON.stringify(addData).slice(0, 200)}`);
       return {
         email: emailNormalizado,
         valido: false,
         status: 'erro',
         creditos: 0,
         tempo_ms: Date.now() - inicio,
-        erro: `SEM_TASK_HASH: ${JSON.stringify(startData).slice(0, 120)}`,
+        erro: `ADD_API_FAIL: ${JSON.stringify(addData).slice(0, 120)}`,
       };
     }
 
-    // 2. POLL — GET result até concluído ou timeout
-    const resultUrl =
-      startData?.links?.result || `${SNOVIO_BASE_URL}/v2/emails-verifier/result/${taskHash}`;
+    // ════════════════════════════════════════════════════════════════════
+    // 2. POLL — POST /v1/get-emails-verification-status
+    //    Body: emails[]=email@example.com
+    //    Resposta REAL (chave dinâmica = o próprio email):
+    //      {
+    //        "success": true,
+    //        "<email>": {
+    //          "status": { "identifier": "in_progress" | "complete" | "error", "description": "..." },
+    //          "data": [] | { "email", "smtpStatus", "isCatchall", "isDisposable", "isGreylist", ... }
+    //        }
+    //      }
+    // ════════════════════════════════════════════════════════════════════
+    const pollParams = new URLSearchParams();
+    pollParams.append('emails[]', emailNormalizado);
+
     const tInicioPoll = Date.now();
     const intervaloMs = 2000;
     const maxAttempts = Math.ceil(timeoutMs / intervaloMs);
 
     for (let i = 0; i < maxAttempts; i++) {
-      const pollRes = await fetch(resultUrl, {
-        headers: { Authorization: `Bearer ${token}` },
+      const pollRes = await fetch(`${SNOVIO_BASE_URL}/v1/get-emails-verification-status`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: pollParams.toString(),
       });
 
       if (!pollRes.ok) {
+        const pollErrText = await pollRes.text();
+        console.warn(`[snovio-verifier] ⚠️ POLL_${pollRes.status} para ${emailNormalizado} (tentativa ${i+1}): ${pollErrText.slice(0, 200)}`);
         return {
           email: emailNormalizado,
           valido: false,
           status: 'erro',
           creditos: 0,
           tempo_ms: Date.now() - inicio,
-          erro: `POLL_${pollRes.status}: ${(await pollRes.text()).slice(0, 120)}`,
+          erro: `POLL_${pollRes.status}: ${pollErrText.slice(0, 120)}`,
         };
       }
 
-      const pollData = await pollRes.json();
-      const taskStatus = pollData?.status || pollData?.data?.status;
+      const pollData: any = await pollRes.json();
 
-      if (taskStatus === 'completed') {
-        // Resultado consolidado em data.result
-        const result: string = (
-          pollData?.data?.result ||
-          pollData?.data?.verification_status ||
-          pollData?.data?.smtp_status ||
-          'unknown'
-        ).toLowerCase();
+      // Acessa o item via chave dinâmica = o próprio email
+      const item = pollData?.[emailNormalizado];
 
-        // Normalizar para o set conhecido
+      if (!item) {
+        // Resposta sem o email esperado — pode ser problema no Snov.io
+        if (i === 0) {
+          // Loga só na primeira tentativa para evitar poluir log
+          console.warn(`[snovio-verifier] ⚠️ POLL_SEM_ITEM_EMAIL para ${emailNormalizado}: ${JSON.stringify(pollData).slice(0, 200)}`);
+        }
+        // continua polling — pode ser delay de propagação
+        if (Date.now() - tInicioPoll >= timeoutMs) break;
+        await new Promise(r => setTimeout(r, intervaloMs));
+        continue;
+      }
+
+      const statusIdentifier: string = (item?.status?.identifier || '').toLowerCase();
+
+      // ── Resultado COMPLETO ──
+      if (statusIdentifier === 'complete') {
+        // data DEVE ser objeto (não array vazio) quando complete
+        const verifyData = item?.data;
+        if (!verifyData || Array.isArray(verifyData)) {
+          console.warn(`[snovio-verifier] ⚠️ COMPLETE_SEM_DATA para ${emailNormalizado}: ${JSON.stringify(item).slice(0, 200)}`);
+          return {
+            email: emailNormalizado,
+            valido: false,
+            status: 'erro',
+            creditos: 0,
+            tempo_ms: Date.now() - inicio,
+            erro: 'COMPLETE_SEM_DATA',
+          };
+        }
+
+        const smtpStatus: string = (verifyData.smtpStatus || '').toString().toLowerCase();
+        const isCatchall = verifyData.isCatchall === true;
+        const isDisposable = verifyData.isDisposable === true;
+
+        // Mapeamento para o set conhecido
         let statusFinal: VerifierStatus = 'unknown';
-        if (result === 'valid' || result === 'deliverable') statusFinal = 'valid';
-        else if (result === 'invalid' || result === 'undeliverable') statusFinal = 'invalid';
-        else if (result === 'catch_all' || result === 'accept_all' || result === 'catchall') {
+        if (isDisposable) {
+          statusFinal = 'disposable';
+        } else if (isCatchall || smtpStatus === 'catch_all' || smtpStatus === 'accept_all') {
           statusFinal = 'catch_all';
-        } else if (result === 'disposable') statusFinal = 'disposable';
-        else statusFinal = 'unknown';
+        } else if (smtpStatus === 'valid' || smtpStatus === 'deliverable') {
+          statusFinal = 'valid';
+        } else if (smtpStatus === 'invalid' || smtpStatus === 'undeliverable') {
+          statusFinal = 'invalid';
+        } else {
+          statusFinal = 'unknown';
+        }
 
         const valido =
           statusFinal === 'valid' || (aceitarCatchAll && statusFinal === 'catch_all');
@@ -236,23 +341,26 @@ export async function verificarEmail(
         };
       }
 
-      if (taskStatus === 'failed' || taskStatus === 'error') {
+      // ── Erro definitivo ──
+      if (statusIdentifier === 'error' || statusIdentifier === 'failed') {
+        console.warn(`[snovio-verifier] ⚠️ TASK_${statusIdentifier} para ${emailNormalizado}: ${JSON.stringify(item).slice(0, 300)}`);
         return {
           email: emailNormalizado,
           valido: false,
           status: 'erro',
           creditos: 0,
           tempo_ms: Date.now() - inicio,
-          erro: `TASK_${taskStatus}`,
+          erro: `TASK_${statusIdentifier}: ${(item?.status?.description || '').slice(0, 80)}`,
         };
       }
 
-      // Ainda em progresso (status === 'in_progress' | 'started')
+      // ── Ainda em progresso (identifier === 'in_progress' | 'pending' | '') ──
       if (Date.now() - tInicioPoll >= timeoutMs) break;
       await new Promise(r => setTimeout(r, intervaloMs));
     }
 
     // Timeout do polling
+    console.warn(`[snovio-verifier] ⚠️ POLL_TIMEOUT para ${emailNormalizado} após ${timeoutMs}ms`);
     return {
       email: emailNormalizado,
       valido: false,
@@ -262,6 +370,7 @@ export async function verificarEmail(
       erro: 'POLL_TIMEOUT',
     };
   } catch (err: any) {
+    console.error(`[snovio-verifier] ❌ EXCEPTION em ${emailNormalizado}: ${err?.message || 'desconhecido'} | stack: ${err?.stack?.slice(0, 300) || 'sem stack'}`);
     return {
       email: emailNormalizado,
       valido: false,
