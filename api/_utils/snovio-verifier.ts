@@ -1,23 +1,26 @@
 /**
- * SNOV.IO EMAIL VERIFIER — v1.1
+ * SNOV.IO EMAIL VERIFIER — v1.2
  * Fase 2 — Email Recovery Pipeline + Sub-fase 3.A — Camada Gemini
- * Data: 13/06/2026 (v1.1 — logging adicional para diagnóstico)
+ * Data: 13/06/2026 (v1.2 — correção do endpoint Snov.io)
  *
- * v1.1 (13/06/2026) — LOGS CIRÚRGICOS PARA DIAGNÓSTICO
- *   Após smoke tests em Preview retornarem creditos=0 em 32 chamadas
- *   silenciosamente, adicionados console.warn/console.error em todos os
- *   pontos de falha. Sem mudanças na lógica de retorno — apenas observabilidade.
+ * v1.2 (13/06/2026) — CORREÇÃO CRÍTICA: ENDPOINT ESTAVA INCORRETO
+ *   Diagnóstico via logs v1.1: o endpoint `/v2/emails-verifier/start`
+ *   retornou 404 em 100% das 32 chamadas — esse path NÃO EXISTE na API
+ *   pública do Snov.io. A v1.0 implementou um endpoint inexistente.
  *
- *   Pontos de log adicionados:
- *    - obterToken(): cache hit/miss + falha de auth (console.error)
- *    - verificarEmail: erro 4xx/5xx em /start (console.warn)
- *    - verificarEmail: sem task_hash (console.warn)
- *    - verificarEmail: erro no polling (console.warn)
- *    - verificarEmail: task failed/error (console.warn)
- *    - verificarEmail: POLL_TIMEOUT (console.warn)
- *    - verificarEmail: exception genérica (console.error)
+ *   Correção: trocado para API v1 (estável, documentada, em uso há anos):
+ *    - POST /v1/add-emails-to-verification    (adicionar à fila)
+ *      body: emails[]=email@example.com
+ *      retorna: { success: true, data: [{ email, status: "queued" }] }
+ *    - POST /v1/get-emails-verification-status (polling do resultado)
+ *      body: emails[]=email@example.com
+ *      retorna: { success: true, data: [{ email, result: "valid|invalid|catch_all|unknown|disposable", ... }] }
  *
- * v1.0 (12/06/2026) — Implementação inicial
+ *   Sem mudanças no shape de retorno do helper para o caller.
+ *   Logs v1.1 mantidos integralmente.
+ *
+ * v1.1 (13/06/2026) — Logs cirúrgicos em todos os pontos de falha
+ * v1.0 (12/06/2026) — Implementação inicial (endpoint v2 estava errado)
  *
  * Helper para verificar se um endereço de e-mail é válido via Snov.io
  * Email Verifier API. Diferente do prospect-snovio-search.ts (que busca
@@ -134,17 +137,18 @@ async function obterToken(): Promise<string> {
 }
 
 // ============================================================================
-// VERIFICAÇÃO UNITÁRIA — POST /v2/email-verifier
+// VERIFICAÇÃO UNITÁRIA — API v1 do Snov.io
 // ============================================================================
 
 /**
- * Verifica um e-mail via Snov.io. Faz 1 chamada start + polling até resultado.
+ * Verifica um e-mail via Snov.io. Faz 1 chamada add + polling até resultado.
  *
- * Snov.io v2 API:
- *  1. POST /v2/emails-verifier/start  body: { email }      → { task_hash }
- *  2. GET  /v2/emails-verifier/result/:task_hash           → { status, data: { result, ... } }
+ * Snov.io v1 API (estável, documentada):
+ *  1. POST /v1/add-emails-to-verification     body: emails[]=email     → { success, data: [{email, status}] }
+ *  2. POST /v1/get-emails-verification-status body: emails[]=email     → { success, data: [{email, result, ...}] }
  *
  * Polling: até 10×2s = 20s máx por verificação.
+ * Resultado vazio/ausente = ainda processando → continua polling.
  */
 export async function verificarEmail(
   email: string,
@@ -171,56 +175,70 @@ export async function verificarEmail(
   try {
     const token = await obterToken();
 
-    // 1. START — POST com body urlencoded
-    const params = new URLSearchParams();
-    params.append('email', emailNormalizado);
+    // ════════════════════════════════════════════════════════════════════
+    // 1. ADD — POST /v1/add-emails-to-verification
+    //    Body: emails[]=email@example.com
+    //    Resposta esperada: { success: true, data: [{ email, status }] }
+    // ════════════════════════════════════════════════════════════════════
+    const addParams = new URLSearchParams();
+    addParams.append('emails[]', emailNormalizado);
 
-    const startRes = await fetch(`${SNOVIO_BASE_URL}/v2/emails-verifier/start`, {
+    const addRes = await fetch(`${SNOVIO_BASE_URL}/v1/add-emails-to-verification`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: params.toString(),
+      body: addParams.toString(),
     });
 
-    if (!startRes.ok) {
-      const errText = await startRes.text();
-      console.warn(`[snovio-verifier] ⚠️ START_${startRes.status} para ${emailNormalizado}: ${errText.slice(0, 200)}`);
+    if (!addRes.ok) {
+      const errText = await addRes.text();
+      console.warn(`[snovio-verifier] ⚠️ ADD_${addRes.status} para ${emailNormalizado}: ${errText.slice(0, 200)}`);
       return {
         email: emailNormalizado,
         valido: false,
         status: 'erro',
         creditos: 0,
         tempo_ms: Date.now() - inicio,
-        erro: `START_${startRes.status}: ${errText.slice(0, 120)}`,
+        erro: `ADD_${addRes.status}: ${errText.slice(0, 120)}`,
       };
     }
 
-    const startData = await startRes.json();
-    const taskHash = startData?.meta?.task_hash || startData?.data?.task_hash;
-    if (!taskHash) {
-      console.warn(`[snovio-verifier] ⚠️ SEM_TASK_HASH para ${emailNormalizado}: ${JSON.stringify(startData).slice(0, 200)}`);
+    const addData = await addRes.json();
+    if (addData?.success === false) {
+      console.warn(`[snovio-verifier] ⚠️ ADD_API_FAIL para ${emailNormalizado}: ${JSON.stringify(addData).slice(0, 200)}`);
       return {
         email: emailNormalizado,
         valido: false,
         status: 'erro',
         creditos: 0,
         tempo_ms: Date.now() - inicio,
-        erro: `SEM_TASK_HASH: ${JSON.stringify(startData).slice(0, 120)}`,
+        erro: `ADD_API_FAIL: ${JSON.stringify(addData).slice(0, 120)}`,
       };
     }
 
-    // 2. POLL — GET result até concluído ou timeout
-    const resultUrl =
-      startData?.links?.result || `${SNOVIO_BASE_URL}/v2/emails-verifier/result/${taskHash}`;
+    // ════════════════════════════════════════════════════════════════════
+    // 2. POLL — POST /v1/get-emails-verification-status
+    //    Body: emails[]=email@example.com
+    //    Resposta esperada: { success, data: [{ email, result, smtp_status, ... }] }
+    //    `result` vazio/ausente = ainda processando → faz polling
+    // ════════════════════════════════════════════════════════════════════
+    const pollParams = new URLSearchParams();
+    pollParams.append('emails[]', emailNormalizado);
+
     const tInicioPoll = Date.now();
     const intervaloMs = 2000;
     const maxAttempts = Math.ceil(timeoutMs / intervaloMs);
 
     for (let i = 0; i < maxAttempts; i++) {
-      const pollRes = await fetch(resultUrl, {
-        headers: { Authorization: `Bearer ${token}` },
+      const pollRes = await fetch(`${SNOVIO_BASE_URL}/v1/get-emails-verification-status`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: pollParams.toString(),
       });
 
       if (!pollRes.ok) {
@@ -237,24 +255,25 @@ export async function verificarEmail(
       }
 
       const pollData = await pollRes.json();
-      const taskStatus = pollData?.status || pollData?.data?.status;
+      // A v1 retorna `data` como array. Pegamos o primeiro item (único email).
+      const item = Array.isArray(pollData?.data) ? pollData.data[0] : pollData?.data;
 
-      if (taskStatus === 'completed') {
-        // Resultado consolidado em data.result
-        const result: string = (
-          pollData?.data?.result ||
-          pollData?.data?.verification_status ||
-          pollData?.data?.smtp_status ||
-          'unknown'
-        ).toLowerCase();
+      // Result vazio/ausente = ainda processando (continua polling)
+      const rawResult: string = (
+        item?.result ||
+        item?.smtp_status ||
+        item?.verification_status ||
+        ''
+      ).toString().toLowerCase();
 
-        // Normalizar para o set conhecido
+      if (rawResult && rawResult !== '' && rawResult !== 'in_progress' && rawResult !== 'pending') {
+        // Resultado pronto — mapeia para o set conhecido
         let statusFinal: VerifierStatus = 'unknown';
-        if (result === 'valid' || result === 'deliverable') statusFinal = 'valid';
-        else if (result === 'invalid' || result === 'undeliverable') statusFinal = 'invalid';
-        else if (result === 'catch_all' || result === 'accept_all' || result === 'catchall') {
+        if (rawResult === 'valid' || rawResult === 'deliverable') statusFinal = 'valid';
+        else if (rawResult === 'invalid' || rawResult === 'undeliverable') statusFinal = 'invalid';
+        else if (rawResult === 'catch_all' || rawResult === 'accept_all' || rawResult === 'catchall') {
           statusFinal = 'catch_all';
-        } else if (result === 'disposable') statusFinal = 'disposable';
+        } else if (rawResult === 'disposable') statusFinal = 'disposable';
         else statusFinal = 'unknown';
 
         const valido =
@@ -269,19 +288,21 @@ export async function verificarEmail(
         };
       }
 
-      if (taskStatus === 'failed' || taskStatus === 'error') {
-        console.warn(`[snovio-verifier] ⚠️ TASK_${taskStatus} para ${emailNormalizado}: ${JSON.stringify(pollData).slice(0, 300)}`);
+      // Detecta erros explícitos retornados pelo Snov.io
+      if (item?.error || pollData?.errors) {
+        const errMsg = JSON.stringify(item?.error || pollData?.errors).slice(0, 200);
+        console.warn(`[snovio-verifier] ⚠️ TASK_ERROR para ${emailNormalizado}: ${errMsg}`);
         return {
           email: emailNormalizado,
           valido: false,
           status: 'erro',
           creditos: 0,
           tempo_ms: Date.now() - inicio,
-          erro: `TASK_${taskStatus}`,
+          erro: `TASK_ERROR: ${errMsg.slice(0, 120)}`,
         };
       }
 
-      // Ainda em progresso (status === 'in_progress' | 'started')
+      // Ainda em progresso — aguarda próximo poll
       if (Date.now() - tInicioPoll >= timeoutMs) break;
       await new Promise(r => setTimeout(r, intervaloMs));
     }
