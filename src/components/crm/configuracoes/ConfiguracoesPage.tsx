@@ -2,18 +2,34 @@
  * ConfiguracoesPage.tsx — Página "Configurações CRM"
  *
  * Caminho: src/components/crm/configuracoes/ConfiguracoesPage.tsx
- * Versão: 1.0 (01/06/2026)
+ * Versão: 1.1 (13/06/2026)
  *
- * Container com 5 sub-abas. Acessível por Administrador + Gestão de R&S
- * (RBAC garantido pelo Sidebar; aqui há uma trava defensiva extra).
+ * v1.1 (13/06/2026 — Fase 1 da reorganização Prospect/Lead):
+ *   Reduzidas as sub-abas de 5 → 2. As 3 abas removidas migraram para
+ *   outros locais ou foram absorvidas por funcionalidades já existentes:
  *
- * Sub-abas:
- *  - 🏷️  Tipos de Campanha — ✅ funcional (CRUD em api/crm-copys.ts)
- *  - 🚫  Opt-out             — ✅ funcional (CRUD em api/crm-config.ts)
- *  - 🌐  Domínios de Envio   — 🟡 placeholder (lê DOMINIOS_ENVIO; status real
- *                              vem na Fase 5 com a tabela email_dominios)
- *  - 🔁  E-mails Inválidos   — 🟡 placeholder (depende de bounces da Fase 6)
- *  - 📥  Correspondência     — 🟡 placeholder (reply-routing da Fase 7)
+ *   - 🚫 Opt-out             → MOVEU para Base de Leads (aba dedicada)
+ *                              com RBAC contextual (GC/SDR vê só os seus).
+ *   - 🔁 E-mails Inválidos   → MOVEU para Base de Leads (aba "E-mails
+ *                              Inválidos"); o motor de recovery é a
+ *                              Fase 2 desta reorganização.
+ *   - 📥 Correspondência     → REMOVIDA. O reply-routing manual foi
+ *                              substituído pelo campo BCC ("CCO") do
+ *                              modal de Campanha (entrega de 11/06/2026),
+ *                              que é per-campanha — mais granular que
+ *                              o roteamento global anterior.
+ *
+ *   Mantidas (sem mudança):
+ *   - 🏷️ Tipos de Campanha   — ✅ funcional (CRUD em api/crm-copys.ts)
+ *   - 🌐 Domínios de Envio   — 🟡 placeholder (Fase 5 — motor de disparo)
+ *
+ *   O arquivo OptOutTab.tsx desta pasta permanece no repositório (sem
+ *   import) para preservar histórico Git — a nova versão vive em
+ *   src/components/crm/base-leads/OptOutTab.tsx.
+ *
+ * v1.0 (01/06/2026):
+ *   Container com 5 sub-abas. Acessível por Administrador + Gestão de R&S
+ *   (RBAC garantido pelo Sidebar; aqui há uma trava defensiva extra).
  */
 
 import React, { useState } from 'react';
@@ -21,13 +37,17 @@ import type { CurrentUserLite } from '../types/crm.types';
 import { DOMINIOS_ENVIO } from '../types/crm.constants';
 import EmptyState from '../shared/components/EmptyState';
 import TiposCampanhaTab from './TiposCampanhaTab';
-import OptOutTab from './OptOutTab';
+// 🆕 v1.1 (13/06/2026) — OptOutTab MOVIDO para a Base de Leads.
+//   O arquivo ./OptOutTab.tsx permanece no repo apenas para histórico
+//   Git e não é mais importado aqui.
 
 // ════════════════════════════════════════════════════════════
 // TIPOS
 // ════════════════════════════════════════════════════════════
 
-type ConfigTab = 'tipos' | 'optout' | 'dominios' | 'invalidos' | 'correspondencia';
+// 🆕 v1.1 (13/06/2026) — Sub-abas reduzidas a 'tipos' e 'dominios'.
+//   - 'optout' / 'invalidos' / 'correspondencia' removidos (ver cabeçalho).
+type ConfigTab = 'tipos' | 'dominios';
 
 interface ConfigTabDef {
   id: ConfigTab;
@@ -56,35 +76,12 @@ const TABS: ConfigTabDef[] = [
     pronta: true,
   },
   {
-    id: 'optout',
-    label: 'Opt-out',
-    icon: 'fa-solid fa-ban',
-    descricao: 'Lista global de e-mails que não devem receber disparos',
-    pronta: true,
-  },
-  {
     id: 'dominios',
     label: 'Domínios de Envio',
     icon: 'fa-solid fa-globe',
     descricao: 'Rodízio entre domínios e status no Resend',
     pronta: false,
     fase: 'Fase 5',
-  },
-  {
-    id: 'invalidos',
-    label: 'E-mails Inválidos',
-    icon: 'fa-solid fa-envelope-circle-check',
-    descricao: 'Recovery Pipeline — recuperar e-mails com bounce',
-    pronta: false,
-    fase: 'Fase 6',
-  },
-  {
-    id: 'correspondencia',
-    label: 'Correspondência',
-    icon: 'fa-solid fa-reply-all',
-    descricao: 'Reply-routing — quem recebe as respostas',
-    pronta: false,
-    fase: 'Fase 7',
   },
 ];
 
@@ -122,7 +119,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = ({ currentUser }) =>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Configurações CRM</h1>
             <p className="text-sm text-gray-500">
-              Verticais, opt-out, domínios, recuperação de e-mails e correspondência
+              Verticais e domínios de envio
             </p>
           </div>
         </div>
@@ -168,25 +165,7 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = ({ currentUser }) =>
         {/* Conteúdo */}
         <div className="p-6">
           {activeTab === 'tipos' && <TiposCampanhaTab currentUser={currentUser} />}
-          {activeTab === 'optout' && <OptOutTab currentUser={currentUser} />}
           {activeTab === 'dominios' && <DominiosPlaceholder />}
-          {activeTab === 'invalidos' && (
-            <PlaceholderFase
-              icon="fa-solid fa-envelope-circle-check"
-              titulo="E-mails Inválidos"
-              fase="Fase 6"
-              descricao="Quando o motor de disparo entrar e começar a receber webhooks de bounce do Resend, esta tela vai listar automaticamente os endereços que precisam ser recuperados (via MX + 30 padrões + Snov.io)."
-              referencia="Especificacao_Email_Recovery_Pipeline.md"
-            />
-          )}
-          {activeTab === 'correspondencia' && (
-            <PlaceholderFase
-              icon="fa-solid fa-reply-all"
-              titulo="Correspondência (reply-routing)"
-              fase="Fase 7"
-              descricao="CRUD para definir quem recebe as respostas das campanhas, por escopo (campanha → analista → domínio → global). Múltiplas caixas postais por entrada. Depende do motor de envio existir para montar o Reply-To."
-            />
-          )}
         </div>
       </div>
     </div>
@@ -257,47 +236,12 @@ const DominiosPlaceholder: React.FC = () => {
 };
 
 // ════════════════════════════════════════════════════════════
-// PLACEHOLDER GENÉRICO PARA FASES FUTURAS
+// PLACEHOLDER GENÉRICO PARA FASES FUTURAS — REMOVIDO em v1.1
 // ════════════════════════════════════════════════════════════
-
-interface PlaceholderFaseProps {
-  icon: string;
-  titulo: string;
-  fase: string;
-  descricao: string;
-  referencia?: string;
-}
-
-const PlaceholderFase: React.FC<PlaceholderFaseProps> = ({
-  icon,
-  titulo,
-  fase,
-  descricao,
-  referencia,
-}) => (
-  <div className="text-center py-10 px-4">
-    <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-gray-100 mb-4">
-      <i className={`${icon} text-gray-400 text-xl`}></i>
-    </div>
-    <h2 className="text-lg font-semibold text-gray-700 mb-1">{titulo}</h2>
-    <p className="text-sm text-gray-500 mb-5 max-w-xl mx-auto">{descricao}</p>
-
-    <div className="inline-block px-4 py-3 rounded-lg bg-amber-50 border border-amber-100 text-left max-w-md">
-      <div className="flex items-center gap-2 mb-1">
-        <i className="fa-solid fa-clock-rotate-left text-amber-500 text-sm"></i>
-        <span className="text-xs font-semibold text-amber-700 uppercase tracking-wide">
-          Entrega prevista — {fase}
-        </span>
-      </div>
-      <p className="text-xs text-amber-900">Depende do motor de disparo da fila de e-mails.</p>
-      {referencia && (
-        <p className="text-xs text-amber-700 mt-1">
-          <i className="fa-solid fa-file-lines mr-1"></i>
-          Referência: <code>{referencia}</code>
-        </p>
-      )}
-    </div>
-  </div>
-);
+//
+// 🆕 v1.1 (13/06/2026): o componente `PlaceholderFase` foi removido
+//   junto com as 3 abas que o utilizavam (optout, invalidos,
+//   correspondencia). Se voltar a ser necessário no futuro, há
+//   referência no histórico Git (commit anterior a esta versão).
 
 export default ConfiguracoesPage;
