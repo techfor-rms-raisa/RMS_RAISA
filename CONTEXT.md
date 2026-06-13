@@ -603,18 +603,19 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 62 arquivos | 961.7 KB | 12/06/2026 |
-| `src/components/` | 163 arquivos | 923.0 KB | 12/06/2026 |
+| `api/` | 66 arquivos | 992.1 KB | 13/06/2026 |
+| `src/components/` | 163 arquivos | 923.0 KB | 13/06/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 12/06/2026 |
-| `src/types/` | 6 arquivos | 31.0 KB | 12/06/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 12/06/2026 |
-| `scripts/` | 1 arquivos | 6.8 KB | 12/06/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 13/06/2026 |
+| `src/types/` | 6 arquivos | 31.0 KB | 13/06/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 13/06/2026 |
+| `scripts/` | 1 arquivos | 15.3 KB | 13/06/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
 - `api/analyze-activity-report.ts`
 - `api/apollo-prospect-test.ts`
+- `api/campaign-email-recovery.ts`
 - `api/claude-analyze.ts`
 - `api/creci-capture.ts`
 - `api/crm-analytics.ts`
