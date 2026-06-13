@@ -9,8 +9,8 @@
  * 2. Hunter.io enriquece com email verificado
  * 3. Salvar selecionados no Supabase
  *
- * Versão: 4.2
- * Data: 09/06/2026
+ * Versão: 4.3
+ * Data: 13/06/2026
  *
  * v4.0:
  * - Motor principal: Gemini + Google Search Grounding
@@ -23,7 +23,7 @@
  * - motor_email propagado no buscarEmailIndividual (botão por linha)
  *
  * v4.2 (09/06/2026 — Fase A do CRM):
- * - Botão "Campanhas" da aba "Meus Leads Salvos" agora abre o
+ * - Botão "Campanhas" da aba "Meus Prospects Salvos" agora abre o
  *   SelecionarCampanhaModal antes de promover, permitindo o usuário
  *   escolher entre "Apenas para o CRM" (comportamento legado) OU
  *   uma campanha ativa/pausada/agendada elegível para o lead.
@@ -34,6 +34,14 @@
  *   passando `prospect_id` para descobrir as campanhas elegíveis pelos
  *   critérios da Fase B (vertical + responsável + status + data_encerramento)
  *   e da regra de duplicação (não exibe campanhas onde o lead já está).
+ *
+ * v4.3 (13/06/2026 — Fase 1 da reorganização Prospect/Lead):
+ * - Rename do label visível da aba "Meus Leads Salvos" → "Meus Prospects
+ *   Salvos" para alinhar a literal com o estágio real do funil
+ *   (Prospect Engine entrega prospects; Leads vivem na Base de Leads
+ *   do CRM). Sem mudança da chave interna da aba ('leads' continua
+ *   sendo o discriminator) e sem mudança de RBAC ou lógica.
+ * - Comentários atualizados para refletir o vocabulário "Prospects".
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -171,7 +179,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [loadingSalvos, setLoadingSalvos]             = useState(false);
     const [filtroStatus, setFiltroStatus]               = useState('');
 
-    // Meus Leads Salvos (leads pesquisados via Gemini/Hunter/Extension)
+    // Meus Prospects Salvos (prospects pesquisados via Gemini/Hunter/Extension)
     const [meusLeads, setMeusLeads]                     = useState<ProspectLead[]>([]);
     const [loadingMeusLeads, setLoadingMeusLeads]       = useState(false);
     const [filtroLeadsEmpresa, setFiltroLeadsEmpresa]   = useState('');
@@ -744,7 +752,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         }
     }, [verticaisDisponiveis]);
 
-    // Carrega as verticais quando a aba "Meus Leads Salvos" abre
+    // Carrega as verticais quando a aba "Meus Prospects Salvos" abre
     useEffect(() => {
         if (abaAtiva === 'leads') carregarVerticais();
     }, [abaAtiva, carregarVerticais]);
@@ -1557,7 +1565,7 @@ A empresa ficará disponível para a equipe.`)) return;
                             : 'text-gray-500 hover:text-gray-700'}`}>
                     {aba === 'busca'     ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
                      : aba === 'empresas' ? <><i className="fa-solid fa-building mr-2"></i>Lista Empresas</>
-                     : aba === 'leads'   ? <><i className="fa-solid fa-users mr-2"></i>Meus Leads Salvos</>
+                     : aba === 'leads'   ? <><i className="fa-solid fa-users mr-2"></i>Meus Prospects Salvos</>
                                         : <><i className="fa-solid fa-ban mr-2 text-red-400"></i>Exclusões</>}
                 </button>
             ))}
