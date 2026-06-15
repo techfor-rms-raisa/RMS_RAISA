@@ -2,7 +2,31 @@
  * StepInfo.tsx — Passo 1 do wizard: Dados gerais da campanha
  *
  * Caminho: src/components/crm/campanhas/wizard-steps/StepInfo.tsx
- * Versão: 1.4 (Prioridade 1 — 11/06/2026)
+ * Versão: 1.5 (Legacy Guard de Vertical — 14/06/2026)
+ *
+ * 🆕 v1.5 (14/06/2026 — Legacy Guard de Vertical):
+ *   Bug pós-deploy do fix do Bug 2 (Single Source of Truth):
+ *   campanhas legadas com `tipo` fora da taxonomia canônica de
+ *   `email_tipos_campanha` (ex.: "Outsourcing", "Help-Desk", "Projetos",
+ *   "Corretores") não conseguiam ser SALVAS com um novo tipo.
+ *   Mecanismo do bug:
+ *     1. `campanha.tipo = "Outsourcing"` vem do banco.
+ *     2. <select value="Outsourcing"> mas "Outsourcing" NÃO está nas
+ *        <option>s renderizadas a partir de `tipos` canônicos.
+ *     3. Comportamento HTML/React: navegador mostra visualmente a 1ª
+ *        option ("Alocação") mas o state interno do React mantém
+ *        "Outsourcing".
+ *     4. Usuário pensa que o dropdown está em "Alocação", clica Salvar
+ *        sem mudar — onChange nunca disparou (não houve mudança real).
+ *     5. PATCH envia `tipo: "Outsourcing"`; banco continua "Outsourcing".
+ *   Fix em 3 partes:
+ *     • Removido fallback `|| 'Outsourcing'` do `value` do select.
+ *     • Adicionada `<option value="" disabled>Selecione uma vertical…</option>`
+ *       como padrão visual.
+ *     • Adicionada <option> dinâmica que renderiza o `campanha.tipo`
+ *       atual caso ele NÃO esteja em `tipos` (com sufixo "⚠ legacy"),
+ *       garantindo consistência state↔visual e revelando o legado.
+ *     • Warning textual em amber abaixo do dropdown.
  *
  * Histórico:
  *  - v1.0 (30/05/2026 — Fase 1D): decomposto de CampaignBuilder.tsx.
@@ -274,24 +298,53 @@ const StepInfo: React.FC<StepInfoProps> = ({
           Tipo de campanha
         </label>
         {!showTipoCustom ? (
-          <select
-            value={campanha.tipo || 'Outsourcing'}
-            onChange={(e) => {
-              if (e.target.value === '__custom__') {
-                setShowTipoCustom(true);
-              } else {
-                setField('tipo', e.target.value);
-              }
-            }}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-          >
-            {tipos.map((t) => (
-              <option key={t} value={t}>
-                {t}
+          <>
+            <select
+              value={campanha.tipo || ''}
+              onChange={(e) => {
+                if (e.target.value === '__custom__') {
+                  setShowTipoCustom(true);
+                } else {
+                  setField('tipo', e.target.value);
+                }
+              }}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+            >
+              <option value="" disabled>
+                Selecione uma vertical...
               </option>
-            ))}
-            <option value="__custom__">+ Outro tipo...</option>
-          </select>
+              {tipos.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+              {/* 🆕 v1.5 — Legacy Guard: renderiza o tipo atual como option
+                  marcada quando ele não está na taxonomia canônica. Garante
+                  que o <select> mostre visualmente o estado real do banco
+                  (em vez de fallback à 1ª option) e expõe o legado para o
+                  usuário corrigir. Sem isto, o onChange nunca dispararia
+                  porque o navegador "alinha" a UI à 1ª option mas o state
+                  React mantém o valor legado — disparando o falso-positivo
+                  de "salvou com sucesso" sem persistir a mudança. */}
+              {campanha.tipo && !tipos.includes(campanha.tipo) && (
+                <option
+                  key={`__legacy_${campanha.tipo}`}
+                  value={campanha.tipo}
+                >
+                  {campanha.tipo} ⚠ (legacy — escolha uma vertical da lista)
+                </option>
+              )}
+              <option value="__custom__">+ Outro tipo...</option>
+            </select>
+            {campanha.tipo && !tipos.includes(campanha.tipo) && (
+              <p className="text-xs text-amber-600 mt-1">
+                ⚠️ "{campanha.tipo}" não pertence mais à taxonomia canônica
+                de verticais. Selecione uma vertical da lista para que o
+                vínculo com leads e o filtro do "Vincular em Lote" voltem
+                a funcionar.
+              </p>
+            )}
+          </>
         ) : (
           <div className="flex gap-2">
             <input
