@@ -2,6 +2,24 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.16 (14/06/2026 — Bug 2: Single Source of Truth de verticais):
+ *    A action GET `listar_tipos` foi REESCRITA para ler de
+ *    `email_tipos_campanha` (fonte canônica, mesma de
+ *    /api/crm-copys?action=listar_tipos) em vez de combinar uma lista
+ *    HARDCODED `['Outsourcing','BPO','Service Center','Help-Desk',
+ *    'Corretores','Projetos']` com tipos legados de
+ *    `email_campanhas.tipo`. Causa: o dropdown "Tipo de campanha" do
+ *    Wizard mostrava 7 verticais (com 3 órfãs e 5 hardcodes não-
+ *    canônicos) enquanto o LeadFormModal mostrava 8 verticais
+ *    canônicas, criando uma matriz de divergência que bloqueava o
+ *    "Vincular em Lote" para Alocação, Alocação - Infraestrutura -
+ *    Help Desk, Alocação SAP, IA Engenharia/... e IA Security Code
+ *    Sentrix. O endpoint segue vivo (mesmo contrato de saída
+ *    `{ tipos: string[] }`) para preservar compat com possíveis
+ *    consumidores indiretos via `useCampanhas`; o frontend principal
+ *    (CampanhaWizard v2.2) já passou a consumir a fonte canônica via
+ *    `useTiposCampanha()`.
+ *
  *  - v1.15 (11/06/2026 — Prioridade 1: BCC nas respostas da campanha):
  *    novo campo opcional `bcc_emails` (text[]) em `email_campanhas`.
  *    Lista de até 3 endereços que recebem cópia quando o LEAD RESPONDE
@@ -1078,19 +1096,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (action === 'listar_tipos') {
+        // 🆕 v1.16 (14/06/2026 — Bug 2 Single Source of Truth):
+        // Lê da tabela canônica `email_tipos_campanha` em vez de combinar
+        // uma lista hardcoded com tipos legados de `email_campanhas.tipo`.
+        // Mantém o contrato de saída `{ tipos: string[] }` para preservar
+        // compat com consumidores indiretos via useCampanhas. A ÚNICA
+        // fonte de verdade da taxonomia é agora `email_tipos_campanha`,
+        // alinhada com `/api/crm-copys?action=listar_tipos` (que retorna
+        // o array de objetos `TipoCampanha[]` em vez de só nomes).
         const { data, error } = await supabase
-          .from('email_campanhas')
-          .select('tipo')
-          .not('tipo', 'is', null);
+          .from('email_tipos_campanha')
+          .select('nome')
+          .eq('ativo', true)
+          .order('nome', { ascending: true });
 
         if (error) return res.status(500).json({ success: false, error: error.message });
 
-        // Tipos únicos + fixos padrão
-        const tiposPadrao = ['Outsourcing', 'BPO', 'Service Center', 'Help-Desk', 'Corretores', 'Projetos'];
-        const tiposExistentes = [...new Set((data || []).map((d: any) => d.tipo).filter(Boolean))];
-        const todosOsTipos = [...new Set([...tiposPadrao, ...tiposExistentes])].sort();
-
-        return res.status(200).json({ success: true, tipos: todosOsTipos });
+        const tipos = (data || []).map((t: any) => t.nome).filter(Boolean);
+        return res.status(200).json({ success: true, tipos });
       }
 
       return res.status(400).json({ success: false, error: `GET action desconhecida: ${action}` });

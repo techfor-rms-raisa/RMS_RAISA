@@ -2,7 +2,20 @@
  * crm.types.ts — Tipos compartilhados do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/types/crm.types.ts
- * Versão: 1.5 (Reorganização Prospect/Lead — 13/06/2026)
+ * Versão: 1.6 (Alinhamento TS↔DDL TipoCampanha — 14/06/2026)
+ *
+ * v1.6 (14/06/2026 — Alinhamento TS↔DDL):
+ *   Removido o campo `codigo: string` da interface `TipoCampanha`. A
+ *   coluna `codigo` foi declarada no TS desde a v1.0 mas NUNCA existiu
+ *   na DDL real de `email_tipos_campanha` em Production (introspect
+ *   confirmou: id, nome, descricao, ativo, criado_por, criado_em).
+ *   Inconsistência detectada durante a investigação dos bugs de
+ *   dropdown de vertical (Bug 2 — campo nunca foi consumido pelo
+ *   código de runtime, só atrapalhava SELECTs do tipo
+ *   `select('id, codigo, nome, ativo, criado_em')` que retornavam
+ *   ERROR 42703. Solução de menor impacto: remover do TS.
+ *   Caminho alternativo (não escolhido): ALTER TABLE adicionando
+ *   a coluna — descartado por não haver uso real.
  *
  * Histórico:
  *  - v1.0 (29/05/2026 — Fase 1B): fonte única de verdade dos tipos.
@@ -346,7 +359,6 @@ export interface PessoaAssinatura {
 
 export interface TipoCampanha {
   id: number;
-  codigo: string;                  // 'ALOCACAO', 'BPO', 'SECURITY', etc.
   nome: string;
   descricao: string | null;
   cor_badge: string | null;        // hex

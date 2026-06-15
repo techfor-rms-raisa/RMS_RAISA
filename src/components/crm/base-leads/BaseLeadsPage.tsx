@@ -2,7 +2,22 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.8 (Coluna ANALISTA + ordenação configurável — 13/06/2026)
+ * Versão: 1.9 (Bug 1 — Empresas carregadas no mount — 14/06/2026)
+ *
+ * 🆕 v1.9 (14/06/2026 — Bug 1: Empresas no Modal Lead):
+ *   Em Production o dropdown "Empresa" do LeadFormModal aparecia sem
+ *   opções (só "Sem empresa") mesmo quando havia empresas cadastradas
+ *   (cenário pós-deploy do INSERT de TECHFORTI). Causa-raiz: o
+ *   `empresasH.carregar()` SÓ era disparado quando a aba ativa era
+ *   "empresas" (useEffect dependente de `abaAtiva`). Se o usuário
+ *   entrasse direto na aba "leads" (deep link, refresh, navegação
+ *   por outro fluxo) e abrisse o modal, o array `empresas` chegava
+ *   vazio. Fix: passar `empresasH.carregar()` para o useEffect de
+ *   mount global, no mesmo lugar onde `tiposCampanhaH.carregar()`
+ *   já era chamado. O useEffect específico da aba 'empresas'
+ *   permanece para tratar mudanças de paginação/busca/setor dentro
+ *   da aba. Bug 2 (verticais divergentes) foi tratado em paralelo
+ *   no CampanhaWizard.tsx v2.2 e crm-campanhas.ts v1.15.
  *
  * v1.8 (13/06/2026 — Coluna ANALISTA + ordenação configurável):
  *   Continuação da reorganização Prospect/Lead (v1.7). Plugado o novo
@@ -222,6 +237,10 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     leadsH.carregarStats();
     // 🆕 v1.4 — Verticais (todos os perfis precisam para o seletor)
     tiposCampanhaH.carregar();
+    // 🆕 v1.9 — Empresas (lista global, alimenta o dropdown do LeadFormModal
+    // independente da aba de entrada). O useEffect específico da aba
+    // 'empresas' permanece abaixo, cuidando de paginação/busca/setor.
+    empresasH.carregar();
     // 🆕 v1.4 — Lista de responsáveis (somente Admin precisa)
     if (currentUser.tipo_usuario === 'Administrador') {
       responsaveisH.carregar();

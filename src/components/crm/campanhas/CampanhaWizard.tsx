@@ -2,7 +2,23 @@
  * CampanhaWizard.tsx — Orquestrador do wizard de edição de campanha
  *
  * Caminho: src/components/crm/campanhas/CampanhaWizard.tsx
- * Versão: 2.1 (Fase 5B-UI — 02/06/2026)
+ * Versão: 2.2 (Bug 2 Single Source — 14/06/2026)
+ *
+ * 🆕 v2.2 (14/06/2026 — Bug 2 Single Source of Truth):
+ *   Bug descoberto durante diagnóstico das verticais divergentes em
+ *   Production: a linha que passava `tipos` para o <StepInfo> recebia
+ *   `campanhasHook.tipos` em vez de `tiposHook.tipos`. O resultado é
+ *   que o dropdown "Tipo de campanha" mostrava a lista hardcoded
+ *   `['Outsourcing','BPO','Service Center','Help-Desk','Corretores',
+ *    'Projetos']` + valores legados de `email_campanhas.tipo`,
+ *   divergindo das 8 verticais canônicas de `email_tipos_campanha`
+ *   (que o LeadFormModal já consome corretamente via useTiposCampanha).
+ *   Sintomas: 5 verticais (Alocação, Alocação - Infra, Alocação SAP,
+ *   IA Engenharia/..., IA Security Code Sentrix) inválidas para
+ *   "Vincular em Lote" porque nunca apareciam como campanhas
+ *   elegíveis. Fix cirúrgico: criar `tiposNomes` via useMemo,
+ *   mapeando tiposHook.tipos.map(t => t.nome), e passar para o
+ *   StepInfo. CopySelector (linha já usava tiposHook) inalterado.
  *
  * Decomposto de CampaignBuilder.tsx (linhas 651-761 + ações dos passos).
  * Recebe os hooks já instanciados pelo CampanhasPage para evitar
@@ -148,6 +164,16 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
     );
     return match ? match.id : null;
   }, [campanha.tipo, tiposHook.tipos]);
+
+  // 🆕 v2.2 — Lista de NOMES das verticais para alimentar o dropdown do StepInfo
+  // (que recebe `tipos: string[]`). Fonte canônica: useTiposCampanha →
+  // /api/crm-copys?action=listar_tipos → email_tipos_campanha (ativos).
+  // Antes (v2.1) usava `campanhasHook.tipos` por engano de copy-paste,
+  // disparando o Bug 2 das verticais divergentes em Production.
+  const tiposNomes = useMemo(
+    () => tiposHook.tipos.map((t) => t.nome),
+    [tiposHook.tipos]
+  );
 
   // ════════════════════════════════════════════════════════════
   // HANDLERS — SALVAR CAMPANHA (campanha + steps em sequência)
@@ -384,7 +410,7 @@ const CampanhaWizard: React.FC<CampanhaWizardProps> = ({
         {activeTab === 'info' && (
           <StepInfo
             campanha={campanha}
-            tipos={campanhasHook.tipos}
+            tipos={tiposNomes}
             assinaturaCarregada={assinaturaCarregada}
             responsaveis={responsaveis}
             travadoNoProprio={travadoNoProprio}
