@@ -2,12 +2,28 @@
  * InvalidosTab.tsx — Aba "Inválidos" (LEADS com email inválido)
  *
  * Caminho: src/components/crm/base-leads/InvalidosTab.tsx
- * Versão: 1.1 (F8 — schema lead-centric + recovery — 16/06/2026)
+ * Versão: 1.2 (F8 — Spinner no botão Recovery — 16/06/2026)
  *
- * v1.1 (16/06/2026 — F8): REESCRITA para o schema lead-centric introduzido
- *   em crm-leads.ts v1.15 (action `listar_invalidos`) e crm.types.ts v1.7
- *   (interface InvalidoItem). Cada linha agora representa 1 LEAD com email
- *   inválido (não mais 1 evento de fila bounceado). Mudanças visíveis:
+ * v1.2 (16/06/2026 — F8 release final): adiciona prop opcional
+ *   `recoveringLeadIds?: number[]` para mostrar feedback visual durante
+ *   a chamada do motor Recovery (gerenciada pelo BaseLeadsPage v1.10).
+ *
+ *   Quando o lead está no array `recoveringLeadIds`:
+ *     • Botão "Recovery" mostra spinner azul no lugar do ícone normal
+ *     • Botão fica disabled (impede cliques duplos durante os ~60s
+ *       que o motor Recovery pode levar)
+ *     • Botão "Editar" também fica disabled (evita corrida — usuário
+ *       não deveria editar email enquanto Recovery está rodando, ou
+ *       a sobrescrita pode anular o resultado)
+ *
+ *   Prop continua opcional — quando ausente, comportamento idêntico
+ *   à v1.1 (sem spinner, sem disable durante Recovery).
+ *
+ * v1.1 (16/06/2026 — F8: schema lead-centric): REESCRITA para o schema
+ *   lead-centric introduzido em crm-leads.ts v1.15 (action
+ *   `listar_invalidos`) e crm.types.ts v1.7 (interface InvalidoItem).
+ *   Cada linha agora representa 1 LEAD com email inválido (não mais 1
+ *   evento de fila bounceado). Mudanças visíveis:
  *
  *     • Colunas reorganizadas: Lead/Empresa · Email · Motivo · Recovery ·
  *       Quando · Ações.
@@ -71,6 +87,14 @@ export interface InvalidosTabProps {
    * enquanto o container ainda não conectou o handler do motor 3.A.
    */
   onTentarRecovery?: (leadId: number) => void;
+  /**
+   * 🆕 v1.2 — Lista de lead_ids atualmente em Recovery (chamada em
+   * andamento). Quando o lead está no array:
+   *   • Botão "Recovery" mostra spinner + fica disabled
+   *   • Botão "Editar" também fica disabled (evita corrida)
+   * Prop opcional — quando ausente, comportamento da v1.1 (sem feedback).
+   */
+  recoveringLeadIds?: number[];
 }
 
 // ════════════════════════════════════════════════════════════
@@ -123,8 +147,14 @@ const InvalidosTab: React.FC<InvalidosTabProps> = ({
   onPaginaChange,
   onEditarLead,
   onTentarRecovery,
+  recoveringLeadIds,
 }) => {
   const totalPaginas = Math.max(1, Math.ceil(total / pageSize));
+  // 🆕 v1.2 — Set para lookup O(1) ao decidir se um lead está em loading
+  const recoveringSet = React.useMemo(
+    () => new Set(recoveringLeadIds || []),
+    [recoveringLeadIds],
+  );
 
   return (
     <div className="p-4">
@@ -178,7 +208,9 @@ const InvalidosTab: React.FC<InvalidosTabProps> = ({
                 // e o callback foi provido pelo container.
                 const tentativas = item.tentativas_recovery ?? 0;
                 const recoveryEsgotado = tentativas >= 3;
-                const podeRecovery = !!onTentarRecovery && !recoveryEsgotado;
+                // 🆕 v1.2 — lead em Recovery em andamento (chamada ativa)
+                const recoveryEmAndamento = recoveringSet.has(item.lead_id);
+                const podeRecovery = !!onTentarRecovery && !recoveryEsgotado && !recoveryEmAndamento;
 
                 return (
                   <tr key={item.lead_id} className="hover:bg-gray-50">
@@ -213,11 +245,21 @@ const InvalidosTab: React.FC<InvalidosTabProps> = ({
                     </td>
                     <td className="px-3 py-2.5 text-right">
                       <div className="inline-flex gap-1.5">
-                        {/* Editar cadastro — sempre disponível */}
+                        {/* Editar cadastro — disabled durante Recovery (v1.2 — evita corrida) */}
                         <button
-                          onClick={() => onEditarLead(item.lead_id)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200"
-                          title="Abrir cadastro do lead para corrigir o e-mail"
+                          disabled={recoveryEmAndamento}
+                          onClick={() => !recoveryEmAndamento && onEditarLead(item.lead_id)}
+                          className={[
+                            'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                            recoveryEmAndamento
+                              ? 'bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-200'
+                              : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200',
+                          ].join(' ')}
+                          title={
+                            recoveryEmAndamento
+                              ? 'Aguarde — Recovery em andamento'
+                              : 'Abrir cadastro do lead para corrigir o e-mail'
+                          }
                         >
                           <i className="fa-solid fa-pen-to-square"></i>
                           Editar
@@ -232,16 +274,29 @@ const InvalidosTab: React.FC<InvalidosTabProps> = ({
                               'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors',
                               podeRecovery
                                 ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
-                                : 'bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-200',
+                                : recoveryEmAndamento
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-200 cursor-wait'
+                                  : 'bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-200',
                             ].join(' ')}
                             title={
-                              recoveryEsgotado
-                                ? 'Tentativas de Recovery esgotadas (3/3) — corrija o e-mail manualmente'
-                                : 'Tentar encontrar o e-mail correto via motor de Recovery'
+                              recoveryEmAndamento
+                                ? 'Recovery em andamento (pode levar até ~60s)'
+                                : recoveryEsgotado
+                                  ? 'Tentativas de Recovery esgotadas (3/3) — corrija o e-mail manualmente'
+                                  : 'Tentar encontrar o e-mail correto via motor de Recovery'
                             }
                           >
-                            <i className="fa-solid fa-magic-wand-sparkles"></i>
-                            Recovery
+                            {recoveryEmAndamento ? (
+                              <>
+                                <i className="fa-solid fa-spinner fa-spin"></i>
+                                Processando...
+                              </>
+                            ) : (
+                              <>
+                                <i className="fa-solid fa-magic-wand-sparkles"></i>
+                                Recovery
+                              </>
+                            )}
                           </button>
                         )}
                       </div>
