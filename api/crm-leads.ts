@@ -2,6 +2,30 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.15.1 (16/06/2026 — F8 FIX: tradução de motivo_invalidacao):
+ *    Pareado com webhook v1.15.1 que passou a gravar CÓDIGOS técnicos
+ *    snake_case ('mailbox_inexistente', 'caixa_lotada', 'bloqueado',
+ *    'servidor_indisponivel') em vez de strings em português. Isso resolve
+ *    a violação da CHECK constraint `email_leads_motivo_invalidacao_valido`
+ *    descoberta em smoke test 16/06/2026 (logs Vercel 15:21:28 BRT).
+ *
+ *    Mudança neste arquivo (apenas listar_invalidos):
+ *      • Dicionário TRADUCAO_MOTIVO_INVALIDACAO no topo do módulo, mapeando
+ *        cada código snake_case → string legível em português. Inclui os 5
+ *        códigos pré-existentes (Recovery 3.A, F7) + 4 novos da F8.
+ *      • No mapeamento dos itens (campo `motivo`), aplica a tradução em vez
+ *        de retornar o código bruto. Fallback "Falha permanente" mantido
+ *        para leads pré-v1.15 (bounced=true mas motivo_invalidacao=NULL).
+ *
+ *    Camada única de tradução: este dicionário é a fonte da verdade para
+ *    todos os pontos da UI que mostram motivo de invalidação. Frontend
+ *    (InvalidosTab) NÃO PRECISA conhecer códigos — recebe pronto do backend.
+ *
+ *    Dependência SQL: migration
+ *    `db/scripts/2026-06-16_amplia_whitelist_motivo_invalidacao.sql` DEVE
+ *    rodar ANTES do deploy desta versão (adiciona os 4 códigos novos à
+ *    whitelist da CHECK constraint).
+ *
  *  - v1.15 (16/06/2026 — F8: Aba Inválidos lead-centric):
  *    Trilha de mudanças que move a aba "Inválidos" de modelo fila-centric
  *    para lead-centric, em sincronia com webhook v1.15 (popula
@@ -401,6 +425,42 @@ const COLUNAS_EDITAVEIS_EMPRESA = [
   'observacoes',
   'origem',
 ] as const;
+
+/**
+ * 🆕 v1.15.1 (16/06/2026 — F8 FIX) — Tradução código → string visível para
+ * o campo `email_leads.motivo_invalidacao`.
+ *
+ * A coluna armazena CÓDIGOS técnicos snake_case (validados pela CHECK
+ * constraint `email_leads_motivo_invalidacao_valido`). A UI precisa de
+ * strings em português legíveis. Este dicionário é a FONTE ÚNICA dessa
+ * tradução — toda exibição de motivo na UI deve passar por aqui.
+ *
+ * Origem dos códigos:
+ *   • Recovery 3.A (Production desde 13/06/2026): grava 'bounce', 'mx',
+ *     'no_match' (resultados do motor Recovery).
+ *   • F7 MVP: grava 'f7_pre_campanha' (lead invalidado antes da campanha).
+ *   • Edição manual (PATCH atualizar_lead): grava 'edicao_manual'.
+ *   • F8 webhook v1.15.1: grava 'mailbox_inexistente', 'caixa_lotada',
+ *     'mx', 'bloqueado', 'servidor_indisponivel', 'bounce' (fallback).
+ *
+ * Se a coluna receber um código DESCONHECIDO (ex.: futuro código não
+ * mapeado aqui), o backend retorna o próprio código para a UI — pior UX
+ * mas não quebra a tela. Vale revisar este dicionário sempre que a
+ * whitelist da CHECK constraint for ampliada.
+ */
+const TRADUCAO_MOTIVO_INVALIDACAO: Record<string, string> = {
+  // Códigos pré-F8 (Recovery 3.A, F7, edição manual)
+  bounce:                'Falha permanente',
+  mx:                    'Domínio inválido',
+  f7_pre_campanha:       'Invalidado antes da campanha',
+  no_match:              'Recovery não encontrou',
+  edicao_manual:         'Editado manualmente',
+  // Códigos F8 (webhook v1.15.1)
+  mailbox_inexistente:   'Email não existe',
+  caixa_lotada:          'Caixa lotada',
+  bloqueado:             'Email bloqueado',
+  servidor_indisponivel: 'Servidor indisponível',
+};
 
 /**
  * Pega do `body` apenas os campos presentes na `whitelist`, ignorando
@@ -1015,10 +1075,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const itens = (leads || []).map((l: any) => {
           const empresa = l.email_empresas;
-          // Fallback "Falha permanente" para leads pré-v1.15 com bounced=true
-          // mas motivo_invalidacao=NULL (decisão D3: sem backfill).
-          const motivo = l.motivo_invalidacao
-            || (l.bounced ? 'Falha permanente' : 'Outro motivo');
+          // 🆕 v1.15.1 — tradução de CÓDIGO → string visível, via dicionário
+          //   centralizado. O campo `motivo_invalidacao` no banco armazena
+          //   códigos snake_case (validados pela CHECK constraint).
+          //   Fallback "Falha permanente" para leads pré-v1.15 com bounced=true
+          //   mas motivo_invalidacao=NULL (decisão D3: sem backfill).
+          //   Fallback final (código desconhecido): retorna o próprio código —
+          //   pior UX, mas não quebra a tela; sinaliza necessidade de mapping.
+          let motivo: string;
+          if (l.motivo_invalidacao) {
+            motivo = TRADUCAO_MOTIVO_INVALIDACAO[l.motivo_invalidacao]
+                  || l.motivo_invalidacao;
+          } else {
+            motivo = l.bounced ? 'Falha permanente' : 'Outro motivo';
+          }
           return {
             lead_id: l.id,
             lead_nome: l.nome,

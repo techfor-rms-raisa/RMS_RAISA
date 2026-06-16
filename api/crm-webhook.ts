@@ -3,6 +3,44 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.15.1 — 16/06/2026 — F8 FIX: classificarMotivoBounce retorna CÓDIGOS
+ *   técnicos snake_case (não strings em português).
+ *
+ *   Motivação (descoberto via logs do Vercel em smoke test 16/06/2026):
+ *     A coluna `email_leads.motivo_invalidacao` tem uma CHECK constraint
+ *     (`email_leads_motivo_invalidacao_valido`) que aceita apenas códigos
+ *     técnicos snake_case ('bounce', 'mx', 'f7_pre_campanha', 'no_match',
+ *     'edicao_manual') — usados pelo Recovery 3.A e F7 MVP. A v1.15
+ *     introduziu strings em português ('Email não existe', 'Caixa lotada',
+ *     etc.) que VIOLAVAM o CHECK, fazendo o UPDATE em email_leads falhar
+ *     silenciosamente. Resultado: lead com bounce continuava com
+ *     `bounced=false` e nunca aparecia na aba "Inválidos".
+ *
+ *   Log do erro real no Vercel (15:21:28 BRT, 16/06/2026):
+ *     "[crm-webhook] ❌ Falha ao marcar lead 16 como bounced:
+ *      new row for relation 'email_leads' violates check constraint
+ *      'email_leads_motivo_invalidacao_valido'"
+ *
+ *   Solução: classificarMotivoBounce agora retorna CÓDIGOS técnicos.
+ *   Camada de tradução para a UI movida para crm-leads.ts v1.15.1
+ *   (action `listar_invalidos`), via dicionário TRADUCAO_MOTIVO_INVALIDACAO.
+ *
+ *   Mapeamento código → string visível (no backend listar_invalidos):
+ *     'bounce'               → "Falha permanente"
+ *     'mx'                   → "Domínio inválido"
+ *     'mailbox_inexistente'  → "Email não existe"     🆕
+ *     'caixa_lotada'         → "Caixa lotada"          🆕
+ *     'bloqueado'            → "Email bloqueado"       🆕
+ *     'servidor_indisponivel'→ "Servidor indisponível" 🆕
+ *     'no_match'             → "Recovery não encontrou"
+ *     'f7_pre_campanha'      → "Invalidado antes da campanha"
+ *     'edicao_manual'        → "Editado manualmente"
+ *
+ *   Dependência: migration SQL
+ *   `db/scripts/2026-06-16_amplia_whitelist_motivo_invalidacao.sql`
+ *   adiciona os 4 códigos novos à whitelist. DEVE rodar ANTES do deploy
+ *   desta versão (ordem obrigatória: migration → deploy).
+ *
  * v1.15 — 16/06/2026 — F8: popular `email_leads.motivo_invalidacao` no
  *   bloco A (hard bounce).
  *
@@ -566,26 +604,36 @@ const MAPA_TIPO_EVENTO: Record<string, string> = {
 };
 
 /**
- * 🆕 v1.15 (16/06/2026 — F8) — Classifica mensagens RAW do Resend em
- * categorias curtas padronizadas para popular `email_leads.motivo_invalidacao`.
+ * 🆕 v1.15 (16/06/2026 — F8) / 🔧 v1.15.1 (16/06/2026 — FIX CHECK constraint)
  *
- * Decisão de produto D1=C (híbrido):
- *   • `bounced_motivo` continua com o raw do Resend (auditoria/debug).
- *   • `motivo_invalidacao` recebe a classificação curta (UI da aba Inválidos).
+ * Classifica mensagens RAW do Resend em CÓDIGOS técnicos snake_case que
+ * batem com a CHECK constraint `email_leads_motivo_invalidacao_valido`.
  *
- * Categorias (cobrem ~95% dos casos reais reportados pelo Resend):
- *   • "Email não existe"     — mailbox inexistente (caso mais comum, ~60-70%)
- *   • "Caixa lotada"         — over quota / mailbox full
- *   • "Domínio inválido"     — domain not found / MX missing
- *   • "Email bloqueado"      — spam filters / blacklist / access denied
- *   • "Servidor indisponível" — timeout / connection refused / temp failure
- *   • "Outro motivo"         — fallback quando o raw existe mas não casa
- *   • "Falha permanente"     — fallback quando o raw está vazio
+ * Decisão arquitetural (v1.15.1):
+ *   • bounced_motivo: raw do Resend (auditoria/debug)
+ *   • motivo_invalidacao: código snake_case (validado pela CHECK)
+ *   • Tradução código → string visível: feita em crm-leads.ts v1.15.1
+ *     (listar_invalidos), via dicionário centralizado.
+ *
+ * Códigos retornados (todos presentes na whitelist da v1.15.1):
+ *   • 'mailbox_inexistente' — mailbox inexistente (~60-70% dos bounces)
+ *   • 'caixa_lotada'        — over quota / mailbox full
+ *   • 'mx'                  — domain not found / MX missing (reusa código existente)
+ *   • 'bloqueado'           — spam filters / blacklist / access denied
+ *   • 'servidor_indisponivel' — timeout / connection refused / temp failure
+ *   • 'bounce'              — fallback genérico (reusa código existente —
+ *                             whitelist do Recovery 3.A)
  *
  * Padrões case-insensitive. Ordem importa: o primeiro match ganha.
+ *
+ * NOTA: o retorno 'bounce' é usado tanto para "mensagem vazia"
+ * (fallback de Resend mudo) quanto para "padrão não reconhecido"
+ * (mensagem existe mas não casa com nenhuma regex). A camada de
+ * tradução em listar_invalidos não diferencia os dois casos —
+ * ambos viram "Falha permanente" na UI, semanticamente alinhado.
  */
 function classificarMotivoBounce(bounceMessage: string | null | undefined): string {
-  if (!bounceMessage || !bounceMessage.trim()) return 'Falha permanente';
+  if (!bounceMessage || !bounceMessage.trim()) return 'bounce'; // fallback genérico
   const msg = bounceMessage.toLowerCase();
 
   // Email não existe (mailbox inexistente) — mais comum
@@ -594,7 +642,7 @@ function classificarMotivoBounce(bounceMessage: string | null | undefined): stri
     /\b550[- ]?5\.1\.1\b/.test(msg) ||
     /\b5\.1\.10\b/.test(msg)
   ) {
-    return 'Email não existe';
+    return 'mailbox_inexistente';
   }
 
   // Caixa lotada
@@ -603,15 +651,15 @@ function classificarMotivoBounce(bounceMessage: string | null | undefined): stri
     /\b552[- ]?5\.2\.2\b/.test(msg) ||
     /\b452[- ]?4\.2\.2\b/.test(msg)
   ) {
-    return 'Caixa lotada';
+    return 'caixa_lotada';
   }
 
-  // Domínio inválido (DNS / MX)
+  // Domínio inválido (DNS / MX) — reusa código existente 'mx' do Recovery 3.A
   if (
     /\b(domain not found|domain does not exist|no mx|mx record|dns error|host not found|name not found|nxdomain)\b/.test(msg) ||
     /\b550[- ]?5\.4\.4\b/.test(msg)
   ) {
-    return 'Domínio inválido';
+    return 'mx';
   }
 
   // Email bloqueado (spam, blacklist, access denied)
@@ -620,7 +668,7 @@ function classificarMotivoBounce(bounceMessage: string | null | undefined): stri
     /\b550[- ]?5\.7\.[0-9]+\b/.test(msg) ||
     /\b554[- ]?5\.7\.[0-9]+\b/.test(msg)
   ) {
-    return 'Email bloqueado';
+    return 'bloqueado';
   }
 
   // Servidor indisponível (timeout / connection / temporário tornado permanente)
@@ -629,11 +677,11 @@ function classificarMotivoBounce(bounceMessage: string | null | undefined): stri
     /\b421\b/.test(msg) ||
     /\b450\b/.test(msg)
   ) {
-    return 'Servidor indisponível';
+    return 'servidor_indisponivel';
   }
 
-  // Fallback — bounce permanente sem padrão reconhecido
-  return 'Outro motivo';
+  // Fallback — bounce permanente sem padrão reconhecido (reusa código existente)
+  return 'bounce';
 }
 
 /** Tolerância do timestamp do Svix em segundos (anti-replay). */
@@ -1397,7 +1445,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } else {
         console.log(
           `[crm-webhook] 📛 Lead ${fila.lead_id} (${fila.destinatario_email}) marcado como bounced. ` +
-          `Classificação: "${motivoClassificado}". Raw: ${motivoBounce}`,
+          `Código: "${motivoClassificado}". Raw: ${motivoBounce}`,
         );
       }
     }
