@@ -2,6 +2,54 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.15 (16/06/2026 — F8: Aba Inválidos lead-centric):
+ *    Trilha de mudanças que move a aba "Inválidos" de modelo fila-centric
+ *    para lead-centric, em sincronia com webhook v1.15 (popula
+ *    `motivo_invalidacao`) e crm.types.ts v1.7 (novo schema InvalidoItem).
+ *
+ *    Decisões de produto consolidadas (16/06/2026):
+ *      D1=C — Híbrido: motivo_invalidacao recebe classificação curta;
+ *             bounced_motivo preserva o raw do Resend.
+ *      D2=B — Critério "lead inválido" = bounced=true OR motivo_invalidacao
+ *             IS NOT NULL. Mesmo critério exclui da aba "Leads".
+ *      D3=Não — Sem backfill: leads pre-v1.15 ficam com motivo_invalidacao
+ *             NULL mas continuam visíveis na aba pelo critério bounced=true.
+ *
+ *    Mudanças neste arquivo (3 actions tocadas, cirurgicamente):
+ *
+ *      • GET `listar_leads` (aba "Leads"): adicionados 2 filtros
+ *        defensivos antes do range/order — esconde leads em estado
+ *        terminal de invalidação:
+ *           query
+ *             .not('bounced', 'is', true)
+ *             .is('motivo_invalidacao', null)
+ *        Mantém o filtro v1.13 de opt-out (`opt_out IS NOT true`).
+ *        Resultado: aba "Leads" mostra APENAS leads ativos/recuperáveis.
+ *
+ *      • GET `stats`: `total_invalidos` muda de fonte. Antes contava
+ *        `email_fila WHERE status IN ('bounce','erro')` (eventos de envio
+ *        falhos — 1 lead aparecia N vezes). Agora conta `email_leads`
+ *        com critério D2:
+ *           bounced=true OR motivo_invalidacao IS NOT NULL
+ *        Resultado: badge da aba Inválidos passa a refletir LEADS únicos.
+ *
+ *      • GET `listar_invalidos`: REESCRITA completa (era fila-centric,
+ *        passa a ser lead-centric). Consulta `email_leads` em vez de
+ *        `email_fila`. Cada linha = 1 lead inválido com seu estado
+ *        consolidado. Inclui campos novos no payload para a UI v1.1:
+ *           motivo (classificação curta — derivada de motivo_invalidacao
+ *                   com fallback "Falha permanente" para leads pre-v1.15)
+ *           motivo_raw (bounced_motivo — tooltip)
+ *           tentativas_recovery, recovery_em (progresso do motor 3.A)
+ *        Busca aceita: nome, email, motivo, motivo_raw (ilike).
+ *        Ordenação: bounced_em DESC (mais recentes primeiro), com
+ *        fallback para atualizado_em DESC.
+ *
+ *    Sem mudança de schema, sem migration. Todas as colunas usadas
+ *    (`bounced`, `bounced_em`, `bounced_motivo`, `motivo_invalidacao`,
+ *    `tentativas_recovery`, `recovery_em`) já existem em `email_leads`
+ *    desde a Fase Recovery 3.A (smoke test 2026-06-13).
+ *
  *  - v1.14 (13/06/2026 — Coluna ANALISTA + ordenação configurável):
  *    Continuação da reorganização Prospect/Lead. Action `listar_leads`
  *    ganha 2 capacidades para alimentar a nova tabela LeadsTab v1.1:
@@ -492,6 +540,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         //   é eterno, jamais deletado), mas aparecem APENAS na aba "Opt-Out".
         query = query.not('opt_out', 'is', true);
 
+        // 🆕 v1.15 (16/06/2026 — F8): excluir leads em estado terminal de
+        //   invalidação. Critério D2 (decidido com PO em 16/06/2026):
+        //     bounced=true  OR  motivo_invalidacao IS NOT NULL
+        //   Esses leads aparecem EXCLUSIVAMENTE na aba "Inválidos"
+        //   (action listar_invalidos abaixo). Sem isso, eles apareceriam
+        //   em ambas as abas — pior UX e risco operacional (analista
+        //   tentando reativar lead já bouncedo).
+        //
+        //   Defesa em camadas: o filtro aqui replica o critério usado pelo
+        //   listar_invalidos abaixo. Single source of truth seria uma view
+        //   SQL, mas a duplicação é pequena e local.
+        query = query.not('bounced', 'is', true);
+        query = query.is('motivo_invalidacao', null);
+
         // 🆕 v1.14 (13/06/2026) — Ordenação configurável.
         //   Whitelist defensiva — qualquer valor desconhecido em
         //   `ordenar_por` cai no default 'recentes'.
@@ -694,9 +756,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { count: totalRespostas } = await supabase
           .from('email_respostas').select('id', { count: 'exact', head: true });
 
+        // 🆕 v1.15 (16/06/2026 — F8): total_invalidos passa a contar LEADS,
+        //   não eventos de email_fila. Critério D2:
+        //     bounced=true  OR  motivo_invalidacao IS NOT NULL
+        //   Resultado: badge reflete leads únicos, sincronizado com a
+        //   nova fonte do listar_invalidos abaixo. Antes da v1.15 podia
+        //   acontecer de o badge mostrar "15" e a aba abrir só 8 leads
+        //   (porque havia 15 eventos de bounce em 8 leads distintos).
+        //
+        //   Filtro `not('opt_out', 'is', true)` defensivo: opt-out tem
+        //   aba própria, não deve contar como inválido na aba Inválidos.
         const { count: totalInvalidos } = await supabase
-          .from('email_fila').select('id', { count: 'exact', head: true })
-          .in('status', ['bounce', 'erro']);
+          .from('email_leads').select('id', { count: 'exact', head: true })
+          .or('bounced.eq.true,motivo_invalidacao.not.is.null')
+          .not('opt_out', 'is', true);
 
         return res.status(200).json({
           success: true,
@@ -874,15 +947,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ════════════════════════════════════════════════════════════
-      // 🆕 v1.3 — INVÁLIDOS (Aba "Inválidos" do Form Empresas)
+      // 🆕 v1.3 (04/06/2026 — Fase 8-Inbox) — INVÁLIDOS — schema original
+      //         (fila-centric, 1 linha por evento de email_fila)
+      // 🔄 v1.15 (16/06/2026 — F8) — REESCRITA lead-centric
       // ════════════════════════════════════════════════════════════
-      // E-mails que falharam tecnicamente: email_fila WHERE status IN
-      // ('bounce','erro'). Joins via embed para puxar lead/empresa/campanha
-      // em uma única query, com fallback em camada Node para o caso de
-      // FK quebrada (lead deletado, por exemplo).
+      // LEADS em estado terminal de invalidação. Critério D2 (decidido
+      // com PO em 16/06/2026):
+      //
+      //     email_leads.bounced = true
+      //        OR
+      //     email_leads.motivo_invalidacao IS NOT NULL
+      //
+      // Mudança vs v1.3:
+      //   ANTES — consulta `email_fila` por evento de falha. Mesmo lead
+      //           aparecia N vezes (1 por bounce). Lead corrigido pelo
+      //           analista mas sem novo envio continuava na lista.
+      //   AGORA — consulta `email_leads` por estado consolidado. 1 lead =
+      //           1 linha. Lead corrigido sai automaticamente (PATCH
+      //           atualizar_lead v1.11 já reseta bounced quando email muda).
+      //
+      // Campos do payload (alinhados com crm.types.ts v1.7 → InvalidoItem):
+      //   lead_id, lead_nome, lead_email, empresa_id, empresa_nome,
+      //   status (sempre 'bounce' por ora),
+      //   motivo (motivo_invalidacao classificada — fallback "Falha
+      //           permanente" para leads pré-v1.15 com bounced=true mas
+      //           motivo_invalidacao=NULL),
+      //   motivo_raw (bounced_motivo — exibido em tooltip na UI),
+      //   bounced_em, tentativas_recovery, recovery_em.
       //
       // Parâmetros aceitos:
-      //   - busca: string (nome, email, empresa, motivo) — opcional
+      //   - busca: string (nome, email, motivo, motivo_raw) — opcional, ilike
       //   - page, limit: paginação clássica
       //
       // Resposta: { success, itens: InvalidoItem[], total, page, limit }
@@ -892,49 +986,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const pageNum = Math.max(1, parseInt(page) || 1);
         const offset = (pageNum - 1) * limitNum;
 
-        // Conta total (com filtro de busca aplicado depois para simplicidade)
-        // — para volumes muito grandes podemos migrar para count_estimate.
+        // Critério D2 — bounced=true OR motivo_invalidacao IS NOT NULL
+        // Exclui leads em opt-out (eles têm aba própria — Opt-Out).
         let query = supabase
-          .from('email_fila')
+          .from('email_leads')
           .select(
-            'id, lead_id, campanha_id, destinatario_email, destinatario_nome, status, erro_detalhes, bounce_em, enviado_em, criado_em, ' +
-            'email_leads(id, nome, empresa_id, email_empresas(id, nome)), ' +
-            'email_campanhas(id, nome)',
+            'id, nome, email, empresa_id, bounced, bounced_em, bounced_motivo, ' +
+            'motivo_invalidacao, tentativas_recovery, recovery_em, atualizado_em, ' +
+            'email_empresas(id, nome)',
             { count: 'exact' }
           )
-          .in('status', ['bounce', 'erro'])
-          .order('bounce_em', { ascending: false, nullsFirst: false })
-          .order('criado_em', { ascending: false })
+          .or('bounced.eq.true,motivo_invalidacao.not.is.null')
+          .not('opt_out', 'is', true)
+          .order('bounced_em', { ascending: false, nullsFirst: false })
+          .order('atualizado_em', { ascending: false })
           .range(offset, offset + limitNum - 1);
 
         if (busca && busca.trim().length > 0) {
           const q = busca.trim();
+          // Busca em campos do lead + campos de invalidação (motivo classificado e raw).
           query = query.or(
-            `destinatario_email.ilike.%${q}%,destinatario_nome.ilike.%${q}%,erro_detalhes.ilike.%${q}%`
+            `nome.ilike.%${q}%,email.ilike.%${q}%,motivo_invalidacao.ilike.%${q}%,bounced_motivo.ilike.%${q}%`
           );
         }
 
-        const { data: fila, error: errF, count } = await query;
-        if (errF) throw errF;
+        const { data: leads, error: errLeads, count } = await query;
+        if (errLeads) throw errLeads;
 
-        const itens = (fila || []).map((f: any) => {
-          const lead = f.email_leads;
-          const empresa = lead?.email_empresas;
-          const camp = f.email_campanhas;
+        const itens = (leads || []).map((l: any) => {
+          const empresa = l.email_empresas;
+          // Fallback "Falha permanente" para leads pré-v1.15 com bounced=true
+          // mas motivo_invalidacao=NULL (decisão D3: sem backfill).
+          const motivo = l.motivo_invalidacao
+            || (l.bounced ? 'Falha permanente' : 'Outro motivo');
           return {
-            fila_id: f.id,
-            lead_id: f.lead_id,
-            lead_nome: lead?.nome ?? f.destinatario_nome ?? null,
-            empresa_id: lead?.empresa_id ?? null,
+            lead_id: l.id,
+            lead_nome: l.nome,
+            lead_email: l.email,
+            empresa_id: l.empresa_id ?? null,
             empresa_nome: empresa?.nome ?? null,
-            destinatario_email: f.destinatario_email,
-            campanha_id: f.campanha_id,
-            campanha_nome: camp?.nome ?? null,
-            status: f.status as 'bounce' | 'erro',
-            motivo: f.erro_detalhes ?? (f.status === 'bounce' ? 'Bounce (sem detalhe)' : 'Erro de envio'),
-            bounce_em: f.bounce_em,
-            enviado_em: f.enviado_em,
-            criado_em: f.criado_em,
+            status: 'bounce' as const,
+            motivo,
+            motivo_raw: l.bounced_motivo ?? null,
+            bounced_em: l.bounced_em ?? null,
+            tentativas_recovery: l.tentativas_recovery ?? 0,
+            recovery_em: l.recovery_em ?? null,
           };
         });
 
