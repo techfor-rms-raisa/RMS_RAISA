@@ -2,9 +2,52 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.9 (Bug 1 — Empresas carregadas no mount — 14/06/2026)
+ * Versão: 1.10 (F8 — Botão Recovery na aba Inválidos — 16/06/2026)
  *
- * 🆕 v1.9 (14/06/2026 — Bug 1: Empresas no Modal Lead):
+ * 🆕 v1.10 (16/06/2026 — F8: Botão Recovery na aba Inválidos):
+ *   Pluga o motor de Recovery (api/campaign-email-recovery — em
+ *   Production desde 13/06/2026, Sub-fase 3.A) diretamente na aba
+ *   "E-mails Inválidos". Antes, Recovery só era acionável via SQL
+ *   ou drawer Meus Leads. Agora o gestor/SDR vê o lead inválido na
+ *   aba dedicada e dispara o Recovery com 1 clique.
+ *
+ *   Mudanças cirúrgicas:
+ *
+ *    - Novo state `recoveringLeadIds: Set<number>` rastreia leads em
+ *      Recovery em andamento. Backed por React state com Set imutável
+ *      (substitui por `new Set(prev)` em cada UPDATE).
+ *
+ *    - Novo handler `handleTentarRecovery(leadId)`:
+ *        1. `window.confirm` com aviso sobre tentativas restantes.
+ *        2. Adiciona leadId ao Set de em-andamento.
+ *        3. POST /api/campaign-email-recovery
+ *             body: { action: 'recover_lead', lead_id, criado_por }
+ *        4. Decisão por `response.status`:
+ *             'recovered' → alert sucesso com email novo
+ *             'no_match'  → alert info com tentativas restantes
+ *             'limite_atingido' → alert ÂMBAR (3/3 esgotado)
+ *             'dominio_invalido' → alert ÂMBAR (MX falhou)
+ *             erro (network/500) → alert vermelho
+ *        5. Remove leadId do Set.
+ *        6. Recarrega `invalidosH` + `leadsH.carregarStats()` para que
+ *           o badge da aba e a listagem reflitam o estado novo.
+ *
+ *    - `<InvalidosTab>` recebe 2 props novas:
+ *        `onTentarRecovery` (handler)
+ *        `recoveringLeadIds` (array de leads em andamento — usado pelo
+ *                              componente para mostrar spinner no botão)
+ *
+ *   Dependência runtime: o motor Recovery (api/campaign-email-recovery
+ *   v2.0) JÁ ESTÁ EM PRODUCTION desde 13/06/2026. Esta v1.10 apenas
+ *   conecta a UI ao endpoint existente — zero risco de regressão fora
+ *   do escopo da aba Inválidos.
+ *
+ *   Compatibilidade: o InvalidosTab v1.1 já aceita `onTentarRecovery`
+ *   como prop opcional (degradação graciosa — sem prop, sem botão).
+ *   A v1.2 do InvalidosTab (entregue junto) adiciona o spinner via
+ *   `recoveringLeadIds`.
+ *
+ * v1.9 (14/06/2026 — Bug 1: Empresas no Modal Lead):
  *   Em Production o dropdown "Empresa" do LeadFormModal aparecia sem
  *   opções (só "Sem empresa") mesmo quando havia empresas cadastradas
  *   (cenário pós-deploy do INSERT de TECHFORTI). Causa-raiz: o
@@ -232,6 +275,12 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   // ── Modal de importação ──
   const [modalImportarAberto, setModalImportarAberto] = useState(false);
 
+  // 🆕 v1.10 (F8 — 16/06/2026) — Recovery em andamento por lead.
+  // Set imutável para garantir re-render do InvalidosTab quando o
+  // estado muda. O componente filho usa este Set para mostrar spinner
+  // no botão "Recovery" dos leads que estão sendo processados.
+  const [recoveringLeadIds, setRecoveringLeadIds] = useState<Set<number>>(new Set());
+
   // ── Efeitos: carregar dados ──
   useEffect(() => {
     leadsH.carregarStats();
@@ -358,6 +407,126 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       }
     } catch (err: any) {
       alert('Erro ao carregar lead: ' + (err?.message || 'desconhecido'));
+    }
+  };
+
+  // ════════════════════════════════════════════════════════════
+  // 🆕 v1.10 (16/06/2026 — F8) — RECOVERY DE EMAIL
+  // ════════════════════════════════════════════════════════════
+  //
+  // Aciona o motor Recovery v2.0 (api/campaign-email-recovery, em
+  // Production desde 13/06/2026 — Sub-fase 3.A) para tentar encontrar
+  // o email correto de um lead bouncedo. Fluxo:
+  //
+  //   1. Confirma com o usuário (window.confirm) — Recovery consome
+  //      tokens Snov.io + chamadas Gemini, por isso a ação não deve
+  //      ser disparada sem confirmação consciente.
+  //   2. Marca o leadId no Set `recoveringLeadIds` (spinner aparece).
+  //   3. POST /api/campaign-email-recovery com action='recover_lead'.
+  //   4. Decide a UX por `data.status`:
+  //        'recovered'        → ✅ alert com novo email + recarrega aba
+  //        'no_match'         → ⚠️ alert com tentativas restantes
+  //        'limite_atingido'  → ⚠️ alert âmbar (3/3 esgotado)
+  //        'dominio_invalido' → ⚠️ alert âmbar (MX falhou)
+  //        outros (network/500) → ❌ alert vermelho
+  //   5. Remove leadId do Set (spinner some).
+  //   6. Recarrega listagem da aba + stats (badges).
+  //
+  // Em caso de SUCESSO, o lead some da aba Inválidos (porque o
+  // backend reseta `bounced=false` e limpa `motivo_invalidacao` —
+  // crm-leads.ts v1.11 PATCH atualizar_lead faz isso automaticamente
+  // quando o email muda).
+  //
+  // RBAC: ação disponível para qualquer perfil que veja a aba
+  //   Inválidos. Bloqueio fino (RBAC por reservado_por) deve ser
+  //   adicionado no backend Recovery se necessário no futuro.
+  const handleTentarRecovery = async (leadId: number) => {
+    // Acha tentativas atuais para mensagem informativa
+    const itemAtual = invalidosH.itens.find((i: any) => i.lead_id === leadId);
+    const tentativas = itemAtual?.tentativas_recovery ?? 0;
+    const restantes = Math.max(0, 3 - tentativas);
+
+    const confirmou = window.confirm(
+      `Tentar recuperar o email correto deste lead via motor de Recovery?\n\n` +
+      `Tentativas restantes: ${restantes}/3\n\n` +
+      `Esta operação consome créditos Snov.io e chamadas Gemini API. ` +
+      `Pode levar até ~60 segundos.`,
+    );
+    if (!confirmou) return;
+
+    // Marca o lead como em-Recovery (spinner aparece no botão)
+    setRecoveringLeadIds((prev) => {
+      const next = new Set(prev);
+      next.add(leadId);
+      return next;
+    });
+
+    try {
+      const resp = await fetch('/api/campaign-email-recovery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'recover_lead',
+          lead_id: leadId,
+          criado_por: currentUser.nome_usuario || 'sistema',
+        }),
+      });
+      const data = await resp.json().catch(() => ({}));
+
+      if (!resp.ok) {
+        alert(
+          `❌ Falha no Recovery (HTTP ${resp.status}):\n` +
+          (data?.error || 'Erro desconhecido. Verifique os logs do Vercel.'),
+        );
+      } else {
+        switch (data?.status) {
+          case 'recovered':
+            alert(
+              `✅ Email recuperado com sucesso!\n\n` +
+              `Novo email: ${data?.email || '—'}\n` +
+              `Método: ${data?.metodo_validacao || 'snov.io'}\n` +
+              `Posição na cascata: ${data?.posicao ?? '—'}\n\n` +
+              `O lead foi reenfileirado nas campanhas em que estava ativo.`,
+            );
+            break;
+          case 'no_match':
+            alert(
+              `⚠️ Recovery não encontrou um email válido nesta tentativa.\n\n` +
+              `Tentativas restantes: ${Math.max(0, 3 - (data?.tentativas_recovery ?? tentativas + 1))}/3\n\n` +
+              `Você pode tentar novamente ou corrigir o email manualmente.`,
+            );
+            break;
+          case 'limite_atingido':
+            alert(
+              `⚠️ Tentativas de Recovery esgotadas (3/3).\n\n` +
+              `Corrija o email manualmente clicando em "Editar".`,
+            );
+            break;
+          case 'dominio_invalido':
+            alert(
+              `⚠️ Domínio do email é inválido (MX inexistente).\n\n` +
+              `Recovery não pode operar. Corrija o email manualmente.`,
+            );
+            break;
+          default:
+            alert(
+              `Recovery concluído com status: "${data?.status || 'desconhecido'}".\n\n` +
+              (data?.mensagem || 'Veja os logs para detalhes.'),
+            );
+        }
+      }
+    } catch (err: any) {
+      alert('❌ Erro de rede ao chamar Recovery: ' + (err?.message || 'desconhecido'));
+    } finally {
+      // Remove o lead do Set (spinner some)
+      setRecoveringLeadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(leadId);
+        return next;
+      });
+      // Recarrega aba + stats — independente do resultado
+      invalidosH.carregar();
+      leadsH.carregarStats();
     }
   };
 
@@ -728,6 +897,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
         )}
 
         {/* 🆕 v1.2 (Fase 8-Inbox) — Aba Inválidos */}
+        {/* 🆕 v1.10 (16/06/2026 — F8) — props onTentarRecovery + recoveringLeadIds */}
         {abaAtiva === 'invalidos' && (
           <InvalidosTab
             itens={invalidosH.itens}
@@ -743,6 +913,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             }}
             onPaginaChange={invalidosH.setPagina}
             onEditarLead={abrirEditarLeadPorId}
+            onTentarRecovery={handleTentarRecovery}
+            recoveringLeadIds={Array.from(recoveringLeadIds)}
           />
         )}
 

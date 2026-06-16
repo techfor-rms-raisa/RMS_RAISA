@@ -3,6 +3,96 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.15.1 — 16/06/2026 — F8 FIX: classificarMotivoBounce retorna CÓDIGOS
+ *   técnicos snake_case (não strings em português).
+ *
+ *   Motivação (descoberto via logs do Vercel em smoke test 16/06/2026):
+ *     A coluna `email_leads.motivo_invalidacao` tem uma CHECK constraint
+ *     (`email_leads_motivo_invalidacao_valido`) que aceita apenas códigos
+ *     técnicos snake_case ('bounce', 'mx', 'f7_pre_campanha', 'no_match',
+ *     'edicao_manual') — usados pelo Recovery 3.A e F7 MVP. A v1.15
+ *     introduziu strings em português ('Email não existe', 'Caixa lotada',
+ *     etc.) que VIOLAVAM o CHECK, fazendo o UPDATE em email_leads falhar
+ *     silenciosamente. Resultado: lead com bounce continuava com
+ *     `bounced=false` e nunca aparecia na aba "Inválidos".
+ *
+ *   Log do erro real no Vercel (15:21:28 BRT, 16/06/2026):
+ *     "[crm-webhook] ❌ Falha ao marcar lead 16 como bounced:
+ *      new row for relation 'email_leads' violates check constraint
+ *      'email_leads_motivo_invalidacao_valido'"
+ *
+ *   Solução: classificarMotivoBounce agora retorna CÓDIGOS técnicos.
+ *   Camada de tradução para a UI movida para crm-leads.ts v1.15.1
+ *   (action `listar_invalidos`), via dicionário TRADUCAO_MOTIVO_INVALIDACAO.
+ *
+ *   Mapeamento código → string visível (no backend listar_invalidos):
+ *     'bounce'               → "Falha permanente"
+ *     'mx'                   → "Domínio inválido"
+ *     'mailbox_inexistente'  → "Email não existe"     🆕
+ *     'caixa_lotada'         → "Caixa lotada"          🆕
+ *     'bloqueado'            → "Email bloqueado"       🆕
+ *     'servidor_indisponivel'→ "Servidor indisponível" 🆕
+ *     'no_match'             → "Recovery não encontrou"
+ *     'f7_pre_campanha'      → "Invalidado antes da campanha"
+ *     'edicao_manual'        → "Editado manualmente"
+ *
+ *   Dependência: migration SQL
+ *   `db/scripts/2026-06-16_amplia_whitelist_motivo_invalidacao.sql`
+ *   adiciona os 4 códigos novos à whitelist. DEVE rodar ANTES do deploy
+ *   desta versão (ordem obrigatória: migration → deploy).
+ *
+ * v1.15 — 16/06/2026 — F8: popular `email_leads.motivo_invalidacao` no
+ *   bloco A (hard bounce).
+ *
+ *   Motivação: a aba "Inválidos" foi reformulada para ser lead-centric
+ *   (1 linha por lead inválido, não mais 1 por falha de envio). O
+ *   critério do backend (crm-leads.ts v1.15 — action `listar_invalidos`)
+ *   é `bounced=true OR motivo_invalidacao IS NOT NULL`. Para o motor
+ *   Recovery v2.0 (Sub-fase 3.A em Production desde 13/06/2026) também
+ *   é util — ele aceita `motivo_invalidacao IS NOT NULL` como gatilho
+ *   alternativo ao `bounced=true`.
+ *
+ *   Mudança cirúrgica no bloco A (linha ~1239):
+ *     ANTES (v1.14): UPDATE email_leads SET bounced=true, bounced_motivo=raw,
+ *                    bounced_em=NOW(), atualizado_em=NOW()
+ *     AGORA (v1.15): + motivo_invalidacao = classificarMotivoBounce(raw)
+ *                    Resultado: bounced_motivo continua com o raw do Resend
+ *                    (preservado para auditoria/debug); motivo_invalidacao
+ *                    recebe a classificação curta padronizada que a UI
+ *                    exibe (decisão D1=C — híbrido).
+ *
+ *   Classificação (estratégia D1=C — híbrido):
+ *     • Helper `classificarMotivoBounce(bounceMessage)` adicionado no topo
+ *       do arquivo (~linha 100, antes de MAPA_TIPO_EVENTO).
+ *     • 6 categorias padronizadas que cobrem ~95% dos casos reais:
+ *         "Email não existe" / "Caixa lotada" / "Domínio inválido" /
+ *         "Email bloqueado" / "Servidor indisponível" / "Outro motivo"
+ *     • Fallback "Falha permanente" só ocorre se bounceMessage for vazio.
+ *     • Busca case-insensitive em todos os padrões.
+ *
+ *   Idempotência:
+ *     • UPDATE de motivo_invalidacao é determinístico para o mesmo input
+ *       (classificarMotivoBounce é função pura). Retries do Resend
+ *       sobrescrevem com o mesmo valor — sem efeito colateral.
+ *
+ *   Compatibilidade:
+ *     • Leads bouncados em Production ANTES desta v1.15 ficam com
+ *       motivo_invalidacao=NULL. NÃO há backfill (decisão D3=Não).
+ *       Eles continuam aparecendo na aba Inválidos porque o critério
+ *       OR cobre `bounced=true` também. A UI exibe "Falha permanente"
+ *       como fallback para o motivo (InvalidosTab v1.1 trata isso).
+ *
+ *   Dependência SQL: nenhuma. Coluna `motivo_invalidacao` já existe em
+ *   `email_leads` desde a Fase Recovery 3.A (smoke test 2026-06-13).
+ *
+ *   Smoke test mínimo: após deploy em Preview, disparar um email a um
+ *   endereço inválido (ex.: naoexiste-{timestamp}@techforti.com.br),
+ *   aguardar o evento `email.bounced` chegar (~10–30s) e validar:
+ *     SELECT id, email, bounced, motivo_invalidacao, bounced_motivo
+ *     FROM email_leads WHERE id = <lead_id>;
+ *   Esperado: bounced=true, motivo_invalidacao='Email não existe',
+ *   bounced_motivo contém o raw do Resend.
+ *
  * v1.14 — 12/06/2026 — P3: popular `email_fila.respondido_em` no UPDATE
  *   do ramo `email.received`.
  *
@@ -512,6 +602,87 @@ const MAPA_TIPO_EVENTO: Record<string, string> = {
   'email.complained': 'complained',
   'email.received': 'received', // 🆕 Fase 7-MVP
 };
+
+/**
+ * 🆕 v1.15 (16/06/2026 — F8) / 🔧 v1.15.1 (16/06/2026 — FIX CHECK constraint)
+ *
+ * Classifica mensagens RAW do Resend em CÓDIGOS técnicos snake_case que
+ * batem com a CHECK constraint `email_leads_motivo_invalidacao_valido`.
+ *
+ * Decisão arquitetural (v1.15.1):
+ *   • bounced_motivo: raw do Resend (auditoria/debug)
+ *   • motivo_invalidacao: código snake_case (validado pela CHECK)
+ *   • Tradução código → string visível: feita em crm-leads.ts v1.15.1
+ *     (listar_invalidos), via dicionário centralizado.
+ *
+ * Códigos retornados (todos presentes na whitelist da v1.15.1):
+ *   • 'mailbox_inexistente' — mailbox inexistente (~60-70% dos bounces)
+ *   • 'caixa_lotada'        — over quota / mailbox full
+ *   • 'mx'                  — domain not found / MX missing (reusa código existente)
+ *   • 'bloqueado'           — spam filters / blacklist / access denied
+ *   • 'servidor_indisponivel' — timeout / connection refused / temp failure
+ *   • 'bounce'              — fallback genérico (reusa código existente —
+ *                             whitelist do Recovery 3.A)
+ *
+ * Padrões case-insensitive. Ordem importa: o primeiro match ganha.
+ *
+ * NOTA: o retorno 'bounce' é usado tanto para "mensagem vazia"
+ * (fallback de Resend mudo) quanto para "padrão não reconhecido"
+ * (mensagem existe mas não casa com nenhuma regex). A camada de
+ * tradução em listar_invalidos não diferencia os dois casos —
+ * ambos viram "Falha permanente" na UI, semanticamente alinhado.
+ */
+function classificarMotivoBounce(bounceMessage: string | null | undefined): string {
+  if (!bounceMessage || !bounceMessage.trim()) return 'bounce'; // fallback genérico
+  const msg = bounceMessage.toLowerCase();
+
+  // Email não existe (mailbox inexistente) — mais comum
+  if (
+    /\b(does not exist|doesn'?t exist|no such user|user unknown|mailbox not found|recipient not found|address rejected|unknown user|user not found|no mailbox|invalid recipient)\b/.test(msg) ||
+    /\b550[- ]?5\.1\.1\b/.test(msg) ||
+    /\b5\.1\.10\b/.test(msg)
+  ) {
+    return 'mailbox_inexistente';
+  }
+
+  // Caixa lotada
+  if (
+    /\b(mailbox full|over quota|quota exceeded|insufficient storage|exceeds maximum|message size)\b/.test(msg) ||
+    /\b552[- ]?5\.2\.2\b/.test(msg) ||
+    /\b452[- ]?4\.2\.2\b/.test(msg)
+  ) {
+    return 'caixa_lotada';
+  }
+
+  // Domínio inválido (DNS / MX) — reusa código existente 'mx' do Recovery 3.A
+  if (
+    /\b(domain not found|domain does not exist|no mx|mx record|dns error|host not found|name not found|nxdomain)\b/.test(msg) ||
+    /\b550[- ]?5\.4\.4\b/.test(msg)
+  ) {
+    return 'mx';
+  }
+
+  // Email bloqueado (spam, blacklist, access denied)
+  if (
+    /\b(blocked|blacklist(ed)?|rejected as spam|spam policy|access denied|message refused|policy reject|reputation|spam content|denied by policy|administratively prohibited)\b/.test(msg) ||
+    /\b550[- ]?5\.7\.[0-9]+\b/.test(msg) ||
+    /\b554[- ]?5\.7\.[0-9]+\b/.test(msg)
+  ) {
+    return 'bloqueado';
+  }
+
+  // Servidor indisponível (timeout / connection / temporário tornado permanente)
+  if (
+    /\b(timed out|timeout|connection refused|connection failed|could not connect|network error|temporary failure|service unavailable|try again later)\b/.test(msg) ||
+    /\b421\b/.test(msg) ||
+    /\b450\b/.test(msg)
+  ) {
+    return 'servidor_indisponivel';
+  }
+
+  // Fallback — bounce permanente sem padrão reconhecido (reusa código existente)
+  return 'bounce';
+}
 
 /** Tolerância do timestamp do Svix em segundos (anti-replay). */
 const SVIX_TIMESTAMP_TOLERANCE_SEC = 5 * 60;
@@ -1238,6 +1409,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ── (A) Hard bounce — marca o LEAD como bounced (decisão P1.1) ──
     if (isHardBounce && fila.lead_id) {
       const motivoBounce = bounceMessage || `Hard bounce (${bounceType || 'unknown'})`;
+      // 🆕 v1.15 (16/06/2026 — F8) — classificação curta padronizada
+      //   para popular motivo_invalidacao (UI da aba Inválidos).
+      //   bounced_motivo continua com o raw (auditoria/debug). Decisão D1=C.
+      const motivoClassificado = classificarMotivoBounce(bounceMessage);
 
       // Lê o estado atual para preservar o PRIMEIRO bounced_em (idempotência).
       const { data: leadAtual } = await supabase
@@ -1249,6 +1424,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const updateLead: Record<string, any> = {
         bounced: true,
         bounced_motivo: motivoBounce,
+        motivo_invalidacao: motivoClassificado, // 🆕 v1.15
         atualizado_em: new Date().toISOString(),
       };
       // bounced_em só é gravado na PRIMEIRA ocorrência (preserva timestamp original).
@@ -1268,7 +1444,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         );
       } else {
         console.log(
-          `[crm-webhook] 📛 Lead ${fila.lead_id} (${fila.destinatario_email}) marcado como bounced. Motivo: ${motivoBounce}`,
+          `[crm-webhook] 📛 Lead ${fila.lead_id} (${fila.destinatario_email}) marcado como bounced. ` +
+          `Código: "${motivoClassificado}". Raw: ${motivoBounce}`,
         );
       }
     }

@@ -2,13 +2,23 @@
  * useInvalidos.ts — Hook de gestão de E-mails Inválidos
  *
  * Caminho: src/components/crm/shared/hooks/useInvalidos.ts
- * Versão: 1.0 (Fase 8-Inbox — 04/06/2026)
+ * Versão: 1.1 (F8 — Aba Inválidos lead-centric — 16/06/2026)
  *
- * Responsabilidade:
- *  - Consumir `GET /api/crm-leads?action=listar_invalidos` (e-mails que
- *    falharam tecnicamente: email_fila WHERE status IN ('bounce','erro')).
- *  - Manter estado de busca, paginação e loading.
- *  - Expor recarregamento para uso reativo dentro do BaseLeadsPage.
+ * v1.1 (16/06/2026 — F8): O formato de resposta da API permanece idêntico
+ *   ({ success, itens, total, page, limit, total_pages }), por isso a
+ *   única mudança real é o TIPO `InvalidoItem` (atualizado em crm.types.ts
+ *   v1.7 para schema lead-centric). Nenhuma mudança funcional aqui — o
+ *   hook continua funcionando como agnóstico do schema dos itens.
+ *
+ *   Mudança colateral: o backend (crm-leads.ts v1.15 — listar_invalidos)
+ *   agora retorna 1 linha por LEAD inválido (não mais 1 por evento de
+ *   fila). Volume tende a cair (deduplicação natural). Nada a fazer aqui.
+ *
+ * v1.0 (Fase 8-Inbox — 04/06/2026):
+ *   Responsabilidade:
+ *    - Consumir `GET /api/crm-leads?action=listar_invalidos`.
+ *    - Manter estado de busca, paginação e loading.
+ *    - Expor recarregamento para uso reativo dentro do BaseLeadsPage.
  *
  * Padrão idêntico aos hooks useLeads / useRespostas.
  */

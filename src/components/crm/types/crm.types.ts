@@ -2,7 +2,48 @@
  * crm.types.ts — Tipos compartilhados do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/types/crm.types.ts
- * Versão: 1.6 (Alinhamento TS↔DDL TipoCampanha — 14/06/2026)
+ * Versão: 1.7 (F8 — Aba Inválidos lead-centric + Lead com estados de invalidação — 16/06/2026)
+ *
+ * v1.7 (16/06/2026 — F8: Aba Inválidos lead-centric):
+ *   Alinhamento dos tipos com a reformulação da aba "Inválidos" entregue
+ *   junto com o webhook v1.15 (popular `motivo_invalidacao` em hard
+ *   bounce) e crm-leads.ts v1.15 (rota `listar_invalidos` agora consulta
+ *   `email_leads` em vez de `email_fila`).
+ *
+ *   Mudanças neste arquivo:
+ *     • `Lead` ganha 6 campos opcionais (todos populados pelo backend,
+ *       já existentes no schema do banco desde a Fase Recovery 3.A):
+ *         - `bounced`           (boolean — true = hard bounce permanente)
+ *         - `bounced_em`        (timestamp — quando o bounce ocorreu)
+ *         - `bounced_motivo`    (texto raw do Resend, preservado)
+ *         - `motivo_invalidacao` (classificação curta — "Email não existe",
+ *                                 "Caixa lotada", "Domínio inválido", etc.)
+ *         - `tentativas_recovery` (contador 0–3, usado pelo motor 3.A)
+ *         - `recovery_em`       (último timestamp de tentativa de recovery)
+ *       Esses campos já vinham no payload do `listar_leads` (que faz
+ *       `select('*')`) — declará-los no TS apenas elimina os `(l as any)`
+ *       que estavam aparecendo nos componentes.
+ *
+ *     • `InvalidoItem` REESCRITO para schema lead-centric:
+ *         - chave primária passa a ser `lead_id` (não mais `fila_id`)
+ *         - 1 linha por lead inválido (não mais 1 por falha de envio)
+ *         - novo campo `motivo` derivado de `motivo_invalidacao`
+ *           (com fallback para `bounced_motivo` quando NULL)
+ *         - inclui `tentativas_recovery` e `recovery_em` para a coluna
+ *           "Recovery" da nova UI (botão "Tentar Recovery" usa esses
+ *           campos para mostrar progresso / esgotamento).
+ *       Campos removidos: `fila_id`, `enviado_em`, `criado_em` (já não
+ *       fazem sentido no modelo lead-centric — uma linha NÃO é mais
+ *       evento de fila).
+ *
+ *     • `InvalidoStatus` reduzido para `'bounce'` apenas (já não há
+ *       distinção entre bounce e erro técnico — o critério da aba é o
+ *       estado consolidado do lead). Mantido como tipo para retrocompat
+ *       caso futuras categorias surjam.
+ *
+ *   Sem alteração em outros tipos. Sem migração SQL — todas as colunas
+ *   já existem em `email_leads` (confirmado no smoke test CHECKPOINT
+ *   2026-06-13).
  *
  * v1.6 (14/06/2026 — Alinhamento TS↔DDL):
  *   Removido o campo `codigo: string` da interface `TipoCampanha`. A
@@ -152,6 +193,35 @@ export interface Lead {
   // em LeadsTab v1.1. NULL quando `reservado_por` é NULL ou quando
   // o usuário referenciado foi removido.
   reservado_por_nome?: string | null;
+
+  // ── v1.7 (16/06/2026) — F8: estados de invalidação e Recovery ──
+  // Todos estes campos JÁ EXISTEM em `email_leads` desde a Fase Recovery
+  // 3.A. Eram acessados via `(lead as any).campo` em alguns componentes —
+  // declará-los aqui torna o uso type-safe.
+  //
+  // Critério da aba "Inválidos" (crm-leads.ts v1.15 — listar_invalidos):
+  //   bounced === true  OR  motivo_invalidacao IS NOT NULL
+  //
+  // Critério para exclusão da aba "Leads":
+  //   mesmo critério acima (defesa em camadas — backend filtra na query).
+  /** TRUE quando email do lead deu hard bounce permanente (Resend). */
+  bounced?: boolean;
+  /** Timestamp do PRIMEIRO bounce reportado (preservado entre retries). */
+  bounced_em?: string | null;
+  /** Mensagem RAW do Resend (ex.: "550 5.1.1 The email account..."). */
+  bounced_motivo?: string | null;
+  /**
+   * Classificação curta padronizada do motivo da invalidação.
+   * Populada pelo webhook v1.15 a partir do `bounced_motivo` raw.
+   * Valores: "Email não existe", "Caixa lotada", "Domínio inválido",
+   * "Email bloqueado", "Servidor indisponível", "Outro motivo".
+   * Pode ser populada manualmente em outros caminhos (futuro).
+   */
+  motivo_invalidacao?: string | null;
+  /** Contador de tentativas do motor Recovery (0–3). */
+  tentativas_recovery?: number;
+  /** Timestamp da última tentativa de recovery (sucesso ou falha). */
+  recovery_em?: string | null;
 }
 
 export type LeadInput = Omit<
@@ -483,50 +553,76 @@ export interface RespostaInbox {
 }
 
 // ════════════════════════════════════════════════════════════
-// INVÁLIDOS — Aba "Inválidos" (Fase 8 — 04/06/2026)
+// INVÁLIDOS — Aba "Inválidos" (F8 — 16/06/2026, reescrita lead-centric)
 // ════════════════════════════════════════════════════════════
 
 /**
- * Item da aba Inválidos: e-mails que falharam tecnicamente em envios
- * de campanhas. Critério: `email_fila.status IN ('bounce','erro')`.
+ * Item da aba Inválidos: LEADS que estão em estado terminal de email
+ * inválido. Critério (aplicado no backend pela action `listar_invalidos`
+ * em crm-leads.ts v1.15):
  *
- * Opt-out NÃO entra aqui — vai para a aba Respostas (decisão de produto
- * de 04/06/2026: opt-out é urgência de remoção, não falha técnica).
+ *   email_leads.bounced = true
+ *      OR
+ *   email_leads.motivo_invalidacao IS NOT NULL
+ *
+ * Mudança v1.7 vs v1.2 original:
+ *   ANTES — 1 linha por falha de envio em `email_fila` (status IN
+ *           'bounce','erro'). Mesmo lead aparecia N vezes se deu N bounces.
+ *   AGORA — 1 linha por LEAD inválido. Estado consolidado. Lead aparece
+ *           uma vez só, com todas as informações de invalidação e
+ *           progresso de Recovery.
+ *
+ * Opt-out NÃO entra aqui — vai para a aba "Opt-Out" dedicada (decisão
+ * permanente desde a Reorganização Prospect/Lead de 13/06/2026).
  */
-export type InvalidoStatus = 'bounce' | 'erro';
+export type InvalidoStatus = 'bounce';
 
 export interface InvalidoItem {
-  /** ID da linha em email_fila — usado como chave da listagem. */
-  fila_id: number;
+  /** ID do lead em email_leads — chave primária da listagem. */
+  lead_id: number;
 
   // ── Lead + Empresa ──
-  lead_id: number | null;
-  lead_nome: string | null;
+  lead_nome: string;
+  lead_email: string;
   empresa_id: number | null;
   empresa_nome: string | null;
 
-  /** E-mail que estava sendo usado quando a falha aconteceu. */
-  destinatario_email: string;
-
-  // ── Campanha emissora ──
-  campanha_id: number;
-  campanha_nome: string | null;
-
-  /** Tipo de falha: 'bounce' (rejeitado pelo destinatário) ou 'erro' (falha de envio). */
+  /**
+   * Status consolidado. Hoje sempre 'bounce' (lead com bounced=true OU
+   * com motivo_invalidacao populado). Mantido como union type para
+   * permitir futuras categorias (ex.: 'manual', 'compliance').
+   */
   status: InvalidoStatus;
 
   /**
-   * Motivo legível da falha — vem de `email_fila.erro_detalhes`, populado
-   * pelo cron de envio (erro 4xx/5xx) ou pelo webhook (bounce hard/soft).
+   * Motivo legível da invalidação (classificação curta padronizada):
+   *   - "Email não existe"
+   *   - "Caixa lotada"
+   *   - "Domínio inválido"
+   *   - "Email bloqueado"
+   *   - "Servidor indisponível"
+   *   - "Outro motivo"
+   *   - "Falha permanente" (fallback para leads pré-v1.15 com bounced=true
+   *     mas motivo_invalidacao=NULL — não fizemos backfill por decisão
+   *     de produto 16/06/2026, preenchimento orgânico nos próximos bounces)
    */
-  motivo: string | null;
+  motivo: string;
 
-  /** Quando o bounce foi registrado (presente apenas para status='bounce'). */
-  bounce_em: string | null;
-  /** Quando o cron tentou enviar (presente apenas para status='erro'). */
-  enviado_em: string | null;
-  /** Timestamp de criação do item da fila (sempre presente — usado como fallback). */
-  criado_em: string;
+  /**
+   * Raw original do Resend, preservado em `email_leads.bounced_motivo`.
+   * Mostrado em tooltip quando o usuário passa o mouse sobre o motivo
+   * classificado. NULL para invalidações sem origem em bounce automático.
+   */
+  motivo_raw: string | null;
+
+  /** Quando o lead foi marcado como inválido (presente em todos os casos). */
+  bounced_em: string | null;
+
+  // ── Recovery (Fase 3.A — Camada Gemini em Production desde 13/06/2026) ──
+  /** Contador de tentativas de recovery (0 = nunca tentou; 3 = esgotado). */
+  tentativas_recovery: number;
+  /** Timestamp da última tentativa (sucesso ou falha) — ou null se nunca tentou. */
+  recovery_em: string | null;
 }
 
 // ════════════════════════════════════════════════════════════
