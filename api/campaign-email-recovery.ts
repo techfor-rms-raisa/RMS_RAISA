@@ -1,9 +1,27 @@
 /**
  * api/campaign-email-recovery.ts
  *
- * EMAIL RECOVERY PIPELINE — v2.0
- * Fase 3.A — Camada Gemini (expansão do motor)
- * Data: 13/06/2026
+ * EMAIL RECOVERY PIPELINE — v2.0.1
+ * Fase 3.A — Camada Gemini (expansão do motor) + Fix timeout Vercel
+ * Data: 13/06/2026 → 16/06/2026 (v2.0.1)
+ *
+ * v2.0.1 (16/06/2026 — F8 fix de timeout):
+ *   Único change: `maxDuration: 60` → `maxDuration: 300` (5min).
+ *   Smoke test em Preview (lead 17 naoexiste-f8-v3@techforti.com.br) via
+ *   UI da F8 (botão Recovery na aba Inválidos) bateu HTTP 504 Vercel
+ *   Runtime Timeout após 60s — Snov.io estava no meio das validações.
+ *   Logs mostraram: 17:01:32 obteve token Snov.io, 17:02:04 timeout 60s.
+ *
+ *   Como o pior caso do motor (smoke 13/06 Production lead 1662) já tinha
+ *   sido medido em 58.4s, qualquer flutuação de latência (rede Snov.io,
+ *   Gemini, MX lookup) excedia o budget. O `maxDuration: 60` original era
+ *   inadequado para o pior caso real.
+ *
+ *   maxDuration: 300 é o teto do Vercel Pro. Refinamento definitivo será
+ *   na Sub-fase 3.B com async + polling (frontend não fica esperando).
+ *
+ *   ZERO mudança na lógica do motor. Smoke test pós-patch deve mostrar
+ *   o motor completando normalmente (~30-60s).
  *
  * v2.0 (13/06/2026) — Sub-fase 3.A — CAMADA GEMINI INSERIDA NA CASCATA
  *
@@ -102,7 +120,19 @@ import { smtpProbe } from './_utils/smtp-probe.js';
 import { descobrirEmail } from './_utils/gemini-discovery.js';
 import { rankearCandidatos } from './_utils/gemini-ranker.js';
 
-export const config = { maxDuration: 60 };
+// 🆕 v2.0.1 (16/06/2026 — F8 fix): timeout estendido de 60s para 300s.
+// O motor Recovery 3.A (cascata completa Snov.io) tem pior caso ~58s, no
+// limite do timeout default Vercel Pro de 60s. Em smoke test 16/06/2026
+// (lead 17 via UI da F8) bateu 504 Vercel Runtime Timeout — Snov.io
+// estava no meio das validações quando a função foi morta.
+//
+// Solução temporária: aumentar maxDuration para 5 minutos (limite máximo
+// do Vercel Pro). Funcional, mas UX subótima — frontend espera síncrono.
+//
+// Próximo passo (Sub-fase 3.B): migrar para padrão async com job_id +
+// polling. Aí o maxDuration deste handler volta a 60s (handler só
+// enfileira o job), e um cron processa em background.
+export const config = { maxDuration: 300 };
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
