@@ -2,6 +2,19 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.16.1 (17/06/2026 — Vincular em Lote v2 FIX defesa em profundidade):
+ *    Patch sobre v1.16. Em chamadas SEM `vertical_destino` (uso direto de
+ *    API sem contexto de campanha de destino), a v1.16 inicial deixava
+ *    leads CRECI vazarem nos resultados de listar_leads_para_vinculo_em_lote.
+ *    A v1.15.1 tinha fallback defensivo que sempre excluía CRECI nesse caso;
+ *    restaurado em ambos os ramos do filtro tipo_busca (aderentes E
+ *    conversíveis). Frontend novo SEMPRE envia vertical_destino, então
+ *    essa proteção só ativa em chamadas API externas — mas é a postura
+ *    correta para defesa em profundidade (memória #27).
+ *
+ *    Sem mudança de schema. Smoke test em Preview validou o fix
+ *    (chamada sem vertical_destino → 0 leads CRECI).
+ *
  *  - v1.16 (17/06/2026 — Vincular em Lote v2 — Sessão 1 backend):
  *    Reescrita da action `listar_leads_para_vinculo_em_lote` para suportar o
  *    novo fluxo do mockup aprovado (CHECKPOINT 16/06/2026):
@@ -1411,20 +1424,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .not('funil_status', 'eq', 'perdido');
 
         // ── 4.1) Filtro tipo_busca + regra CRECI bidirecional ─
+        // 🛡️ v1.16.1 (17/06/2026) — FIX defesa em profundidade:
+        // Quando verticalDestinoQ é vazio (chamada API direta sem destino),
+        // a v1.16 inicial deixava CRECI vazar nos resultados. A v1.15.1 tinha
+        // fallback defensivo que EXCLUÍA CRECI nesse caso. Restaurado abaixo
+        // em ambos os ramos (aderentes E conversíveis). O frontend novo
+        // SEMPRE envia vertical_destino, então essa proteção só ativa em
+        // chamadas API externas indevidas — mas é a postura correta.
         if (tipoBusca === 'aderentes') {
           // ADERENTES: vertical exata = destino.
           // - Se destino CRECI → só CRECI (zero alteração).
           // - Se destino X → só X.
+          // - Se SEM destino → exclui CRECI (defesa em profundidade).
           if (verticalDestinoQ) {
             query = query.eq('vertical', verticalDestinoQ);
+          } else {
+            query = query.not('vertical', 'eq', 'CRECI');
           }
         } else {
           // CONVERSÍVEIS: qualquer vertical, com regra CRECI bidirecional:
           // - Se destino CRECI → ainda só leads CRECI (entrada blindada).
-          // - Se destino ≠ CRECI → exclui leads CRECI (saída blindada).
+          // - Se destino ≠ CRECI (ou ausente) → exclui CRECI (saída blindada).
           if (verticalDestinoQ === 'CRECI') {
             query = query.eq('vertical', 'CRECI');
-          } else if (verticalDestinoQ) {
+          } else {
             query = query.not('vertical', 'eq', 'CRECI');
           }
         }
