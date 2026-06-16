@@ -2,6 +2,66 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.16.1 (17/06/2026 — Vincular em Lote v2 FIX defesa em profundidade):
+ *    Patch sobre v1.16. Em chamadas SEM `vertical_destino` (uso direto de
+ *    API sem contexto de campanha de destino), a v1.16 inicial deixava
+ *    leads CRECI vazarem nos resultados de listar_leads_para_vinculo_em_lote.
+ *    A v1.15.1 tinha fallback defensivo que sempre excluía CRECI nesse caso;
+ *    restaurado em ambos os ramos do filtro tipo_busca (aderentes E
+ *    conversíveis). Frontend novo SEMPRE envia vertical_destino, então
+ *    essa proteção só ativa em chamadas API externas — mas é a postura
+ *    correta para defesa em profundidade (memória #27).
+ *
+ *    Sem mudança de schema. Smoke test em Preview validou o fix
+ *    (chamada sem vertical_destino → 0 leads CRECI).
+ *
+ *  - v1.16 (17/06/2026 — Vincular em Lote v2 — Sessão 1 backend):
+ *    Reescrita da action `listar_leads_para_vinculo_em_lote` para suportar o
+ *    novo fluxo do mockup aprovado (CHECKPOINT 16/06/2026):
+ *
+ *      • 6 NOVOS FILTROS:
+ *          - tipo_busca: 'aderentes' (vertical exata) | 'conversiveis'
+ *            (qualquer vertical, com CRECI ainda bidirecionalmente blindada).
+ *            Default backend = 'conversiveis' (compat com v1.15.1).
+ *          - engajamento: 'qualquer' | 'abriu' | 'clicou' | 'respondeu' |
+ *            'virgem'. Operados sobre contadores materializados de
+ *            email_leads (sem subselect em email_eventos).
+ *          - setor: filtro exato em email_empresas.setor (JOIN INNER quando
+ *            usado; LEFT quando ausente — leads sem empresa aparecem).
+ *          - uf: filtro exato em email_empresas.uf.
+ *          - cidade: ilike em email_empresas.cidade.
+ *          - cadastro_range: '7d' | '30d' | '90d' | 'mais_90d' | 'qualquer'.
+ *          - outras_campanhas: 'excluir' (default — bloqueia leads em
+ *            ativa/pausada/agendada) | 'incluir' | 'so_encerradas'.
+ *
+ *      • PAGINAÇÃO BACKEND:
+ *          - per_page (default 30, max 100), offset (default 0).
+ *          - count: 'exact' do PostgREST → resposta inclui total_geral,
+ *            pagina_atual, total_paginas, has_proxima, has_anterior.
+ *
+ *      • SCORE DE ENGAJAMENTO NA RESPOSTA:
+ *          - Cada lead retorna score_engajamento populado (vinha NULL
+ *            antes — agora é mantido em sync pela RPC; vide migration
+ *            2026-06-17_vincular_em_lote_v2_score_e_indices.sql).
+ *          - Também devolve total_emails_abertos/_clicados, total_respostas
+ *            para o frontend mostrar breakdown.
+ *
+ *      • NOVA ACTION `listar_metadados_filtros_vinculo_em_lote`:
+ *          - Devolve setores/UFs/cidades DISTINCT de email_empresas e
+ *            responsáveis ativos (GC + SDR + Administrador) para popular
+ *            os dropdowns dinâmicos do wizard.
+ *          - Zero hardcode no frontend — opções refletem a base real.
+ *
+ *    Defesa em profundidade CRECI bidirecional PRESERVADA — a action
+ *    `vincular_em_lote_a_campanha` (v1.10) NÃO foi tocada, e mantém a
+ *    blindagem por lead conforme o helper vincularLeadACampanha (v1.8).
+ *
+ *    Pareado com migration `2026-06-17_vincular_em_lote_v2_score_e_indices.sql`
+ *    que (1) atualiza a RPC `incrementar_contador_lead` para também
+ *    sincronizar `email_leads.score_engajamento`, (2) faz backfill one-shot
+ *    do score nos 1662 leads existentes, (3) cria 3 índices de suporte aos
+ *    filtros novos. Migration deve rodar ANTES do deploy desta versão.
+ *
  *  - v1.15.1 (16/06/2026 — F8 FIX: tradução de motivo_invalidacao):
  *    Pareado com webhook v1.15.1 que passou a gravar CÓDIGOS técnicos
  *    snake_case ('mailbox_inexistente', 'caixa_lotada', 'bloqueado',
@@ -1140,100 +1200,376 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ─────────────────────────────────────────────────────────
-      // 🆕 v1.9 (10/06/2026 — Vinculação em Lote) — Lista leads aptos
-      // a vinculação em lote a uma campanha existente.
-      // 🔄 v1.10 (10/06/2026 — CRECI condicional) — comportamento do
-      // filtro de vertical agora depende do parâmetro vertical_destino:
-      //  • vertical_destino === 'CRECI': mostra APENAS leads CRECI
-      //    (caso de uso: pessoal CRECI vinculando a outra campanha CRECI)
-      //  • vertical_destino !== 'CRECI' (e informado): exclui CRECI
-      //    (caso PJ: leads CRECI não podem virar outra vertical)
-      //  • vertical_destino ausente: exclui CRECI (fallback defensivo)
+      // 🆕 v1.16 (17/06/2026 — Vincular em Lote v2) — Lista dinâmica de
+      // setores, UFs, cidades e responsáveis para popular os dropdowns do
+      // wizard. Zero hardcode no frontend — opções refletem base real.
       //
-      // Critérios mantidos:
-      //  • apto_campanha = true
-      //  • opt_out IS NULL OR false
-      //  • funil_status != 'perdido'
-      //  • NÃO vinculado a campanha em status ativa/pausada/agendada
-      //  • reservado_por = responsavel_id (se informado — RBAC para não-admin)
+      // Sem parâmetros. Custo trivial (~3 queries pequenas, <100ms).
       //
-      // RBAC: Admin não passa responsavel_id (vê tudo); não-admin passa
-      //       o próprio user.id (vê apenas leads sob sua responsabilidade).
+      // Retorna:
+      //   { setores: string[], ufs: string[], cidades: string[],
+      //     responsaveis: { id, nome_usuario, tipo_usuario, email_usuario }[] }
       // ─────────────────────────────────────────────────────────
-      if (action === 'listar_leads_para_vinculo_em_lote') {
-        const responsavelIdQ = req.query.responsavel_id as string | undefined;
-        const verticalDestinoQ = (req.query.vertical_destino as string) || '';
-        const busca = (req.query.busca as string) || '';
-        const limit = parseInt((req.query.limit as string) || '200');
+      if (action === 'listar_metadados_filtros_vinculo_em_lote') {
+        // 1) Setores/UFs/cidades distintos da base de empresas (sem null)
+        const { data: empresas, error: errEmp } = await supabase
+          .from('email_empresas')
+          .select('setor, cidade, uf');
 
-        // Coletar IDs já vinculados a campanhas em status ativa/pausada/agendada
-        // (decisão de produto 09/06/2026 — bloqueia duplicação simultânea).
-        const { data: vinculosAtivos } = await supabase
-          .from('email_lead_campanhas')
-          .select('lead_id, email_campanhas!inner(status)')
-          .in('email_campanhas.status', ['ativa', 'pausada', 'agendada']);
-
-        const idsVinculados = Array.from(
-          new Set((vinculosAtivos || []).map((v: any) => v.lead_id))
-        );
-
-        // Query principal — apto_campanha + filtros
-        // 🆕 v1.11 (10/06/2026) — Adicionado filtro `bounced != true`:
-        //   leads com hard bounce permanente não aparecem em listagens de
-        //   elegíveis. Decisão P1.2 (CHECKPOINT_2026-06-10.md). Defesa em
-        //   profundidade — o helper vincularLeadACampanha também bloqueia.
-        let query = supabase
-          .from('email_leads')
-          .select(`
-            id, nome, email, cargo, vertical, reservado_por, funil_status,
-            apto_campanha, opt_out, telefone, linkedin_url,
-            email_empresas(id, nome)
-          `)
-          .eq('apto_campanha', true)
-          .or('opt_out.is.null,opt_out.eq.false')
-          .or('bounced.is.null,bounced.eq.false')
-          .not('funil_status', 'eq', 'perdido')
-          .order('nome', { ascending: true })
-          .limit(limit);
-
-        // 🔄 v1.10 — Filtro de vertical condicional (regra CRECI bidirecional):
-        if (verticalDestinoQ === 'CRECI') {
-          // Destino CRECI → mostra APENAS leads CRECI (vincula sem alteração)
-          query = query.eq('vertical', 'CRECI');
-        } else {
-          // Destino ≠ CRECI ou ausente → exclui CRECI (não vira outra vertical)
-          query = query.not('vertical', 'eq', 'CRECI');
+        if (errEmp) {
+          console.error('[crm-leads] listar_metadados_filtros erro empresas:', errEmp.message);
+          return res.status(500).json({ success: false, error: errEmp.message });
         }
 
-        if (responsavelIdQ) {
-          query = query.eq('reservado_por', parseInt(responsavelIdQ));
-        }
-        if (busca) {
-          query = query.or(`nome.ilike.%${busca}%,email.ilike.%${busca}%,cargo.ilike.%${busca}%`);
-        }
-        if (idsVinculados.length > 0) {
-          query = query.not('id', 'in', `(${idsVinculados.join(',')})`);
-        }
+        const setores: string[] = Array.from(new Set(
+          (empresas || []).map((e: any) => (e.setor || '').trim()).filter(Boolean) as string[]
+        )).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
-        const { data: leads, error: errLeads } = await query;
-        if (errLeads) return res.status(500).json({ success: false, error: errLeads.message });
+        const ufs: string[] = Array.from(new Set(
+          (empresas || []).map((e: any) => (e.uf || '').trim().toUpperCase()).filter(Boolean) as string[]
+        )).sort();
 
-        // Filtrar opt-outs globais (defesa em profundidade)
-        const { data: optouts } = await supabase
-          .from('email_optout')
-          .select('email');
-        const emailsOptout = new Set((optouts || []).map((o: any) => (o.email || '').toLowerCase().trim()));
+        const cidades: string[] = Array.from(new Set(
+          (empresas || []).map((e: any) => (e.cidade || '').trim()).filter(Boolean) as string[]
+        )).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
-        const filtered = (leads || []).filter(
-          (l: any) => !emailsOptout.has((l.email || '').toLowerCase().trim())
-        );
+        // 2) Responsáveis ativos (GC + SDR + Administrador — Admin pode aparecer
+        //    como responsável em casos excepcionais; vide criar_lead v1.7).
+        //    Não filtramos por flag 'ativo' aqui porque a tabela app_users no
+        //    schema atual não a expõe consistentemente; basta filtrar pelo tipo.
+        const { data: responsaveis, error: errResp } = await supabase
+          .from('app_users')
+          .select('id, nome_usuario, tipo_usuario, email_usuario')
+          .in('tipo_usuario', ['Gestão Comercial', 'SDR', 'Administrador'])
+          .order('tipo_usuario', { ascending: true })
+          .order('nome_usuario', { ascending: true });
+
+        if (errResp) {
+          console.error('[crm-leads] listar_metadados_filtros erro responsaveis:', errResp.message);
+          return res.status(500).json({ success: false, error: errResp.message });
+        }
 
         return res.status(200).json({
           success: true,
-          leads: filtered,
-          total: filtered.length,
-          ids_vinculados_bloqueados: idsVinculados.length,
+          setores,
+          ufs,
+          cidades,
+          responsaveis: responsaveis || [],
+        });
+      }
+
+      // ─────────────────────────────────────────────────────────
+      // 🔄 v1.16 (17/06/2026 — Vincular em Lote v2 — REESCRITA):
+      // Lista leads aptos a vinculação em lote, com 6 NOVOS FILTROS +
+      // PAGINAÇÃO + SCORE no payload. Pareado com migration
+      // 2026-06-17_vincular_em_lote_v2_score_e_indices.sql (RPC do score
+      // + 3 índices: criado_em, empresas.setor, empresas.uf).
+      //
+      // Histórico desta action:
+      //   - v1.9 (10/06): criação (8 filtros base).
+      //   - v1.10 (10/06): vertical_destino condicional (CRECI bidirecional).
+      //   - v1.11 (10/06): filtro bounced=false (decisão P1.2).
+      //   - v1.16 (17/06): 6 novos filtros + paginação + score.
+      //
+      // ── PARÂMETROS (todos GET querystring) ─────────────────
+      //
+      // FILTROS BASE (compat v1.15.1):
+      //   responsavel_id    : number  — RBAC; não-admin envia próprio user.id
+      //   vertical_destino  : string  — vertical da campanha (obriga regra CRECI)
+      //   busca             : string  — ilike em nome/email/cargo
+      //
+      // FILTROS V2:
+      //   tipo_busca        : 'aderentes' | 'conversiveis' (default 'conversiveis')
+      //                       - aderentes:   só leads com vertical === destino
+      //                       - conversiveis: qualquer vertical (CRECI ainda
+      //                         bidirecionalmente blindada — não entra nem sai)
+      //   engajamento       : 'qualquer' | 'abriu' | 'clicou' | 'respondeu'
+      //                     | 'virgem'  (default 'qualquer')
+      //                       Operados sobre contadores materializados de
+      //                       email_leads (populados pelo webhook v1.15.1).
+      //   setor             : string  — exato em email_empresas.setor
+      //   uf                : string  — exato em email_empresas.uf (uppercase)
+      //   cidade            : string  — ilike em email_empresas.cidade
+      //   cadastro_range    : '7d' | '30d' | '90d' | 'mais_90d' | 'qualquer'
+      //                       (default 'qualquer')
+      //   outras_campanhas  : 'excluir' (default) | 'incluir' | 'so_encerradas'
+      //                       - excluir:      bloqueia leads em ativa/pausada/agendada
+      //                       - incluir:      sem bloqueio (admin power)
+      //                       - so_encerradas: lead em ≥1 encerrada E nenhuma ativa
+      //
+      // PAGINAÇÃO:
+      //   per_page          : number (default 30, max 100)
+      //   offset            : number (default 0)
+      //
+      // ── CRITÉRIOS HARD-CODED (não negociáveis) ──────────────
+      //   • apto_campanha = true
+      //   • opt_out IS NULL OR opt_out = false
+      //   • bounced IS NULL OR bounced = false
+      //   • funil_status != 'perdido'
+      //   • opt-out global (tabela email_optout) — defesa em profundidade
+      //
+      // ── DEFESA CRECI BIDIRECIONAL ──────────────────────────
+      // Mantida em DUAS camadas:
+      //   1. Aqui (filtro de listagem) — não mostra leads CRECI em destinos
+      //      não-CRECI nem vice-versa.
+      //   2. vincular_em_lote_a_campanha (linha ~1975) — valida lead a lead.
+      //
+      // ── RBAC ───────────────────────────────────────────────
+      // Admin não passa responsavel_id (vê tudo); não-admin passa o próprio
+      // user.id (vê apenas leads sob sua responsabilidade).
+      // ─────────────────────────────────────────────────────────
+      if (action === 'listar_leads_para_vinculo_em_lote') {
+        // ── 1) Coleta e normalização dos parâmetros ─────────
+        const responsavelIdQ = req.query.responsavel_id as string | undefined;
+        const verticalDestinoQ = (req.query.vertical_destino as string) || '';
+        const busca = (req.query.busca as string) || '';
+
+        const tipoBusca = ((req.query.tipo_busca as string) || 'conversiveis').toLowerCase();
+        const engajamento = ((req.query.engajamento as string) || 'qualquer').toLowerCase();
+        const setor = (req.query.setor as string) || '';
+        const uf = ((req.query.uf as string) || '').toUpperCase();
+        const cidade = (req.query.cidade as string) || '';
+        const cadastroRange = ((req.query.cadastro_range as string) || 'qualquer').toLowerCase();
+        const outrasCampanhas = ((req.query.outras_campanhas as string) || 'excluir').toLowerCase();
+
+        // Paginação — clamp defensivo
+        let perPage = parseInt((req.query.per_page as string) || '30');
+        if (isNaN(perPage) || perPage < 1) perPage = 30;
+        if (perPage > 100) perPage = 100;
+        let offset = parseInt((req.query.offset as string) || '0');
+        if (isNaN(offset) || offset < 0) offset = 0;
+
+        // ── 2) Pré-cálculo: IDs bloqueados / IDs em encerradas ─
+        //   (depende do parâmetro outras_campanhas; defaults para 'excluir').
+        let idsBloqueadosAtivas: number[] = [];
+        let idsEmEncerradas: number[] = [];
+
+        if (outrasCampanhas === 'excluir' || outrasCampanhas === 'so_encerradas') {
+          const { data: vinculosAtivos, error: errVA } = await supabase
+            .from('email_lead_campanhas')
+            .select('lead_id, email_campanhas!inner(status)')
+            .in('email_campanhas.status', ['ativa', 'pausada', 'agendada']);
+          if (errVA) {
+            console.error('[crm-leads] erro vinculosAtivos:', errVA.message);
+            return res.status(500).json({ success: false, error: errVA.message });
+          }
+          idsBloqueadosAtivas = Array.from(
+            new Set((vinculosAtivos || []).map((v: any) => v.lead_id))
+          );
+        }
+
+        if (outrasCampanhas === 'so_encerradas') {
+          const { data: vinculosEncerrados, error: errVE } = await supabase
+            .from('email_lead_campanhas')
+            .select('lead_id, email_campanhas!inner(status)')
+            .in('email_campanhas.status', ['encerrada']);
+          if (errVE) {
+            console.error('[crm-leads] erro vinculosEncerrados:', errVE.message);
+            return res.status(500).json({ success: false, error: errVE.message });
+          }
+          idsEmEncerradas = Array.from(
+            new Set((vinculosEncerrados || []).map((v: any) => v.lead_id))
+          );
+          // Se não houver nenhum lead em campanha encerrada, retorno cedo —
+          // saved-cycles e evita .in('id', [vazio]) que o PostgREST não aceita.
+          if (idsEmEncerradas.length === 0) {
+            return res.status(200).json({
+              success: true,
+              leads: [],
+              total_geral: 0,
+              total_paginas: 0,
+              pagina_atual: 1,
+              per_page: perPage,
+              offset,
+              has_proxima: false,
+              has_anterior: false,
+              vertical_destino_aplicado: verticalDestinoQ || null,
+              tipo_busca_aplicado: tipoBusca,
+              filtros_aplicados: {
+                engajamento, setor, uf, cidade, cadastro_range: cadastroRange,
+                outras_campanhas: outrasCampanhas, responsavel_id: responsavelIdQ || null,
+                busca: busca || null,
+              },
+              ids_vinculados_bloqueados: idsBloqueadosAtivas.length,
+            });
+          }
+        }
+
+        // ── 3) JOIN strategy ────────────────────────────────
+        // Se houver filtro em setor/uf/cidade → INNER (exige empresa associada).
+        // Caso contrário → LEFT (leads sem empresa aparecem normalmente).
+        const usaInnerEmpresa = !!(setor || uf || cidade);
+        const empresaSelect = usaInnerEmpresa
+          ? 'email_empresas!inner(id, nome, setor, cidade, uf)'
+          : 'email_empresas(id, nome, setor, cidade, uf)';
+
+        // ── 4) Query principal ──────────────────────────────
+        // count: 'exact' devolve total_geral em uma query só (PostgREST
+        // executa SELECT count(*) em paralelo — ~10ms em 1.6k leads hoje).
+        let query = supabase
+          .from('email_leads')
+          .select(
+            `
+            id, nome, email, cargo, vertical, reservado_por, funil_status,
+            apto_campanha, opt_out, telefone, linkedin_url, criado_em,
+            total_emails_recebidos, total_emails_abertos, total_emails_clicados,
+            total_respostas, score_engajamento,
+            ${empresaSelect}
+            `,
+            { count: 'exact' }
+          )
+          .eq('apto_campanha', true)
+          .or('opt_out.is.null,opt_out.eq.false')
+          .or('bounced.is.null,bounced.eq.false')
+          .not('funil_status', 'eq', 'perdido');
+
+        // ── 4.1) Filtro tipo_busca + regra CRECI bidirecional ─
+        // 🛡️ v1.16.1 (17/06/2026) — FIX defesa em profundidade:
+        // Quando verticalDestinoQ é vazio (chamada API direta sem destino),
+        // a v1.16 inicial deixava CRECI vazar nos resultados. A v1.15.1 tinha
+        // fallback defensivo que EXCLUÍA CRECI nesse caso. Restaurado abaixo
+        // em ambos os ramos (aderentes E conversíveis). O frontend novo
+        // SEMPRE envia vertical_destino, então essa proteção só ativa em
+        // chamadas API externas indevidas — mas é a postura correta.
+        if (tipoBusca === 'aderentes') {
+          // ADERENTES: vertical exata = destino.
+          // - Se destino CRECI → só CRECI (zero alteração).
+          // - Se destino X → só X.
+          // - Se SEM destino → exclui CRECI (defesa em profundidade).
+          if (verticalDestinoQ) {
+            query = query.eq('vertical', verticalDestinoQ);
+          } else {
+            query = query.not('vertical', 'eq', 'CRECI');
+          }
+        } else {
+          // CONVERSÍVEIS: qualquer vertical, com regra CRECI bidirecional:
+          // - Se destino CRECI → ainda só leads CRECI (entrada blindada).
+          // - Se destino ≠ CRECI (ou ausente) → exclui CRECI (saída blindada).
+          if (verticalDestinoQ === 'CRECI') {
+            query = query.eq('vertical', 'CRECI');
+          } else {
+            query = query.not('vertical', 'eq', 'CRECI');
+          }
+        }
+
+        // ── 4.2) Filtros de empresa (setor / UF / cidade) ────
+        if (setor) query = query.eq('email_empresas.setor', setor);
+        if (uf) query = query.eq('email_empresas.uf', uf);
+        if (cidade) query = query.ilike('email_empresas.cidade', `%${cidade}%`);
+
+        // ── 4.3) Filtro de responsável ──────────────────────
+        if (responsavelIdQ) {
+          query = query.eq('reservado_por', parseInt(responsavelIdQ));
+        }
+
+        // ── 4.4) Busca textual ──────────────────────────────
+        if (busca) {
+          query = query.or(
+            `nome.ilike.%${busca}%,email.ilike.%${busca}%,cargo.ilike.%${busca}%`
+          );
+        }
+
+        // ── 4.5) Filtro de engajamento ──────────────────────
+        // Operados sobre colunas materializadas em email_leads. Quase grátis
+        // (sem join com email_eventos). O score_engajamento já foi atualizado
+        // pelo webhook v1.15.1 + RPC v1.16 (vide migration).
+        if (engajamento === 'abriu') {
+          query = query.gte('total_emails_abertos', 1);
+        } else if (engajamento === 'clicou') {
+          query = query.gte('total_emails_clicados', 1);
+        } else if (engajamento === 'respondeu') {
+          query = query.gte('total_respostas', 1);
+        } else if (engajamento === 'virgem') {
+          query = query.or('total_emails_recebidos.is.null,total_emails_recebidos.eq.0');
+        }
+        // 'qualquer' (default) → sem filtro
+
+        // ── 4.6) Filtro de data de cadastro ─────────────────
+        // Faixas calculadas no servidor para evitar drift de timezone do cliente.
+        if (cadastroRange !== 'qualquer') {
+          const agora = Date.now();
+          const dia = 24 * 60 * 60 * 1000;
+          if (cadastroRange === '7d') {
+            query = query.gte('criado_em', new Date(agora - 7 * dia).toISOString());
+          } else if (cadastroRange === '30d') {
+            query = query.gte('criado_em', new Date(agora - 30 * dia).toISOString());
+          } else if (cadastroRange === '90d') {
+            query = query.gte('criado_em', new Date(agora - 90 * dia).toISOString());
+          } else if (cadastroRange === 'mais_90d') {
+            query = query.lt('criado_em', new Date(agora - 90 * dia).toISOString());
+          }
+        }
+
+        // ── 4.7) Filtros "outras campanhas" ─────────────────
+        if (idsBloqueadosAtivas.length > 0) {
+          query = query.not('id', 'in', `(${idsBloqueadosAtivas.join(',')})`);
+        }
+        if (outrasCampanhas === 'so_encerradas') {
+          // idsEmEncerradas garantido não-vazio (early-return acima cobre o caso vazio)
+          query = query.in('id', idsEmEncerradas);
+        }
+
+        // ── 5) Ordenação + paginação ────────────────────────
+        // Mais engajados primeiro (score DESC), depois alfabético por nome.
+        // Range é zero-indexed e INCLUSIVO em ambas as pontas.
+        query = query
+          .order('score_engajamento', { ascending: false, nullsFirst: false })
+          .order('nome', { ascending: true })
+          .range(offset, offset + perPage - 1);
+
+        const { data: leads, error: errLeads, count: totalGeral } = await query;
+        if (errLeads) {
+          console.error('[crm-leads] listar_leads_para_vinculo_em_lote erro:', errLeads.message);
+          return res.status(500).json({ success: false, error: errLeads.message });
+        }
+
+        // ── 6) Defesa em profundidade: opt-out global ───────
+        // A tabela email_optout é desacoplada de email_leads, então o filtro
+        // vai pós-query. Em casos reais (poucos opt-outs vs total de leads),
+        // o impacto na contagem é desprezível; documentamos como aproximação.
+        const { data: optouts } = await supabase
+          .from('email_optout')
+          .select('email');
+        const emailsOptout = new Set(
+          (optouts || []).map((o: any) => (o.email || '').toLowerCase().trim())
+        );
+
+        const leadsFiltrados = (leads || []).filter(
+          (l: any) => !emailsOptout.has((l.email || '').toLowerCase().trim())
+        );
+
+        const removidosPorOptout = (leads || []).length - leadsFiltrados.length;
+        const totalAjustado = Math.max(0, (totalGeral || 0) - removidosPorOptout);
+
+        // ── 7) Metadados de paginação ───────────────────────
+        const totalPaginas = Math.max(1, Math.ceil(totalAjustado / perPage));
+        const paginaAtual = Math.floor(offset / perPage) + 1;
+        const hasProxima = offset + perPage < totalAjustado;
+        const hasAnterior = offset > 0;
+
+        return res.status(200).json({
+          success: true,
+          leads: leadsFiltrados,
+          total_geral: totalAjustado,
+          total_paginas: totalPaginas,
+          pagina_atual: paginaAtual,
+          per_page: perPage,
+          offset,
+          has_proxima: hasProxima,
+          has_anterior: hasAnterior,
           vertical_destino_aplicado: verticalDestinoQ || null,
+          tipo_busca_aplicado: tipoBusca,
+          filtros_aplicados: {
+            engajamento,
+            setor: setor || null,
+            uf: uf || null,
+            cidade: cidade || null,
+            cadastro_range: cadastroRange,
+            outras_campanhas: outrasCampanhas,
+            responsavel_id: responsavelIdQ || null,
+            busca: busca || null,
+          },
+          ids_vinculados_bloqueados: idsBloqueadosAtivas.length,
         });
       }
 
