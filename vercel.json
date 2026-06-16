@@ -13,10 +13,6 @@
   "functions": {
     "api/**/*.ts": {
       "memory": 1024,
-      "maxDuration": 60
-    },
-    "api/campaign-email-recovery.*": {
-      "memory": 1024,
       "maxDuration": 300
     }
   },
