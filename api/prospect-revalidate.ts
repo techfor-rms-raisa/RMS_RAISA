@@ -1,6 +1,21 @@
 /**
  * api/prospect-revalidate.ts — Orquestrador da Revalidação de Leads Importados
  *
+ * v1.1 (17/06/2026 — Sub-fase 3.C: suporte a "Importar Lista de Leads")
+ *   Quando o body chega com `lead.criar_se_nao_existir === true` E sem
+ *   `lead.lead_id`, o handler INSERE o registro em `prospect_leads` ANTES
+ *   de rodar a cascata, com:
+ *     - motor = 'importacao_lista' (novo valor — exige migration
+ *       2026-06-17_prospect_leads_motor_importacao.sql aplicada)
+ *     - reservado_por = lead.reservado_por (do CSV/Excel) ou user_id (fallback)
+ *     - vertical = lead.vertical (vem da planilha)
+ *     - status = 'novo', permite_revalidacao_externa = true
+ *   O `lead_id` resultante é injetado em `leadInput` para que ETAPA 4 faça
+ *   UPDATE no mesmo registro com o resultado da cascata (validado_em,
+ *   proxima_validacao, status_atualizacao, etc.).
+ *   Backwards-compatible: leads SEM a flag continuam tratados como
+ *   "lead externo, só registra log" (comportamento v1.0).
+ *
  * v1.0 (17/06/2026)
  *
  * Implementa a cascata especificada em RAISA-Revalidacao-Especificacao-Tecnica.docx v1.0,
@@ -86,6 +101,13 @@ interface LeadInput {
   ultimo_contato_em?: string;
   status_pipeline?: 'ativo' | 'nurturing' | 'cold';
   tier_pipeline?:   'ativo' | 'nurturing' | 'cold';
+
+  // 🆕 v1.1 (17/06/2026 — Sub-fase 3.C "Importar Lista de Leads"):
+  //   Quando estes campos vêm no body, o handler cria o registro em
+  //   prospect_leads ANTES de rodar a cascata.
+  criar_se_nao_existir?: boolean;
+  reservado_por?:        number;
+  vertical?:             string;
 }
 
 interface ResultadoEtapa0 {
@@ -684,6 +706,47 @@ async function processarLead(leadInput: LeadInput, user_id: number): Promise<Res
       .eq('id', leadInput.lead_id)
       .maybeSingle();
     leadDb = data;
+  }
+
+  // 🆕 v1.1 (17/06/2026 — Sub-fase 3.C "Importar Lista de Leads"):
+  //   Se chegou SEM lead_id mas COM a flag de criação E temos info mínima,
+  //   INSERIMOS o lead em prospect_leads e usamos o ID resultante para o
+  //   resto do fluxo. ETAPA 4 fará UPDATE em cima desse mesmo ID com o
+  //   resultado da cascata (validado_em, proxima_validacao, etc.).
+  //   Requer migration 2026-06-17_prospect_leads_motor_importacao.sql
+  //   aplicada (adiciona 'importacao_lista' ao CHECK constraint de `motor`).
+  if (!leadDb && !leadInput.lead_id && leadInput.criar_se_nao_existir === true) {
+    const { primeiro: pNome, ultimo: uNome } = extrairPrimeiroEUltimo(leadInput.nome_completo);
+    const insertNovo: any = {
+      buscado_por:     user_id,
+      reservado_por:   leadInput.reservado_por ?? user_id,
+      motor:           'importacao_lista',
+      nome_completo:   leadInput.nome_completo,
+      primeiro_nome:   leadInput.primeiro_nome ?? pNome ?? null,
+      ultimo_nome:     leadInput.ultimo_nome   ?? uNome ?? null,
+      email:           leadInput.email         ?? null,
+      cargo:           leadInput.cargo         ?? null,
+      linkedin_url:    leadInput.linkedin_url  ?? null,
+      empresa_nome:    leadInput.empresa_nome  ?? null,
+      empresa_dominio: leadInput.empresa_dominio ?? null,
+      vertical:        leadInput.vertical      ?? null,
+      status:          'novo',
+      tier_pipeline:   leadInput.tier_pipeline ?? 'cold',
+      permite_revalidacao_externa: true,
+    };
+    const { data: inserido, error: errIns } = await supabase
+      .from('prospect_leads')
+      .insert(insertNovo)
+      .select('*')
+      .single();
+    if (errIns) {
+      console.error(`❌ [revalidate/insert-novo-importacao] ${errIns.message}`);
+      // Continua sem leadDb — fallback para o caminho "lead externo, só log"
+    } else if (inserido) {
+      console.log(`✅ [revalidate/insert-novo-importacao] lead_id=${inserido.id} reservado_por=${insertNovo.reservado_por}`);
+      leadDb = inserido;
+      leadInput.lead_id = inserido.id;
+    }
   }
 
   // ── ETAPA 0
