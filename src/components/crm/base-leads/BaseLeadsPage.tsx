@@ -2,9 +2,29 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.11 (Sub-fase 3.C — Importar Lista de Leads — 17/06/2026)
+ * Versão: 1.12 (Sub-fase 3.D — Edição + Auto-promoção — 17/06/2026)
  *
- * 🆕 v1.11 (17/06/2026 — Sub-fase 3.C: Importar Lista de Leads):
+ * 🆕 v1.12 (17/06/2026 — Sub-fase 3.D: Auto-promoção + Edição):
+ *   Complementa a Sub-fase 3.C (v1.11) com:
+ *    - Modal "Editar Lead Importado" — formulário rico permitindo
+ *      ajustar dados do lead antes de revalidar/promover.
+ *    - Auto-promoção transparente para o usuário: rodada de validação
+ *      que termina com status_atualizacao='atualizado' e sem
+ *      review_manual transfere o lead para email_leads (CRM) e remove
+ *      de prospect_leads na mesma chamada. A aba "Leads Importados"
+ *      naturalmente diminui à medida que leads são promovidos.
+ *
+ *   Mudanças cirúrgicas:
+ *    - Novo import: EditarLeadImportadoModal.
+ *    - Novos states: `modalEditarLead` + `editandoLead`.
+ *    - Handler `abrirEditarLead(lead)` / `fecharEditarLead()` / `salvarEdicao()`.
+ *    - LeadsImportadosTab agora recebe prop `onEditar`.
+ *    - EditarLeadImportadoModal instanciado junto dos demais modais.
+ *
+ *   Dependência: backend prospect-leads-importados v1.1 com suporte a
+ *   PATCH, e prospect-revalidate v1.2 com auto-promoção integrada.
+ *
+ * v1.11 (17/06/2026 — Sub-fase 3.C: Importar Lista de Leads):
  *   Adiciona o fluxo de importação manual de leads via Excel/CSV no topo
  *   do BaseLeadsPage, complementando o "Importar Prospects" existente
  *   (que continua intacto). Cobre o caso de uso de GC/SDR que recebe
@@ -250,6 +270,9 @@ import ImportProspectsModal from './ImportProspectsModal';
 import { useLeadsImportados } from '../shared/hooks/useLeadsImportados';
 import ImportarListaLeadsModal from './ImportarListaLeadsModal';
 import LeadsImportadosTab from './LeadsImportadosTab';
+// 🆕 v1.12 (Sub-fase 3.D — 17/06/2026)
+import EditarLeadImportadoModal from './EditarLeadImportadoModal';
+import type { LeadImportado } from '../shared/hooks/useLeadsImportados';
 
 import KpiCard from '../shared/components/KpiCard';
 import type { CurrentUserLite, Empresa, Lead } from '../types/crm.types';
@@ -313,6 +336,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   const [modalImportarAberto, setModalImportarAberto] = useState(false);
   // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — Modal "Importar Lista de Leads"
   const [modalImportarListaAberto, setModalImportarListaAberto] = useState(false);
+  // 🆕 v1.12 (Sub-fase 3.D — 17/06/2026) — Modal "Editar Lead Importado"
+  const [editandoLead, setEditandoLead] = useState<LeadImportado | null>(null);
 
   // 🆕 v1.10 (F8 — 16/06/2026) — Recovery em andamento por lead.
   // Set imutável para garantir re-render do InvalidosTab quando o
@@ -1000,7 +1025,11 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
 
         {/* 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — Aba Leads Importados */}
         {abaAtiva === 'leads_importados' && (
-          <LeadsImportadosTab hook={leadsImportadosH} />
+          <LeadsImportadosTab
+            hook={leadsImportadosH}
+            // 🆕 v1.12 (Sub-fase 3.D — 17/06/2026)
+            onEditar={(lead) => setEditandoLead(lead)}
+          />
         )}
 
         {/* 🆕 v1.7 (Reorganização Prospect/Lead — 13/06/2026) — Aba Opt-Out */}
@@ -1060,6 +1089,20 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           leadsH.carregarStats();
         }}
         onFechar={() => setModalImportarListaAberto(false)}
+      />
+
+      {/* 🆕 v1.12 (Sub-fase 3.D — 17/06/2026) — Modal "Editar Lead Importado" */}
+      <EditarLeadImportadoModal
+        aberto={editandoLead !== null}
+        lead={editandoLead}
+        currentUser={currentUser}
+        responsaveis={responsaveisH.responsaveis}
+        verticaisDisponiveis={(tiposCampanhaH.tipos ?? []).map(t => t.nome)}
+        onSalvar={async (lead_id, novos_dados) => {
+          const atualizado = await leadsImportadosH.editar(lead_id, novos_dados);
+          return atualizado;
+        }}
+        onFechar={() => setEditandoLead(null)}
       />
 
       {/* ════════════════════════════════════════════════════════════ */}

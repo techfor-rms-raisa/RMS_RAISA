@@ -1,180 +1,400 @@
 /**
- * api/prospect-leads-importados.ts — Listagem dos leads importados via "Importar Lista de Leads"
+ * useLeadsImportados.ts — Hook orquestrador da aba "Leads Importados"
  *
- * Caminho: api/prospect-leads-importados.ts
- * Versão: 1.0 (Sub-fase 3.C — 17/06/2026)
+ * Caminho: src/components/crm/shared/hooks/useLeadsImportados.ts
+ * Versão: 1.1 (Sub-fase 3.D — 17/06/2026 — adiciona método editar())
  *
- * Endpoint dedicado da aba "Leads Importados" do BaseLeadsPage. Lê
- * `prospect_leads` filtrando exclusivamente os registros que vieram
- * pelo motor 'importacao_lista' (criados pelo handler prospect-revalidate
- * v1.1 quando a planilha é processada).
+ * v1.1 (Sub-fase 3.D — 17/06/2026):
+ *   • Novo método `editar(lead_id, novos_dados)` que chama PATCH
+ *     /api/prospect-leads-importados e atualiza o item no array
+ *     local sem precisar de re-fetch.
  *
- * RBAC contextual:
- *   - Admin/GR&S      → vê todos os leads importados (sem filtro reservado_por)
- *   - GC/SDR comum    → vê APENAS os reservados para o próprio user_id
- *   - Toggle "apenas_meus" pode forçar o filtro mesmo para admins
+ * v1.0 (Sub-fase 3.C — 17/06/2026): primeira versão.
  *
- * Endpoints:
- *   GET /api/prospect-leads-importados
- *       ?user_id=2
- *       [&apenas_meus=true|false]            (default: true)
- *       [&status=atualizado|promovido|trocou_empresa|nao_localizado|dominio_invalido|pendente]
- *       [&ordenacao=recente|antigo|proxima_validacao]   (default: recente)
- *       [&busca={texto livre em nome/email/empresa}]
- *       [&page=1&per_page=30|50|100]                    (default: page=1 per_page=30)
+ * Encapsula estado/fetch/filtros/paginação/cota da aba "Leads Importados"
+ * e expõe as ações de:
+ *   • carregar()                       — fetch da listagem com filtros atuais
+ *   • validarLead(leadId)              — chama prospect-revalidate em modo
+ *                                        individual para um lead específico
+ *   • importarLote(leads, cb)          — importa lote do CSV/Excel chamando
+ *                                        prospect-revalidate com a flag
+ *                                        criar_se_nao_existir=true
+ *   • editar(lead_id, novos_dados)     — 🆕 v1.1: PATCH em prospect-leads-importados,
+ *                                        atualiza o item local
  *
- * Resposta:
- *   {
- *     success: true,
- *     leads: LeadImportado[],
- *     total: number,
- *     page: number,
- *     per_page: number,
- *     cota_consumida_hoje: number,
- *     cota_residual: number,
- *   }
+ * Endpoints consumidos:
+ *   GET   /api/prospect-leads-importados (lista)
+ *   PATCH /api/prospect-leads-importados (🆕 v1.1: edita)
+ *   POST  /api/prospect-revalidate       (valida individual / importa lote)
  *
- * Observação: a contagem da cota é apurada via tabela `prospect_revalidacao_log`
- * pela mesma lógica do prospect-revalidate.ts (single source of truth).
+ * Padrão de hook: alinhado com useVincularEmLote v1.0 (CHECKPOINT
+ * 2026-06-17). Mesma convenção de nomes (`carregar`, `setX`, `loading`).
  */
 
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { createClient } from '@supabase/supabase-js';
+import { useCallback, useState } from 'react';
 
-export const config = { maxDuration: 30 };
+// ════════════════════════════════════════════════════════════
+// TIPOS PÚBLICOS
+// ════════════════════════════════════════════════════════════
 
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+export type OrdenacaoImportados = 'recente' | 'antigo' | 'proxima_validacao';
 
-const COTA_DIARIA_POR_GESTOR = 50;
-const PER_PAGE_DEFAULT = 30;
-const PER_PAGE_ALLOWED = new Set([30, 50, 100]);
+export type PerPageImportados = 30 | 50 | 100;
 
-type Ordenacao = 'recente' | 'antigo' | 'proxima_validacao';
+export type StatusAtualizacao =
+  | 'atualizado'
+  | 'promovido'
+  | 'trocou_empresa'
+  | 'nao_localizado'
+  | 'dominio_invalido'
+  | 'opt_out'
+  | 'ttl_nao_atingido'
+  | 'pendente';
 
-// ──────────────────────────────────────────────────────────────────────
-// COTA RESIDUAL — calculada via COUNT no log (mesma lógica do revalidate)
-// ──────────────────────────────────────────────────────────────────────
-
-async function contarValidacoesHoje(user_id: number): Promise<number> {
-  const agora = new Date();
-  const offsetBrtMs = 3 * 60 * 60 * 1000;
-  const brt = new Date(agora.getTime() - offsetBrtMs);
-  const inicioBrt = new Date(Date.UTC(brt.getUTCFullYear(), brt.getUTCMonth(), brt.getUTCDate(), 0, 0, 0));
-  const inicioUtc = new Date(inicioBrt.getTime() + offsetBrtMs);
-
-  const { count, error } = await supabase
-    .from('prospect_revalidacao_log')
-    .select('id', { count: 'exact', head: true })
-    .eq('revalidado_por', user_id)
-    .gte('revalidado_em', inicioUtc.toISOString());
-
-  if (error) {
-    console.error(`❌ [prospect-leads-importados/cota] ${error.message}`);
-    return 0;
-  }
-  return count ?? 0;
+/**
+ * Forma retornada pelo endpoint /api/prospect-leads-importados.
+ * Espelha colunas selecionadas de `prospect_leads`.
+ */
+export interface LeadImportado {
+  id: number;
+  buscado_por: number;
+  motor: string;
+  nome_completo: string;
+  primeiro_nome: string | null;
+  ultimo_nome: string | null;
+  cargo: string | null;
+  email: string | null;
+  email_status: string | null;
+  linkedin_url: string | null;
+  empresa_nome: string | null;
+  empresa_dominio: string | null;
+  empresa_setor: string | null;
+  cidade: string | null;
+  estado: string | null;
+  status: string;
+  reservado_por: number | null;
+  vertical: string | null;
+  validado_em: string | null;
+  proxima_validacao: string | null;
+  status_atualizacao: StatusAtualizacao | null;
+  review_manual: boolean;
+  tier_pipeline: string | null;
+  criado_em: string;
+  atualizado_em: string | null;
 }
 
-// ──────────────────────────────────────────────────────────────────────
-// HANDLER
-// ──────────────────────────────────────────────────────────────────────
+/**
+ * Forma de UM lead a ser importado pelo modal (já validado client-side
+ * com responsavel_id resolvido via useResponsaveis).
+ */
+export interface LeadParaImportar {
+  reservado_por:   number;     // resolvido client-side pelo Responsável da planilha
+  nome_completo:   string;
+  email:           string;
+  empresa_nome:    string;
+  empresa_dominio: string;
+  vertical:        string;
+  // Opcionais
+  primeiro_nome?:  string;
+  ultimo_nome?:    string;
+  cargo?:          string;
+  linkedin_url?:   string;
+  cnpj?:           string;
+  cidade?:         string;
+  estado?:         string;
+}
 
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  if (req.method !== 'GET') {
-    return res.status(405).json({ success: false, error: 'Use GET.' });
-  }
+export interface ProgressoImportacao {
+  atual:       number;
+  total:       number;
+  sucessos:    number;
+  falhas:      number;
+  resumo: {
+    atualizado:       number;
+    promovido:        number;
+    trocou_empresa:   number;
+    nao_localizado:   number;
+    dominio_invalido: number;
+  };
+}
 
-  // ── Query params
-  const q = req.query as Record<string, string | undefined>;
+export interface ResultadoImportacao {
+  total_processados: number;
+  sucessos:          number;
+  falhas:            number;
+  ids_criados:       number[];
+  erros:             Array<{ linha: number; nome: string; mensagem: string }>;
+  resumo: {
+    atualizado:       number;
+    promovido:        number;
+    trocou_empresa:   number;
+    nao_localizado:   number;
+    dominio_invalido: number;
+  };
+}
 
-  const user_id = Number(q.user_id);
-  if (!user_id || isNaN(user_id)) {
-    return res.status(400).json({ success: false, error: 'user_id obrigatório' });
-  }
+// ════════════════════════════════════════════════════════════
+// HOOK
+// ════════════════════════════════════════════════════════════
 
-  const apenasMeus = (q.apenas_meus ?? 'true').toLowerCase() !== 'false';
-  const status     = (q.status ?? '').trim() || null;
-  const busca      = (q.busca  ?? '').trim() || null;
+export interface UseLeadsImportadosOptions {
+  /** ID do usuário logado (filtra `reservado_por` quando apenasMeus=true). */
+  userId: number;
+}
 
-  let ordenacao: Ordenacao = 'recente';
-  if (q.ordenacao === 'antigo' || q.ordenacao === 'proxima_validacao') {
-    ordenacao = q.ordenacao;
-  }
+export function useLeadsImportados(options: UseLeadsImportadosOptions) {
+  const { userId } = options;
 
-  const page = Math.max(1, Number(q.page) || 1);
-  let per_page = Number(q.per_page) || PER_PAGE_DEFAULT;
-  if (!PER_PAGE_ALLOWED.has(per_page)) per_page = PER_PAGE_DEFAULT;
+  // ── Estado de listagem ──────────────────────────────────
+  const [leads, setLeads]                       = useState<LeadImportado[]>([]);
+  const [total, setTotal]                       = useState(0);
+  const [page, setPage]                         = useState(1);
+  const [perPage, setPerPage]                   = useState<PerPageImportados>(30);
+  const [apenasMeus, setApenasMeus]             = useState(true);
+  const [filtroStatus, setFiltroStatus]         = useState<StatusAtualizacao | ''>('');
+  const [ordenacao, setOrdenacao]               = useState<OrdenacaoImportados>('recente');
+  const [busca, setBusca]                       = useState('');
+  const [loading, setLoading]                   = useState(false);
+  const [cotaConsumidaHoje, setCotaConsumidaHoje] = useState(0);
+  const [cotaResidual, setCotaResidual]         = useState(50);
 
-  // ── Monta a query base
-  let query = supabase
-    .from('prospect_leads')
-    .select('*', { count: 'exact' })
-    .eq('motor', 'importacao_lista');
+  // ── Estado de ações por linha (spinners) ────────────────
+  const [validandoLeadIds, setValidandoLeadIds] = useState<Set<number>>(new Set());
 
-  if (apenasMeus) {
-    query = query.eq('reservado_por', user_id);
-  }
+  // ── carregar() — GET /api/prospect-leads-importados ─────
+  const carregar = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set('user_id', String(userId));
+      params.set('apenas_meus', apenasMeus ? 'true' : 'false');
+      params.set('ordenacao', ordenacao);
+      params.set('page', String(page));
+      params.set('per_page', String(perPage));
+      if (filtroStatus) params.set('status', filtroStatus);
+      if (busca.trim()) params.set('busca', busca.trim());
 
-  if (status) {
-    if (status === 'pendente') {
-      // Pendente = nunca foi revalidado (status_atualizacao NULL)
-      query = query.is('status_atualizacao', null);
-    } else {
-      query = query.eq('status_atualizacao', status);
+      const res = await fetch(`/api/prospect-leads-importados?${params.toString()}`);
+      const data = await res.json();
+      if (data?.success) {
+        setLeads(data.leads || []);
+        setTotal(data.total || 0);
+        setCotaConsumidaHoje(data.cota_consumida_hoje ?? 0);
+        setCotaResidual(data.cota_residual ?? 50);
+      } else {
+        console.error('[useLeadsImportados] Erro:', data?.error);
+        setLeads([]);
+        setTotal(0);
+      }
+    } catch (err) {
+      console.error('[useLeadsImportados] Exceção em carregar():', err);
+      setLeads([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
     }
-  }
+  }, [userId, apenasMeus, ordenacao, page, perPage, filtroStatus, busca]);
 
-  if (busca) {
-    // Busca em nome, email e empresa
-    const padrao = `%${busca.replace(/%/g, '\\%')}%`;
-    query = query.or(
-      `nome_completo.ilike.${padrao},email.ilike.${padrao},empresa_nome.ilike.${padrao}`
-    );
-  }
+  // ── validarLead() — POST /api/prospect-revalidate ───────
+  const validarLead = useCallback(async (lead: LeadImportado): Promise<{
+    ok: boolean;
+    status?: StatusAtualizacao;
+    mensagem?: string;
+  }> => {
+    if (validandoLeadIds.has(lead.id)) return { ok: false, mensagem: 'Já em validação' };
 
-  // Ordenação
-  if (ordenacao === 'recente') {
-    query = query.order('criado_em', { ascending: false }).order('id', { ascending: false });
-  } else if (ordenacao === 'antigo') {
-    query = query.order('criado_em', { ascending: true }).order('id', { ascending: true });
-  } else {
-    // proxima_validacao: NULL primeiro (nunca validados), depois cronologicamente
-    query = query
-      .order('proxima_validacao', { ascending: true, nullsFirst: true })
-      .order('id', { ascending: true });
-  }
+    setValidandoLeadIds(prev => new Set(prev).add(lead.id));
 
-  // Paginação
-  const offsetIni = (page - 1) * per_page;
-  const offsetFim = offsetIni + per_page - 1;
-  query = query.range(offsetIni, offsetFim);
+    try {
+      const res = await fetch('/api/prospect-revalidate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          modo:    'individual',
+          lead: {
+            lead_id:         lead.id,
+            nome_completo:   lead.nome_completo,
+            primeiro_nome:   lead.primeiro_nome ?? undefined,
+            ultimo_nome:     lead.ultimo_nome ?? undefined,
+            email:           lead.email ?? undefined,
+            empresa_nome:    lead.empresa_nome ?? undefined,
+            empresa_dominio: lead.empresa_dominio ?? undefined,
+            cargo:           lead.cargo ?? undefined,
+            linkedin_url:    lead.linkedin_url ?? undefined,
+            tier_pipeline:   (lead.tier_pipeline as any) ?? 'cold',
+            vertical:        lead.vertical ?? undefined,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!data?.success) {
+        return { ok: false, mensagem: data?.error || 'Erro desconhecido' };
+      }
+      const detalhe = data.detalhes?.[0];
+      const status: StatusAtualizacao = detalhe?.status_atualizacao;
+      // Atualiza cota local
+      setCotaConsumidaHoje(data.cota_consumida_hoje ?? cotaConsumidaHoje);
+      setCotaResidual(data.cota_residual ?? cotaResidual);
+      return { ok: true, status };
+    } catch (err: any) {
+      return { ok: false, mensagem: err?.message || 'Falha de rede' };
+    } finally {
+      setValidandoLeadIds(prev => {
+        const novo = new Set(prev);
+        novo.delete(lead.id);
+        return novo;
+      });
+    }
+  }, [userId, validandoLeadIds, cotaConsumidaHoje, cotaResidual]);
 
-  const { data, error, count } = await query;
+  // ── importarLote() — sequencial, com callback de progresso ─
+  const importarLote = useCallback(async (
+    leadsParaImportar: LeadParaImportar[],
+    onProgresso?: (p: ProgressoImportacao) => void
+  ): Promise<ResultadoImportacao> => {
+    const total = leadsParaImportar.length;
+    const idsCriados: number[] = [];
+    const erros: ResultadoImportacao['erros'] = [];
+    const resumo = {
+      atualizado: 0, promovido: 0, trocou_empresa: 0,
+      nao_localizado: 0, dominio_invalido: 0,
+    };
+    let sucessos = 0;
+    let falhas = 0;
 
-  if (error) {
-    console.error(`❌ [prospect-leads-importados] ${error.message}`);
-    return res.status(500).json({ success: false, error: error.message });
-  }
+    for (let i = 0; i < total; i++) {
+      const linha = i + 1;
+      const lead = leadsParaImportar[i];
+      try {
+        const res = await fetch('/api/prospect-revalidate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: userId,
+            modo:    'individual',
+            lead: {
+              criar_se_nao_existir: true,
+              reservado_por:        lead.reservado_por,
+              nome_completo:        lead.nome_completo,
+              primeiro_nome:        lead.primeiro_nome ?? undefined,
+              ultimo_nome:          lead.ultimo_nome ?? undefined,
+              email:                lead.email,
+              cargo:                lead.cargo ?? undefined,
+              linkedin_url:         lead.linkedin_url ?? undefined,
+              empresa_nome:         lead.empresa_nome,
+              empresa_dominio:      lead.empresa_dominio,
+              vertical:             lead.vertical,
+              tier_pipeline:        'cold',
+            },
+          }),
+        });
+        const data = await res.json();
+        if (data?.success && data.ids_processados?.length > 0) {
+          sucessos++;
+          idsCriados.push(...data.ids_processados);
+          const decisao: StatusAtualizacao = data.detalhes?.[0]?.status_atualizacao;
+          if (decisao === 'atualizado')       resumo.atualizado++;
+          else if (decisao === 'promovido')   resumo.promovido++;
+          else if (decisao === 'trocou_empresa')   resumo.trocou_empresa++;
+          else if (decisao === 'nao_localizado')   resumo.nao_localizado++;
+          else if (decisao === 'dominio_invalido') resumo.dominio_invalido++;
+        } else {
+          falhas++;
+          erros.push({
+            linha,
+            nome: lead.nome_completo,
+            mensagem: data?.error || 'Falha sem detalhe',
+          });
+        }
+        // Atualiza cota a cada chamada (resposta traz cota viva)
+        if (typeof data?.cota_consumida_hoje === 'number') {
+          setCotaConsumidaHoje(data.cota_consumida_hoje);
+        }
+        if (typeof data?.cota_residual === 'number') {
+          setCotaResidual(data.cota_residual);
+        }
+      } catch (err: any) {
+        falhas++;
+        erros.push({
+          linha,
+          nome: lead.nome_completo,
+          mensagem: err?.message || 'Falha de rede',
+        });
+      }
 
-  // ── Cota (compartilhada com prospect-revalidate)
-  const cotaConsumida = await contarValidacoesHoje(user_id);
-  const cotaResidual  = Math.max(0, COTA_DIARIA_POR_GESTOR - cotaConsumida);
+      // Progresso ao vivo
+      if (onProgresso) {
+        onProgresso({
+          atual: i + 1, total, sucessos, falhas, resumo: { ...resumo },
+        });
+      }
+    }
 
-  return res.status(200).json({
-    success: true,
-    leads:   data ?? [],
-    total:   count ?? 0,
-    page,
-    per_page,
-    cota_diaria:         COTA_DIARIA_POR_GESTOR,
-    cota_consumida_hoje: cotaConsumida,
-    cota_residual:       cotaResidual,
-  });
+    return {
+      total_processados: total,
+      sucessos,
+      falhas,
+      ids_criados:       idsCriados,
+      erros,
+      resumo,
+    };
+  }, [userId]);
+
+  // ── 🆕 v1.1 editar() — PATCH /api/prospect-leads-importados ────
+  /**
+   * Edita um lead importado (PATCH parcial). Substitui o item
+   * correspondente no array local sem precisar de re-fetch.
+   * @returns o lead atualizado retornado pelo backend
+   * @throws  Error com mensagem amigável quando o backend recusa
+   */
+  const editar = useCallback(async (
+    lead_id: number,
+    novos_dados: Partial<LeadImportado>
+  ): Promise<LeadImportado> => {
+    const res = await fetch('/api/prospect-leads-importados', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lead_id,
+        user_id: userId,
+        novos_dados,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.success) {
+      const msg = data?.error || `HTTP ${res.status} ao salvar`;
+      throw new Error(msg);
+    }
+
+    // Substitui o item no array local
+    const atualizado = data.lead as LeadImportado;
+    setLeads(prev => prev.map(l => (l.id === atualizado.id ? atualizado : l)));
+    return atualizado;
+  }, [userId]);
+
+  return {
+    // estado de listagem
+    leads, total,
+    page, setPage,
+    perPage, setPerPage,
+    apenasMeus, setApenasMeus,
+    filtroStatus, setFiltroStatus,
+    ordenacao, setOrdenacao,
+    busca, setBusca,
+    loading,
+    cotaConsumidaHoje, cotaResidual,
+
+    // estado por linha
+    validandoLeadIds,
+
+    // ações
+    carregar,
+    validarLead,
+    importarLote,
+    editar,        // 🆕 v1.1
+  };
 }
+
+export default useLeadsImportados;

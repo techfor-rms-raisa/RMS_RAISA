@@ -2,21 +2,30 @@
  * useLeadsImportados.ts — Hook orquestrador da aba "Leads Importados"
  *
  * Caminho: src/components/crm/shared/hooks/useLeadsImportados.ts
- * Versão: 1.0 (Sub-fase 3.C — 17/06/2026)
+ * Versão: 1.1 (Sub-fase 3.D — 17/06/2026 — adiciona método editar())
+ *
+ * v1.1 (Sub-fase 3.D — 17/06/2026):
+ *   • Novo método `editar(lead_id, novos_dados)` que chama PATCH
+ *     /api/prospect-leads-importados e atualiza o item no array
+ *     local sem precisar de re-fetch.
+ *
+ * v1.0 (Sub-fase 3.C — 17/06/2026): primeira versão.
  *
  * Encapsula estado/fetch/filtros/paginação/cota da aba "Leads Importados"
  * e expõe as ações de:
- *   • carregar()                 — fetch da listagem com filtros atuais
- *   • validarLead(leadId)        — chama prospect-revalidate em modo
- *                                  individual para um lead específico
- *   • importarLote(leads, cb)    — importa lote do CSV/Excel chamando
- *                                  prospect-revalidate com a flag
- *                                  criar_se_nao_existir=true, reportando
- *                                  progresso via callback
+ *   • carregar()                       — fetch da listagem com filtros atuais
+ *   • validarLead(leadId)              — chama prospect-revalidate em modo
+ *                                        individual para um lead específico
+ *   • importarLote(leads, cb)          — importa lote do CSV/Excel chamando
+ *                                        prospect-revalidate com a flag
+ *                                        criar_se_nao_existir=true
+ *   • editar(lead_id, novos_dados)     — 🆕 v1.1: PATCH em prospect-leads-importados,
+ *                                        atualiza o item local
  *
  * Endpoints consumidos:
- *   GET  /api/prospect-leads-importados (lista)
- *   POST /api/prospect-revalidate       (valida individual / importa lote)
+ *   GET   /api/prospect-leads-importados (lista)
+ *   PATCH /api/prospect-leads-importados (🆕 v1.1: edita)
+ *   POST  /api/prospect-revalidate       (valida individual / importa lote)
  *
  * Padrão de hook: alinhado com useVincularEmLote v1.0 (CHECKPOINT
  * 2026-06-17). Mesma convenção de nomes (`carregar`, `setX`, `loading`).
@@ -332,6 +341,39 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     };
   }, [userId]);
 
+  // ── 🆕 v1.1 editar() — PATCH /api/prospect-leads-importados ────
+  /**
+   * Edita um lead importado (PATCH parcial). Substitui o item
+   * correspondente no array local sem precisar de re-fetch.
+   * @returns o lead atualizado retornado pelo backend
+   * @throws  Error com mensagem amigável quando o backend recusa
+   */
+  const editar = useCallback(async (
+    lead_id: number,
+    novos_dados: Partial<LeadImportado>
+  ): Promise<LeadImportado> => {
+    const res = await fetch('/api/prospect-leads-importados', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lead_id,
+        user_id: userId,
+        novos_dados,
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.success) {
+      const msg = data?.error || `HTTP ${res.status} ao salvar`;
+      throw new Error(msg);
+    }
+
+    // Substitui o item no array local
+    const atualizado = data.lead as LeadImportado;
+    setLeads(prev => prev.map(l => (l.id === atualizado.id ? atualizado : l)));
+    return atualizado;
+  }, [userId]);
+
   return {
     // estado de listagem
     leads, total,
@@ -351,6 +393,7 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     carregar,
     validarLead,
     importarLote,
+    editar,        // 🆕 v1.1
   };
 }
 

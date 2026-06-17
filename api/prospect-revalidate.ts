@@ -1,6 +1,26 @@
 /**
  * api/prospect-revalidate.ts — Orquestrador da Revalidação de Leads Importados
  *
+ * v1.2 (17/06/2026 — Sub-fase 3.D: Auto-promoção + Edição)
+ *   Após `persistir()` da Etapa 4, se o resultado atende ao critério
+ *   de promoção automática, TRANSFERE o registro de `prospect_leads`
+ *   (base transitória) para `email_leads` (CRM). O critério é:
+ *     - status_atualizacao === 'atualizado'
+ *     - review_manual === false
+ *     - lead_id presente (registro existe em prospect_leads)
+ *   Promoção é "transferência": INSERT email_lead + DELETE prospect_lead
+ *   atômicos no helper `lib/promover-email-lead.ts`. Salvaguardas LGPD
+ *   (opt_out) e idempotência (dedup por email) ficam dentro do helper.
+ *
+ *   O `ResultadoLead` ganha 2 novos campos opcionais:
+ *     - promovido_para_email_leads: boolean
+ *     - email_lead_id:              number  (quando promovido=true ou já existia)
+ *
+ *   Caso de falha de promoção (sem_email, opt_out_lgpd, lead_ja_existia,
+ *   erro_*): o lead em prospect_leads pode permanecer (opt_out) ou ter
+ *   sido removido (lead_ja_existia). O caller decide pela UI se mostrar
+ *   warning ou silenciar.
+ *
  * v1.1 (17/06/2026 — Sub-fase 3.C: suporte a "Importar Lista de Leads")
  *   Quando o body chega com `lead.criar_se_nao_existir === true` E sem
  *   `lead.lead_id`, o handler INSERE o registro em `prospect_leads` ANTES
@@ -50,6 +70,8 @@ import dns from 'node:dns/promises';
 import { apolloPeopleMatch, type ApolloMatchResult } from '../lib/apollo.js';
 import { geminiConfirmaEmprego, type GeminiConfirmaResult } from '../lib/gemini-confirma-emprego.js';
 import { compararEmpresas } from '../lib/comparadores.js';
+// 🆕 v1.2 (Sub-fase 3.D — 17/06/2026) — Helper de promoção transferência
+import { promoverParaEmailLeads } from '../lib/promover-email-lead.js';
 
 export const config = { maxDuration: 60 };
 
@@ -159,6 +181,22 @@ interface ResultadoLead {
   review_manual:      boolean;
   creditos:           CustoLead;
   duracao_ms:         number;
+  // 🆕 v1.2 (Sub-fase 3.D — 17/06/2026) — Auto-promoção transferência
+  /**
+   * `true` se o lead foi promovido com sucesso para `email_leads`
+   * (INSERT + DELETE atômico). Quando `true`, `email_lead_id` traz o
+   * ID do novo registro no CRM.
+   *
+   * `false` (ou ausente) quando o critério não foi atendido, quando
+   * o helper retornou motivo não-OK (sem_email, opt_out_lgpd,
+   * lead_ja_existia, erro_*), ou quando o lead não tinha registro
+   * em prospect_leads para promover.
+   */
+  promovido_para_email_leads?: boolean;
+  /** Motivo retornado pelo helper quando não promoveu (debug/UI). */
+  motivo_promocao?:            string;
+  /** ID do registro em email_leads (quando promovido OU quando já existia). */
+  email_lead_id?:              number;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -799,7 +837,7 @@ async function processarLead(leadInput: LeadInput, user_id: number): Promise<Res
   }
 
   // ── ETAPA 4
-  return await persistir(leadInput, leadDb, user_id, {
+  const resultado = await persistir(leadInput, leadDb, user_id, {
     etapa0,
     etapa1,
     etapa2,
@@ -809,6 +847,67 @@ async function processarLead(leadInput: LeadInput, user_id: number): Promise<Res
     creditos,
     duracao_ms: Date.now() - inicioMs,
   });
+
+  // ── ETAPA 5 (🆕 v1.2 Sub-fase 3.D — 17/06/2026) — Auto-promoção transferência
+  //   prospect_leads (transitória) → email_leads (CRM).
+  //   Critério: status_atualizacao='atualizado' E review_manual=false E
+  //             lead presente em prospect_leads (lead_id resolvido).
+  //   Comportamento: helper faz INSERT email_lead + DELETE prospect_lead
+  //   atomicamente, com salvaguardas LGPD (opt_out) e idempotência (dedup
+  //   por email). Se NÃO promove (qualquer motivo), o lead permanece em
+  //   prospect_leads para revisão manual via Editar/Validar.
+  if (
+    resultado.status_atualizacao === 'atualizado' &&
+    !resultado.review_manual &&
+    leadDb?.id
+  ) {
+    try {
+      // Busca o prospect com os dados PÓS-persistir (Etapa 4 acabou de
+      // atualizar empresa_dominio/email/etc com o resultado da cascata).
+      const { data: prospectAtual } = await supabase
+        .from('prospect_leads')
+        .select(`
+          id, nome_completo, email, cargo, linkedin_url,
+          empresa_nome, empresa_dominio, empresa_setor,
+          cidade, estado, vertical, reservado_por
+        `)
+        .eq('id', leadDb.id)
+        .maybeSingle();
+
+      if (prospectAtual) {
+        // Resolve nome do usuário (criadoPor convencional do CRM).
+        const { data: user } = await supabase
+          .from('app_users')
+          .select('nome_usuario')
+          .eq('id', user_id)
+          .maybeSingle();
+        const criadoPor = user?.nome_usuario || `user_${user_id}`;
+
+        const r = await promoverParaEmailLeads({
+          supabase,
+          prospect: prospectAtual as any,
+          criado_por: criadoPor,
+        });
+
+        resultado.promovido_para_email_leads = r.promovido;
+        resultado.motivo_promocao            = r.motivo;
+        if (r.email_lead_id) resultado.email_lead_id = r.email_lead_id;
+
+        if (r.promovido) {
+          console.log(`🚀 [revalidate/promocao] prospect_id=${leadDb.id} → email_lead_id=${r.email_lead_id}`);
+        } else {
+          console.log(`⚠️ [revalidate/promocao] prospect_id=${leadDb.id} NÃO promovido: ${r.motivo}`);
+        }
+      }
+    } catch (err: any) {
+      // Promoção é best-effort — falha não invalida a revalidação.
+      console.error(`❌ [revalidate/promocao] Exceção no helper para prospect_id=${leadDb.id}: ${err?.message}`);
+      resultado.promovido_para_email_leads = false;
+      resultado.motivo_promocao            = 'excecao_runtime';
+    }
+  }
+
+  return resultado;
 }
 
 // ──────────────────────────────────────────────────────────────────────

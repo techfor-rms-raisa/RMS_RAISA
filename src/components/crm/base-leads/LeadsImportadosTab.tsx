@@ -2,7 +2,15 @@
  * LeadsImportadosTab.tsx — Aba "Leads Importados" do BaseLeadsPage
  *
  * Caminho: src/components/crm/base-leads/LeadsImportadosTab.tsx
- * Versão: 1.0 (Sub-fase 3.C "Importar Lista de Leads" — 17/06/2026)
+ * Versão: 1.1 (Sub-fase 3.D — 17/06/2026 — botão Editar na linha)
+ *
+ * 🆕 v1.1 (Sub-fase 3.D — 17/06/2026):
+ *   • Nova prop `onEditar` (callback chamado quando usuário clica
+ *     no botão Editar de uma linha).
+ *   • Novo botão "Editar" (ícone lápis) ao lado do "Validar" na
+ *     coluna Ações de cada linha.
+ *
+ * v1.0 (Sub-fase 3.C — 17/06/2026): primeira versão.
  *
  * Mostra os leads em `prospect_leads` com motor='importacao_lista'
  * filtrados pelo `reservado_por` do GC/SDR logado (toggle "Apenas meus").
@@ -10,6 +18,7 @@
  * Ações:
  *  • Linha: botão "Validar" individual → POST /api/prospect-revalidate
  *    em modo individual, atualiza a linha quando termina.
+ *  • Linha: botão "Editar" → callback `onEditar(lead)` (modal externo).
  *
  * Filtros:
  *  • Apenas meus (default ativo)
@@ -37,6 +46,8 @@ import type {
 
 export interface LeadsImportadosTabProps {
   hook: ReturnType<typeof useLeadsImportados>;
+  /** 🆕 v1.1 — Callback chamado quando usuário clica no botão Editar de uma linha. */
+  onEditar: (lead: LeadImportado) => void;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -106,7 +117,7 @@ const BadgeEmail: React.FC<BadgeEmailProps> = ({ score }) => {
 // COMPONENTE
 // ════════════════════════════════════════════════════════════
 
-const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook }) => {
+const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar }) => {
   const {
     leads, total, page, perPage, apenasMeus, filtroStatus,
     ordenacao, busca, loading, cotaConsumidaHoje, cotaResidual,
@@ -285,22 +296,32 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook }) => {
                       <td className="px-4 py-3 text-gray-600 text-xs">{formatarData(l.validado_em)}</td>
                       <td className="px-4 py-3 text-gray-600 text-xs">{formatarDataCurta(l.proxima_validacao)}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
-                        <button
-                          onClick={() => onValidar(l)}
-                          disabled={validando || cotaResidual <= 0}
-                          title={cotaResidual <= 0 ? 'Cota diária esgotada' : 'Re-validar e-mail'}
-                          className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700 disabled:bg-gray-300 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
-                        >
-                          {validando ? (
-                            <>
-                              <i className="fa-solid fa-spinner fa-spin"></i> Validando…
-                            </>
-                          ) : (
-                            <>
-                              <i className="fa-solid fa-envelope-circle-check"></i> Validar
-                            </>
-                          )}
-                        </button>
+                        <div className="inline-flex gap-1.5">
+                          {/* 🆕 v1.1 — botão Editar (lápis) */}
+                          <button
+                            onClick={() => onEditar(l)}
+                            title="Editar dados do lead"
+                            className="px-2.5 py-1.5 bg-white border border-amber-300 text-amber-700 rounded-lg text-xs font-medium hover:bg-amber-50 inline-flex items-center gap-1"
+                          >
+                            <i className="fa-solid fa-pen-to-square"></i> Editar
+                          </button>
+                          <button
+                            onClick={() => onValidar(l)}
+                            disabled={validando || cotaResidual <= 0}
+                            title={cotaResidual <= 0 ? 'Cota diária esgotada' : 'Re-validar e-mail'}
+                            className="px-3 py-1.5 bg-teal-600 text-white rounded-lg text-xs font-medium hover:bg-teal-700 disabled:bg-gray-300 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                          >
+                            {validando ? (
+                              <>
+                                <i className="fa-solid fa-spinner fa-spin"></i> Validando…
+                              </>
+                            ) : (
+                              <>
+                                <i className="fa-solid fa-envelope-circle-check"></i> Validar
+                              </>
+                            )}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
