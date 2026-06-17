@@ -2,7 +2,17 @@
  * ImportarListaLeadsModal.tsx — Modal de upload da Sub-fase 3.C
  *
  * Caminho: src/components/crm/base-leads/ImportarListaLeadsModal.tsx
- * Versão: 1.0 (Sub-fase 3.C "Importar Lista de Leads" — 17/06/2026)
+ * Versão: 1.0.1 (Sub-fase 3.C — 17/06/2026 — hotfix tolerância de headers)
+ *
+ * v1.0.1 (17/06/2026 — hotfix): `normalizar()` agora converte `_` e `-`
+ *   em espaço (e colapsa múltiplos espaços), tornando o detector de colunas
+ *   tolerante a variações como `Nome_contato`, `Nome-contato`, `E_mail`,
+ *   `Empresa_dominio`. Sem esta normalização, planilhas legítimas com
+ *   underscore no header eram rejeitadas como "obrigatório ausente".
+ *   Detectado durante smoke em Preview com upload do Messias (planilha
+ *   `Upload.xlsx` com header `Nome_contato`).
+ *
+ * v1.0 (Sub-fase 3.C — 17/06/2026): primeira versão.
  *
  * Fluxo de 4 telas (estado interno):
  *   1. ESCOLHER    — usuário arrasta/seleciona arquivo .xlsx ou .csv
@@ -101,7 +111,10 @@ function normalizar(s: string): string {
     .trim()
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+    .replace(/[\u0300-\u036f]/g, '')   // remove acentos
+    .replace(/[_\-]+/g, ' ')            // 🆕 v1.0.1: underscore e hífen → espaço
+    .replace(/\s+/g, ' ')               // 🆕 v1.0.1: colapsa múltiplos espaços
+    .trim();
 }
 
 function detectarCampoPorHeader(header: string): string | null {
