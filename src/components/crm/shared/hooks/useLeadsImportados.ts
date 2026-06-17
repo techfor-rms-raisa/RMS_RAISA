@@ -2,11 +2,21 @@
  * useLeadsImportados.ts — Hook orquestrador da aba "Leads Importados"
  *
  * Caminho: src/components/crm/shared/hooks/useLeadsImportados.ts
- * Versão: 1.1 (Sub-fase 3.D — 17/06/2026 — adiciona método editar())
+ * Versão: 1.2 (Sub-fase 3.D — 17/06/2026 — hotfix endpoint renomeado)
+ *
+ * v1.2 (Sub-fase 3.D — 17/06/2026):
+ *   • URLs alteradas de /api/prospect-leads-importados (nome antigo)
+ *     para /api/revalidacao-leads-importados. O endpoint backend foi
+ *     renomeado porque o nome anterior colidia com este próprio
+ *     arquivo (useLeadsImportados.ts) durante o bundling do Vercel,
+ *     fazendo o `ncc` resolver o nome do hook frontend para dentro
+ *     do bundle do endpoint serverless — sintoma era TypeError
+ *     "Cannot read properties of null (reading 'useState')" ao
+ *     chamar GET no endpoint.
  *
  * v1.1 (Sub-fase 3.D — 17/06/2026):
  *   • Novo método `editar(lead_id, novos_dados)` que chama PATCH
- *     /api/prospect-leads-importados e atualiza o item no array
+ *     /api/revalidacao-leads-importados e atualiza o item no array
  *     local sem precisar de re-fetch.
  *
  * v1.0 (Sub-fase 3.C — 17/06/2026): primeira versão.
@@ -19,12 +29,12 @@
  *   • importarLote(leads, cb)          — importa lote do CSV/Excel chamando
  *                                        prospect-revalidate com a flag
  *                                        criar_se_nao_existir=true
- *   • editar(lead_id, novos_dados)     — 🆕 v1.1: PATCH em prospect-leads-importados,
+ *   • editar(lead_id, novos_dados)     — 🆕 v1.1: PATCH em revalidacao-leads-importados,
  *                                        atualiza o item local
  *
  * Endpoints consumidos:
- *   GET   /api/prospect-leads-importados (lista)
- *   PATCH /api/prospect-leads-importados (🆕 v1.1: edita)
+ *   GET   /api/revalidacao-leads-importados (lista)
+ *   PATCH /api/revalidacao-leads-importados (🆕 v1.1: edita)
  *   POST  /api/prospect-revalidate       (valida individual / importa lote)
  *
  * Padrão de hook: alinhado com useVincularEmLote v1.0 (CHECKPOINT
@@ -52,7 +62,7 @@ export type StatusAtualizacao =
   | 'pendente';
 
 /**
- * Forma retornada pelo endpoint /api/prospect-leads-importados.
+ * Forma retornada pelo endpoint /api/revalidacao-leads-importados.
  * Espelha colunas selecionadas de `prospect_leads`.
  */
 export interface LeadImportado {
@@ -161,7 +171,7 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
   // ── Estado de ações por linha (spinners) ────────────────
   const [validandoLeadIds, setValidandoLeadIds] = useState<Set<number>>(new Set());
 
-  // ── carregar() — GET /api/prospect-leads-importados ─────
+  // ── carregar() — GET /api/revalidacao-leads-importados ─────
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
@@ -174,7 +184,7 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
       if (filtroStatus) params.set('status', filtroStatus);
       if (busca.trim()) params.set('busca', busca.trim());
 
-      const res = await fetch(`/api/prospect-leads-importados?${params.toString()}`);
+      const res = await fetch(`/api/revalidacao-leads-importados?${params.toString()}`);
       const data = await res.json();
       if (data?.success) {
         setLeads(data.leads || []);
@@ -341,7 +351,7 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     };
   }, [userId]);
 
-  // ── 🆕 v1.1 editar() — PATCH /api/prospect-leads-importados ────
+  // ── 🆕 v1.1 editar() — PATCH /api/revalidacao-leads-importados ────
   /**
    * Edita um lead importado (PATCH parcial). Substitui o item
    * correspondente no array local sem precisar de re-fetch.
@@ -352,7 +362,7 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     lead_id: number,
     novos_dados: Partial<LeadImportado>
   ): Promise<LeadImportado> => {
-    const res = await fetch('/api/prospect-leads-importados', {
+    const res = await fetch('/api/revalidacao-leads-importados', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
