@@ -2,9 +2,39 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.10 (F8 — Botão Recovery na aba Inválidos — 16/06/2026)
+ * Versão: 1.11 (Sub-fase 3.C — Importar Lista de Leads — 17/06/2026)
  *
- * 🆕 v1.10 (16/06/2026 — F8: Botão Recovery na aba Inválidos):
+ * 🆕 v1.11 (17/06/2026 — Sub-fase 3.C: Importar Lista de Leads):
+ *   Adiciona o fluxo de importação manual de leads via Excel/CSV no topo
+ *   do BaseLeadsPage, complementando o "Importar Prospects" existente
+ *   (que continua intacto). Cobre o caso de uso de GC/SDR que recebe
+ *   uma planilha externa e quer enriquecê-la via cascata de revalidação
+ *   (Hunter+Snov.io+Apollo+Gemini) ANTES de virar email_leads do CRM.
+ *
+ *   Mudanças cirúrgicas:
+ *    - Novo import: useLeadsImportados (hook orquestrador da nova aba).
+ *    - Novo import: ImportarListaLeadsModal (modal de upload xlsx/csv).
+ *    - Novo import: LeadsImportadosTab (aba dedicada com tabela + ações).
+ *    - `abaAtiva` agora aceita 'leads_importados' (entre 'leads' e
+ *      'vincular_em_lote' — ordem semântica do funil).
+ *    - `responsaveisH.carregar()` agora dispara para TODOS os perfis
+ *      (não só Administrador), porque o modal de upload precisa da
+ *      lista de GC/SDR pra resolver a coluna "Responsável" da planilha.
+ *    - Novo state `modalImportarListaAberto` + handlers (abrir/fechar/concluído).
+ *    - Novo botão "Importar Lista de Leads" (teal-600) entre os 2 botões
+ *      existentes no header (indigo "Importar Prospects" + emerald "Nova Empresa").
+ *    - Nova entrada no array de tabs (ícone fa-file-import).
+ *    - useEffect para carregar a nova aba quando ativa.
+ *    - Renderização condicional + modal.
+ *
+ *   Dependência runtime:
+ *     • Pacote `xlsx` (SheetJS) — instalar com `npm install xlsx`.
+ *     • Backend prospect-revalidate v1.1 (suporte a INSERT preventivo).
+ *     • Endpoint /api/prospect-leads-importados v1.0.
+ *     • Migration 2026-06-17_prospect_leads_motor_importacao.sql aplicada
+ *       (CHECK constraint do `motor` aceita 'importacao_lista').
+ *
+ * v1.10 (16/06/2026 — F8: Botão Recovery na aba Inválidos):
  *   Pluga o motor de Recovery (api/campaign-email-recovery — em
  *   Production desde 13/06/2026, Sub-fase 3.A) diretamente na aba
  *   "E-mails Inválidos". Antes, Recovery só era acionável via SQL
@@ -216,6 +246,10 @@ import LeadFormModal from './LeadFormModal';
 import EmpresaDetailDrawer from './EmpresaDetailDrawer';
 import LeadDetailDrawer from './LeadDetailDrawer';
 import ImportProspectsModal from './ImportProspectsModal';
+// 🆕 v1.11 (Sub-fase 3.C — 17/06/2026)
+import { useLeadsImportados } from '../shared/hooks/useLeadsImportados';
+import ImportarListaLeadsModal from './ImportarListaLeadsModal';
+import LeadsImportadosTab from './LeadsImportadosTab';
 
 import KpiCard from '../shared/components/KpiCard';
 import type { CurrentUserLite, Empresa, Lead } from '../types/crm.types';
@@ -251,8 +285,9 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   // 🆕 v1.2 (Fase 8-Inbox) — agora aceita 'respostas' e 'invalidos'.
   // 🆕 v1.5 (Vinculação em Lote — 10/06/2026) — agora aceita 'vincular_em_lote'.
   // 🆕 v1.7 (Reorganização Prospect/Lead — 13/06/2026) — agora aceita 'opt_out'.
+  // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — agora aceita 'leads_importados'.
   const [abaAtiva, setAbaAtiva] = useState<
-    'empresas' | 'leads' | 'respostas' | 'invalidos' | 'vincular_em_lote' | 'opt_out'
+    'empresas' | 'leads' | 'leads_importados' | 'respostas' | 'invalidos' | 'vincular_em_lote' | 'opt_out'
   >('empresas');
 
   // ── Hooks ──
@@ -265,6 +300,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   // 🆕 v1.4 (Lead RBAC fix) — fontes p/ o LeadFormModal
   const tiposCampanhaH = useTiposCampanha();
   const responsaveisH = useResponsaveis();
+  // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — hook da nova aba "Leads Importados"
+  const leadsImportadosH = useLeadsImportados({ userId: currentUser.id });
 
   // ── Modais de formulário ──
   const [modalEmpresa, setModalEmpresa] = useState<'criar' | 'editar' | null>(null);
@@ -274,6 +311,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
 
   // ── Modal de importação ──
   const [modalImportarAberto, setModalImportarAberto] = useState(false);
+  // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — Modal "Importar Lista de Leads"
+  const [modalImportarListaAberto, setModalImportarListaAberto] = useState(false);
 
   // 🆕 v1.10 (F8 — 16/06/2026) — Recovery em andamento por lead.
   // Set imutável para garantir re-render do InvalidosTab quando o
@@ -291,9 +330,10 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     // 'empresas' permanece abaixo, cuidando de paginação/busca/setor.
     empresasH.carregar();
     // 🆕 v1.4 — Lista de responsáveis (somente Admin precisa)
-    if (currentUser.tipo_usuario === 'Administrador') {
-      responsaveisH.carregar();
-    }
+    // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — Agora também TODOS os perfis
+    // precisam: o modal "Importar Lista de Leads" usa a lista para resolver
+    // a coluna "Responsável" da planilha em `app_users.id`.
+    responsaveisH.carregar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -330,6 +370,21 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abaAtiva, invalidosH.pagina, invalidosH.busca]);
+
+  // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — carregar Leads Importados sob demanda
+  useEffect(() => {
+    if (abaAtiva === 'leads_importados') {
+      leadsImportadosH.carregar();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    abaAtiva,
+    leadsImportadosH.page,
+    leadsImportadosH.perPage,
+    leadsImportadosH.apenasMeus,
+    leadsImportadosH.filtroStatus,
+    leadsImportadosH.ordenacao,
+  ]);
 
   // 🆕 v1.1 (Fase 7-MVP) — Consumo do deep link.
   // Quando recebemos deepLinkLeadId pelo App.tsx (parser de URL), forçamos
@@ -671,6 +726,13 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           >
             <i className="fa-solid fa-download"></i> Importar Prospects
           </button>
+          {/* 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — Importar Lista de Leads (Excel/CSV) */}
+          <button
+            onClick={() => setModalImportarListaAberto(true)}
+            className="px-3 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-700 flex items-center gap-1.5 transition-colors"
+          >
+            <i className="fa-solid fa-file-import"></i> Importar Lista de Leads
+          </button>
           <button
             onClick={abrirCriarEmpresa}
             className="px-3 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 flex items-center gap-1.5 transition-colors"
@@ -753,6 +815,17 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
                 ? stats.total_leads + stats.total_prospects + stats.total_clientes
                 : leadsH.total,
             },
+            // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — Leads Importados (motor='importacao_lista')
+            //   Posição: entre "Meus Leads" e "Vincular em Lote" (ordem semântica
+            //   do funil — importar → revalidar → vincular à campanha).
+            //   Badge usa o total atual do hook (carregado sob demanda quando
+            //   a aba é aberta — pisca '—' até a primeira carga).
+            {
+              key: 'leads_importados' as const,
+              label: 'Leads Importados',
+              icon: 'fa-solid fa-file-import',
+              count: leadsImportadosH.total,
+            },
             // 🆕 v1.5 (Vinculação em Lote — 10/06/2026)
             //   Sem badge de contagem — esta aba não exibe uma listagem
             //   persistente, é uma operação de vinculação ad-hoc.
@@ -799,6 +872,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
                 else if (tab.key === 'leads') leadsH.setPagina(1);
                 else if (tab.key === 'respostas') respostasH.setPagina(1);
                 else if (tab.key === 'invalidos') invalidosH.setPagina(1);
+                // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026)
+                else if (tab.key === 'leads_importados') leadsImportadosH.setPage(1);
                 // 🆕 v1.7 — 'opt_out' gerencia paginação internamente
                 //          (o OptOutTab não usa hook compartilhado).
               }}
@@ -923,6 +998,11 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           <VincularEmLoteTab currentUser={currentUser} />
         )}
 
+        {/* 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — Aba Leads Importados */}
+        {abaAtiva === 'leads_importados' && (
+          <LeadsImportadosTab hook={leadsImportadosH} />
+        )}
+
         {/* 🆕 v1.7 (Reorganização Prospect/Lead — 13/06/2026) — Aba Opt-Out */}
         {abaAtiva === 'opt_out' && (
           <OptOutTab currentUser={currentUser} />
@@ -966,6 +1046,20 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
         onSelecionarTodos={importH.selecionarTodos}
         onExecutar={executarImportacao}
         onFechar={fecharImportacao}
+      />
+
+      {/* 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — Modal "Importar Lista de Leads" */}
+      <ImportarListaLeadsModal
+        aberto={modalImportarListaAberto}
+        responsaveis={responsaveisH.responsaveis}
+        cotaResidual={leadsImportadosH.cotaResidual}
+        onImportar={leadsImportadosH.importarLote}
+        onConcluido={() => {
+          // Após import, recarrega listagem da aba e stats globais
+          leadsImportadosH.carregar();
+          leadsH.carregarStats();
+        }}
+        onFechar={() => setModalImportarListaAberto(false)}
       />
 
       {/* ════════════════════════════════════════════════════════════ */}
