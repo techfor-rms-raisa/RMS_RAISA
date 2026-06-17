@@ -2,6 +2,47 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.16.2 (17/06/2026 — Vincular em Lote v2 — Sessão 3 fix de smoke):
+ *    Três correções cirúrgicas descobertas durante o smoke test em Preview
+ *    (Cenário B — Conversíveis com mudança vertical). Pareada com o
+ *    CHECKPOINT_2026-06-17_VINCULAR_EM_LOTE_V2_SESSAO_2.md:
+ *
+ *      FIX A — ORDERING DETERMINÍSTICO em `listar_leads_para_vinculo_em_lote`
+ *        Sintoma reportado na Sessão 1: ordem aparente 50→10→10→11→10
+ *        quando esperado 50→11→10→10→10. Causa-raiz: o `.order()` no
+ *        PostgREST aplicava apenas (score_engajamento DESC, nome ASC), sem
+ *        tiebreaker FINAL determinístico. Empates em (score, nome) tornam-se
+ *        não-determinísticos entre execuções (physical row order do
+ *        PostgreSQL muda conforme VACUUM/UPDATE). Em paginação por `range()`,
+ *        isso pode embaralhar empates entre páginas adjacentes.
+ *        Fix: adicionado `.order('id', { ascending: false })` como tiebreaker
+ *        FINAL. Custo: zero (id já tem índice PK). Benefício: ordem 100%
+ *        estável e reproduzível.
+ *
+ *      FIX B — ATOMICIDADE de mutações em `vincular_em_lote_a_campanha`
+ *        Sintoma descoberto na auditoria SQL (Q3): timestamp do histórico
+ *        `vertical_alterada` (13:27:57) ficou ANTES da timestamp do
+ *        `campanha_vinculada` em ~62s. Causa: na 1ª tentativa que falhou
+ *        no modal vermelho (Roseni reservada para Débora), o UPDATE de
+ *        vertical já tinha sido feito + histórico gravado, ANTES do helper
+ *        `vincularLeadACampanha` validar RBAC. Estado inconsistente
+ *        latente: lead com vertical alterada sem nunca ter sido vinculado.
+ *        Fix: introduzido modo `dryRun` no helper. O loop da action agora
+ *        executa o helper em modo dry-run PRIMEIRO (valida tudo sem mutar),
+ *        e só promove o UPDATE vertical + INSERT histórico + chamada real
+ *        do helper se o dry-run retornar success. Caso falhe, lead fica
+ *        com vertical original intacta — zero contaminação.
+ *
+ *      FIX C — FK `campanha_id` populado em email_lead_historico
+ *        Sintoma descoberto na auditoria SQL (Q3): eventos 268 e 269 tinham
+ *        `campanha_id=NULL` apesar de descrição em texto mencionando a
+ *        campanha. Isso quebra queries auditoria por campanha (ex.: "todas
+ *        as movimentações da campanha 13"). Fix: ambos os INSERTs em
+ *        email_lead_historico (`vertical_alterada` na action e
+ *        `campanha_vinculada` no helper) agora preenchem o FK `campanha_id`.
+ *
+ *    Schema: sem mudanças. Backward-compatível (opts é opcional no helper).
+ *
  *  - v1.16.1 (17/06/2026 — Vincular em Lote v2 FIX defesa em profundidade):
  *    Patch sobre v1.16. Em chamadas SEM `vertical_destino` (uso direto de
  *    API sem contexto de campanha de destino), a v1.16 inicial deixava
@@ -1511,10 +1552,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // ── 5) Ordenação + paginação ────────────────────────
         // Mais engajados primeiro (score DESC), depois alfabético por nome.
+        // 🆕 v1.16.2: adicionado tiebreaker FINAL .order('id') para garantir
+        //   determinismo em empates. Sem isso, o PostgREST/PostgreSQL pode
+        //   retornar linhas com mesmo (score, nome) em ordem indefinida
+        //   (depende do physical row order, que muda com VACUUM/UPDATE).
+        //   Em paginação por range(), isso causava o sintoma 50→10→10→11→10
+        //   reportado na Sessão 1 — empates "atravessando" páginas.
+        //   Custo: zero (id tem índice PK). Benefício: ordem 100% estável.
         // Range é zero-indexed e INCLUSIVO em ambas as pontas.
         query = query
           .order('score_engajamento', { ascending: false, nullsFirst: false })
           .order('nome', { ascending: true })
+          .order('id', { ascending: false })
           .range(offset, offset + perPage - 1);
 
         const { data: leads, error: errLeads, count: totalGeral } = await query;
@@ -2363,9 +2412,46 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           let verticalAtualizada = lead.vertical;
 
+          // 🆕 v1.16.2 — DRY-RUN PRIMEIRO (atomicidade).
+          //   Antes desta versão, o UPDATE vertical era feito ANTES das
+          //   validações do helper (RBAC, opt-out, bounce, duplicação). Em
+          //   caso de falha, o lead ficava com vertical alterada SEM ter
+          //   sido vinculado — estado inconsistente latente.
+          //
+          //   Solução: chamar o helper em modo dryRun=true PRIMEIRO,
+          //   passando vertical_destino via opts.verticalEsperada (o helper
+          //   simula que a vertical já estaria alterada). Se passar, então
+          //   promovemos UPDATE + histórico + chamada real. Se falhar, lead
+          //   permanece intacto.
+          const dryRunResult = await vincularLeadACampanha(
+            supabase,
+            {
+              id: lead.id,
+              nome: lead.nome,
+              email: lead.email,
+              vertical: lead.vertical,
+              reservado_por: lead.reservado_por,
+            },
+            campanha_id,
+            criado_por,
+            { verticalEsperada: vertical_destino, dryRun: true }
+          );
+
+          if (!dryRunResult.success) {
+            resultados.falhas.push({
+              lead_id: lead.id,
+              lead_nome: lead.nome,
+              error: dryRunResult.error || 'Falha na pré-validação (dry-run)',
+            });
+            continue;
+          }
+
           // ── Alteração de vertical (se necessário) ────────────
           // 🔄 v1.10 — Quando destinoEhCreci=true e lead.vertical==='CRECI',
           //   esta condição é falsa → NÃO dispara UPDATE (já são iguais).
+          // 🆕 v1.16.2 — Esta etapa só é executada se o dry-run acima passou.
+          //   A vertical é alterada como ÚLTIMA mutação antes da chamada
+          //   real do helper, garantindo atomicidade.
           if (lead.vertical !== vertical_destino) {
             const { error: errUpdate } = await supabase
               .from('email_leads')
@@ -2388,15 +2474,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             resultados.verticais_alteradas++;
 
             // Histórico de mudança de vertical
+            // 🆕 v1.16.2 — campanha_id agora populado (FK) para permitir
+            //   queries auditoria "todas as movimentações da campanha X".
             await supabase.from('email_lead_historico').insert({
               lead_id: lead.id,
+              campanha_id: campanha_id,
               tipo: 'vertical_alterada',
               descricao: `Vertical alterada de "${lead.vertical || '—'}" para "${vertical_destino}" (vinculação em lote à campanha "${campanha.nome}")`,
               criado_por,
             });
           }
 
-          // ── Vinculação à campanha (helper reaproveitado) ─────
+          // ── Vinculação à campanha (helper reaproveitado, execução real) ─
           const resultadoVinculo = await vincularLeadACampanha(
             supabase,
             {
@@ -2413,10 +2502,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (resultadoVinculo.success) {
             resultados.sucessos++;
           } else {
+            // Caso raríssimo: dry-run passou mas execução real falhou
+            // (ex: concorrência entre janelas). Reportar honestamente.
             resultados.falhas.push({
               lead_id: lead.id,
               lead_nome: lead.nome,
-              error: resultadoVinculo.error || 'Erro desconhecido ao vincular',
+              error: resultadoVinculo.error || 'Erro desconhecido ao vincular (pós dry-run)',
             });
           }
         }
@@ -2873,7 +2964,24 @@ async function vincularLeadACampanha(
   supabase: any,
   lead: LeadParaVincular,
   campanhaId: number,
-  criadoPor: string
+  criadoPor: string,
+  opts?: {
+    /**
+     * 🆕 v1.16.2 — quando presente, substitui `lead.vertical` para a
+     * validação do passo 4. Permite simular o estado pós-UPDATE de
+     * vertical no fluxo de vinculação em lote, sem mutar o lead ainda.
+     */
+    verticalEsperada?: string;
+    /**
+     * 🆕 v1.16.2 — quando true, o helper executa apenas as validações
+     * (passos 1-7) e retorna success sem realizar INSERTs em
+     * email_lead_campanhas / email_fila / email_lead_historico nem
+     * o UPDATE de total_destinatarios. Usado pela action
+     * `vincular_em_lote_a_campanha` para garantir atomicidade:
+     * dry-run primeiro → UPDATE vertical → execução real.
+     */
+    dryRun?: boolean;
+  }
 ): Promise<ResultadoVinculo> {
   // 1. Buscar campanha
   const { data: camp, error: errCamp } = await supabase
@@ -2905,10 +3013,13 @@ async function vincularLeadACampanha(
   }
 
   // 4. Validar match de vertical (Fase B trava)
-  if (camp.tipo !== lead.vertical) {
+  // 🆕 v1.16.2 — opts.verticalEsperada permite simular um estado pós-UPDATE
+  //   sem mutar o lead. Usado no fluxo dry-run da action `vincular_em_lote`.
+  const verticalEfetiva = opts?.verticalEsperada ?? lead.vertical;
+  if (camp.tipo !== verticalEfetiva) {
     return {
       success: false,
-      error: `Lead tem vertical "${lead.vertical}" e a campanha é da vertical "${camp.tipo}". Verticais incompatíveis.`,
+      error: `Lead tem vertical "${verticalEfetiva}" e a campanha é da vertical "${camp.tipo}". Verticais incompatíveis.`,
     };
   }
 
@@ -2988,6 +3099,18 @@ async function vincularLeadACampanha(
       success: false,
       error: 'Email está em opt-out global — não pode entrar em campanha.',
     };
+  }
+
+  // 🆕 v1.16.2 — DRY-RUN early-return.
+  //   Todas as validações (passos 1-7) passaram. Se o caller pediu dryRun,
+  //   retornamos sucesso sem executar nenhuma mutação (INSERT vínculo,
+  //   enfileiramento, UPDATE de total_destinatarios, INSERT histórico).
+  //   O caller usará esse sinal para liberar o UPDATE de vertical antes
+  //   de chamar o helper novamente (sem dryRun) para execução real.
+  //   O campo `vinculo` é omitido no retorno — a interface ResultadoVinculo
+  //   já o declara como opcional.
+  if (opts?.dryRun) {
+    return { success: true };
   }
 
   // 8. Inserir vínculo
@@ -3088,8 +3211,11 @@ async function vincularLeadACampanha(
     .eq('id', camp.id);
 
   // 11. Registrar no histórico do lead
+  // 🆕 v1.16.2 — campanha_id agora populado (FK) para permitir queries
+  //   auditoria "todas as movimentações da campanha X".
   await supabase.from('email_lead_historico').insert({
     lead_id: lead.id,
+    campanha_id: camp.id,
     tipo: 'campanha_vinculada',
     descricao: `Vinculado à campanha "${camp.nome}" (ID ${camp.id})${enfileirados > 0 ? ` — ${enfileirados} envio(s) agendado(s)` : ''}`,
     criado_por: criadoPor,
