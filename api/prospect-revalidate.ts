@@ -1,6 +1,27 @@
 /**
  * api/prospect-revalidate.ts — Orquestrador da Revalidação de Leads Importados
  *
+ * v1.5 (18/06/2026 — Ativação Apollo Basic Plan 2.500 créditos/mês)
+ *   Cirurgia mínima propagando o `user_id` ativo da requisição para o
+ *   wrapper `apolloPeopleMatch` (lib/apollo.ts v2.0). Necessário para
+ *   o cap diário por gestor (30 créditos/dia/GC-SDR) funcionar.
+ *
+ *   Mudanças:
+ *     - `etapa2_identidade()` ganha parâmetro `user_id: number`
+ *     - `apolloPeopleMatch({...})` recebe `user_id` no input
+ *     - `processarLead()` propaga `user_id` ao chamar `etapa2_identidade`
+ *
+ *   Sem alteração de schema. Sem alteração de contrato HTTP. Sem
+ *   alteração na matriz de decisão. Backwards-compatible com payloads
+ *   que ainda não passem user_id (o wrapper trata gracefully).
+ *
+ *   IMPORTANTE — gates do wrapper Apollo v2.0 (não mexer aqui, foram
+ *   centralizados no `lib/apollo.ts`):
+ *     - APOLLO_ENABLED=false → kill switch sem deploy
+ *     - APOLLO_DAILY_CAP_PER_USER (default 30) → cap por gestor
+ *     - SKIP preventivo se sem linkedin_url E sem empresa_dominio
+ *     - Log explícito 💰 quando crédito é consumido
+ *
  * v1.4 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade no INSERT preventivo)
  *   Quando o body chega com `lead.criar_se_nao_existir === true` E sem
  *   `lead.lead_id`, ANTES de fazer o INSERT em `prospect_leads`, agora
@@ -388,12 +409,15 @@ async function etapa1_validarEmail(
 // ──────────────────────────────────────────────────────────────────────
 
 async function etapa2_identidade(
-  lead: LeadInput
+  lead: LeadInput,
+  user_id: number,
 ): Promise<{ resultado: ResultadoEtapa2Consolidado; creditos: { apollo: number; gemini: number } }> {
 
   const { primeiro: pNome, ultimo: uNome } = extrairPrimeiroEUltimo(lead.nome_completo);
 
   // ─── ETAPA 2: Apollo ───
+  // 🆕 v1.5 (18/06/2026) — propaga user_id para o cap diário Apollo
+  //   (lib/apollo.ts v2.0). Sem user_id, o cap por gestor não é aplicado.
   const apollo: ApolloMatchResult = await apolloPeopleMatch({
     primeiro_nome:    lead.primeiro_nome || pNome,
     ultimo_nome:      lead.ultimo_nome   || uNome,
@@ -401,6 +425,7 @@ async function etapa2_identidade(
     linkedin_url:     lead.linkedin_url,
     empresa_dominio:  lead.empresa_dominio,
     empresa_nome:     lead.empresa_nome,
+    user_id,
   });
 
   const creditoApollo = apollo.encontrado ? 1 : 0;
@@ -924,7 +949,8 @@ async function processarLead(leadInput: LeadInput, user_id: number): Promise<Res
   }
 
   // ── ETAPA 2 + 2-B
-  const r2 = await etapa2_identidade(leadInput);
+  // 🆕 v1.5 (18/06/2026) — passa user_id para o cap diário Apollo
+  const r2 = await etapa2_identidade(leadInput, user_id);
   const etapa2 = r2.resultado;
   creditos.apollo += r2.creditos.apollo;
   creditos.gemini += r2.creditos.gemini;
