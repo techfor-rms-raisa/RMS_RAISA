@@ -1,6 +1,45 @@
 /**
  * lib/gemini-confirma-emprego.ts — Fallback Gemini para Revalidação (Etapa 2-B)
  *
+ * v2.1 (18/06/2026 — Refinamento do bloco NÍVEL DE CONFIANÇA + few-shot)
+ *
+ *   Motivado por sintoma observado nos smokes de 18/06: casos com evidência
+ *   sólida (Luiza Trajano @ Magazine Luiza — LinkedIn público + dezenas de
+ *   fontes corporativas) retornavam `confianca=media` em vez de `alta`,
+ *   enquanto Frederico Trajano (mesma estrutura) retornava `alta`. A régua
+ *   v2.0 era descritiva mas exigia AND implícito ("LinkedIn confirma E
+ *   cargo E data recente") — qualquer ambiguidade em 1 dos 3 qualificadores
+ *   degradava silenciosamente para "media".
+ *
+ *   MUDANÇAS CIRÚRGICAS (apenas montarPromptPrincipal + cabeçalho):
+ *
+ *     1. Critérios de "alta" reescritos como SUFICIÊNCIA (OR) — basta uma
+ *        das 3 condições estar claramente atendida:
+ *          (i)   LinkedIn público confirma empresa atual
+ *          (ii)  2+ fontes corporativas independentes corroboram
+ *          (iii) Pessoa em posição pública verificável (C-level/conselho)
+ *                de empresa listada/conhecida mencionada em imprensa
+ *                2025-2026
+ *
+ *     2. Critérios de "media" também explicitados como SUFICIÊNCIA com
+ *        3 condições mutuamente exclusivas vs "alta".
+ *
+ *     3. REGRA DE DESEMPATE explícita: havendo evidência razoável para
+ *        "alta", NÃO degradar para "media" por excesso de cautela. Quebra
+ *        o viés conservador padrão do modelo com temperature=0.1.
+ *
+ *     4. Bloco EXEMPLOS DE CALIBRAGEM (few-shot) com 3 casos sintéticos
+ *        — alta/media/baixa — usando nomes/empresas genéricos (Maria
+ *        Santos/Itaú, João Silva/ACME, Pedro Costa/Beta Corp) para não
+ *        enviesar casos reais.
+ *
+ *   ZERO MUDANÇAS EM: robustez (B1-B4), bugfixes (C1-C3), prompt do retry
+ *   simplificado, assinatura externa (GeminiConfirmaInput/Result), helpers,
+ *   integração com prospect-revalidate.ts v1.5.
+ *
+ *   Risco residual: baixo. Smoke isolado via
+ *   /api/gemini-confirma-test?suite=true valida em <30s.
+ *
  * v2.0 (18/06/2026 — Refinamento de prompt + robustez para empresas BR médio porte)
  *
  *   Refinamento integral disparado por sintoma observado em 17-18/06:
@@ -109,7 +148,7 @@ const GEMINI_TIMEOUT_MS_RETRY     = 15_000;
 const RAWTEXT_DEBUG_MAX_CHARS     = 500;
 
 // ──────────────────────────────────────────────────────────────────────
-// TIPOS PÚBLICOS — ASSINATURA INALTERADA EM v2.0
+// TIPOS PÚBLICOS — ASSINATURA INALTERADA EM v2.0/v2.1
 // ──────────────────────────────────────────────────────────────────────
 
 export interface GeminiConfirmaInput {
@@ -265,15 +304,18 @@ function extrairRawText(result: any): string {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// PROMPTS — 🆕 v2.0
+// PROMPTS — 🆕 v2.1
 // ──────────────────────────────────────────────────────────────────────
 
 /**
- * Prompt principal — 🆕 v2.0 (corrige A1+A2+A3+A4):
- *   - "Onde X trabalha em <mes/ano>?" prospectivo + temporal
- *   - LinkedIn como prioridade absoluta da busca
- *   - Data atual injetada dinamicamente
- *   - Regras explícitas de comparação de empresas (aceita variações)
+ * Prompt principal — 🆕 v2.1:
+ *   Mantém todos os ajustes v2.0 (A1+A2+A3+A4) e refina o bloco
+ *   NÍVEL DE CONFIANÇA + adiciona EXEMPLOS DE CALIBRAGEM (few-shot).
+ *
+ *   Mudança-chave: critérios de "alta" agora são de SUFICIÊNCIA (OR) —
+ *   basta UMA das 3 condições estar atendida. Antes era AND implícito
+ *   ("LinkedIn confirma E cargo E data recente"), que degradava para
+ *   "media" quando qualquer qualificador ficava ambíguo.
  */
 function montarPromptPrincipal(input: GeminiConfirmaInput): string {
   const mesAno = getMesAnoAtual();
@@ -302,10 +344,38 @@ CRITÉRIOS PARA COMPARAR EMPRESAS — considere a MESMA empresa quando:
 - Variação ortográfica/abreviação (ex: "TechFor TI" = "TECHFOR" = "TechFor TI Soluções").
 - Acentos/espaços não diferenciam (ex: "ACOME" = "Acomé" = "ACOME do Brasil").
 
-NÍVEL DE CONFIANÇA:
-- alta:  LinkedIn público da pessoa confirma empresa atual com cargo e data recente.
-- media: site corporativo ou notícia 2025/2026 confirma empresa atual.
-- baixa: sem evidência clara, fontes conflitantes, ou apenas informação pré-2025.
+NÍVEL DE CONFIANÇA (escolha o mais alto que se aplique):
+
+- alta: BASTA UMA das condições abaixo estar claramente atendida:
+  (i)   LinkedIn público da pessoa confirma a empresa atual (mesmo que o cargo não esteja explícito ou exatamente igual ao registrado no CRM).
+  (ii)  2 ou mais fontes corporativas independentes corroboram a posição atual (site oficial da empresa, sala de imprensa, comunicado, press release, relatório anual, perfis em conferências/eventos).
+  (iii) Pessoa em posição pública verificável (presidência, conselho de administração, diretoria, C-level, founder/co-founder) de empresa listada na bolsa ou amplamente conhecida no mercado, mencionada por veículos de imprensa em 2025-2026.
+
+- media: nenhuma das condições de "alta" se aplica, mas pelo menos UMA das abaixo está atendida:
+  (i)   Apenas 1 fonte corporativa de 2025-2026 (uma única notícia, site, ou perfil profissional não-LinkedIn).
+  (ii)  LinkedIn público existe e menciona a empresa, mas cargo/empresa parecem desatualizados ou sem indicação clara de data recente.
+  (iii) Fontes corporativas com leve divergência mas apontando para a mesma empresa-mãe/grupo (ex: subsidiária vs holding).
+
+- baixa: sem evidência clara, OU fontes conflitantes (empresas diferentes sem como desambiguar), OU apenas informação anterior a 2025, OU pessoa com nome muito comum sem identificador único disponível.
+
+REGRA DE DESEMPATE: quando houver evidência razoável para "alta" (LinkedIn confirmando a empresa OU 2+ fontes corporativas corroborando), NÃO degrade para "media" apenas por excesso de cautela. A regra existe para discriminar confiança real, não para hedge defensivo.
+
+EXEMPLOS DE CALIBRAGEM (use como âncora para classificar):
+
+Exemplo 1 — ALTA confiança:
+  Nome: "Maria Santos"; CRM: "Itaú Unibanco"
+  Fontes encontradas: LinkedIn público "Maria Santos — Diretora de Tecnologia, Itaú Unibanco — desde mar/2024"; sala de imprensa do Itaú cita "Maria Santos, Diretora de TI" em release de jan/2026.
+  → confianca: "alta" (atende (i) LinkedIn + (ii) 2 fontes corporativas independentes)
+
+Exemplo 2 — MEDIA confiança:
+  Nome: "João Silva"; CRM: "ACME Tech"
+  Fontes encontradas: portal setorial em 2025 cita "João Silva, gerente de produto na ACME"; sem perfil LinkedIn público localizado para confirmar.
+  → confianca: "media" (atende (i) — 1 fonte corporativa única, sem LinkedIn de apoio)
+
+Exemplo 3 — BAIXA confiança:
+  Nome: "Pedro Costa"; CRM: "Beta Corp"
+  Fontes encontradas: 3 perfis distintos chamados "Pedro Costa" em empresas diferentes; nenhum identificador único (LinkedIn, cargo específico) permite desambiguação.
+  → confianca: "baixa" (fontes conflitantes + nome comum, sem identificador)
 
 Responda SOMENTE com JSON válido (sem markdown, sem backticks, sem texto antes/depois):
 {
