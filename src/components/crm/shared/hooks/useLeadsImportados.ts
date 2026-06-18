@@ -2,9 +2,24 @@
  * useLeadsImportados.ts — Hook orquestrador da aba "Leads Importados"
  *
  * Caminho: src/components/crm/shared/hooks/useLeadsImportados.ts
- * Versão: 1.3 (Sub-fase 3.D refino — 18/06/2026 — Promover Lead manual)
+ * Versão: 1.4 (Sub-fase 3.D refino — 18/06/2026 — Anti-duplicidade)
  *
- * 🆕 v1.3 (Sub-fase 3.D refino — 18/06/2026):
+ * 🆕 v1.4 (Sub-fase 3.D refino — 18/06/2026):
+ *   • Novo método `verificarDuplicidade(emails)` que chama POST
+ *     /api/revalidacao-leads-importados?action=verificar_duplicidade.
+ *     Retorna o status de cada email contra `email_leads`, `email_optout`
+ *     e `prospect_leads`. Frontend usa pra bloquear duplicatas na
+ *     pré-visualização do modal de importação.
+ *   • Novos tipos públicos: `StatusDuplicidade`,
+ *     `ResultadoVerificacaoDuplicidade`.
+ *   • `StatusAtualizacao` agora inclui `duplicado_em_email_leads`,
+ *     `duplicado_em_opt_out`, `duplicado_em_revalidacao` (sincronizado
+ *     com prospect-revalidate v1.4).
+ *   • `ResultadoImportacao.resumo` ganha 3 contadores de duplicados
+ *     (para o modal mostrar quantos foram rejeitados pelo backend, em
+ *     casos de race condition).
+ *
+ * v1.3 (Sub-fase 3.D refino — 18/06/2026 — Promover Lead manual):
  *   Novo método `promoverManualmente(lead_id)` que chama POST
  *   /api/revalidacao-leads-importados?action=promover_manualmente.
  *   Quando o backend retorna `promovido=true` OU `motivo='lead_ja_existia'`,
@@ -70,7 +85,23 @@ export type StatusAtualizacao =
   | 'dominio_invalido'
   | 'opt_out'
   | 'ttl_nao_atingido'
-  | 'pendente';
+  | 'pendente'
+  // 🆕 v1.4 (18/06/2026 — Anti-duplicidade no INSERT preventivo)
+  | 'duplicado_em_email_leads'
+  | 'duplicado_em_opt_out'
+  | 'duplicado_em_revalidacao';
+
+// 🆕 v1.4 (18/06/2026 — Anti-duplicidade): status retornado por verificarDuplicidade()
+export type StatusDuplicidade =
+  | 'novo'
+  | 'em_email_leads'
+  | 'em_opt_out'
+  | 'em_revalidacao';
+
+export interface ItemVerificacaoDuplicidade {
+  email:  string;            // email original (como veio do input)
+  status: StatusDuplicidade;
+}
 
 /**
  * Forma retornada pelo endpoint /api/revalidacao-leads-importados.
@@ -136,6 +167,10 @@ export interface ProgressoImportacao {
     trocou_empresa:   number;
     nao_localizado:   number;
     dominio_invalido: number;
+    // 🆕 v1.4 — Anti-duplicidade (defesa em profundidade do backend)
+    duplicado_em_email_leads: number;
+    duplicado_em_opt_out:     number;
+    duplicado_em_revalidacao: number;
   };
 }
 
@@ -151,6 +186,10 @@ export interface ResultadoImportacao {
     trocou_empresa:   number;
     nao_localizado:   number;
     dominio_invalido: number;
+    // 🆕 v1.4 — Anti-duplicidade (defesa em profundidade do backend)
+    duplicado_em_email_leads: number;
+    duplicado_em_opt_out:     number;
+    duplicado_em_revalidacao: number;
   };
 }
 
@@ -304,6 +343,10 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     const resumo = {
       atualizado: 0, promovido: 0, trocou_empresa: 0,
       nao_localizado: 0, dominio_invalido: 0,
+      // 🆕 v1.4 — Anti-duplicidade (backend defesa em profundidade)
+      duplicado_em_email_leads: 0,
+      duplicado_em_opt_out:     0,
+      duplicado_em_revalidacao: 0,
     };
     let sucessos = 0;
     let falhas = 0;
@@ -335,10 +378,24 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
           }),
         });
         const data = await res.json();
-        if (data?.success && data.ids_processados?.length > 0) {
+        // 🆕 v1.4 — Anti-duplicidade: backend retorna decisão 'duplicado_*'
+        // SEM ids_processados. Trata como categoria própria (não como falha
+        // nem como sucesso). Continua somando ao detalhes.
+        const decisao: StatusAtualizacao | undefined = data?.detalhes?.[0]?.status_atualizacao;
+        const isDuplicado =
+          decisao === 'duplicado_em_email_leads' ||
+          decisao === 'duplicado_em_opt_out'     ||
+          decisao === 'duplicado_em_revalidacao';
+
+        if (data?.success && isDuplicado) {
+          // Duplicado detectado pelo backend (race condition ou bypass do
+          // frontend). Conta no resumo, NÃO conta como falha nem sucesso.
+          if (decisao === 'duplicado_em_email_leads') resumo.duplicado_em_email_leads++;
+          else if (decisao === 'duplicado_em_opt_out')     resumo.duplicado_em_opt_out++;
+          else if (decisao === 'duplicado_em_revalidacao') resumo.duplicado_em_revalidacao++;
+        } else if (data?.success && data.ids_processados?.length > 0) {
           sucessos++;
           idsCriados.push(...data.ids_processados);
-          const decisao: StatusAtualizacao = data.detalhes?.[0]?.status_atualizacao;
           if (decisao === 'atualizado')       resumo.atualizado++;
           else if (decisao === 'promovido')   resumo.promovido++;
           else if (decisao === 'trocou_empresa')   resumo.trocou_empresa++;
@@ -491,6 +548,50 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     }
   }, [userId]);
 
+  // ── 🆕 v1.4 verificarDuplicidade() — POST com action=verificar_duplicidade ──
+  /**
+   * Verifica em 1 round-trip se cada email da lista já existe em alguma
+   * das 3 fontes que bloqueiam importação:
+   *
+   *   - `email_optout`    → status 'em_opt_out'      (LGPD)
+   *   - `email_leads`     → status 'em_email_leads'  (lead ativo no CRM)
+   *   - `prospect_leads`  → status 'em_revalidacao'  (em revalidação/prospecção)
+   *
+   * Quando o mesmo email aparece em mais de uma fonte, prevalece a
+   * classificação mais restritiva (opt_out > email_leads > prospect_leads).
+   *
+   * Limite: 100 emails por chamada (alinhado com backend).
+   *
+   * Usado pelo ImportarListaLeadsModal v1.1 para classificar leads na
+   * pré-visualização e bloquear submit de duplicatas.
+   *
+   * @param emails Array de emails a verificar (até 100)
+   * @returns Lista de { email, status } na mesma ordem do input.
+   *          Em caso de erro, lança Error com mensagem amigável.
+   */
+  const verificarDuplicidade = useCallback(async (
+    emails: string[]
+  ): Promise<ItemVerificacaoDuplicidade[]> => {
+    if (!Array.isArray(emails) || emails.length === 0) return [];
+
+    const res = await fetch(
+      '/api/revalidacao-leads-importados?action=verificar_duplicidade',
+      {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ emails }),
+      }
+    );
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data?.success) {
+      const msg = data?.error || `HTTP ${res.status} ao verificar duplicidade`;
+      throw new Error(msg);
+    }
+
+    return (data.resultados ?? []) as ItemVerificacaoDuplicidade[];
+  }, []);
+
   return {
     // estado de listagem
     leads, total,
@@ -510,8 +611,9 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     carregar,
     validarLead,
     importarLote,
-    editar,                // 🆕 v1.1
-    promoverManualmente,   // 🆕 v1.3
+    editar,                  // 🆕 v1.1
+    promoverManualmente,     // 🆕 v1.3
+    verificarDuplicidade,    // 🆕 v1.4
   };
 }
 
