@@ -2,9 +2,18 @@
  * LeadsImportadosTab.tsx — Aba "Leads Importados" do BaseLeadsPage
  *
  * Caminho: src/components/crm/base-leads/LeadsImportadosTab.tsx
- * Versão: 1.1 (Sub-fase 3.D — 17/06/2026 — botão Editar na linha)
+ * Versão: 1.2 (Sub-fase 3.D refino — 18/06/2026 — botão Promover manual)
  *
- * 🆕 v1.1 (Sub-fase 3.D — 17/06/2026):
+ * 🆕 v1.2 (Sub-fase 3.D refino — 18/06/2026):
+ *   • Nova prop `onPromover` (callback chamado quando usuário clica no
+ *     botão "Promover" purple de uma linha).
+ *   • Novo botão "Promover" (ícone fa-rocket, cor purple-600) ao lado de
+ *     "Editar" e antes de "Validar" na coluna Ações. Aparece APENAS para
+ *     leads com `status_atualizacao === 'nao_localizado'` — caso de uso
+ *     em que todos os providers do cascade falharam e o usuário decide
+ *     promover manualmente para o CRM assumindo o risco de bounce.
+ *
+ * v1.1 (Sub-fase 3.D — 17/06/2026):
  *   • Nova prop `onEditar` (callback chamado quando usuário clica
  *     no botão Editar de uma linha).
  *   • Novo botão "Editar" (ícone lápis) ao lado do "Validar" na
@@ -48,6 +57,8 @@ export interface LeadsImportadosTabProps {
   hook: ReturnType<typeof useLeadsImportados>;
   /** 🆕 v1.1 — Callback chamado quando usuário clica no botão Editar de uma linha. */
   onEditar: (lead: LeadImportado) => void;
+  /** 🆕 v1.2 — Callback chamado quando usuário clica no botão Promover de uma linha. */
+  onPromover: (lead: LeadImportado) => void;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -117,7 +128,7 @@ const BadgeEmail: React.FC<BadgeEmailProps> = ({ score }) => {
 // COMPONENTE
 // ════════════════════════════════════════════════════════════
 
-const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar }) => {
+const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar, onPromover }) => {
   const {
     leads, total, page, perPage, apenasMeus, filtroStatus,
     ordenacao, busca, loading, cotaConsumidaHoje, cotaResidual,
@@ -305,6 +316,16 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar 
                           >
                             <i className="fa-solid fa-pen-to-square"></i> Editar
                           </button>
+                          {/* 🆕 v1.2 — botão Promover (foguete) — só pra nao_localizado */}
+                          {l.status_atualizacao === 'nao_localizado' && (
+                            <button
+                              onClick={() => onPromover(l)}
+                              title="Promover manualmente para o CRM (assume risco de bounce)"
+                              className="px-2.5 py-1.5 bg-white border border-purple-300 text-purple-700 rounded-lg text-xs font-medium hover:bg-purple-50 inline-flex items-center gap-1"
+                            >
+                              <i className="fa-solid fa-rocket"></i> Promover
+                            </button>
+                          )}
                           <button
                             onClick={() => onValidar(l)}
                             disabled={validando || cotaResidual <= 0}

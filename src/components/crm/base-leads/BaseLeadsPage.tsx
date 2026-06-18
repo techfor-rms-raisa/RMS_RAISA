@@ -2,9 +2,28 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.12 (Sub-fase 3.D — Edição + Auto-promoção — 17/06/2026)
+ * Versão: 1.13 (Sub-fase 3.D refino — Promover Lead manual — 18/06/2026)
  *
- * 🆕 v1.12 (17/06/2026 — Sub-fase 3.D: Auto-promoção + Edição):
+ * 🆕 v1.13 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual):
+ *   Adiciona o fluxo de promoção manual para leads importados que
+ *   caíram em `nao_localizado` (cascade automatizado falhou).
+ *
+ *   Mudanças cirúrgicas:
+ *    - Novo import: PromoverLeadModal.
+ *    - Novo state: `promovendoLead: LeadImportado | null`.
+ *    - LeadsImportadosTab recebe nova prop `onPromover`.
+ *    - PromoverLeadModal instanciado junto dos demais modais, chamando
+ *      `leadsImportadosH.promoverManualmente(lead_id)` no onConfirmar.
+ *    - Após promoção bem-sucedida: dispara `leadsH.carregarStats()` para
+ *      o badge "Leads" refletir o novo total (que ganhou 1 lead promovido).
+ *      A aba "Leads Importados" já tem o item removido localmente pelo
+ *      hook v1.3.
+ *
+ *   Dependência: backend revalidacao-leads-importados v1.3 com a action
+ *   POST `?action=promover_manualmente`, e helper promover-email-lead v1.1
+ *   com origem parametrizada.
+ *
+ * v1.12 (17/06/2026 — Sub-fase 3.D: Auto-promoção + Edição):
  *   Complementa a Sub-fase 3.C (v1.11) com:
  *    - Modal "Editar Lead Importado" — formulário rico permitindo
  *      ajustar dados do lead antes de revalidar/promover.
@@ -273,6 +292,8 @@ import LeadsImportadosTab from './LeadsImportadosTab';
 // 🆕 v1.12 (Sub-fase 3.D — 17/06/2026)
 import EditarLeadImportadoModal from './EditarLeadImportadoModal';
 import type { LeadImportado } from '../shared/hooks/useLeadsImportados';
+// 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026)
+import PromoverLeadModal from './PromoverLeadModal';
 
 import KpiCard from '../shared/components/KpiCard';
 import type { CurrentUserLite, Empresa, Lead } from '../types/crm.types';
@@ -338,6 +359,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   const [modalImportarListaAberto, setModalImportarListaAberto] = useState(false);
   // 🆕 v1.12 (Sub-fase 3.D — 17/06/2026) — Modal "Editar Lead Importado"
   const [editandoLead, setEditandoLead] = useState<LeadImportado | null>(null);
+  // 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026) — Modal "Promover Lead manualmente"
+  const [promovendoLead, setPromovendoLead] = useState<LeadImportado | null>(null);
 
   // 🆕 v1.10 (F8 — 16/06/2026) — Recovery em andamento por lead.
   // Set imutável para garantir re-render do InvalidosTab quando o
@@ -1029,6 +1052,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             hook={leadsImportadosH}
             // 🆕 v1.12 (Sub-fase 3.D — 17/06/2026)
             onEditar={(lead) => setEditandoLead(lead)}
+            // 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026)
+            onPromover={(lead) => setPromovendoLead(lead)}
           />
         )}
 
@@ -1103,6 +1128,23 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           return atualizado;
         }}
         onFechar={() => setEditandoLead(null)}
+      />
+
+      {/* 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026) — Modal "Promover Lead manualmente" */}
+      <PromoverLeadModal
+        aberto={promovendoLead !== null}
+        lead={promovendoLead}
+        onConfirmar={async (lead_id) => {
+          const r = await leadsImportadosH.promoverManualmente(lead_id);
+          // Quando promoção bem-sucedida (ou lead já existia), o hook v1.3
+          // remove o item do array local. Atualizamos as stats globais
+          // (badge "Leads") para refletir o novo total de email_leads.
+          if (r.success && (r.promovido || r.motivo === 'lead_ja_existia')) {
+            leadsH.carregarStats();
+          }
+          return r;
+        }}
+        onFechar={() => setPromovendoLead(null)}
       />
 
       {/* ════════════════════════════════════════════════════════════ */}

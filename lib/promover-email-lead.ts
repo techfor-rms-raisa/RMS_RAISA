@@ -3,7 +3,22 @@
  *   prospect_leads (motor='importacao_lista') → email_leads (CRM)
  *
  * Caminho: lib/promover-email-lead.ts
- * Versão: 1.0 (Sub-fase 3.D — 17/06/2026)
+ * Versão: 1.1 (Sub-fase 3.D refino — 18/06/2026 — origem parametrizável)
+ *
+ * 🆕 v1.1 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual):
+ *   Parametriza o campo `origem` (default mantém compatibilidade total
+ *   com chamadas existentes da auto-promoção). Permite que callers
+ *   distingam entre cenários de promoção:
+ *     - `revalidacao_importacao_lista` (default) — auto-promoção do
+ *       cascade quando `status_atualizacao='atualizado'` e
+ *       `review_manual=false`.
+ *     - `importacao_manual` — promoção via botão "Promover Lead" da
+ *       aba Leads Importados (usuário decide promover apesar de
+ *       `nao_localizado`, assumindo o risco de bounce).
+ *   A origem é aplicada tanto no `email_leads.origem` quanto no
+ *   `email_empresas.origem` (quando empresa é criada na promoção).
+ *
+ * v1.0 (Sub-fase 3.D — 17/06/2026): primeira versão.
  *
  * Encapsula a regra de promoção do lead da base transitória
  * (prospect_leads) para o CRM (email_leads), aplicando as
@@ -78,13 +93,20 @@ export interface ResultadoPromocao {
  * @param params.prospect   Registro completo do prospect_leads
  * @param params.criado_por Nome de exibição do criador (string,
  *                          padrão app_users.nome_usuario)
+ * @param params.origem     🆕 v1.1 — Origem a registrar em
+ *                          email_leads.origem e email_empresas.origem.
+ *                          Default: 'revalidacao_importacao_lista' (auto-promoção).
+ *                          Use 'importacao_manual' para promoção via botão manual.
  */
 export async function promoverParaEmailLeads(params: {
   supabase:   SupabaseClient;
   prospect:   ProspectLeadParaPromover;
   criado_por: string;
+  origem?:    string;
 }): Promise<ResultadoPromocao> {
   const { supabase, prospect, criado_por } = params;
+  // 🆕 v1.1 — origem parametrizada (default mantém compatibilidade com v1.0)
+  const origem = params.origem || 'revalidacao_importacao_lista';
 
   // ── (1) Email obrigatório ───────────────────────────────
   if (!prospect.email) {
@@ -149,7 +171,7 @@ export async function promoverParaEmailLeads(params: {
         setor:        prospect.empresa_setor ?? null,
         cidade:       prospect.cidade ?? null,
         uf:           prospect.estado ?? null,
-        origem:       'revalidacao_importacao_lista',
+        origem,       // 🆕 v1.1 — parametrizada (auto-promoção vs manual)
         criado_por,
       })
       .select('id')
@@ -171,7 +193,7 @@ export async function promoverParaEmailLeads(params: {
       email:            emailNorm,
       cargo:            prospect.cargo ?? null,
       linkedin_url:     prospect.linkedin_url ?? null,
-      origem:           'revalidacao_importacao_lista',
+      origem,           // 🆕 v1.1 — parametrizada (auto-promoção vs manual)
       vertical:         prospect.vertical ?? null,
       apto_campanha:    true,
       reservado_por:    prospect.reservado_por ?? null,
@@ -203,7 +225,7 @@ export async function promoverParaEmailLeads(params: {
     };
   }
 
-  console.log(`🚀 [promover-email-lead] prospect_id=${prospect.id} → email_lead_id=${novoLead.id} (empresa_id=${empresa_id ?? 'null'})`);
+  console.log(`🚀 [promover-email-lead] prospect_id=${prospect.id} → email_lead_id=${novoLead.id} (empresa_id=${empresa_id ?? 'null'}, origem=${origem})`);
   return {
     promovido:     true,
     motivo:        'ok',

@@ -1,10 +1,43 @@
 /**
- * api/revalidacao-leads-importados.ts — Listagem + Edição dos leads importados
+ * api/revalidacao-leads-importados.ts — Listagem + Edição + Promoção manual
  *
  * Caminho: api/revalidacao-leads-importados.ts
- * Versão: 1.2 (Sub-fase 3.D — 17/06/2026 — RENOMEADO de prospect-leads-importados.ts)
+ * Versão: 1.3 (Sub-fase 3.D refino — 18/06/2026 — Promover Lead manual)
  *
- * 🆕 v1.2 (17/06/2026 — hotfix bundling colisão):
+ * 🆕 v1.3 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual):
+ *   Adiciona action POST `?action=promover_manualmente` para permitir
+ *   ao usuário (GC/SDR/Admin) promover MANUALMENTE um lead importado
+ *   da aba "Leads Importados" para o CRM (`email_leads`), mesmo
+ *   quando o cascade automatizado o deixou como `nao_localizado`.
+ *
+ *   Caso de uso: providers externos (Hunter, Apollo, Gemini, Snov.io)
+ *   falham para emails inferidos de empresas brasileiras de médio
+ *   porte. O lead fica retido na aba indefinidamente. A promoção
+ *   manual é a "escotilha de escape": usuário assume o risco de
+ *   bounce, promove o lead, vincula a uma campanha via "Vincular em
+ *   Lote", e o fluxo natural (crm-webhook v1.15.1) cuida do bounce
+ *   movendo o lead para a aba "E-mails Inválidos" se for o caso.
+ *
+ *   Endpoint:
+ *
+ *   POST /api/revalidacao-leads-importados?action=promover_manualmente
+ *       Body: { lead_id: number, user_id: number }
+ *       Validações:
+ *         - lead deve existir e ter motor='importacao_lista'
+ *         - lead deve estar em status_atualizacao='nao_localizado'
+ *           (defesa em profundidade — UI já filtra)
+ *         - user_id deve ser o reservado_por do lead OU Administrador
+ *         - chama helper `lib/promover-email-lead.ts` com origem='importacao_manual'
+ *           (helper aplica LGPD opt_out + idempotência)
+ *       Resposta: {
+ *         success: true,
+ *         promovido: boolean,
+ *         motivo: 'ok' | 'sem_email' | 'opt_out_lgpd' | 'lead_ja_existia' | 'erro_*',
+ *         email_lead_id?: number,
+ *         empresa_id?: number,
+ *       }
+ *
+ * v1.2 (17/06/2026 — hotfix bundling colisão):
  *   Arquivo renomeado de `api/prospect-leads-importados.ts` para
  *   `api/revalidacao-leads-importados.ts` porque o nome anterior colidia
  *   com o hook React `useLeadsImportados.ts` durante o bundling do Vercel
@@ -69,6 +102,8 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+// 🆕 v1.3 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual)
+import { promoverParaEmailLeads } from '../lib/promover-email-lead.js';
 
 export const config = { maxDuration: 30 };
 
@@ -113,13 +148,22 @@ async function contarValidacoesHoje(user_id: number): Promise<number> {
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  // 🆕 v1.1 — agora também aceita PATCH
-  res.setHeader('Access-Control-Allow-Methods', 'GET, PATCH, OPTIONS');
+  // 🆕 v1.3 — agora também aceita POST (action=promover_manualmente)
+  res.setHeader('Access-Control-Allow-Methods', 'GET, PATCH, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method === 'GET')   return handleListar(req, res);
   if (req.method === 'PATCH') return handleEditar(req, res);
-  return res.status(405).json({ success: false, error: 'Use GET ou PATCH.' });
+  // 🆕 v1.3 — POST com action no query string
+  if (req.method === 'POST') {
+    const action = (req.query.action ?? '').toString();
+    if (action === 'promover_manualmente') return handlePromoverManualmente(req, res);
+    return res.status(400).json({
+      success: false,
+      error: `action desconhecida: '${action}'. Use ?action=promover_manualmente.`,
+    });
+  }
+  return res.status(405).json({ success: false, error: 'Use GET, PATCH ou POST.' });
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -380,6 +424,153 @@ async function handleEditar(req: VercelRequest, res: VercelResponse) {
     });
   } catch (err: any) {
     console.error(`❌ [revalidacao-leads-importados/editar] exceção:`, err);
+    return res.status(500).json({ success: false, error: err?.message || 'erro interno' });
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 🆕 v1.3 HANDLER POST — Promover Lead Manualmente (Sub-fase 3.D refino)
+// ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Promove um lead importado MANUALMENTE para `email_leads`, mesmo quando
+ * o cascade automatizado deixou-o como `nao_localizado`. Caso de uso:
+ * providers externos falharam para emails inferidos de empresas BR de
+ * médio porte. Usuário assume o risco de bounce e promove para destravar
+ * o fluxo.
+ *
+ * Fluxo:
+ *   1. Valida payload (lead_id, user_id).
+ *   2. Busca lead em prospect_leads (motor='importacao_lista').
+ *   3. RBAC: dono (reservado_por) OU Administrador.
+ *   4. Defesa em profundidade: status_atualizacao deve ser 'nao_localizado'.
+ *      (UI já filtra, mas backend valida pra evitar bypass.)
+ *   5. Resolve `criado_por` (nome_usuario do user_id).
+ *   6. Chama helper `promoverParaEmailLeads` com origem='importacao_manual'.
+ *      O helper aplica salvaguardas LGPD (opt_out) + idempotência (dedup
+ *      por email).
+ *   7. Retorna resultado completo para o frontend tratar UX.
+ *
+ * Resposta:
+ *   {
+ *     success: true,
+ *     promovido: boolean,
+ *     motivo: 'ok' | 'sem_email' | 'opt_out_lgpd' | 'lead_ja_existia' | 'erro_*',
+ *     email_lead_id?: number,
+ *     empresa_id?: number,
+ *   }
+ *
+ * Observação importante sobre `motivo`:
+ *   - 'ok'              → promoveu com sucesso; lead some da aba
+ *   - 'lead_ja_existia' → lead já estava em email_leads; helper DELETA
+ *                         do prospect_leads (lead some da aba também)
+ *   - 'opt_out_lgpd'    → bloqueado por LGPD; lead permanece na aba
+ *   - 'sem_email'       → email faltando no prospect; UI deve sugerir Editar
+ *   - 'erro_*'          → falha técnica; lead permanece na aba
+ */
+async function handlePromoverManualmente(req: VercelRequest, res: VercelResponse) {
+  try {
+    const body = req.body ?? {};
+    const lead_id = Number(body.lead_id);
+    const user_id = Number(body.user_id);
+
+    // ── (1) Validações de payload ─────────────────────────
+    if (!lead_id || isNaN(lead_id)) {
+      return res.status(400).json({ success: false, error: 'lead_id obrigatório' });
+    }
+    if (!user_id || isNaN(user_id)) {
+      return res.status(400).json({ success: false, error: 'user_id obrigatório' });
+    }
+
+    // ── (2) Busca prospect existente ───────────────────────
+    const { data: prospect, error: errBusca } = await supabase
+      .from('prospect_leads')
+      .select(`
+        id, nome_completo, email, cargo, linkedin_url,
+        empresa_nome, empresa_dominio, empresa_setor,
+        cidade, estado, vertical, reservado_por,
+        motor, status_atualizacao, permite_revalidacao_externa
+      `)
+      .eq('id', lead_id)
+      .eq('motor', 'importacao_lista')
+      .maybeSingle();
+
+    if (errBusca) {
+      console.error(`❌ [revalidacao-leads-importados/promover] busca: ${errBusca.message}`);
+      return res.status(500).json({ success: false, error: errBusca.message });
+    }
+    if (!prospect) {
+      return res.status(404).json({
+        success: false,
+        error: `Lead importado id=${lead_id} não encontrado (motor='importacao_lista').`,
+      });
+    }
+
+    // ── (3) RBAC: dono OU Administrador ───────────────────
+    const { data: user } = await supabase
+      .from('app_users')
+      .select('id, nome_usuario, tipo_usuario')
+      .eq('id', user_id)
+      .maybeSingle();
+
+    if (!user) {
+      return res.status(403).json({ success: false, error: 'Usuário não encontrado.' });
+    }
+    const isAdmin = user.tipo_usuario === 'Administrador';
+    const isDono  = prospect.reservado_por === user_id;
+    if (!isAdmin && !isDono) {
+      return res.status(403).json({
+        success: false,
+        error: `Apenas o responsável (id=${prospect.reservado_por}) ou um Administrador pode promover este lead.`,
+      });
+    }
+
+    // ── (4) Defesa em profundidade: só permite promover 'nao_localizado' ──
+    //   A UI só mostra o botão para este status, mas validamos no backend
+    //   para evitar bypass via chamada direta ao endpoint.
+    if (prospect.status_atualizacao !== 'nao_localizado') {
+      return res.status(409).json({
+        success: false,
+        error: `Promoção manual permitida apenas para leads com status 'nao_localizado'. ` +
+               `Status atual: '${prospect.status_atualizacao ?? 'pendente'}'. ` +
+               `Use o botão Validar para os demais casos.`,
+      });
+    }
+
+    // ── (5) Resolve criado_por (nome_usuario) ─────────────
+    const criadoPor = user.nome_usuario || `user_${user_id}`;
+
+    // ── (6) Chama helper com origem manual ────────────────
+    const resultado = await promoverParaEmailLeads({
+      supabase,
+      prospect: prospect as any,
+      criado_por: criadoPor,
+      origem: 'importacao_manual',
+    });
+
+    if (resultado.promovido) {
+      console.log(
+        `🚀 [revalidacao-leads-importados/promover] MANUAL lead_id=${lead_id} ` +
+        `→ email_lead_id=${resultado.email_lead_id} por user_id=${user_id} ` +
+        `(${isAdmin ? 'Admin' : 'Dono'})`
+      );
+    } else {
+      console.warn(
+        `⚠️ [revalidacao-leads-importados/promover] MANUAL lead_id=${lead_id} ` +
+        `NÃO promovido (motivo=${resultado.motivo}) por user_id=${user_id}`
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      promovido:     resultado.promovido,
+      motivo:        resultado.motivo,
+      email_lead_id: resultado.email_lead_id,
+      empresa_id:    resultado.empresa_id,
+    });
+
+  } catch (err: any) {
+    console.error(`❌ [revalidacao-leads-importados/promover] exceção:`, err);
     return res.status(500).json({ success: false, error: err?.message || 'erro interno' });
   }
 }
