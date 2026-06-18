@@ -2,9 +2,19 @@
  * api/revalidacao-leads-importados.ts — Listagem + Edição + Promoção manual
  *
  * Caminho: api/revalidacao-leads-importados.ts
- * Versão: 1.3 (Sub-fase 3.D refino — 18/06/2026 — Promover Lead manual)
+ * Versão: 1.4 (Sub-fase 3.D refino — 18/06/2026 — Promover libera TTL ativo)
  *
- * 🆕 v1.3 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual):
+ * 🆕 v1.4 (18/06/2026 — Sub-fase 3.D refino: Promover libera TTL ativo):
+ *   `handlePromoverManualmente` agora aceita status `ttl_nao_atingido`
+ *   (TTL ativo) além de `nao_localizado`. Motivação: leads em TTL
+ *   ficavam travados sem ação prática na aba — só Editar (Validar fica
+ *   disabled em Etapa 0). Liberar Promover dá ao GC/SDR a opção de
+ *   assumir o risco e seguir adiante. Se der bounce, fluxo natural
+ *   (crm-webhook v1.15.1) move automaticamente para a aba E-mails
+ *   Inválidos. Demais status (atualizado, promovido, trocou_empresa,
+ *   dominio_invalido, opt_out) continuam recusados com 409.
+ *
+ * v1.3 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual):
  *   Adiciona action POST `?action=promover_manualmente` para permitir
  *   ao usuário (GC/SDR/Admin) promover MANUALMENTE um lead importado
  *   da aba "Leads Importados" para o CRM (`email_leads`), mesmo
@@ -525,13 +535,19 @@ async function handlePromoverManualmente(req: VercelRequest, res: VercelResponse
       });
     }
 
-    // ── (4) Defesa em profundidade: só permite promover 'nao_localizado' ──
-    //   A UI só mostra o botão para este status, mas validamos no backend
-    //   para evitar bypass via chamada direta ao endpoint.
-    if (prospect.status_atualizacao !== 'nao_localizado') {
+    // ── (4) Defesa em profundidade: status_atualizacao deve permitir promoção ──
+    //   A UI só mostra o botão para 'nao_localizado' e 'ttl_nao_atingido'
+    //   (v1.3 + v1.4), mas validamos no backend para evitar bypass via
+    //   chamada direta ao endpoint.
+    //   - 'nao_localizado'    → cascade falhou, usuário assume risco de bounce
+    //   - 'ttl_nao_atingido'  → lead em TTL travado, usuário libera manualmente
+    //   - demais (atualizado, promovido, trocou_empresa, dominio_invalido,
+    //     opt_out) → não devem chegar aqui (UI esconde o botão)
+    const STATUS_PROMOVIVEIS = new Set<string>(['nao_localizado', 'ttl_nao_atingido']);
+    if (!STATUS_PROMOVIVEIS.has(String(prospect.status_atualizacao ?? ''))) {
       return res.status(409).json({
         success: false,
-        error: `Promoção manual permitida apenas para leads com status 'nao_localizado'. ` +
+        error: `Promoção manual permitida apenas para leads com status 'nao_localizado' ou 'ttl_nao_atingido' (TTL ativo). ` +
                `Status atual: '${prospect.status_atualizacao ?? 'pendente'}'. ` +
                `Use o botão Validar para os demais casos.`,
       });
