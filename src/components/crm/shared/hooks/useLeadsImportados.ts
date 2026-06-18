@@ -2,9 +2,20 @@
  * useLeadsImportados.ts — Hook orquestrador da aba "Leads Importados"
  *
  * Caminho: src/components/crm/shared/hooks/useLeadsImportados.ts
- * Versão: 1.2 (Sub-fase 3.D — 17/06/2026 — hotfix endpoint renomeado)
+ * Versão: 1.3 (Sub-fase 3.D refino — 18/06/2026 — Promover Lead manual)
  *
- * v1.2 (Sub-fase 3.D — 17/06/2026):
+ * 🆕 v1.3 (Sub-fase 3.D refino — 18/06/2026):
+ *   Novo método `promoverManualmente(lead_id)` que chama POST
+ *   /api/revalidacao-leads-importados?action=promover_manualmente.
+ *   Quando o backend retorna `promovido=true` OU `motivo='lead_ja_existia'`,
+ *   o lead é REMOVIDO do array local (porque o helper deletou o registro
+ *   de prospect_leads). Para outros motivos (opt_out_lgpd, sem_email,
+ *   erro_*), o lead PERMANECE no array.
+ *
+ *   Retorna o ResultadoPromocao completo para o caller decidir UX
+ *   (modal de sucesso/aviso/erro).
+ *
+ * v1.2 (Sub-fase 3.D — 17/06/2026 — hotfix endpoint renomeado):
  *   • URLs alteradas de /api/prospect-leads-importados (nome antigo)
  *     para /api/revalidacao-leads-importados. O endpoint backend foi
  *     renomeado porque o nome anterior colidia com este próprio
@@ -141,6 +152,30 @@ export interface ResultadoImportacao {
     nao_localizado:   number;
     dominio_invalido: number;
   };
+}
+
+// 🆕 v1.3 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual)
+/**
+ * Motivos retornados pelo backend ao tentar promover manualmente.
+ * Espelha `MotivoPromocao` de lib/promover-email-lead.ts.
+ */
+export type MotivoPromocaoManual =
+  | 'ok'
+  | 'sem_email'
+  | 'opt_out_lgpd'
+  | 'lead_ja_existia'
+  | 'erro_insert_lead'
+  | 'erro_delete_prospect';
+
+/** Resultado da chamada `promoverManualmente`. */
+export interface ResultadoPromocaoManual {
+  success:        boolean;
+  promovido:      boolean;
+  motivo:         MotivoPromocaoManual | string;
+  email_lead_id?: number;
+  empresa_id?:    number;
+  /** Quando success=false (erro HTTP/payload), traz a mensagem. */
+  error?:         string;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -384,6 +419,78 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     return atualizado;
   }, [userId]);
 
+  // ── 🆕 v1.3 promoverManualmente() — POST com action=promover_manualmente ──
+  /**
+   * Promove manualmente um lead importado para `email_leads`. Caso de uso:
+   * lead caiu em `nao_localizado` no cascade automático mas o usuário
+   * decide promovê-lo mesmo assim (assumindo o risco de bounce).
+   *
+   * Comportamento sobre o array local de `leads`:
+   *  - Se `promovido=true` ou `motivo='lead_ja_existia'` → REMOVE do array
+   *    (o helper backend deletou o registro de prospect_leads).
+   *  - Caso contrário (opt_out_lgpd, sem_email, erro_*) → MANTÉM no array
+   *    (lead continua em prospect_leads para revisão manual via Editar).
+   *
+   * O caller (componente que renderiza o modal) decide a UX:
+   *  - 'ok'              → toast verde de sucesso
+   *  - 'lead_ja_existia' → toast azul "lead já estava no CRM"
+   *  - 'opt_out_lgpd'    → alerta amarelo + mantém modal aberto
+   *  - 'sem_email'       → alerta amarelo sugerindo Editar antes
+   *  - 'erro_*'          → alerta vermelho
+   *
+   * @param lead_id ID do prospect_lead a promover
+   * @returns ResultadoPromocaoManual (nunca lança — sempre devolve resultado)
+   */
+  const promoverManualmente = useCallback(async (
+    lead_id: number
+  ): Promise<ResultadoPromocaoManual> => {
+    try {
+      const res = await fetch(
+        '/api/revalidacao-leads-importados?action=promover_manualmente',
+        {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lead_id, user_id: userId }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.success) {
+        return {
+          success:   false,
+          promovido: false,
+          motivo:    data?.error || `HTTP ${res.status}`,
+          error:     data?.error || `Erro HTTP ${res.status}`,
+        };
+      }
+
+      // Backend retornou success=true. Avalia se devemos remover do array.
+      const promovido = data.promovido === true;
+      const motivo    = (data.motivo ?? 'ok') as MotivoPromocaoManual;
+      const removerDoArray = promovido || motivo === 'lead_ja_existia';
+
+      if (removerDoArray) {
+        setLeads(prev => prev.filter(l => l.id !== lead_id));
+        setTotal(prev => Math.max(0, prev - 1));
+      }
+
+      return {
+        success:       true,
+        promovido,
+        motivo,
+        email_lead_id: data.email_lead_id,
+        empresa_id:    data.empresa_id,
+      };
+    } catch (err: any) {
+      return {
+        success:   false,
+        promovido: false,
+        motivo:    err?.message || 'erro_rede',
+        error:     err?.message || 'Falha de rede',
+      };
+    }
+  }, [userId]);
+
   return {
     // estado de listagem
     leads, total,
@@ -403,7 +510,8 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     carregar,
     validarLead,
     importarLote,
-    editar,        // 🆕 v1.1
+    editar,                // 🆕 v1.1
+    promoverManualmente,   // 🆕 v1.3
   };
 }
 
