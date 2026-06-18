@@ -1,10 +1,35 @@
 /**
- * api/revalidacao-leads-importados.ts — Listagem + Edição + Promoção manual
+ * api/revalidacao-leads-importados.ts — Listagem + Edição + Promoção + Anti-dup
  *
  * Caminho: api/revalidacao-leads-importados.ts
- * Versão: 1.4 (Sub-fase 3.D refino — 18/06/2026 — Promover libera TTL ativo)
+ * Versão: 1.5 (Sub-fase 3.D refino — 18/06/2026 — Anti-duplicidade)
  *
- * 🆕 v1.4 (18/06/2026 — Sub-fase 3.D refino: Promover libera TTL ativo):
+ * 🆕 v1.5 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade de importação):
+ *   Adiciona action POST `?action=verificar_duplicidade` que classifica cada
+ *   email de uma lista contra 3 fontes simultaneamente:
+ *     - `email_leads.email`     → status 'em_email_leads'  (lead ativo no CRM)
+ *     - `email_optout.email`    → status 'em_opt_out'      (LGPD)
+ *     - `prospect_leads.email`  → status 'em_revalidacao'  (em revalidação)
+ *   Prioridade na classificação (LGPD primeiro):
+ *     opt_out > email_leads > prospect_leads > novo
+ *
+ *   Resposta: { success: true, resultados: [{ email, status }] }
+ *
+ *   Frontend usa essa info no modal "Importar Lista de Leads" pra mostrar
+ *   badges e impedir submit de duplicatas. Backend complementar
+ *   (prospect-revalidate v1.4) faz defesa em profundidade no INSERT
+ *   preventivo, rejeitando duplicatas sem consumir cota.
+ *
+ *   Limite: 100 emails por chamada (suficiente p/ o limite de 50 da
+ *   importação atual, com folga p/ planilhas que exibem duplicatas
+ *   internas — todas verificadas em 1 round-trip).
+ *
+ *   POST /api/revalidacao-leads-importados?action=verificar_duplicidade
+ *       Body: { emails: string[] }
+ *       Sem RBAC fino — duplicidade é informação global (qualquer GC/SDR
+ *       precisa saber se outro usuário já está com aquele lead).
+ *
+ * v1.4 (18/06/2026 — Sub-fase 3.D refino: Promover libera TTL ativo):
  *   `handlePromoverManualmente` agora aceita status `ttl_nao_atingido`
  *   (TTL ativo) além de `nao_localizado`. Motivação: leads em TTL
  *   ficavam travados sem ação prática na aba — só Editar (Validar fica
@@ -168,9 +193,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'POST') {
     const action = (req.query.action ?? '').toString();
     if (action === 'promover_manualmente') return handlePromoverManualmente(req, res);
+    // 🆕 v1.5 — Anti-duplicidade
+    if (action === 'verificar_duplicidade') return handleVerificarDuplicidade(req, res);
     return res.status(400).json({
       success: false,
-      error: `action desconhecida: '${action}'. Use ?action=promover_manualmente.`,
+      error: `action desconhecida: '${action}'. Use ?action=promover_manualmente OU ?action=verificar_duplicidade.`,
     });
   }
   return res.status(405).json({ success: false, error: 'Use GET, PATCH ou POST.' });
@@ -587,6 +614,151 @@ async function handlePromoverManualmente(req: VercelRequest, res: VercelResponse
 
   } catch (err: any) {
     console.error(`❌ [revalidacao-leads-importados/promover] exceção:`, err);
+    return res.status(500).json({ success: false, error: err?.message || 'erro interno' });
+  }
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 🆕 v1.5 HANDLER POST — Verificar Duplicidade (Sub-fase 3.D refino)
+// ──────────────────────────────────────────────────────────────────────
+
+/** Status de duplicidade retornado por email. Ordem de precedência:
+ *  opt_out > email_leads > revalidacao > novo. */
+type StatusDuplicidade = 'novo' | 'em_email_leads' | 'em_opt_out' | 'em_revalidacao';
+
+const LIMITE_EMAILS_POR_VERIFICACAO = 100;
+
+/**
+ * Verifica em 1 round-trip se cada email da lista já existe em alguma
+ * das 3 fontes que bloqueiam importação:
+ *
+ *   - `email_optout.email`    → 'em_opt_out'      (LGPD — prioridade máxima)
+ *   - `email_leads.email`     → 'em_email_leads'  (lead ativo no CRM)
+ *   - `prospect_leads.email`  → 'em_revalidacao'  (em revalidação/prospecção)
+ *
+ * Quando o mesmo email aparece em mais de uma fonte, prevalece a
+ * classificação mais restritiva (opt_out vence email_leads, que vence
+ * prospect_leads).
+ *
+ * Sem RBAC — duplicidade é informação global. Um GC/SDR precisa saber
+ * que outro já está trabalhando aquele lead (mesmo que não veja o
+ * registro na própria aba "apenas meus").
+ *
+ * Resposta:
+ *   {
+ *     success: true,
+ *     resultados: [{ email: string, status: StatusDuplicidade }]
+ *   }
+ *
+ * Performance: 3 SELECTs paralelos com `IN (...)` cobrem até
+ * LIMITE_EMAILS_POR_VERIFICACAO (100) emails em ~1 round-trip cada,
+ * paralelos via Promise.all. Sets em memória pra lookup O(1).
+ */
+async function handleVerificarDuplicidade(req: VercelRequest, res: VercelResponse) {
+  try {
+    const body = req.body ?? {};
+    const emailsBrutos = body.emails;
+
+    // ── (1) Validações de payload ─────────────────────────
+    if (!Array.isArray(emailsBrutos)) {
+      return res.status(400).json({ success: false, error: 'emails deve ser um array' });
+    }
+    if (emailsBrutos.length === 0) {
+      return res.status(200).json({ success: true, resultados: [] });
+    }
+    if (emailsBrutos.length > LIMITE_EMAILS_POR_VERIFICACAO) {
+      return res.status(400).json({
+        success: false,
+        error: `Máximo de ${LIMITE_EMAILS_POR_VERIFICACAO} emails por verificação. Recebido: ${emailsBrutos.length}.`,
+      });
+    }
+
+    // Normaliza (lowercase + trim) e remove vazios/strings inválidas.
+    // Mantém Set p/ dedup interno, mas devolvemos resultado por email
+    // ORIGINAL (não normalizado) para o caller poder associar.
+    const mapaOriginalParaNorm = new Map<string, string>();
+    for (const e of emailsBrutos) {
+      if (typeof e !== 'string') continue;
+      const norm = e.toLowerCase().trim();
+      if (!norm) continue;
+      mapaOriginalParaNorm.set(e, norm);
+    }
+    const emailsNorm = Array.from(new Set(mapaOriginalParaNorm.values()));
+
+    if (emailsNorm.length === 0) {
+      return res.status(200).json({ success: true, resultados: [] });
+    }
+
+    // ── (2) 3 SELECTs paralelos ───────────────────────────
+    const [resEmailLeads, resOptout, resProspectLeads] = await Promise.all([
+      supabase
+        .from('email_leads')
+        .select('email')
+        .in('email', emailsNorm),
+      supabase
+        .from('email_optout')
+        .select('email')
+        .in('email', emailsNorm),
+      supabase
+        .from('prospect_leads')
+        .select('email')
+        .in('email', emailsNorm),
+    ]);
+
+    if (resEmailLeads.error) {
+      console.error(`❌ [revalidacao-leads-importados/verificar_dup] email_leads: ${resEmailLeads.error.message}`);
+      return res.status(500).json({ success: false, error: resEmailLeads.error.message });
+    }
+    if (resOptout.error) {
+      console.error(`❌ [revalidacao-leads-importados/verificar_dup] email_optout: ${resOptout.error.message}`);
+      return res.status(500).json({ success: false, error: resOptout.error.message });
+    }
+    if (resProspectLeads.error) {
+      console.error(`❌ [revalidacao-leads-importados/verificar_dup] prospect_leads: ${resProspectLeads.error.message}`);
+      return res.status(500).json({ success: false, error: resProspectLeads.error.message });
+    }
+
+    // Sets de lookup O(1)
+    const setEmailLeads     = new Set<string>((resEmailLeads.data     ?? []).map(r => (r.email ?? '').toLowerCase().trim()));
+    const setOptout         = new Set<string>((resOptout.data         ?? []).map(r => (r.email ?? '').toLowerCase().trim()));
+    const setProspectLeads  = new Set<string>((resProspectLeads.data  ?? []).map(r => (r.email ?? '').toLowerCase().trim()));
+
+    // ── (3) Classifica cada email (mantém ordem original do input) ──
+    const resultados: Array<{ email: string; status: StatusDuplicidade }> = [];
+    for (const original of emailsBrutos) {
+      if (typeof original !== 'string') continue;
+      const norm = original.toLowerCase().trim();
+      if (!norm) continue;
+
+      let status: StatusDuplicidade = 'novo';
+      // Prioridade: LGPD > CRM > revalidação
+      if (setOptout.has(norm))             status = 'em_opt_out';
+      else if (setEmailLeads.has(norm))    status = 'em_email_leads';
+      else if (setProspectLeads.has(norm)) status = 'em_revalidacao';
+
+      resultados.push({ email: original, status });
+    }
+
+    const contagem = {
+      novo:           resultados.filter(r => r.status === 'novo').length,
+      em_email_leads: resultados.filter(r => r.status === 'em_email_leads').length,
+      em_opt_out:     resultados.filter(r => r.status === 'em_opt_out').length,
+      em_revalidacao: resultados.filter(r => r.status === 'em_revalidacao').length,
+    };
+    console.log(
+      `🔍 [revalidacao-leads-importados/verificar_dup] ` +
+      `recebidos=${emailsBrutos.length} novos=${contagem.novo} ` +
+      `crm=${contagem.em_email_leads} optout=${contagem.em_opt_out} ` +
+      `reval=${contagem.em_revalidacao}`
+    );
+
+    return res.status(200).json({
+      success: true,
+      resultados,
+    });
+
+  } catch (err: any) {
+    console.error(`❌ [revalidacao-leads-importados/verificar_dup] exceção:`, err);
     return res.status(500).json({ success: false, error: err?.message || 'erro interno' });
   }
 }

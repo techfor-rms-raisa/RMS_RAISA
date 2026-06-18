@@ -1,6 +1,32 @@
 /**
  * api/prospect-revalidate.ts — Orquestrador da Revalidação de Leads Importados
  *
+ * v1.4 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade no INSERT preventivo)
+ *   Quando o body chega com `lead.criar_se_nao_existir === true` E sem
+ *   `lead.lead_id`, ANTES de fazer o INSERT em `prospect_leads`, agora
+ *   verificamos o email contra 3 fontes em paralelo (Promise.all):
+ *     - `email_optout.email`    → opt-out LGPD (prioridade máxima)
+ *     - `email_leads.email`     → lead ativo no CRM
+ *     - `prospect_leads.email`  → em revalidação/prospecção
+ *
+ *   Se encontra duplicidade, retorna IMEDIATAMENTE um `ResultadoLead`
+ *   com `status_atualizacao` = `'duplicado_em_opt_out'` /
+ *   `'duplicado_em_email_leads'` / `'duplicado_em_revalidacao'`,
+ *   SEM:
+ *     - inserir em `prospect_leads`
+ *     - inserir em `prospect_revalidacao_log`  (cota NÃO é consumida)
+ *     - rodar cascade (sem créditos Hunter/Apollo/Snov.io/Gemini)
+ *
+ *   Frontend (ImportarListaLeadsModal v1.1) já bloqueia duplicatas na
+ *   pré-visualização via endpoint `verificar_duplicidade`. Esta camada
+ *   no `prospect-revalidate` é DEFESA EM PROFUNDIDADE: cobre race
+ *   condition (vários usuários importando simultaneamente) e payload
+ *   malformado de cliente direto.
+ *
+ *   Sem alteração de schema. Adiciona 3 novos valores ao type
+ *   StatusAtualizacao (que precisam refletir no frontend
+ *   `useLeadsImportados.ts` v1.4).
+ *
  * v1.3 (18/06/2026 — Sub-fase 3.D refino: Resgate via Snov.io)
  *   Quando o cascade chega em `nao_localizado` por:
  *     - Hunter retornou 'invalid' (email inferido não existe na mailbox);
@@ -194,7 +220,11 @@ interface CustoLead {
 type StatusAtualizacao =
   | 'atualizado' | 'promovido' | 'trocou_empresa'
   | 'nao_localizado' | 'opt_out'
-  | 'dominio_invalido' | 'ttl_nao_atingido';
+  | 'dominio_invalido' | 'ttl_nao_atingido'
+  // 🆕 v1.4 (18/06/2026 — Anti-duplicidade no INSERT preventivo)
+  | 'duplicado_em_email_leads'
+  | 'duplicado_em_opt_out'
+  | 'duplicado_em_revalidacao';
 
 interface ResultadoLead {
   lead_id?:           number | null;
@@ -776,6 +806,62 @@ async function processarLead(leadInput: LeadInput, user_id: number): Promise<Res
   //   Requer migration 2026-06-17_prospect_leads_motor_importacao.sql
   //   aplicada (adiciona 'importacao_lista' ao CHECK constraint de `motor`).
   if (!leadDb && !leadInput.lead_id && leadInput.criar_se_nao_existir === true) {
+
+    // 🆕 v1.4 (18/06/2026) — ANTI-DUPLICIDADE NO INSERT PREVENTIVO
+    //   Defesa em profundidade: frontend (ImportarListaLeadsModal v1.1) já
+    //   bloqueia duplicatas na pré-visualização via /verificar_duplicidade,
+    //   mas aqui validamos novamente para cobrir:
+    //     - race condition (2 GCs importando o mesmo email simultaneamente)
+    //     - payload manipulado (chamada direta ao endpoint)
+    //
+    //   Prioridade: opt_out > email_leads > prospect_leads.
+    //   Se duplicado, retorna curto-circuito SEM:
+    //     - inserir em prospect_leads
+    //     - inserir em prospect_revalidacao_log (cota NÃO é consumida)
+    //     - rodar cascade (sem créditos externos)
+    if (leadInput.email) {
+      const emailNorm = leadInput.email.toLowerCase().trim();
+      try {
+        const [resOptout, resEmailLeads, resProspect] = await Promise.all([
+          supabase.from('email_optout').select('email').eq('email', emailNorm).limit(1).maybeSingle(),
+          supabase.from('email_leads').select('id').eq('email', emailNorm).limit(1).maybeSingle(),
+          supabase.from('prospect_leads').select('id').eq('email', emailNorm).limit(1).maybeSingle(),
+        ]);
+
+        let statusDup: StatusAtualizacao | null = null;
+        let motivoLog = '';
+        if (resOptout.data) {
+          statusDup = 'duplicado_em_opt_out';
+          motivoLog = 'email já em email_optout (LGPD)';
+        } else if (resEmailLeads.data) {
+          statusDup = 'duplicado_em_email_leads';
+          motivoLog = `email já em email_leads (id=${resEmailLeads.data.id})`;
+        } else if (resProspect.data) {
+          statusDup = 'duplicado_em_revalidacao';
+          motivoLog = `email já em prospect_leads (id=${resProspect.data.id})`;
+        }
+
+        if (statusDup) {
+          console.log(
+            `🚫 [revalidate/anti-dup] lead "${leadInput.nome_completo}" ` +
+            `<${emailNorm}> bloqueado: ${motivoLog}. Sem INSERT/log/cota.`
+          );
+          return {
+            lead_id:            null,
+            lead_id_novo:       null,
+            status_atualizacao: statusDup,
+            review_manual:      false,
+            creditos,
+            duracao_ms:         Date.now() - inicioMs,
+          };
+        }
+      } catch (err: any) {
+        // Falha de rede/Supabase: NÃO bloqueia o fluxo — segue pro INSERT
+        // (defesa em profundidade tem o backend da listagem como fallback).
+        console.warn(`⚠️ [revalidate/anti-dup] verificação falhou (segue ao INSERT): ${err?.message}`);
+      }
+    }
+
     const { primeiro: pNome, ultimo: uNome } = extrairPrimeiroEUltimo(leadInput.nome_completo);
     const insertNovo: any = {
       buscado_por:     user_id,
@@ -1066,6 +1152,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const resumo: Record<StatusAtualizacao, number> = {
     atualizado: 0, promovido: 0, trocou_empresa: 0,
     nao_localizado: 0, opt_out: 0, dominio_invalido: 0, ttl_nao_atingido: 0,
+    // 🆕 v1.4 — anti-duplicidade (não consomem cota)
+    duplicado_em_email_leads: 0,
+    duplicado_em_opt_out:     0,
+    duplicado_em_revalidacao: 0,
   };
   const creditosTotais: CustoLead = { hunter: 0, apollo: 0, snovio: 0, gemini: 0 };
   const idsProcessados: number[] = [];
@@ -1103,6 +1193,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     `ok=${resumo.atualizado} promovido=${resumo.promovido} trocou=${resumo.trocou_empresa} ` +
     `perdido=${resumo.nao_localizado} optout=${resumo.opt_out} ` +
     `dom_inv=${resumo.dominio_invalido} ttl=${resumo.ttl_nao_atingido} ` +
+    // 🆕 v1.4 — contadores de duplicidade (não consomem cota)
+    `dup_crm=${resumo.duplicado_em_email_leads} ` +
+    `dup_optout=${resumo.duplicado_em_opt_out} ` +
+    `dup_reval=${resumo.duplicado_em_revalidacao} ` +
     `creditos=H${creditosTotais.hunter}/A${creditosTotais.apollo}/S${creditosTotais.snovio}/G${creditosTotais.gemini} ` +
     `dur=${duracaoMs}ms`
   );

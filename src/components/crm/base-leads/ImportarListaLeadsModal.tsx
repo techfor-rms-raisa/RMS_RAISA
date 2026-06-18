@@ -2,7 +2,34 @@
  * ImportarListaLeadsModal.tsx — Modal de upload da Sub-fase 3.C
  *
  * Caminho: src/components/crm/base-leads/ImportarListaLeadsModal.tsx
- * Versão: 1.0.1 (Sub-fase 3.C — 17/06/2026 — hotfix tolerância de headers)
+ * Versão: 1.1 (Sub-fase 3.D refino — 18/06/2026 — Anti-duplicidade)
+ *
+ * 🆕 v1.1 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade):
+ *   Após o parse local do arquivo (e antes de habilitar o botão Importar),
+ *   o modal chama o backend `verificarDuplicidade` para classificar cada
+ *   email contra `email_leads`, `email_optout` e `prospect_leads`.
+ *   Mudanças:
+ *
+ *   • Nova prop `onVerificarDuplicidade` (callback que recebe a lista
+ *     de emails e devolve a classificação por email).
+ *   • Cada `LinhaParseada` ganha `status_duplicidade` (StatusDuplicidade).
+ *   • Header da etapa Preview ganha indicador "Verificando duplicatas…"
+ *     e, ao terminar, os contadores discriminados (Novos / Em CRM /
+ *     Opt-out / Em revalidação).
+ *   • Coluna Status mostra badge específico para cada caso de duplicidade.
+ *   • Linhas duplicadas têm fundo cinza claro (visualmente reconhecidas
+ *     como "não importáveis"); linhas inválidas continuam vermelhas.
+ *   • Botão Importar conta APENAS os "novos" (válidos sem duplicidade)
+ *     e fica desabilitado se 0 novos.
+ *
+ *   Limitação consciente: a verificação roda em 1 chamada para todos os
+ *   emails da preview (até 50, dentro do limite 100 do backend). Caso
+ *   futuro >100, vai precisar paginar.
+ *
+ *   Defesa em profundidade: backend `prospect-revalidate` v1.4 também
+ *   verifica duplicidade antes do INSERT preventivo e devolve status
+ *   `duplicado_*` sem consumir cota. Isso cobre race condition entre
+ *   verificação do modal e o submit.
  *
  * v1.0.1 (17/06/2026 — hotfix): `normalizar()` agora converte `_` e `-`
  *   em espaço (e colapsa múltiplos espaços), tornando o detector de colunas
@@ -42,6 +69,9 @@ import type {
   LeadParaImportar,
   ProgressoImportacao,
   ResultadoImportacao,
+  // 🆕 v1.1 — Anti-duplicidade
+  StatusDuplicidade,
+  ItemVerificacaoDuplicidade,
 } from '../shared/hooks/useLeadsImportados';
 
 // ════════════════════════════════════════════════════════════
@@ -58,6 +88,8 @@ export interface ImportarListaLeadsModalProps {
   ) => Promise<ResultadoImportacao>;
   onConcluido: (resultado: ResultadoImportacao) => void;
   onFechar: () => void;
+  /** 🆕 v1.1 — Callback de verificação de duplicidade (anti-dup pré-upload). */
+  onVerificarDuplicidade: (emails: string[]) => Promise<ItemVerificacaoDuplicidade[]>;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -73,6 +105,10 @@ interface LinhaParseada {
   responsavelId: number | null;   // resolvido via lookup
   // Mapeamento normalizado (para passar pro hook quando válida)
   campos?: LeadParaImportar;
+  // 🆕 v1.1 — Status de duplicidade ('novo' até verificação rodar; depois
+  // assume 'em_email_leads' / 'em_opt_out' / 'em_revalidacao' conforme
+  // backend retornar). `null` significa "ainda verificando".
+  status_duplicidade?: StatusDuplicidade | null;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -175,6 +211,7 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
   onImportar,
   onConcluido,
   onFechar,
+  onVerificarDuplicidade,
 }) => {
   const [etapa, setEtapa] = useState<Etapa>('escolher');
   const [linhas, setLinhas] = useState<LinhaParseada[]>([]);
@@ -182,6 +219,9 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
   const [arquivoNome, setArquivoNome] = useState<string>('');
   const [progresso, setProgresso] = useState<ProgressoImportacao | null>(null);
   const [resultado, setResultado] = useState<ResultadoImportacao | null>(null);
+  // 🆕 v1.1 — Estados da verificação de duplicidade
+  const [verificandoDup, setVerificandoDup] = useState<boolean>(false);
+  const [erroVerificarDup, setErroVerificarDup] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Reset ────────────────────────────────────────────────
@@ -192,6 +232,9 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
     setArquivoNome('');
     setProgresso(null);
     setResultado(null);
+    // 🆕 v1.1
+    setVerificandoDup(false);
+    setErroVerificarDup(null);
   }, []);
 
   const fechar = useCallback(() => {
@@ -204,7 +247,17 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
   const stats = useMemo(() => {
     const validas = linhas.filter(l => l.erros.length === 0).length;
     const invalidas = linhas.length - validas;
-    return { validas, invalidas, total: linhas.length };
+    // 🆕 v1.1 — Stats de duplicidade. Considera apenas linhas SEM erros
+    // (linhas inválidas já são descartadas e não consultam duplicidade).
+    const validasComStatus = linhas.filter(l => l.erros.length === 0);
+    const novos = validasComStatus.filter(l => l.status_duplicidade === 'novo').length;
+    const emCrm = validasComStatus.filter(l => l.status_duplicidade === 'em_email_leads').length;
+    const emOptout = validasComStatus.filter(l => l.status_duplicidade === 'em_opt_out').length;
+    const emRevalidacao = validasComStatus.filter(l => l.status_duplicidade === 'em_revalidacao').length;
+    return {
+      validas, invalidas, total: linhas.length,
+      novos, emCrm, emOptout, emRevalidacao,
+    };
   }, [linhas]);
 
   // ── Parse do arquivo ─────────────────────────────────────
@@ -330,11 +383,48 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
 
       setLinhas(parsed);
       setEtapa('preview');
+
+      // 🆕 v1.1 — Após mostrar a preview, dispara verificação de duplicidade
+      // em background para emails das linhas SEM erros. UI mostra spinner
+      // discreto no header e desabilita botão Importar até terminar.
+      const emailsParaVerificar = parsed
+        .filter(l => l.erros.length === 0 && l.campos?.email)
+        .map(l => l.campos!.email);
+
+      if (emailsParaVerificar.length > 0) {
+        setVerificandoDup(true);
+        setErroVerificarDup(null);
+        try {
+          const resultados = await onVerificarDuplicidade(emailsParaVerificar);
+          // Indexa por email (normalizado) para lookup eficiente
+          const mapaStatus = new Map<string, StatusDuplicidade>();
+          for (const r of resultados) {
+            mapaStatus.set(r.email.toLowerCase().trim(), r.status);
+          }
+          // Atualiza linhas com status_duplicidade
+          setLinhas(prev => prev.map(l => {
+            if (l.erros.length > 0 || !l.campos?.email) return l;
+            const emailNorm = l.campos.email.toLowerCase().trim();
+            return {
+              ...l,
+              status_duplicidade: mapaStatus.get(emailNorm) ?? 'novo',
+            };
+          }));
+        } catch (err: any) {
+          // Falha não bloqueia preview — apenas avisa o usuário. As linhas
+          // permanecem sem status_duplicidade, o que faz o botão Importar
+          // ficar disabled (modal exige verificação para liberar submit).
+          console.error('[ImportarListaLeadsModal] erro em verificarDuplicidade:', err);
+          setErroVerificarDup(err?.message || 'Falha na verificação de duplicidade');
+        } finally {
+          setVerificandoDup(false);
+        }
+      }
     } catch (err: any) {
       console.error('[ImportarListaLeadsModal] erro no parse:', err);
       setErroGeral(`Falha ao ler arquivo: ${err?.message || 'erro desconhecido'}`);
     }
-  }, [responsaveis, cotaResidual]);
+  }, [responsaveis, cotaResidual, onVerificarDuplicidade]);
 
   // ── Handlers de upload ──────────────────────────────────
   const onFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -354,13 +444,26 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
 
   // ── Submit ──────────────────────────────────────────────
   const submeter = useCallback(async () => {
-    const validas = linhas.filter(l => l.campos !== undefined).map(l => l.campos!);
+    // 🆕 v1.1 — Envia APENAS leads validados E classificados como 'novo'
+    // pela verificação de duplicidade. Leads com erros ou duplicidade
+    // foram visualmente filtrados; aqui é defesa adicional.
+    const validas = linhas
+      .filter(l => l.campos !== undefined && l.status_duplicidade === 'novo')
+      .map(l => l.campos!);
+
     if (validas.length === 0) return;
 
     setEtapa('importando');
     setProgresso({
       atual: 0, total: validas.length, sucessos: 0, falhas: 0,
-      resumo: { atualizado: 0, promovido: 0, trocou_empresa: 0, nao_localizado: 0, dominio_invalido: 0 },
+      resumo: {
+        atualizado: 0, promovido: 0, trocou_empresa: 0,
+        nao_localizado: 0, dominio_invalido: 0,
+        // 🆕 v1.1 — contadores de duplicidade (race condition detectada pelo backend)
+        duplicado_em_email_leads: 0,
+        duplicado_em_opt_out:     0,
+        duplicado_em_revalidacao: 0,
+      },
     });
 
     const r = await onImportar(validas, p => setProgresso(p));
@@ -465,16 +568,58 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
           {/* ── ETAPA: PREVIEW ── */}
           {etapa === 'preview' && (
             <div className="space-y-3">
-              <div className="text-sm font-semibold text-gray-700 flex items-center justify-between">
+              {/* Cabeçalho com contadores discriminados (🆕 v1.1) */}
+              <div className="text-sm font-semibold text-gray-700 flex flex-wrap items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5">
                   <span className="bg-teal-600 text-white w-5 h-5 rounded-full text-xs flex items-center justify-center font-bold">3</span>
-                  Pré-visualização ({arquivoNome}) — <span className="text-teal-700">{stats.validas} válidos</span>
-                  {stats.invalidas > 0 && <span className="text-red-600"> · {stats.invalidas} com erro</span>}
+                  Pré-visualização ({arquivoNome})
                 </span>
                 <span className="text-xs text-gray-500 font-normal">
                   Cota residual hoje: <strong>{cotaResidual}</strong>
                 </span>
               </div>
+
+              {/* 🆕 v1.1 — Contadores em pílulas */}
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-medium inline-flex items-center gap-1">
+                  <i className="fa-solid fa-circle-plus"></i> {stats.novos} novos
+                </span>
+                {stats.emCrm > 0 && (
+                  <span className="px-2.5 py-1 rounded-full bg-red-100 text-red-800 font-medium inline-flex items-center gap-1">
+                    <i className="fa-solid fa-user-check"></i> {stats.emCrm} já no CRM
+                  </span>
+                )}
+                {stats.emOptout > 0 && (
+                  <span className="px-2.5 py-1 rounded-full bg-rose-100 text-rose-800 font-medium inline-flex items-center gap-1">
+                    <i className="fa-solid fa-ban"></i> {stats.emOptout} em opt-out
+                  </span>
+                )}
+                {stats.emRevalidacao > 0 && (
+                  <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-medium inline-flex items-center gap-1">
+                    <i className="fa-solid fa-rotate"></i> {stats.emRevalidacao} em revalidação
+                  </span>
+                )}
+                {stats.invalidas > 0 && (
+                  <span className="px-2.5 py-1 rounded-full bg-gray-200 text-gray-700 font-medium inline-flex items-center gap-1">
+                    <i className="fa-solid fa-circle-xmark"></i> {stats.invalidas} com erro
+                  </span>
+                )}
+                {verificandoDup && (
+                  <span className="px-2.5 py-1 rounded-full bg-blue-100 text-blue-800 font-medium inline-flex items-center gap-1">
+                    <i className="fa-solid fa-spinner fa-spin"></i> Verificando duplicatas…
+                  </span>
+                )}
+              </div>
+
+              {/* 🆕 v1.1 — Aviso caso a verificação tenha falhado */}
+              {erroVerificarDup && (
+                <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                  <i className="fa-solid fa-triangle-exclamation"></i>{' '}
+                  Não foi possível verificar duplicatas: <strong>{erroVerificarDup}</strong>.
+                  O botão Importar fica bloqueado até a verificação concluir.
+                  Você pode fechar e tentar novamente.
+                </div>
+              )}
 
               <div className="border border-gray-200 rounded-lg overflow-hidden max-h-96 overflow-y-auto">
                 <table className="min-w-full text-xs">
@@ -493,7 +638,13 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
                   <tbody className="divide-y divide-gray-100">
                     {linhas.map(l => {
                       const ok = l.erros.length === 0;
-                      const cls = ok ? 'hover:bg-gray-50' : 'bg-red-50/50 hover:bg-red-50';
+                      // 🆕 v1.1 — classes condicionais por estado de duplicidade
+                      const duplicado = ok && l.status_duplicidade && l.status_duplicidade !== 'novo';
+                      const cls = !ok
+                        ? 'bg-red-50/50 hover:bg-red-50'
+                        : duplicado
+                          ? 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                          : 'hover:bg-gray-50';
                       return (
                         <tr key={l.linha} className={cls}>
                           <td className="px-2 py-1.5 text-gray-500">{l.linha}</td>
@@ -515,12 +666,31 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
                           <td className="px-2 py-1.5">
                             {Object.entries(l.bruto).find(([h]) => detectarCampoPorHeader(h) === 'vertical')?.[1] || '—'}
                           </td>
+                          {/* 🆕 v1.1 — coluna Status com badge discriminado */}
                           <td className="px-2 py-1.5">
-                            {ok ? (
-                              <i className="fa-solid fa-circle-check text-emerald-500" title="OK"></i>
-                            ) : (
+                            {!ok ? (
                               <span className="text-red-600" title={l.erros.join('; ')}>
                                 <i className="fa-solid fa-circle-xmark"></i> {l.erros.length} erro(s)
+                              </span>
+                            ) : l.status_duplicidade === undefined || l.status_duplicidade === null ? (
+                              <span className="text-blue-500" title="Verificando…">
+                                <i className="fa-solid fa-spinner fa-spin"></i> ...
+                              </span>
+                            ) : l.status_duplicidade === 'novo' ? (
+                              <span className="text-emerald-600 inline-flex items-center gap-1" title="Pronto para importar">
+                                <i className="fa-solid fa-circle-check"></i> Novo
+                              </span>
+                            ) : l.status_duplicidade === 'em_email_leads' ? (
+                              <span className="text-red-600 inline-flex items-center gap-1" title="Lead já existe em Meus Leads (CRM)">
+                                <i className="fa-solid fa-user-check"></i> Já no CRM
+                              </span>
+                            ) : l.status_duplicidade === 'em_opt_out' ? (
+                              <span className="text-rose-600 inline-flex items-center gap-1" title="Email em opt-out (LGPD)">
+                                <i className="fa-solid fa-ban"></i> Opt-out
+                              </span>
+                            ) : (
+                              <span className="text-amber-700 inline-flex items-center gap-1" title="Em revalidação (prospect_leads)">
+                                <i className="fa-solid fa-rotate"></i> Em revalidação
                               </span>
                             )}
                           </td>
@@ -534,7 +704,17 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
               {stats.invalidas > 0 && (
                 <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
                   <i className="fa-solid fa-info-circle"></i>{' '}
-                  Linhas com erro serão <strong>ignoradas</strong> no envio. Corrija o arquivo ou continue com {stats.validas} válidas.
+                  Linhas com erro serão <strong>ignoradas</strong> no envio. Corrija o arquivo ou prossiga sem elas.
+                </div>
+              )}
+              {/* 🆕 v1.1 — Aviso de duplicidade quando há leads bloqueados */}
+              {(stats.emCrm + stats.emOptout + stats.emRevalidacao) > 0 && (
+                <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+                  <i className="fa-solid fa-shield-halved"></i>{' '}
+                  Foram detectadas <strong>{stats.emCrm + stats.emOptout + stats.emRevalidacao} duplicatas</strong>
+                  {' '}— elas serão <strong>ignoradas</strong> no envio.
+                  {stats.emOptout > 0 && ' Emails em opt-out (LGPD) jamais podem ser reimportados.'}
+                  {stats.emCrm > 0 && ' Use Editar em "Meus Leads" para atualizar leads já existentes no CRM.'}
                 </div>
               )}
             </div>
@@ -639,11 +819,27 @@ const ImportarListaLeadsModal: React.FC<ImportarListaLeadsModalProps> = ({
             {etapa === 'preview' && (
               <button
                 onClick={submeter}
-                disabled={stats.validas === 0}
+                disabled={stats.novos === 0 || verificandoDup}
                 className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium hover:bg-teal-700 disabled:bg-gray-300 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                title={
+                  verificandoDup
+                    ? 'Aguarde a verificação de duplicatas concluir…'
+                    : stats.novos === 0
+                      ? 'Nenhum lead novo para importar (todos já existem no CRM, em opt-out ou em revalidação)'
+                      : `Importar ${stats.novos} lead${stats.novos !== 1 ? 's' : ''} novo${stats.novos !== 1 ? 's' : ''}`
+                }
               >
-                <i className="fa-solid fa-rocket"></i>
-                Importar e Revalidar {stats.validas} lead{stats.validas !== 1 ? 's' : ''}
+                {verificandoDup ? (
+                  <>
+                    <i className="fa-solid fa-spinner fa-spin"></i>
+                    Verificando…
+                  </>
+                ) : (
+                  <>
+                    <i className="fa-solid fa-rocket"></i>
+                    Importar e Revalidar {stats.novos} lead{stats.novos !== 1 ? 's' : ''}
+                  </>
+                )}
               </button>
             )}
           </div>

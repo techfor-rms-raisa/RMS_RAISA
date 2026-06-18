@@ -2,9 +2,21 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.13 (Sub-fase 3.D refino — Promover Lead manual — 18/06/2026)
+ * Versão: 1.14 (Sub-fase 3.D refino — Anti-duplicidade — 18/06/2026)
  *
- * 🆕 v1.13 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual):
+ * 🆕 v1.14 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade de importação):
+ *   Cirurgia mínima: passa a nova prop `onVerificarDuplicidade` ao
+ *   `ImportarListaLeadsModal` v1.1, ligando ao método
+ *   `leadsImportadosH.verificarDuplicidade` do hook v1.4. Permite ao
+ *   modal classificar cada email da planilha contra `email_leads`,
+ *   `email_optout` e `prospect_leads` na pré-visualização e bloquear
+ *   submit de duplicatas (LGPD + integridade do CRM).
+ *
+ *   Dependência: backend revalidacao-leads-importados v1.5 com action
+ *   POST `?action=verificar_duplicidade`, e prospect-revalidate v1.4
+ *   com defesa em profundidade no INSERT preventivo.
+ *
+ * v1.13 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual):
  *   Adiciona o fluxo de promoção manual para leads importados que
  *   caíram em `nao_localizado` (cascade automatizado falhou).
  *
@@ -1114,6 +1126,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           leadsH.carregarStats();
         }}
         onFechar={() => setModalImportarListaAberto(false)}
+        // 🆕 v1.14 (Sub-fase 3.D refino — 18/06/2026) — Anti-duplicidade pré-upload
+        onVerificarDuplicidade={leadsImportadosH.verificarDuplicidade}
       />
 
       {/* 🆕 v1.12 (Sub-fase 3.D — 17/06/2026) — Modal "Editar Lead Importado" */}
