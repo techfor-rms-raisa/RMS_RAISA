@@ -1,6 +1,28 @@
 /**
  * api/prospect-revalidate.ts — Orquestrador da Revalidação de Leads Importados
  *
+ * v1.3 (18/06/2026 — Sub-fase 3.D refino: Resgate via Snov.io)
+ *   Quando o cascade chega em `nao_localizado` por:
+ *     - Hunter retornou 'invalid' (email inferido não existe na mailbox);
+ *     - Apollo + Gemini não confirmaram emprego (pessoa não localizada
+ *       na empresa declarada no CRM);
+ *     - MAS o lead tem `empresa_dominio` válido,
+ *   a ETAPA 3 agora DISPARA como TENTATIVA DE RESGATE: o endpoint
+ *   `prospect-email-finder` tenta achar email do mesmo nome no mesmo
+ *   domínio via Snov.io (fallback Apollo). Se retorna email com status
+ *   'verified' ou 'probable' (fonte 'snovio' ou 'apollo'), a decisão é
+ *   REVERTIDA para 'atualizado' — assumindo que a pessoa continua na
+ *   empresa declarada, só o email inferido estava errado.
+ *
+ *   Motivação: revalidações de leads importados manualmente frequentemente
+ *   trazem emails inferidos (`nome.sobrenome@empresa`) que Hunter classifica
+ *   como invalid. Sem o resgate, esses leads viravam `nao_localizado`
+ *   silenciosamente mesmo quando a empresa existe e Snov.io conseguiria
+ *   achar o email correto.
+ *
+ *   Sem alteração de schema/migration. Reaproveita endpoint
+ *   `/api/prospect-email-finder` já em Production.
+ *
  * v1.2 (17/06/2026 — Sub-fase 3.D: Auto-promoção + Edição)
  *   Após `persistir()` da Etapa 4, se o resultado atende ao critério
  *   de promoção automática, TRANSFERE o registro de `prospect_leads`
@@ -828,12 +850,42 @@ async function processarLead(leadInput: LeadInput, user_id: number): Promise<Res
   let etapa3: ResultadoEtapa3 | undefined;
   if (
     decisaoBase === 'trocou_empresa' ||
-    (etapa1.score === 'invalid' && decisaoBase === 'atualizado')
+    (etapa1.score === 'invalid' && decisaoBase === 'atualizado') ||
+    // 🆕 v1.3 (18/06/2026) — RESGATE via Snov.io: cascade chegou em
+    //   'nao_localizado' porque Hunter invalidou email inferido E
+    //   Gemini não confirmou. Se temos `empresa_dominio` válido, vale
+    //   tentar Snov.io/Apollo achar o email do mesmo nome no mesmo
+    //   domínio (assume que a pessoa CONTINUA na empresa, só o email
+    //   inferido estava errado).
+    (decisaoBase === 'nao_localizado' &&
+     etapa1.score === 'invalid' &&
+     !!leadInput.empresa_dominio)
   ) {
     const r3 = await etapa3_reBuscarEmail(leadInput, etapa2, decisaoBase);
     etapa3 = r3.resultado;
     creditos.snovio += r3.creditos.snovio;
     creditos.apollo += r3.creditos.apollo;
+  }
+
+  // 🆕 v1.3 (18/06/2026) — REVERSÃO DE DECISÃO por resgate:
+  //   Quando partimos de 'nao_localizado' e Snov.io/Apollo (Etapa 3)
+  //   trouxe email com status 'verified' ou 'probable', promovemos a
+  //   decisão para 'atualizado'. Persistir vai gravar o novo email no
+  //   prospect_leads e a Etapa 5 (auto-promoção) avalia transferência
+  //   para email_leads.
+  let decisaoFinal: Decisao = decisaoBase;
+  if (
+    decisaoBase === 'nao_localizado' &&
+    etapa3?.novoEmail &&
+    (etapa3.emailStatus === 'verified' || etapa3.emailStatus === 'probable') &&
+    (etapa3.fonte === 'snovio' || etapa3.fonte === 'apollo')
+  ) {
+    decisaoFinal = 'atualizado';
+    console.log(
+      `✨ [revalidate/resgate] lead_id=${leadDb?.id ?? '(externo)'} ` +
+      `resgatado via ${etapa3.fonte} | email=${etapa3.novoEmail} ` +
+      `status=${etapa3.emailStatus}`
+    );
   }
 
   // ── ETAPA 4
@@ -842,7 +894,7 @@ async function processarLead(leadInput: LeadInput, user_id: number): Promise<Res
     etapa1,
     etapa2,
     etapa3,
-    decisao: decisaoBase,
+    decisao: decisaoFinal,
     review_manual,
     creditos,
     duracao_ms: Date.now() - inicioMs,
