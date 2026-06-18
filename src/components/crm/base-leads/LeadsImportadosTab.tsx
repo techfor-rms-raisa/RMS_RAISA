@@ -2,9 +2,19 @@
  * LeadsImportadosTab.tsx — Aba "Leads Importados" do BaseLeadsPage
  *
  * Caminho: src/components/crm/base-leads/LeadsImportadosTab.tsx
- * Versão: 1.2 (Sub-fase 3.D refino — 18/06/2026 — botão Promover manual)
+ * Versão: 1.3 (Sub-fase 3.D refino — 18/06/2026 — Promover libera TTL ativo)
  *
- * 🆕 v1.2 (Sub-fase 3.D refino — 18/06/2026):
+ * 🆕 v1.3 (Sub-fase 3.D refino — 18/06/2026):
+ *   Botão "Promover" agora aparece TAMBÉM para leads com
+ *   `status_atualizacao='ttl_nao_atingido'` (badge "TTL ativo"), além de
+ *   `nao_localizado`. Motivação: leads em TTL ficam travados na aba sem
+ *   ação prática (só podem ser editados), o que cria UX dead-lock —
+ *   especialmente após segunda tentativa de validar bloqueada pela Etapa 0.
+ *   Liberar Promover dá ao GC/SDR a opção de assumir o risco e seguir
+ *   adiante; se der bounce, fluxo natural (crm-webhook v1.15.1) move
+ *   automaticamente para a aba E-mails Inválidos.
+ *
+ * v1.2 (Sub-fase 3.D refino — 18/06/2026):
  *   • Nova prop `onPromover` (callback chamado quando usuário clica no
  *     botão "Promover" purple de uma linha).
  *   • Novo botão "Promover" (ícone fa-rocket, cor purple-600) ao lado de
@@ -316,8 +326,13 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
                           >
                             <i className="fa-solid fa-pen-to-square"></i> Editar
                           </button>
-                          {/* 🆕 v1.2 — botão Promover (foguete) — só pra nao_localizado */}
-                          {l.status_atualizacao === 'nao_localizado' && (
+                          {/* 🆕 v1.2 — botão Promover (foguete)
+                              🔧 v1.3 — também libera para 'ttl_nao_atingido' (TTL ativo)
+                              para evitar UX dead-lock: lead em TTL fica travado sem
+                              ação prática. Promover permite ao usuário assumir o risco
+                              de bounce e seguir adiante. */}
+                          {(l.status_atualizacao === 'nao_localizado' ||
+                            l.status_atualizacao === 'ttl_nao_atingido') && (
                             <button
                               onClick={() => onPromover(l)}
                               title="Promover manualmente para o CRM (assume risco de bounce)"
