@@ -1,6 +1,34 @@
 /**
  * api/prospect-revalidate.ts — Orquestrador da Revalidação de Leads Importados
  *
+ * v1.6 (18/06/2026 — Refator lib/: cascade in-process, elimina HTTP 401 em Preview)
+ *   Substitui as duas chamadas `fetch(${PUBLIC_BASE_URL}/api/...)` por
+ *   import direto das libs novas. Causa raiz do 401 visto em Preview era
+ *   Vercel Deployment Protection bloqueando as chamadas cross-function
+ *   entre endpoints do mesmo deploy (não era chave Hunter, como suposto
+ *   no checkpoint 18/06).
+ *
+ *   Mudanças cirúrgicas:
+ *     - Imports: + validarEmailCascade (lib/validate-emails) +
+ *                  buscarEmailPorNome (lib/email-finder)
+ *     - Constante PUBLIC_BASE_URL: REMOVIDA (sem uso após refator)
+ *     - etapa1_validarEmail(): fetch() → validarEmailCascade() in-process
+ *     - etapa3_reBuscarEmail(): fetch() → buscarEmailPorNome() in-process
+ *                                + ganha parâmetro user_id (propagado p/ cap Apollo v2.0)
+ *     - processarLead(): propaga user_id ao chamar etapa3_reBuscarEmail
+ *
+ *   GANHO ARQUITETURAL:
+ *     - 0 erros 401 em Preview (sem Deployment Protection no caminho)
+ *     - Latência -30-80ms por chamada (sem HTTP round-trip cross-function)
+ *     - Cap diário Apollo agora WATERTIGHT na Etapa 3 (resgate) — antes,
+ *       a chamada via prospect-email-finder usava buscarEmailApollo local
+ *       SEM cap, furando silenciosamente o limite de 30 créditos/dia/GC.
+ *     - 3× menos chamadas OAuth Snov.io (cache de token compartilhado em
+ *       lib/snovio.ts, antes era cache local em 3 arquivos distintos).
+ *
+ *   Sem alteração de schema. Sem alteração de contrato HTTP externo. Sem
+ *   alteração na matriz de decisão. Backwards-compatible.
+ *
  * v1.5 (18/06/2026 — Ativação Apollo Basic Plan 2.500 créditos/mês)
  *   Cirurgia mínima propagando o `user_id` ativo da requisição para o
  *   wrapper `apolloPeopleMatch` (lib/apollo.ts v2.0). Necessário para
@@ -141,6 +169,9 @@ import { geminiConfirmaEmprego, type GeminiConfirmaResult } from '../lib/gemini-
 import { compararEmpresas } from '../lib/comparadores.js';
 // 🆕 v1.2 (Sub-fase 3.D — 17/06/2026) — Helper de promoção transferência
 import { promoverParaEmailLeads } from '../lib/promover-email-lead.js';
+// 🆕 v1.6 (18/06/2026 — Refator lib/) — Cascade in-process elimina HTTP 401 em Preview
+import { validarEmailCascade } from '../lib/validate-emails.js';
+import { buscarEmailPorNome  } from '../lib/email-finder.js';
 
 export const config = { maxDuration: 60 };
 
@@ -153,7 +184,9 @@ const supabase = createClient(
 // CONSTANTES OPERACIONAIS
 // ──────────────────────────────────────────────────────────────────────
 
-const PUBLIC_BASE_URL          = process.env.PUBLIC_BASE_URL || '';
+// 🗑️ v1.6 (18/06/2026) — PUBLIC_BASE_URL removido: não há mais chamadas
+//   fetch() cross-function. Cascade chama libs in-process. Se algum dia
+//   for necessário fazer chamada HTTP externa, ler do env diretamente.
 const COTA_DIARIA_POR_GESTOR   = 50;
 const DELAY_ANTI_RATE_LIMIT_MS = 300;
 
@@ -359,32 +392,16 @@ async function etapa1_validarEmail(
     };
   }
 
-  if (!PUBLIC_BASE_URL) {
-    console.warn('⚠️ [revalidate/etapa1] PUBLIC_BASE_URL ausente — pulando validação');
-    return {
-      resultado: { score: 'risky', fonte: 'none' },
-      creditos:  { hunter: 0, snovio: 0 },
-    };
-  }
-
+  // 🆕 v1.6 (18/06/2026) — Refator lib/: chamada in-process elimina HTTP 401
+  //   em Preview (Vercel Deployment Protection bloqueava fetch cross-function).
+  //   validarEmailCascade nunca lança — sempre retorna ValidateResult.
   try {
-    const res = await fetch(`${PUBLIC_BASE_URL}/api/prospect-validate-emails`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email:   lead.email,
-        nome:    lead.nome_completo,
-        dominio: lead.empresa_dominio,
-      }),
+    const data = await validarEmailCascade({
+      email:   lead.email,
+      nome:    lead.nome_completo,
+      dominio: lead.empresa_dominio,
     });
-    if (!res.ok) {
-      console.warn(`⚠️ [revalidate/etapa1] HTTP ${res.status} para ${lead.email}`);
-      return {
-        resultado: { score: 'risky', fonte: 'none' },
-        creditos:  { hunter: 0, snovio: 0 },
-      };
-    }
-    const data = await res.json();
+
     const fonte: ResultadoEtapa1['fonte'] = (data.fonte || 'none') as any;
     const score: ResultadoEtapa1['score'] = (data.score || 'risky') as any;
 
@@ -543,17 +560,11 @@ function aplicarMatrizDecisao(
 // ──────────────────────────────────────────────────────────────────────
 
 async function etapa3_reBuscarEmail(
-  lead: LeadInput,
-  etapa2: ResultadoEtapa2Consolidado,
-  decisao: Decisao
+  lead:    LeadInput,
+  etapa2:  ResultadoEtapa2Consolidado,
+  decisao: Decisao,
+  user_id: number,
 ): Promise<{ resultado: ResultadoEtapa3; creditos: { snovio: number; apollo: number } }> {
-
-  if (!PUBLIC_BASE_URL) {
-    return {
-      resultado: { novoEmail: null, emailStatus: null, fonte: 'none' },
-      creditos:  { snovio: 0, apollo: 0 },
-    };
-  }
 
   // Decide domínio e empresa de busca conforme cenário
   const dominioBusca =
@@ -570,28 +581,23 @@ async function etapa3_reBuscarEmail(
 
   const { primeiro: pNome, ultimo: uNome } = extrairPrimeiroEUltimo(lead.nome_completo);
 
+  // 🆕 v1.6 (18/06/2026) — Refator lib/: chamada in-process elimina HTTP 401
+  //   em Preview. ALÉM disso, agora propaga user_id para o wrapper Apollo
+  //   v2.0 dentro do email-finder → cap diário por gestor finalmente
+  //   WATERTIGHT em TODA a cascade (antes a Etapa 3 furava silenciosamente
+  //   o cap via buscarEmailApollo local sem proteções).
   try {
-    const res = await fetch(`${PUBLIC_BASE_URL}/api/prospect-email-finder`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        primeiro_nome:  lead.primeiro_nome || pNome,
-        ultimo_nome:    lead.ultimo_nome   || uNome,
-        domain:         dominioBusca,
-        empresa_nome:   empresaBusca,
-        fonte_original: 'apollo',
-      }),
+    const data = await buscarEmailPorNome({
+      primeiro_nome:  lead.primeiro_nome || pNome,
+      ultimo_nome:    lead.ultimo_nome   || uNome,
+      domain:         dominioBusca,
+      empresa_nome:   empresaBusca,
+      fonte_original: 'apollo',
+      user_id,
     });
-    if (!res.ok) {
-      console.warn(`⚠️ [revalidate/etapa3] HTTP ${res.status}`);
-      return {
-        resultado: { novoEmail: null, emailStatus: null, fonte: 'none' },
-        creditos:  { snovio: 0, apollo: 0 },
-      };
-    }
-    const data = await res.json();
+
     if (data?.success && data.email) {
-      const motor = data.motor as string | undefined;
+      const motor = data.motor;
       const fonte: ResultadoEtapa3['fonte'] =
         motor === 'snovio' ? 'snovio' :
         motor === 'apollo' ? 'apollo' :
@@ -973,7 +979,7 @@ async function processarLead(leadInput: LeadInput, user_id: number): Promise<Res
      etapa1.score === 'invalid' &&
      !!leadInput.empresa_dominio)
   ) {
-    const r3 = await etapa3_reBuscarEmail(leadInput, etapa2, decisaoBase);
+    const r3 = await etapa3_reBuscarEmail(leadInput, etapa2, decisaoBase, user_id);
     etapa3 = r3.resultado;
     creditos.snovio += r3.creditos.snovio;
     creditos.apollo += r3.creditos.apollo;
