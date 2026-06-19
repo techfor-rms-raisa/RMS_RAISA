@@ -2,7 +2,16 @@
  * LeadsImportadosTab.tsx — Aba "Leads Importados" do BaseLeadsPage
  *
  * Caminho: src/components/crm/base-leads/LeadsImportadosTab.tsx
- * Versão: 1.3 (Sub-fase 3.D refino — 18/06/2026 — Promover libera TTL ativo)
+ * Versão: 1.4 (UX LinkedIn discreto na tabela — 19/06/2026)
+ *
+ * 🆕 v1.4 (19/06/2026 — UX LinkedIn): pequeno ícone azul oficial do LinkedIn
+ *   (#0A66C2) ao lado do nome do lead na coluna principal, EXIBIDO APENAS
+ *   quando `l.linkedin_url` está preenchido. Click abre o perfil em nova
+ *   aba (target=_blank, rel=noreferrer) e usa stopPropagation para não
+ *   acionar nenhum handler de linha que exista a futuro. Mudança apenas
+ *   visual; não altera dados, hooks ou contratos.
+ *
+ * v1.3 (Sub-fase 3.D refino — 18/06/2026 — Promover libera TTL ativo)
  *
  * 🆕 v1.3 (Sub-fase 3.D refino — 18/06/2026):
  *   Botão "Promover" agora aparece TAMBÉM para leads com
@@ -287,7 +296,22 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
                   return (
                     <tr key={l.id} className={linhaCls}>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-gray-900">{l.nome_completo}</div>
+                        <div className="font-medium text-gray-900 flex items-center gap-2">
+                          <span>{l.nome_completo}</span>
+                          {/* v1.4 (19/06/2026): ícone LinkedIn discreto inline */}
+                          {l.linkedin_url && (
+                            <a
+                              href={l.linkedin_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Abrir perfil no LinkedIn em nova aba"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-[#0A66C2] hover:text-[#004182] inline-flex items-center"
+                            >
+                              <i className="fa-brands fa-linkedin"></i>
+                            </a>
+                          )}
+                        </div>
                         {l.cargo && (
                           <div className="text-xs text-gray-500">{l.cargo}</div>
                         )}
