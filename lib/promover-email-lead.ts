@@ -3,7 +3,33 @@
  *   prospect_leads (motor='importacao_lista') → email_leads (CRM)
  *
  * Caminho: lib/promover-email-lead.ts
- * Versão: 1.1 (Sub-fase 3.D refino — 18/06/2026 — origem parametrizável)
+ * Versão: 1.2 (19/06/2026 — FIX Bug ownership: email_empresas herda reservado_por)
+ *
+ * 🆕 v1.2 (19/06/2026 — FIX Bug ownership empresa):
+ *   Ao criar uma nova empresa em `email_empresas` durante a promoção,
+ *   herda `reservado_por` e `reservado_em` do prospect_lead.
+ *
+ *   Causa raiz: a coluna `email_empresas.reservado_por` foi adicionada
+ *   pela migration 2026-05-28_crm_apto_campanha_ownership.sql cujo
+ *   COMMENT oficial diz: "Herdado do prospect_leads no momento da
+ *   promoção". Mas o INSERT do helper omitia o campo, deixando empresas
+ *   recém-criadas com reservado_por=NULL.
+ *
+ *   Impacto no usuário: para Gestão Comercial (filtro RBAC "Suas"),
+ *   essas empresas órfãs NÃO apareciam no dropdown do Editar Lead
+ *   (form mostrava "Sem empresa" mesmo com empresa_id válido em
+ *   email_leads). A coluna EMPRESA na listagem Meus Leads, em contraste,
+ *   exibe o nome correto via JOIN sem filtro RBAC — mascarando o bug.
+ *
+ *   Sintoma confirmado no smoke SmokeMotor.xlsx (19/06/2026):
+ *     - Vanessa.empresa_id=11 (Stone) → válido no banco
+ *     - email_empresas.id=11 (Stone) → reservado_por=NULL  ❌
+ *     - Dropdown da Gestão Comercial → Stone ausente
+ *
+ *   Mudança cirúrgica:
+ *     - INSERT email_empresas agora inclui:
+ *         reservado_por: prospect.reservado_por ?? null
+ *         reservado_em:  new Date().toISOString() (quando reservado_por)
  *
  * 🆕 v1.1 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual):
  *   Parametriza o campo `origem` (default mantém compatibilidade total
@@ -163,15 +189,20 @@ export async function promoverParaEmailLeads(params: {
   }
 
   if (!empresa_id && (prospect.empresa_nome || dominioNorm)) {
+    // 🆕 v1.2 (19/06/2026): herda ownership do prospect — sem isso, empresas
+    // ficam órfãs (reservado_por=NULL) e somem do dropdown da Gestão Comercial.
+    const reservadoEm = prospect.reservado_por ? new Date().toISOString() : null;
     const { data: empNova, error: errEmp } = await supabase
       .from('email_empresas')
       .insert({
-        nome:         prospect.empresa_nome || dominioNorm,
-        dominio:      dominioNorm || null,
-        setor:        prospect.empresa_setor ?? null,
-        cidade:       prospect.cidade ?? null,
-        uf:           prospect.estado ?? null,
-        origem,       // 🆕 v1.1 — parametrizada (auto-promoção vs manual)
+        nome:          prospect.empresa_nome || dominioNorm,
+        dominio:       dominioNorm || null,
+        setor:         prospect.empresa_setor ?? null,
+        cidade:        prospect.cidade ?? null,
+        uf:            prospect.estado ?? null,
+        origem,        // 🆕 v1.1 — parametrizada (auto-promoção vs manual)
+        reservado_por: prospect.reservado_por ?? null,  // 🆕 v1.2 — herda do prospect
+        reservado_em:  reservadoEm,                     // 🆕 v1.2 — coerente com reservado_por
         criado_por,
       })
       .select('id')

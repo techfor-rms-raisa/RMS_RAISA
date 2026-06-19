@@ -2,7 +2,15 @@
  * LeadFormModal.tsx — Modal de criar/editar lead
  *
  * Caminho: src/components/crm/base-leads/LeadFormModal.tsx
- * Versão: 1.2.1 (HOTFIX JSX — 11/06/2026)
+ * Versão: 1.3 (UX LinkedIn affordance — 19/06/2026)
+ *
+ * v1.3 (19/06/2026 — UX LinkedIn): o campo "LinkedIn" agora exibe um ícone
+ *   azul oficial do LinkedIn (#0A66C2) à direita do input, posicionado em
+ *   absolute, que abre o perfil em nova aba (target=_blank, rel=noreferrer)
+ *   quando clicado. O ícone só aparece quando há URL preenchida (decisão
+ *   minimalista — não polui a UI quando vazio). Mudança PURAMENTE visual,
+ *   sem alteração no schema, no contrato de dados, ou nos handlers. Demais
+ *   campos do form (Cargo, Telefone, etc.) inalterados.
  *
  * v1.2.1 (11/06/2026 — HOTFIX JSX): adicionado `</div>` faltante para fechar
  *   o overlay externo `<div className="fixed inset-0...">` do modal principal
@@ -264,12 +272,26 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">LinkedIn</label>
-            <input
-              value={form.linkedin_url || ''}
-              onChange={(e) => setField('linkedin_url', e.target.value)}
-              placeholder="https://linkedin.com/in/..."
-              className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-            />
+            <div className="relative">
+              <input
+                value={form.linkedin_url || ''}
+                onChange={(e) => setField('linkedin_url', e.target.value)}
+                placeholder="https://linkedin.com/in/..."
+                className="w-full px-3 py-2 pr-10 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none"
+              />
+              {/* v1.3 (19/06/2026): ícone azul oficial à direita, abre em nova aba */}
+              {form.linkedin_url && form.linkedin_url.trim() && (
+                <a
+                  href={form.linkedin_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Abrir perfil no LinkedIn em nova aba"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[#0A66C2] hover:text-[#004182] inline-flex items-center"
+                >
+                  <i className="fa-brands fa-linkedin text-lg"></i>
+                </a>
+              )}
+            </div>
           </div>
 
           {/* ══════════════════════════════════════════════════════════ */}

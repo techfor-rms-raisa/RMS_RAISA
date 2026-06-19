@@ -2,7 +2,16 @@
  * EditarLeadImportadoModal.tsx — Modal de edição de lead importado
  *
  * Caminho: src/components/crm/base-leads/EditarLeadImportadoModal.tsx
- * Versão: 1.0 (Sub-fase 3.D — 17/06/2026)
+ * Versão: 1.1 (UX LinkedIn affordance — 19/06/2026)
+ *
+ * v1.1 (19/06/2026 — UX LinkedIn): o campo "LinkedIn URL" agora exibe um
+ *   ícone azul oficial do LinkedIn (#0A66C2) à direita do input, posicionado
+ *   em absolute, que abre o perfil em nova aba (target=_blank, rel=noreferrer)
+ *   quando clicado. O ícone só aparece quando há URL preenchida (decisão
+ *   minimalista — não polui a UI quando vazio). Mudança PURAMENTE visual,
+ *   sem alteração no contrato PATCH do backend ou no FormState.
+ *
+ * v1.0 (Sub-fase 3.D — 17/06/2026)
  *
  * Abre sob a aba "Leads Importados" do BaseLeadsPage quando o usuário
  * clica no botão "Editar" (ícone lápis) em qualquer linha da tabela.
@@ -284,13 +293,27 @@ const EditarLeadImportadoModal: React.FC<EditarLeadImportadoModalProps> = ({
                 />
               </Field>
               <Field label="LinkedIn URL">
-                <input
-                  type="url"
-                  value={form.linkedin_url}
-                  onChange={e => onChange('linkedin_url', e.target.value)}
-                  className={inputClass(false)}
-                  placeholder="https://linkedin.com/in/..."
-                />
+                <div className="relative">
+                  <input
+                    type="url"
+                    value={form.linkedin_url}
+                    onChange={e => onChange('linkedin_url', e.target.value)}
+                    className={`${inputClass(false)} pr-10`}
+                    placeholder="https://linkedin.com/in/..."
+                  />
+                  {/* v1.1 (19/06/2026): ícone azul oficial à direita, abre em nova aba */}
+                  {form.linkedin_url && form.linkedin_url.trim() && (
+                    <a
+                      href={form.linkedin_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Abrir perfil no LinkedIn em nova aba"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[#0A66C2] hover:text-[#004182] inline-flex items-center"
+                    >
+                      <i className="fa-brands fa-linkedin text-lg"></i>
+                    </a>
+                  )}
+                </div>
               </Field>
             </div>
           </section>

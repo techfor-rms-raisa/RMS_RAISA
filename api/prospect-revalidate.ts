@@ -1,6 +1,29 @@
 /**
  * api/prospect-revalidate.ts — Orquestrador da Revalidação de Leads Importados
  *
+ * v1.7 (19/06/2026 — FIX Bug auto-promoção 3.D: aceita status='promovido')
+ *   Ajuste cirúrgico de 1 linha na condição da ETAPA 5 (auto-promoção
+ *   prospect_leads → email_leads). A versão v1.2 (Sub-fase 3.D) só
+ *   qualificava leads com `status_atualizacao='atualizado'` — excluindo
+ *   indevidamente leads com `status_atualizacao='promovido'` (cargo mudou
+ *   entre o XLSX e o que Apollo/Gemini retornou). Como leads "promovido"
+ *   foram igualmente confirmados pela cascade (com dados até MAIS frescos),
+ *   eles devem ser promovidos também.
+ *
+ *   Sintoma confirmado no smoke SmokeMotor.xlsx (19/06/2026):
+ *     - Vanessa/Thiago (status='atualizado') → promovidos a email_leads ✅
+ *     - Cassia/Danilo (status='promovido')   → ficaram presos em prospect_leads ❌
+ *
+ *   Mudança cirúrgica:
+ *     - Linha ~1030: condição da ETAPA 5 agora aceita ambos os status.
+ *
+ *   Side-effect: o termo "promovido" no status_atualizacao significa
+ *     promoção PROFISSIONAL do lead (cargo mudou), NÃO promoção para
+ *     email_leads. A UX do badge em LeadsImportadosTab continua exibindo
+ *     "Promovido" — pode causar confusão semântica. Próximo passo
+ *     (não nesta entrega): considerar renomear o label para "Cargo
+ *     atualizado" ou similar.
+ *
  * v1.6 (18/06/2026 — Refator lib/: cascade in-process, elimina HTTP 401 em Preview)
  *   Substitui as duas chamadas `fetch(${PUBLIC_BASE_URL}/api/...)` por
  *   import direto das libs novas. Causa raiz do 401 visto em Preview era
@@ -1018,16 +1041,20 @@ async function processarLead(leadInput: LeadInput, user_id: number): Promise<Res
     duracao_ms: Date.now() - inicioMs,
   });
 
-  // ── ETAPA 5 (🆕 v1.2 Sub-fase 3.D — 17/06/2026) — Auto-promoção transferência
+  // ── ETAPA 5 (🆕 v1.2 Sub-fase 3.D — 17/06/2026; 🔧 v1.7 19/06/2026) — Auto-promoção transferência
   //   prospect_leads (transitória) → email_leads (CRM).
-  //   Critério: status_atualizacao='atualizado' E review_manual=false E
+  //   Critério: status_atualizacao ∈ {'atualizado', 'promovido'} E review_manual=false E
   //             lead presente em prospect_leads (lead_id resolvido).
+  //   🔧 v1.7 (19/06/2026): adiciona 'promovido' ao critério. Leads com cargo
+  //   mudou pela cascade (status='promovido' = promoção PROFISSIONAL, não promoção
+  //   para CRM) também são leads localizados e válidos — devem ser promovidos.
+  //   Bug confirmado no smoke SmokeMotor.xlsx: Cassia/Danilo ficavam presos.
   //   Comportamento: helper faz INSERT email_lead + DELETE prospect_lead
   //   atomicamente, com salvaguardas LGPD (opt_out) e idempotência (dedup
   //   por email). Se NÃO promove (qualquer motivo), o lead permanece em
   //   prospect_leads para revisão manual via Editar/Validar.
   if (
-    resultado.status_atualizacao === 'atualizado' &&
+    (resultado.status_atualizacao === 'atualizado' || resultado.status_atualizacao === 'promovido') &&
     !resultado.review_manual &&
     leadDb?.id
   ) {
