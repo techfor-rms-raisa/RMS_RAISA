@@ -603,13 +603,13 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 73 arquivos | 1.09 MB | 18/06/2026 |
-| `src/components/` | 170 arquivos | 1.10 MB | 18/06/2026 |
+| `api/` | 75 arquivos | 1.13 MB | 19/06/2026 |
+| `src/components/` | 171 arquivos | 1.10 MB | 19/06/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 18/06/2026 |
-| `src/types/` | 6 arquivos | 31.0 KB | 18/06/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 18/06/2026 |
-| `scripts/` | 1 arquivos | 15.3 KB | 18/06/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 19/06/2026 |
+| `src/types/` | 6 arquivos | 31.0 KB | 19/06/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 19/06/2026 |
+| `scripts/` | 1 arquivos | 15.3 KB | 19/06/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -631,8 +631,10 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 - `api/extract-cv-text.ts`
 - `api/gemini-analyze.ts`
 - `api/gemini-audio-transcription.ts`
+- `api/gemini-confirma-test.ts`
 - `api/gemini-cv-generator-v2.ts`
 - `api/gemini-cv.ts`
+- `api/hunter-debug-test.ts`
 - `api/predicao-riscos.ts`
 - `api/prospect-apollo-search.ts`
 - `api/prospect-capture.ts`
