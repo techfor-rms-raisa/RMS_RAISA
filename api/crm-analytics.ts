@@ -2,86 +2,55 @@
  * api/crm-analytics.ts — Endpoint do Dashboard de Acompanhamento
  *
  * Caminho: api/crm-analytics.ts
- * Versão: 2.3 (21/06/2026)
+ * Versão: 2.4 (21/06/2026)
  *
- * v2.3 (21/06/2026): 3 ajustes finos sobre o dashboard introduzido na v2.2.
+ * v2.4 (21/06/2026 — Fix limite de 1000 do Supabase JS): refator cirúrgico
+ *   de 2 trechos que sofriam do limite default de 1000 linhas por SELECT
+ *   do cliente Supabase JS. Substituídos por agregação no Postgres via
+ *   RPC functions — mesmo padrão do `calcularEngajamento` que já estava
+ *   correto via `{count: 'exact', head: true}`.
  *
- *     1) `dashboard_stats` (ALTERADA): novo param opcional
- *        `campanha_id_engajamento` (number). Quando enviado, o frame
- *        Engajamento da aba "Visão Geral" é calculado SOMENTE para essa
- *        campanha específica — `status_filtro_engajamento` é ignorado.
- *        RBAC é re-verificado: se o ator não tem acesso à campanha
- *        solicitada (responsável diferente em perfil restrito), o
- *        engajamento volta zerado com `aguardando_motor=true` —
- *        comportamento fail-safe (não vaza dados).
+ *   Bug em Production (validado por SELECT direto em 21/06/2026):
+ *     • CRECI 01 (id=3): 3.652 linhas em `email_fila`, 2.387 enviados no
+ *       mês. O Painel Campanha mostrava 872 (subset das 1.000 primeiras
+ *       linhas, das quais 872 tinham `enviado_em` populado).
+ *     • Tabela "Campanhas em andamento" da Visão Geral: taxas calculadas
+ *       sobre amostra truncada (impacto silencioso porque exibe % e não
+ *       count absoluto).
  *
- *     2) `calcularEngajamento` (ALTERADA): aceita param opcional
- *        `campanhaIdEspecifica`. Quando definido, restringe os IDs a
- *        `[campanhaIdEspecifica]` após validar RBAC; caso contrário
- *        mantém o comportamento v2.2 (lista todas com filtro de status).
+ *   Causa raiz:
+ *     • action `metricas_por_step` puxava `email_fila` com `.select(...)`
+ *       e agregava no Node — limite de 1000 truncava.
+ *     • helper `calcularTaxasPorCampanha` idem.
+ *     • helper `calcularEngajamento` usa `head: true` (só conta no
+ *       Postgres, não trafega linhas) → intocado.
  *
- *     3) `metricas_por_step` (ALTERADA): retorna campo novo `opt_outs`
- *        por step + nas estatísticas totais. Implementação Opção B
- *        (decisão de produto 21/06/2026): conta registros de `email_fila`
- *        cujo `motivo_cancelamento` começa com 'opt_out_' (qualquer um
- *        dos 4 caminhos: manual, spam_complaint, list_unsubscribe,
- *        link_rodape).
+ *   Fix (regra 14 — sem gambiarra de `.range(0, 49999)`):
+ *     1) action `metricas_por_step`: chama `supabase.rpc(
+ *        'crm_metricas_por_step', { p_campanha_id, p_inicio })`.
+ *        Mapeia retorno via Map<step_id, métricas> e preenche os steps
+ *        ordenados (mantém contrato JSON 100% idêntico).
+ *     2) helper `calcularTaxasPorCampanha`: chama `supabase.rpc(
+ *        'crm_taxas_por_campanha', { p_campanha_ids })`. Retorno
+ *        Map<campanha_id, totais> idêntico ao anterior.
  *
- *        ⚠️ NOTA TÉCNICA DA OPÇÃO B: 1 lead que opta após o step 1
- *        cancela os steps 2, 3, 4 da fila — então conta 1× em cada
- *        step subsequente cancelado. O total da tabela (soma direta)
- *        NÃO equivale ao número de leads distintos em opt-out. A UI
- *        documenta isso no rodapé. Para "leads distintos em opt-out"
- *        seria necessário JOIN com `email_leads` + agregação por
- *        `lead_id`, descartado por simplicidade conforme decisão de
- *        produto.
+ *   IMPORTANTE: BIGINT em RPC retorna como string em JSON. Wrapper
+ *   `Number()` em cada campo numérico (volumes < 9 trilhões → sem
+ *   precision loss).
  *
- *        Sem filtro de período em `opt_outs`: `email_fila.motivo_cancelamento`
- *        não tem timestamp dedicado de cancelamento (apenas `atualizado_em`,
- *        que muda em outras operações também). Tratar opt-out como
- *        métrica CUMULATIVA da campanha — quando o lead opta, conta para
- *        sempre nas estatísticas históricas. Coerente com o padrão LGPD
- *        de opt-out IRREVERSÍVEL (ver CHECKPOINT 2026-06-11 OPT-OUT 100%).
+ *   PRÉ-REQUISITO: `sql/2026-06-21_analytics_rpc_functions.sql` aplicado
+ *   ANTES do deploy deste arquivo (regra do projeto). Se as functions
+ *   não existirem, o endpoint retornará 500 com mensagem clara.
  *
- *   Banco: NENHUMA migração. Todas as colunas já existem (`email_fila.motivo_cancelamento`
- *   foi adicionada em `2026-06-10_email_leads_bounce_handling.sql`).
+ *   Frontend NÃO muda — contrato JSON do backend é idêntico
+ *   (AcompanhamentoPage v3.1 e PainelCampanhaTab v1.1 permanecem em
+ *   Production sem alteração).
+ *
+ * v2.3 (21/06/2026): filtro de campanha específica no frame Engajamento
+ *   + coluna OPT-OUT (Opção B) no metricas_por_step.
  *
  * v2.2 (21/06/2026): aba "Painel Campanha" + filtro de status no frame
- *   "Engajamento & Entregabilidade" da aba "Visão Geral". Mudanças cirúrgicas:
- *
- *     1) `dashboard_stats` (ALTERADA): aceita param opcional novo
- *        `status_filtro_engajamento` ('todas' | 'ativas' | 'pausadas' |
- *        'finalizadas', default 'todas'). Filtra os IDs de campanhas usados
- *        pelo `calcularEngajamento` (frame de KPIs). NÃO afeta
- *        status_campanhas, distribuição, campanhas em andamento, nem
- *        saúde da base — escopo limitado ao frame Engajamento, conforme
- *        decisão de produto.
- *
- *     2) `listar_responsaveis` (NOVA): popula o Filtro 1 do Painel Campanha.
- *        RBAC espelha o padrão de `listar_responsaveis_elegiveis` em
- *        crm-campanhas.ts, mas adaptado ao escopo do Acompanhamento (que
- *        inclui Analista de R&S/SDR como observadores das próprias):
- *          • Administrador / Gestão de R&S → lista todos GC+SDR ativos +
- *            flag travado_no_proprio=false.
- *          • Gestão Comercial / Analista de R&S / SDR → retorna SOMENTE
- *            o próprio user + travado_no_proprio=true (UI desabilita o
- *            dropdown e exibe o nome dele).
- *
- *     3) `listar_campanhas_dropdown` (NOVA): popula o Filtro 3 cascateado
- *        em F1 (responsável) + F2 (status). Aceita params:
- *          • responsavel_id (number, opcional — se omitido e ator vê tudo,
- *            retorna todas; se ator vê próprias, força = self.id)
- *          • status_filtro: 'todas' | 'ativas' | 'pausadas' | 'finalizadas'
- *            (default 'todas')
- *        Mapeamento (helper `mapearStatusFiltro`):
- *          - 'ativas'      → status IN ('ativa', 'agendada')  (em andamento)
- *          - 'pausadas'    → status = 'pausada'
- *          - 'finalizadas' → status = 'concluida'
- *          - 'todas'       → sem filtro (inclui rascunho)
- *
- *     4) `metricas_por_step` (NOVA): para uma campanha_id, retorna a
- *        performance agregada por step (ordem 1, 2, 3...). RBAC: rejeita
- *        com 403 se ator NÃO vê tudo e campanha.responsavel_id !== self.id.
+ *   "Engajamento & Entregabilidade" da aba "Visão Geral".
  *
  * v2.1 (12/06/2026): substituição de TAXA CLIQUE por TAXA RESPOSTA.
  * v2.0 (04/06/2026 — Fase 8-fix2): conectado às fontes reais de envio.
@@ -94,16 +63,15 @@
  *
  * Actions:
  *   GET dashboard_stats
- *     Params: user_email (obrigatório), periodo ('semana'|'mes'|'trimestre'|'total', default 'mes')
- *             status_filtro_engajamento ('todas'|'ativas'|'pausadas'|'finalizadas', default 'todas')
- *             campanha_id_engajamento (number, opcional)                                                🆕 v2.3
+ *     Params: user_email (obrigatório), periodo, status_filtro_engajamento,
+ *             campanha_id_engajamento
  *   GET listar_responsaveis
  *     Params: user_email (obrigatório)
  *   GET listar_campanhas_dropdown
- *     Params: user_email (obrigatório), responsavel_id (opcional), status_filtro (opcional, default 'todas')
+ *     Params: user_email (obrigatório), responsavel_id, status_filtro
  *   GET metricas_por_step
- *     Params: user_email (obrigatório), campanha_id (obrigatório), periodo (default 'mes')
- *     Retorno: agora inclui `opt_outs` por step + acumulado.                                            🆕 v2.3
+ *     Params: user_email (obrigatório), campanha_id (obrigatório), periodo
+ *     🆕 v2.4 — internamente usa RPC `crm_metricas_por_step`
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -115,15 +83,9 @@ export const config = { maxDuration: 30 };
 // RBAC
 // ════════════════════════════════════════════════════════════════
 
-/** Perfis que veem TODAS as campanhas (sem filtro de responsável). */
 const PERFIS_VEEM_TUDO = ['Administrador', 'Gestão de R&S'];
-
-/** Perfis que veem só as próprias campanhas (filtradas por responsavel_id). */
 const PERFIS_VEEM_PROPRIAS = ['Gestão Comercial', 'Analista de R&S', 'SDR'];
-
 const PERFIS_AUTORIZADOS = [...PERFIS_VEEM_TUDO, ...PERFIS_VEEM_PROPRIAS];
-
-/** Perfis que aparecem no dropdown do Filtro 1 (Responsável) quando ator vê tudo. */
 const PERFIS_RESPONSAVEIS_DROPDOWN = ['Gestão Comercial', 'SDR'];
 
 // ════════════════════════════════════════════════════════════════
@@ -153,14 +115,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const periodo = ((req.query.periodo as string) || 'mes') as 'semana' | 'mes' | 'trimestre' | 'total';
       const statusFiltroEngajamento = ((req.query.status_filtro_engajamento as string) || 'todas') as
         'todas' | 'ativas' | 'pausadas' | 'finalizadas';
-      // 🆕 v2.3 — campanha específica para o frame Engajamento (opcional)
       const campanhaIdEngajamentoRaw = req.query.campanha_id_engajamento;
       const campanhaIdEngajamento =
         campanhaIdEngajamentoRaw && Number.isFinite(Number(campanhaIdEngajamentoRaw))
           ? Number(campanhaIdEngajamentoRaw)
           : undefined;
 
-      // Resolver ator (RBAC)
       const ator = await resolverAtor(supabase, userEmail);
       if (!ator) {
         return res.status(200).json({ success: true, stats: dashboardVazio(periodo, false) });
@@ -172,17 +132,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const veTudo = PERFIS_VEEM_TUDO.includes(ator.tipo_usuario);
       const filtroResp: { responsavel_id?: number } = veTudo ? {} : { responsavel_id: ator.id };
 
-      // Janela do período (afeta apenas métricas data-sensíveis)
       const inicio = inicioDoPeriodo(periodo);
 
-      // ── Status das campanhas (Seção 1) ──
       const statusCampanhas = await contarStatus(supabase, filtroResp);
 
-      // ── Engajamento (Seção 2) ──
-      // 🆕 v2.3 — aceita também `campanhaIdEspecifica` para o caso do filtro
-      //   "Campanha específica" do dropdown. Quando definido, `statusFiltroArr`
-      //   é ignorado (uma campanha não tem múltiplos status). RBAC é
-      //   re-verificado dentro da função para evitar bypass via query string.
       const statusFiltroArr = mapearStatusFiltro(statusFiltroEngajamento);
       const engajamento = await calcularEngajamento(
         supabase,
@@ -192,13 +145,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         campanhaIdEngajamento,
       );
 
-      // ── Distribuição (Seção 3) ──
       const distribuicao = await calcularDistribuicao(supabase, filtroResp);
-
-      // ── Campanhas em andamento (Seção 4) ──
       const ativas = await listarAtivas(supabase, filtroResp);
-
-      // ── Saúde da base (Seção 5) ──
       const saudeBase = await calcularSaudeBase(supabase);
 
       return res.status(200).json({
@@ -208,7 +156,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           periodo,
           inicio_periodo: inicio,
           status_filtro_engajamento: statusFiltroEngajamento,
-          campanha_id_engajamento: campanhaIdEngajamento ?? null, // 🆕 v2.3 (echo)
+          campanha_id_engajamento: campanhaIdEngajamento ?? null,
           status_campanhas: statusCampanhas,
           engajamento,
           distribuicao,
@@ -219,7 +167,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ════════════════════════════════════════════════════════════
-    // listar_responsaveis — Filtro 1 do Painel Campanha
+    // listar_responsaveis
     // ════════════════════════════════════════════════════════════
     if (action === 'listar_responsaveis') {
       const userEmail = (req.query.user_email as string) || '';
@@ -264,8 +212,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // ════════════════════════════════════════════════════════════
-    // listar_campanhas_dropdown — popula filtros de campanha
-    // (usado pelo F3 do Painel Campanha + dropdown novo da Visão Geral v3.1)
+    // listar_campanhas_dropdown
     // ════════════════════════════════════════════════════════════
     if (action === 'listar_campanhas_dropdown') {
       const userEmail = (req.query.user_email as string) || '';
@@ -281,8 +228,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const veTudo = PERFIS_VEEM_TUDO.includes(ator.tipo_usuario);
-
-      // RBAC: se ator NÃO vê tudo, força responsavel_id = self.id
       const responsavelEfetivo = veTudo ? responsavelIdParam : ator.id;
 
       let q = supabase
@@ -307,7 +252,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ════════════════════════════════════════════════════════════
     // metricas_por_step — Drill-down por step da campanha
-    // 🆕 v2.3 — retorna campo `opt_outs` por step (Opção B: cancelamentos da fila)
+    // 🆕 v2.4 — usa RPC `crm_metricas_por_step` (agregação no Postgres,
+    //           sem limite de 1000 linhas do cliente Supabase JS).
     // ════════════════════════════════════════════════════════════
     if (action === 'metricas_por_step') {
       const userEmail = (req.query.user_email as string) || '';
@@ -325,7 +271,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(403).json({ success: false, error: 'Sem permissão' });
       }
 
-      // Buscar campanha (verificar RBAC + obter nome)
       const { data: campanha, error: errC } = await supabase
         .from('email_campanhas')
         .select('id, nome, responsavel_id, status')
@@ -340,7 +285,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(403).json({ success: false, error: 'Sem permissão para essa campanha' });
       }
 
-      // Buscar steps (ordenados)
       const { data: steps, error: errS } = await supabase
         .from('email_campanha_steps')
         .select('id, ordem, assunto')
@@ -357,54 +301,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // 🆕 v2.3 — SELECT agora inclui `motivo_cancelamento` para contar opt-outs (Opção B).
-      const { data: filaData, error: errF } = await supabase
-        .from('email_fila')
-        .select('step_id, enviado_em, aberto_em, respondido_em, bounce_em, motivo_cancelamento')
-        .eq('campanha_id', campanhaIdParam);
-
-      if (errF) return res.status(500).json({ success: false, error: errF.message });
-
-      // Filtro de período por evento (mesma convenção do calcularEngajamento)
+      // 🆕 v2.4 — Agregação no Postgres via RPC. Substitui o
+      // pull-and-aggregate que sofria o limite de 1000 do cliente JS.
+      //
+      // Para "período total" o backend passa '1970-01-01' como p_inicio
+      // — a comparação `enviado_em >= p_inicio` é verdadeira para
+      // qualquer timestamp não-null (preserva semântica anterior).
       const inicio = inicioDoPeriodo(periodo);
-      const usaPeriodo = inicio !== '1970-01-01T00:00:00Z';
-      const dentroDoPeriodo = (ts: string | null): boolean => {
-        if (!ts) return false;
-        if (!usaPeriodo) return true;
-        return ts >= inicio;
-      };
-
-      // 🆕 v2.3 — agg agora inclui `opt_outs`.
-      const agg = new Map<
-        number,
-        { enviados: number; abertos: number; respondidos: number; bounces: number; opt_outs: number }
-      >();
-      for (const r of (filaData || []) as any[]) {
-        if (!r.step_id) continue;
-        const cur = agg.get(r.step_id) || {
-          enviados: 0, abertos: 0, respondidos: 0, bounces: 0, opt_outs: 0,
-        };
-        if (dentroDoPeriodo(r.enviado_em)) cur.enviados++;
-        if (dentroDoPeriodo(r.aberto_em)) cur.abertos++;
-        if (dentroDoPeriodo(r.respondido_em)) cur.respondidos++;
-        if (dentroDoPeriodo(r.bounce_em)) cur.bounces++;
-        // 🆕 v2.3 — Opt-outs (Opção B): conta envios cancelados com motivo
-        //   começando por 'opt_out_' (qualquer um dos 4 caminhos: manual,
-        //   spam_complaint, list_unsubscribe, link_rodape).
-        //   SEM filtro de período — motivo_cancelamento não tem timestamp
-        //   próprio; opt-out é tratado como métrica cumulativa da campanha.
-        //   ⚠️ DISTORÇÃO CONHECIDA: 1 lead que opta após step 1 cancela
-        //   steps 2, 3, 4 — conta 1× em cada step subsequente. UI documenta
-        //   isso no rodapé da tabela.
-        const mc = r.motivo_cancelamento;
-        if (mc && typeof mc === 'string' && mc.toLowerCase().startsWith('opt_out')) {
-          cur.opt_outs++;
+      const { data: metricasData, error: errM } = await supabase.rpc(
+        'crm_metricas_por_step',
+        {
+          p_campanha_id: campanhaIdParam,
+          p_inicio: inicio,
         }
-        agg.set(r.step_id, cur);
+      );
+
+      if (errM) {
+        console.error('[crm-analytics] rpc crm_metricas_por_step:', errM);
+        return res.status(500).json({
+          success: false,
+          error: `Erro na agregação por step: ${errM.message}. Verifique se a migration 2026-06-21_analytics_rpc_functions.sql foi aplicada.`,
+        });
       }
 
+      // BIGINT do Postgres vem como string em JSON — converter com Number().
+      // Map<step_id, métricas> para lookup O(1) durante o map final.
+      const metricasPorStepId = new Map<number, { enviados: number; abertos: number; respondidos: number; bounces: number; opt_outs: number }>();
+      for (const m of (metricasData || []) as any[]) {
+        metricasPorStepId.set(Number(m.step_id), {
+          enviados: Number(m.enviados) || 0,
+          abertos: Number(m.abertos) || 0,
+          respondidos: Number(m.respondidos) || 0,
+          bounces: Number(m.bounces) || 0,
+          opt_outs: Number(m.opt_outs) || 0,
+        });
+      }
+
+      // Contrato JSON 100% idêntico à v2.3 — apenas a fonte dos counts
+      // mudou. Steps sem métricas (sem fila ainda) recebem zeros via
+      // fallback do `||`.
       const resultado = (steps as any[]).map((s) => {
-        const t = agg.get(s.id) || { enviados: 0, abertos: 0, respondidos: 0, bounces: 0, opt_outs: 0 };
+        const t = metricasPorStepId.get(s.id) || {
+          enviados: 0, abertos: 0, respondidos: 0, bounces: 0, opt_outs: 0,
+        };
         const pct = (n: number) =>
           t.enviados > 0 ? Number(((n / t.enviados) * 100).toFixed(2)) : 0;
         return {
@@ -415,7 +354,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           taxa_abertura: pct(t.abertos),
           taxa_resposta: pct(t.respondidos),
           taxa_bounce: pct(t.bounces),
-          opt_outs: t.opt_outs, // 🆕 v2.3 — contagem absoluta
+          opt_outs: t.opt_outs,
         };
       });
 
@@ -462,28 +401,17 @@ function inicioDoPeriodo(p: string): string {
   if (p === 'semana') d.setDate(d.getDate() - 7);
   else if (p === 'mes') d.setMonth(d.getMonth() - 1);
   else if (p === 'trimestre') d.setMonth(d.getMonth() - 3);
-  else return '1970-01-01T00:00:00Z'; // total
+  else return '1970-01-01T00:00:00Z';
   return d.toISOString();
 }
 
-/**
- * v2.2 — Mapeia o filtro de status do UI (Painel Campanha + Frame
- * Engajamento) para os valores reais do schema `email_campanhas.status`.
- *
- * Convenção: array vazio significa "sem filtro" (todos os 5 status).
- *   'todas'       → []  (todos: rascunho/agendada/ativa/pausada/concluida)
- *   'ativas'      → ['ativa', 'agendada']  (em andamento)
- *   'pausadas'    → ['pausada']
- *   'finalizadas' → ['concluida']
- */
 function mapearStatusFiltro(filtro: string): string[] {
   if (filtro === 'ativas') return ['ativa', 'agendada'];
   if (filtro === 'pausadas') return ['pausada'];
   if (filtro === 'finalizadas') return ['concluida'];
-  return []; // 'todas' (default) = sem filtro
+  return [];
 }
 
-/** Aplica filtro de responsável se o ator vê só as próprias. */
 function aplicarFiltroResp(query: any, filtro: { responsavel_id?: number }) {
   return filtro.responsavel_id !== undefined ? query.eq('responsavel_id', filtro.responsavel_id) : query;
 }
@@ -587,12 +515,12 @@ async function listarAtivas(supabase: any, filtro: { responsavel_id?: number }) 
 // ENGAJAMENTO REAL (a partir de email_fila)
 // ════════════════════════════════════════════════════════════════
 //
-// v2.2 — Aceita statusFiltro (array de status válidos) para restringir
-//   o conjunto de campanhas usado no cálculo.
-// 🆕 v2.3 — Aceita também `campanhaIdEspecifica` (number). Quando definido,
-//   restringe IDs a apenas essa campanha após validar RBAC (impede bypass
-//   via query string). `statusFiltro` é ignorado nesse modo (uma campanha
-//   tem 1 status só).
+// v2.2 — Aceita statusFiltro (array de status válidos).
+// v2.3 — Aceita campanhaIdEspecifica (number) com re-verificação RBAC.
+//
+// Esta função NÃO sofre do limite de 1000 do cliente JS porque usa
+// `{count: 'exact', head: true}` — devolve apenas o COUNT exato via
+// header HTTP, sem trafegar linhas. Intocada na v2.4.
 
 async function calcularEngajamento(
   supabase: any,
@@ -603,15 +531,11 @@ async function calcularEngajamento(
 ) {
   let ids: number[];
 
-  // 🆕 v2.3 — Caminho 1: campanha específica (com re-verificação de RBAC).
   if (campanhaIdEspecifica !== undefined && Number.isFinite(campanhaIdEspecifica)) {
     const qVerifica = supabase
       .from('email_campanhas')
       .select('id')
       .eq('id', campanhaIdEspecifica);
-    // aplicarFiltroResp adiciona o eq('responsavel_id', ...) se o ator vê
-    // só as próprias. Se a campanha solicitada não pertence ao ator, a query
-    // retorna 0 linhas — fail-safe.
     const { data: verificacao } = await aplicarFiltroResp(qVerifica, filtro);
     if (!verificacao || (verificacao as any[]).length === 0) {
       return {
@@ -624,7 +548,6 @@ async function calcularEngajamento(
     }
     ids = [campanhaIdEspecifica];
   } else {
-    // Caminho 2 (v2.2): todas as campanhas RBAC com filtro de status.
     let qCamp = supabase.from('email_campanhas').select('id');
     if (statusFiltro && statusFiltro.length > 0) {
       qCamp = qCamp.in('status', statusFiltro);
@@ -679,9 +602,13 @@ async function calcularEngajamento(
 }
 
 /**
- * v2.0 — taxas reais POR campanha (usada pela tabela "Campanhas em
- * andamento"). Faz UMA query trazendo os campos relevantes de email_fila
- * para todas as campanhas pedidas e agrega no Node.
+ * Taxas reais POR campanha (usada pela tabela "Campanhas em andamento").
+ *
+ * 🆕 v2.4 — usa RPC `crm_taxas_por_campanha` (agregação no Postgres,
+ *           sem limite de 1000 linhas do cliente Supabase JS).
+ *
+ * v2.0 — versão original com SELECT + Node aggregation (sujeita ao
+ *        limite, removida na v2.4).
  */
 async function calcularTaxasPorCampanha(
   supabase: any,
@@ -689,20 +616,27 @@ async function calcularTaxasPorCampanha(
 ): Promise<Map<number, { total_enviado: number; total_aberto: number; total_respondido: number }>> {
   if (ids.length === 0) return new Map();
 
-  const { data } = await supabase
-    .from('email_fila')
-    .select('campanha_id, enviado_em, aberto_em, respondido_em')
-    .in('campanha_id', ids);
+  // 🆕 v2.4 — RPC ao invés de `.select() + Node aggregate`. Contrato do
+  // Map retornado é 100% idêntico ao da v2.0.
+  const { data, error } = await supabase.rpc('crm_taxas_por_campanha', {
+    p_campanha_ids: ids,
+  });
+
+  if (error) {
+    console.error('[crm-analytics] rpc crm_taxas_por_campanha:', error);
+    // Fallback: retorna Map vazio (UI mostra "aguardando motor" para
+    // todas as campanhas). Não é desejável mas evita 500 catastrófico
+    // se a migration ainda não foi aplicada em algum ambiente.
+    return new Map();
+  }
 
   const m = new Map<number, { total_enviado: number; total_aberto: number; total_respondido: number }>();
   for (const r of (data || []) as any[]) {
-    const cur =
-      m.get(r.campanha_id) ||
-      { total_enviado: 0, total_aberto: 0, total_respondido: 0 };
-    if (r.enviado_em) cur.total_enviado++;
-    if (r.aberto_em) cur.total_aberto++;
-    if (r.respondido_em) cur.total_respondido++;
-    m.set(r.campanha_id, cur);
+    m.set(Number(r.campanha_id), {
+      total_enviado: Number(r.total_enviado) || 0,
+      total_aberto: Number(r.total_aberto) || 0,
+      total_respondido: Number(r.total_respondido) || 0,
+    });
   }
   return m;
 }
@@ -735,7 +669,7 @@ function dashboardVazio(periodo: string, autorizado: boolean) {
     periodo,
     inicio_periodo: '1970-01-01T00:00:00Z',
     status_filtro_engajamento: 'todas',
-    campanha_id_engajamento: null, // 🆕 v2.3
+    campanha_id_engajamento: null,
     status_campanhas: { rascunho: 0, agendada: 0, ativa: 0, pausada: 0, concluida: 0, total: 0 },
     engajamento: { total_enviado: 0, taxa_abertura: 0, taxa_resposta: 0, taxa_bounce: 0, aguardando_motor: true },
     distribuicao: {
