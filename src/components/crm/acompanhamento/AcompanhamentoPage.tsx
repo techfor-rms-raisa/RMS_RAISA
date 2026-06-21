@@ -2,7 +2,39 @@
  * AcompanhamentoPage.tsx — Página de Acompanhamento (Dashboard CRM)
  *
  * Caminho: src/components/crm/acompanhamento/AcompanhamentoPage.tsx
- * Versão: 2.1 (12/06/2026)
+ * Versão: 3.0 (21/06/2026)
+ *
+ * v3.0 (21/06/2026): introdução de sub-tabs "Visão Geral" / "Painel
+ *   Campanha" + filtro de status no frame Engajamento da aba Visão Geral.
+ *
+ *   Mudanças cirúrgicas (conteúdo da v2.1 preservado integralmente,
+ *   apenas envolvido em condicional de aba):
+ *
+ *     1) Novo state `abaAtiva` ('visao-geral' | 'painel-campanha').
+ *        Default: 'visao-geral'. Sub-tabs renderizadas logo abaixo do
+ *        cabeçalho, antes do conteúdo principal.
+ *
+ *     2) Novo state `statusFiltroEngajamento` ('todas' | 'ativas' |
+ *        'pausadas' | 'finalizadas'). Default: 'todas'. Passado como
+ *        param `status_filtro_engajamento` para `dashboard_stats`. Afeta
+ *        APENAS os 4 KPIs do frame Engajamento — conforme decisão de
+ *        produto. Outras seções (Visão das Campanhas, Distribuição,
+ *        Campanhas em andamento, Saúde da base) permanecem agnósticas.
+ *
+ *     3) Filtro UI no topo do frame Engajamento — pill-group de 4 botões
+ *        no estilo do seletor de período (bg-gray-100 rounded-lg p-1),
+ *        alinhado à direita do título da seção.
+ *
+ *     4) Conteúdo das 5 seções existentes (Visão das Campanhas,
+ *        Engajamento, Distribuição, Campanhas em andamento, Saúde)
+ *        envolvido em `{abaAtiva === 'visao-geral' && (...)}`. Aba
+ *        nova `'painel-campanha'` renderiza `<PainelCampanhaTab />`.
+ *
+ *     5) Sub-componente novo importado: `./PainelCampanhaTab` (drill-down
+ *        de performance por step da campanha selecionada).
+ *
+ *   Backend correspondente: `api/crm-analytics.ts` v2.2 (mesma sessão).
+ *   Banco: sem mudança (todas as colunas necessárias já existem).
  *
  * v2.1 (12/06/2026): substituição do KPI "Taxa clique" por "Taxa resposta"
  *   conforme decisão de produto (12/06/2026). Em campanhas de prospecção
@@ -59,6 +91,7 @@
  * Componentes reusados:
  *  - KpiCard (../shared/components/KpiCard)
  *  - EmptyState, Toast (../shared/components/...)
+ *  - PainelCampanhaTab (./PainelCampanhaTab — novo na v3.0)
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
@@ -67,6 +100,7 @@ import type { CurrentUserLite } from '../types/crm.types';
 import KpiCard from '../shared/components/KpiCard';
 import EmptyState from '../shared/components/EmptyState';
 import Toast, { ToastMensagem } from '../shared/components/Toast';
+import PainelCampanhaTab from './PainelCampanhaTab';
 
 // ════════════════════════════════════════════════════════════
 // CONSTANTES
@@ -82,6 +116,24 @@ const PERIODOS = [
 ] as const;
 
 type PeriodoId = (typeof PERIODOS)[number]['id'];
+
+// 🆕 v3.0 — Sub-tabs internas da página
+const ABAS = [
+  { id: 'visao-geral', label: 'Visão Geral', icon: 'fa-solid fa-chart-line' },
+  { id: 'painel-campanha', label: 'Painel Campanha', icon: 'fa-solid fa-bullseye' },
+] as const;
+
+type AbaId = (typeof ABAS)[number]['id'];
+
+// 🆕 v3.0 — Filtro de status do frame Engajamento
+const STATUS_FILTRO_ENGAJAMENTO = [
+  { id: 'todas', label: 'Todas' },
+  { id: 'ativas', label: 'Ativas' },
+  { id: 'pausadas', label: 'Pausadas' },
+  { id: 'finalizadas', label: 'Finalizadas' },
+] as const;
+
+type StatusFiltroEngajamentoId = (typeof STATUS_FILTRO_ENGAJAMENTO)[number]['id'];
 
 // ════════════════════════════════════════════════════════════
 // TIPOS DA RESPOSTA DO BACKEND
@@ -115,6 +167,7 @@ interface DashboardStats {
   ator: { id: number; nome: string; tipo: string; ve_tudo: boolean } | null;
   periodo: PeriodoId;
   inicio_periodo: string;
+  status_filtro_engajamento?: StatusFiltroEngajamentoId; // 🆕 v3.0 (echo do backend)
   status_campanhas: {
     rascunho: number;
     agendada: number;
@@ -172,6 +225,13 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<ToastMensagem | null>(null);
 
+  // 🆕 v3.0 — Sub-tab ativa
+  const [abaAtiva, setAbaAtiva] = useState<AbaId>('visao-geral');
+
+  // 🆕 v3.0 — Filtro de status do frame Engajamento (default 'todas')
+  const [statusFiltroEngajamento, setStatusFiltroEngajamento] =
+    useState<StatusFiltroEngajamentoId>('todas');
+
   // ── Carregar ──────────────────────────────────────────────
   const carregar = useCallback(async () => {
     if (!atorEmail) return;
@@ -179,6 +239,8 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
     const resp = await get<DashboardResponse>('dashboard_stats', {
       user_email: atorEmail,
       periodo,
+      // 🆕 v3.0 — restringe o frame Engajamento por status (não afeta outras seções)
+      status_filtro_engajamento: statusFiltroEngajamento,
     });
     if (resp.ok && resp.data?.success) {
       setStats(resp.data.stats);
@@ -186,7 +248,7 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
       setToast({ tipo: 'error', texto: resp.error || 'Falha ao carregar dashboard' });
     }
     setLoading(false);
-  }, [get, atorEmail, periodo]);
+  }, [get, atorEmail, periodo, statusFiltroEngajamento]);
 
   useEffect(() => {
     carregar();
@@ -250,257 +312,314 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
         />
       ) : (
         <>
-          {/* ──────────── Seção 1: Visão das Campanhas ──────────── */}
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <i className="fa-solid fa-rocket text-gray-400"></i> Visão das Campanhas
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-              <KpiCard label="Total" valor={stats.status_campanhas.total} icon="fa-solid fa-layer-group" cor="gray" />
-              <KpiCard label="Ativas" valor={stats.status_campanhas.ativa} icon="fa-solid fa-rocket" cor="green" />
-              <KpiCard label="Agendadas" valor={stats.status_campanhas.agendada} icon="fa-solid fa-clock" cor="blue" />
-              <KpiCard label="Em rascunho" valor={stats.status_campanhas.rascunho} icon="fa-solid fa-pen-ruler" cor="amber" />
-              <KpiCard label="Pausadas" valor={stats.status_campanhas.pausada} icon="fa-solid fa-pause" cor="purple" />
-              <KpiCard label="Concluídas" valor={stats.status_campanhas.concluida} icon="fa-solid fa-flag-checkered" cor="gray" />
-            </div>
-          </section>
-
-          {/* ──────────── Seção 2: Engajamento & Entregabilidade ──────────── */}
-          {/* 🆕 v2.0 — conectado aos dados reais. A flag `aguardando_motor`
-              continua respeitada (do backend): quando não houve nenhum
-              envio no período, mostra placeholder. Caso contrário, números
-              reais. */}
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-1 flex items-center gap-2">
-              <i className="fa-solid fa-envelope-open-text text-gray-400"></i> Engajamento & Entregabilidade
-            </h2>
-            {stats.engajamento.aguardando_motor ? (
-              <p className="text-xs text-gray-500 mb-3">
-                <i className="fa-solid fa-clock mr-1 text-amber-500"></i>
-                Sem envios no período — os números abaixo aparecem quando as
-                campanhas começarem a disparar.
-              </p>
-            ) : (
-              <p className="text-xs text-gray-500 mb-3">
-                <i className="fa-solid fa-circle-check mr-1 text-emerald-500"></i>
-                Dados consolidados pelos webhooks do Resend
-                {stats.engajamento.total_enviado > 0 && (
-                  <span className="ml-1 text-gray-400">
-                    ({stats.engajamento.total_enviado.toLocaleString('pt-BR')} envios no período)
-                  </span>
-                )}
-              </p>
-            )}
-            <div
-              className={`grid grid-cols-2 md:grid-cols-4 gap-3 ${
-                stats.engajamento.aguardando_motor ? 'opacity-60' : ''
-              }`}
-            >
-              <KpiCard
-                label="Total enviado"
-                valor={
-                  stats.engajamento.aguardando_motor
-                    ? '—'
-                    : stats.engajamento.total_enviado.toLocaleString('pt-BR')
-                }
-                icon="fa-solid fa-paper-plane"
-                cor="gray"
-                sufixo=""
-                detalhe={
-                  stats.engajamento.aguardando_motor
-                    ? 'aguardando motor'
-                    : 'no período selecionado'
-                }
-              />
-              <KpiCard
-                label="Taxa abertura"
-                valor={
-                  stats.engajamento.aguardando_motor
-                    ? '—'
-                    : stats.engajamento.taxa_abertura.toFixed(1)
-                }
-                icon="fa-solid fa-eye"
-                cor={
-                  stats.engajamento.aguardando_motor
-                    ? 'gray'
-                    : stats.engajamento.taxa_abertura >= 20
-                    ? 'green'
-                    : stats.engajamento.taxa_abertura >= 10
-                    ? 'amber'
-                    : 'gray'
-                }
-                sufixo="%"
-                detalhe={
-                  stats.engajamento.aguardando_motor ? 'aguardando motor' : 'aberturas / enviados'
-                }
-              />
-              <KpiCard
-                label="Taxa resposta"
-                valor={
-                  stats.engajamento.aguardando_motor
-                    ? '—'
-                    : stats.engajamento.taxa_resposta.toFixed(1)
-                }
-                icon="fa-solid fa-reply"
-                cor={
-                  stats.engajamento.aguardando_motor
-                    ? 'gray'
-                    : stats.engajamento.taxa_resposta >= 5
-                    ? 'green'
-                    : stats.engajamento.taxa_resposta >= 2
-                    ? 'amber'
-                    : 'gray'
-                }
-                sufixo="%"
-                detalhe={
-                  stats.engajamento.aguardando_motor ? 'aguardando motor' : 'respondidos / enviados'
-                }
-              />
-              <KpiCard
-                label="Taxa bounce"
-                valor={
-                  stats.engajamento.aguardando_motor
-                    ? '—'
-                    : stats.engajamento.taxa_bounce.toFixed(1)
-                }
-                icon="fa-solid fa-triangle-exclamation"
-                cor={
-                  stats.engajamento.aguardando_motor
-                    ? 'gray'
-                    : stats.engajamento.taxa_bounce >= 5
-                    ? 'red'
-                    : stats.engajamento.taxa_bounce >= 2
-                    ? 'amber'
-                    : 'green'
-                }
-                sufixo="%"
-                detalhe={
-                  stats.engajamento.aguardando_motor ? 'aguardando motor' : 'bounces / enviados'
-                }
-              />
-            </div>
-          </section>
-
-          {/* ──────────── Seção 3: Distribuição ──────────── */}
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <i className="fa-solid fa-chart-pie text-gray-400"></i> Distribuição
-            </h2>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <TabelaDistribuicao bloco={stats.distribuicao.por_responsavel} />
-              <TabelaDistribuicao bloco={stats.distribuicao.por_vertical} />
-              <TabelaDistribuicao bloco={stats.distribuicao.por_dominio} />
-            </div>
-          </section>
-
-          {/* ──────────── Seção 4: Campanhas em andamento ──────────── */}
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <i className="fa-solid fa-list-check text-gray-400"></i> Campanhas em andamento
-              <span className="text-xs text-gray-400 font-normal">
-                ({stats.campanhas_ativas.length} {stats.campanhas_ativas.length === 1 ? 'campanha' : 'campanhas'})
-              </span>
-            </h2>
-            {stats.campanhas_ativas.length === 0 ? (
-              <EmptyState
-                icon="fa-solid fa-rocket"
-                titulo="Nenhuma campanha em andamento"
-                descricao="Quando alguma campanha entrar em status ativa, agendada ou pausada, ela aparece aqui."
-                compacto
-              />
-            ) : (
-              <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wide">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Campanha</th>
-                      <th className="px-4 py-3 font-medium">Responsável</th>
-                      <th className="px-4 py-3 font-medium">Vertical</th>
-                      <th className="px-4 py-3 font-medium">Domínio</th>
-                      <th className="px-4 py-3 font-medium text-right">Destinatários</th>
-                      <th className="px-4 py-3 font-medium text-right">Rodando há</th>
-                      <th className="px-4 py-3 font-medium text-right">Taxas</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {stats.campanhas_ativas.map((c) => (
-                      <tr key={c.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 font-medium text-gray-900">{c.nome}</td>
-                        <td className="px-4 py-3 text-gray-700">{c.responsavel}</td>
-                        <td className="px-4 py-3 text-gray-700">{c.vertical || '—'}</td>
-                        <td className="px-4 py-3 text-gray-500">{c.dominio || '—'}</td>
-                        <td className="px-4 py-3 text-right text-gray-700">
-                          {c.total_destinatarios.toLocaleString('pt-BR')}
-                        </td>
-                        <td className="px-4 py-3 text-right text-gray-600">
-                          {c.dias_rodando === null
-                            ? '—'
-                            : c.dias_rodando === 0
-                            ? 'hoje'
-                            : `${c.dias_rodando} dia${c.dias_rodando === 1 ? '' : 's'}`}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {c.aguardando_motor ? (
-                            <span className="text-xs text-amber-600 inline-flex items-center gap-1" title="Aguardando motor de disparo">
-                              <i className="fa-solid fa-clock"></i> —
-                            </span>
-                          ) : (
-                            <span className="text-xs text-gray-700">
-                              {(c.taxa_abertura ?? 0).toFixed(1)}% / {(c.taxa_resposta ?? 0).toFixed(1)}%
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-
-          {/* ──────────── Seção 5: Saúde da base ──────────── */}
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-              <i className="fa-solid fa-heart-pulse text-gray-400"></i> Saúde da base
-            </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <KpiCard
-                label="Leads aptos a campanha"
-                valor={stats.saude_base.leads_aptos}
-                icon="fa-solid fa-circle-check"
-                cor="green"
-              />
-              <KpiCard
-                label="Opt-outs"
-                valor={stats.saude_base.optouts}
-                icon="fa-solid fa-ban"
-                cor="red"
-              />
-              <KpiCard
-                label="Leads sem vertical"
-                valor={stats.saude_base.leads_sem_vertical}
-                icon="fa-solid fa-triangle-exclamation"
-                cor={stats.saude_base.leads_sem_vertical > 0 ? 'amber' : 'gray'}
-                detalhe={
-                  stats.saude_base.leads_sem_vertical > 0
-                    ? 'não entram em campanha'
-                    : 'todos OK'
-                }
-              />
-            </div>
-          </section>
-
-          {/* Rodapé com botão de export (desabilitado por enquanto) */}
-          <div className="flex justify-end pt-2">
-            <button
-              disabled
-              title="Exportação CSV — disponível na Fase 8 completa"
-              className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-400 cursor-not-allowed flex items-center gap-2"
-            >
-              <i className="fa-solid fa-file-csv"></i>
-              Exportar CSV
-            </button>
+          {/* 🆕 v3.0 — Sub-tabs internas */}
+          <div className="bg-white rounded-lg border border-gray-200 p-1 inline-flex gap-1">
+            {ABAS.map((aba) => (
+              <button
+                key={aba.id}
+                onClick={() => setAbaAtiva(aba.id)}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition flex items-center gap-2 ${
+                  abaAtiva === aba.id
+                    ? 'bg-blue-50 text-blue-700'
+                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-800'
+                }`}
+              >
+                <i className={aba.icon}></i>
+                {aba.label}
+              </button>
+            ))}
           </div>
+
+          {/* ════════════════════════════════════════════════════════
+              ABA: VISÃO GERAL — conteúdo original v2.1 preservado
+              ════════════════════════════════════════════════════════ */}
+          {abaAtiva === 'visao-geral' && (
+            <>
+              {/* ──────────── Seção 1: Visão das Campanhas ──────────── */}
+              <section>
+                <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <i className="fa-solid fa-rocket text-gray-400"></i> Visão das Campanhas
+                </h2>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                  <KpiCard label="Total" valor={stats.status_campanhas.total} icon="fa-solid fa-layer-group" cor="gray" />
+                  <KpiCard label="Ativas" valor={stats.status_campanhas.ativa} icon="fa-solid fa-rocket" cor="green" />
+                  <KpiCard label="Agendadas" valor={stats.status_campanhas.agendada} icon="fa-solid fa-clock" cor="blue" />
+                  <KpiCard label="Em rascunho" valor={stats.status_campanhas.rascunho} icon="fa-solid fa-pen-ruler" cor="amber" />
+                  <KpiCard label="Pausadas" valor={stats.status_campanhas.pausada} icon="fa-solid fa-pause" cor="purple" />
+                  <KpiCard label="Concluídas" valor={stats.status_campanhas.concluida} icon="fa-solid fa-flag-checkered" cor="gray" />
+                </div>
+              </section>
+
+              {/* ──────────── Seção 2: Engajamento & Entregabilidade ──────────── */}
+              {/* 🆕 v2.0 — conectado aos dados reais. A flag `aguardando_motor`
+                  continua respeitada (do backend): quando não houve nenhum
+                  envio no período, mostra placeholder. Caso contrário, números
+                  reais.
+                  🆕 v3.0 — pill-group de filtro de status no topo (Todas/Ativas/
+                  Pausadas/Finalizadas). Default 'todas' preserva comportamento. */}
+              <section>
+                <div className="mb-1 flex items-center justify-between gap-3 flex-wrap">
+                  <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <i className="fa-solid fa-envelope-open-text text-gray-400"></i>
+                    Engajamento & Entregabilidade
+                  </h2>
+                  {/* 🆕 v3.0 — Filtro de status do engajamento */}
+                  <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+                    {STATUS_FILTRO_ENGAJAMENTO.map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() => setStatusFiltroEngajamento(f.id)}
+                        className={`px-3 py-1 rounded-md text-xs font-medium transition ${
+                          statusFiltroEngajamento === f.id
+                            ? 'bg-white text-blue-700 shadow-sm'
+                            : 'text-gray-500 hover:text-gray-700'
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {stats.engajamento.aguardando_motor ? (
+                  <p className="text-xs text-gray-500 mb-3">
+                    <i className="fa-solid fa-clock mr-1 text-amber-500"></i>
+                    Sem envios no período — os números abaixo aparecem quando as
+                    campanhas começarem a disparar.
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-500 mb-3">
+                    <i className="fa-solid fa-circle-check mr-1 text-emerald-500"></i>
+                    Dados consolidados pelos webhooks do Resend
+                    {stats.engajamento.total_enviado > 0 && (
+                      <span className="ml-1 text-gray-400">
+                        ({stats.engajamento.total_enviado.toLocaleString('pt-BR')} envios no período)
+                      </span>
+                    )}
+                  </p>
+                )}
+                <div
+                  className={`grid grid-cols-2 md:grid-cols-4 gap-3 ${
+                    stats.engajamento.aguardando_motor ? 'opacity-60' : ''
+                  }`}
+                >
+                  <KpiCard
+                    label="Total enviado"
+                    valor={
+                      stats.engajamento.aguardando_motor
+                        ? '—'
+                        : stats.engajamento.total_enviado.toLocaleString('pt-BR')
+                    }
+                    icon="fa-solid fa-paper-plane"
+                    cor="gray"
+                    sufixo=""
+                    detalhe={
+                      stats.engajamento.aguardando_motor
+                        ? 'aguardando motor'
+                        : 'no período selecionado'
+                    }
+                  />
+                  <KpiCard
+                    label="Taxa abertura"
+                    valor={
+                      stats.engajamento.aguardando_motor
+                        ? '—'
+                        : stats.engajamento.taxa_abertura.toFixed(1)
+                    }
+                    icon="fa-solid fa-eye"
+                    cor={
+                      stats.engajamento.aguardando_motor
+                        ? 'gray'
+                        : stats.engajamento.taxa_abertura >= 20
+                        ? 'green'
+                        : stats.engajamento.taxa_abertura >= 10
+                        ? 'amber'
+                        : 'gray'
+                    }
+                    sufixo="%"
+                    detalhe={
+                      stats.engajamento.aguardando_motor ? 'aguardando motor' : 'aberturas / enviados'
+                    }
+                  />
+                  <KpiCard
+                    label="Taxa resposta"
+                    valor={
+                      stats.engajamento.aguardando_motor
+                        ? '—'
+                        : stats.engajamento.taxa_resposta.toFixed(1)
+                    }
+                    icon="fa-solid fa-reply"
+                    cor={
+                      stats.engajamento.aguardando_motor
+                        ? 'gray'
+                        : stats.engajamento.taxa_resposta >= 5
+                        ? 'green'
+                        : stats.engajamento.taxa_resposta >= 2
+                        ? 'amber'
+                        : 'gray'
+                    }
+                    sufixo="%"
+                    detalhe={
+                      stats.engajamento.aguardando_motor ? 'aguardando motor' : 'respondidos / enviados'
+                    }
+                  />
+                  <KpiCard
+                    label="Taxa bounce"
+                    valor={
+                      stats.engajamento.aguardando_motor
+                        ? '—'
+                        : stats.engajamento.taxa_bounce.toFixed(1)
+                    }
+                    icon="fa-solid fa-triangle-exclamation"
+                    cor={
+                      stats.engajamento.aguardando_motor
+                        ? 'gray'
+                        : stats.engajamento.taxa_bounce >= 5
+                        ? 'red'
+                        : stats.engajamento.taxa_bounce >= 2
+                        ? 'amber'
+                        : 'green'
+                    }
+                    sufixo="%"
+                    detalhe={
+                      stats.engajamento.aguardando_motor ? 'aguardando motor' : 'bounces / enviados'
+                    }
+                  />
+                </div>
+              </section>
+
+              {/* ──────────── Seção 3: Distribuição ──────────── */}
+              <section>
+                <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <i className="fa-solid fa-chart-pie text-gray-400"></i> Distribuição
+                </h2>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <TabelaDistribuicao bloco={stats.distribuicao.por_responsavel} />
+                  <TabelaDistribuicao bloco={stats.distribuicao.por_vertical} />
+                  <TabelaDistribuicao bloco={stats.distribuicao.por_dominio} />
+                </div>
+              </section>
+
+              {/* ──────────── Seção 4: Campanhas em andamento ──────────── */}
+              <section>
+                <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <i className="fa-solid fa-list-check text-gray-400"></i> Campanhas em andamento
+                  <span className="text-xs text-gray-400 font-normal">
+                    ({stats.campanhas_ativas.length} {stats.campanhas_ativas.length === 1 ? 'campanha' : 'campanhas'})
+                  </span>
+                </h2>
+                {stats.campanhas_ativas.length === 0 ? (
+                  <EmptyState
+                    icon="fa-solid fa-rocket"
+                    titulo="Nenhuma campanha em andamento"
+                    descricao="Quando alguma campanha entrar em status ativa, agendada ou pausada, ela aparece aqui."
+                    compacto
+                  />
+                ) : (
+                  <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 text-left text-xs text-gray-500 uppercase tracking-wide">
+                        <tr>
+                          <th className="px-4 py-3 font-medium">Campanha</th>
+                          <th className="px-4 py-3 font-medium">Responsável</th>
+                          <th className="px-4 py-3 font-medium">Vertical</th>
+                          <th className="px-4 py-3 font-medium">Domínio</th>
+                          <th className="px-4 py-3 font-medium text-right">Destinatários</th>
+                          <th className="px-4 py-3 font-medium text-right">Rodando há</th>
+                          <th className="px-4 py-3 font-medium text-right">Taxas</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {stats.campanhas_ativas.map((c) => (
+                          <tr key={c.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 font-medium text-gray-900">{c.nome}</td>
+                            <td className="px-4 py-3 text-gray-700">{c.responsavel}</td>
+                            <td className="px-4 py-3 text-gray-700">{c.vertical || '—'}</td>
+                            <td className="px-4 py-3 text-gray-500">{c.dominio || '—'}</td>
+                            <td className="px-4 py-3 text-right text-gray-700">
+                              {c.total_destinatarios.toLocaleString('pt-BR')}
+                            </td>
+                            <td className="px-4 py-3 text-right text-gray-600">
+                              {c.dias_rodando === null
+                                ? '—'
+                                : c.dias_rodando === 0
+                                ? 'hoje'
+                                : `${c.dias_rodando} dia${c.dias_rodando === 1 ? '' : 's'}`}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {c.aguardando_motor ? (
+                                <span className="text-xs text-amber-600 inline-flex items-center gap-1" title="Aguardando motor de disparo">
+                                  <i className="fa-solid fa-clock"></i> —
+                                </span>
+                              ) : (
+                                <span className="text-xs text-gray-700">
+                                  {(c.taxa_abertura ?? 0).toFixed(1)}% / {(c.taxa_resposta ?? 0).toFixed(1)}%
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              {/* ──────────── Seção 5: Saúde da base ──────────── */}
+              <section>
+                <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                  <i className="fa-solid fa-heart-pulse text-gray-400"></i> Saúde da base
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <KpiCard
+                    label="Leads aptos a campanha"
+                    valor={stats.saude_base.leads_aptos}
+                    icon="fa-solid fa-circle-check"
+                    cor="green"
+                  />
+                  <KpiCard
+                    label="Opt-outs"
+                    valor={stats.saude_base.optouts}
+                    icon="fa-solid fa-ban"
+                    cor="red"
+                  />
+                  <KpiCard
+                    label="Leads sem vertical"
+                    valor={stats.saude_base.leads_sem_vertical}
+                    icon="fa-solid fa-triangle-exclamation"
+                    cor={stats.saude_base.leads_sem_vertical > 0 ? 'amber' : 'gray'}
+                    detalhe={
+                      stats.saude_base.leads_sem_vertical > 0
+                        ? 'não entram em campanha'
+                        : 'todos OK'
+                    }
+                  />
+                </div>
+              </section>
+
+              {/* Rodapé com botão de export (desabilitado por enquanto) */}
+              <div className="flex justify-end pt-2">
+                <button
+                  disabled
+                  title="Exportação CSV — disponível na Fase 8 completa"
+                  className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-400 cursor-not-allowed flex items-center gap-2"
+                >
+                  <i className="fa-solid fa-file-csv"></i>
+                  Exportar CSV
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ════════════════════════════════════════════════════════
+              🆕 ABA: PAINEL CAMPANHA — drill-down por step
+              ════════════════════════════════════════════════════════ */}
+          {abaAtiva === 'painel-campanha' && (
+            <PainelCampanhaTab
+              atorEmail={atorEmail}
+              periodo={periodo}
+              apiUrl={ANALYTICS_API_URL}
+            />
+          )}
         </>
       )}
     </div>
