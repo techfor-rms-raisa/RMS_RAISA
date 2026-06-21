@@ -2,87 +2,46 @@
  * AcompanhamentoPage.tsx — Página de Acompanhamento (Dashboard CRM)
  *
  * Caminho: src/components/crm/acompanhamento/AcompanhamentoPage.tsx
- * Versão: 3.0 (21/06/2026)
+ * Versão: 3.1 (21/06/2026)
+ *
+ * v3.1 (21/06/2026): dropdown de campanha específica no frame Engajamento
+ *   da aba "Visão Geral".
+ *
+ *   Mudanças cirúrgicas (layout das demais seções intocado):
+ *
+ *     1) Novo state `campanhaIdEngajamento: number | null`. null = "Todas
+ *        as campanhas" (default). Quando definido, é passado para o
+ *        backend como `campanha_id_engajamento` e os 4 KPIs do frame
+ *        passam a refletir SOMENTE a campanha escolhida.
+ *
+ *     2) Novo state `campanhasDropdown` populado pelo
+ *        `listar_campanhas_dropdown` (action já existente desde v2.2 —
+ *        respeita RBAC; GC/SDR vêem só as próprias).
+ *
+ *     3) Quando uma campanha específica está selecionada, o pill-group
+ *        de status (Todas/Ativas/Pausadas/Finalizadas) é VISUALMENTE
+ *        desabilitado (opacity-40 + pointer-events-none + tooltip).
+ *        O state interno é preservado para que o usuário recupere o
+ *        filtro ao voltar para "Todas as campanhas". O backend ignora
+ *        o status_filtro quando recebe campanha_id_engajamento (vide
+ *        api/crm-analytics.ts v2.3 `calcularEngajamento`).
+ *
+ *     4) Layout: dropdown + pill-group na mesma linha do título do
+ *        frame, com flex-wrap para mobile.
+ *
+ *   Backend correspondente: api/crm-analytics.ts v2.3.
+ *   Banco: sem mudança.
  *
  * v3.0 (21/06/2026): introdução de sub-tabs "Visão Geral" / "Painel
  *   Campanha" + filtro de status no frame Engajamento da aba Visão Geral.
  *
- *   Mudanças cirúrgicas (conteúdo da v2.1 preservado integralmente,
- *   apenas envolvido em condicional de aba):
- *
- *     1) Novo state `abaAtiva` ('visao-geral' | 'painel-campanha').
- *        Default: 'visao-geral'. Sub-tabs renderizadas logo abaixo do
- *        cabeçalho, antes do conteúdo principal.
- *
- *     2) Novo state `statusFiltroEngajamento` ('todas' | 'ativas' |
- *        'pausadas' | 'finalizadas'). Default: 'todas'. Passado como
- *        param `status_filtro_engajamento` para `dashboard_stats`. Afeta
- *        APENAS os 4 KPIs do frame Engajamento — conforme decisão de
- *        produto. Outras seções (Visão das Campanhas, Distribuição,
- *        Campanhas em andamento, Saúde da base) permanecem agnósticas.
- *
- *     3) Filtro UI no topo do frame Engajamento — pill-group de 4 botões
- *        no estilo do seletor de período (bg-gray-100 rounded-lg p-1),
- *        alinhado à direita do título da seção.
- *
- *     4) Conteúdo das 5 seções existentes (Visão das Campanhas,
- *        Engajamento, Distribuição, Campanhas em andamento, Saúde)
- *        envolvido em `{abaAtiva === 'visao-geral' && (...)}`. Aba
- *        nova `'painel-campanha'` renderiza `<PainelCampanhaTab />`.
- *
- *     5) Sub-componente novo importado: `./PainelCampanhaTab` (drill-down
- *        de performance por step da campanha selecionada).
- *
- *   Backend correspondente: `api/crm-analytics.ts` v2.2 (mesma sessão).
- *   Banco: sem mudança (todas as colunas necessárias já existem).
- *
  * v2.1 (12/06/2026): substituição do KPI "Taxa clique" por "Taxa resposta"
- *   conforme decisão de produto (12/06/2026). Em campanhas de prospecção
- *   B2B, "clique" tem baixa relevância (templates não dependem de CTA);
- *   "resposta" é a métrica que efetivamente mede conversão para conversa.
- *   Adicionalmente, mostrar "Abertura > 0 mas Clique = 0" gerava confusão
- *   ("se abriram, deveriam ter clicado") — clique técnico (link wrapping
- *   do Resend) ≠ abrir o email no cliente.
- *
- *   Mudanças cirúrgicas, layout intocado:
- *     - Interface `CampanhaAtiva.taxa_clique` → `taxa_resposta`.
- *     - Interface `DashboardStats.engajamento.taxa_clique` → `taxa_resposta`.
- *     - KPI card: label "Taxa clique" → "Taxa resposta"; ícone cursor
- *       (`fa-arrow-pointer`) → balão de fala (`fa-reply`); subtítulo
- *       "cliques / enviados" → "respondidos / enviados".
- *     - Thresholds de cor recalibrados para prospecção B2B (5% verde,
- *       2% amber, < 2% gray — clique era 3%/1%/0% que não cabe para reply).
- *     - Tabela "Campanhas em andamento": coluna "TAXAS" continua com 2
- *       valores "abertura / X" — agora X é resposta, não clique.
- *
- *   Backend correspondente: `api/crm-analytics.ts` v2.1 (mesma sessão).
+ *   conforme decisão de produto (12/06/2026).
  *
  * v2.0 (04/06/2026 — Fase 8-fix2): cards de Engajamento & Entregabilidade
- *   foram CONECTADOS aos dados reais. Antes (v1.0) eles eram placeholders
- *   cinza hardcoded com "—" e "aguardando motor" — restante da Fase 5C-4
- *   que nunca foi finalizada. Como o motor de disparo, o cron e os
- *   webhooks já estão em produção (Fase 7-MVP — 03/06/2026), os dados
- *   já chegam no backend (`api/crm-analytics.ts → dashboard_stats →
- *   engajamento`). Agora a UI honra:
- *     - `stats.engajamento.total_enviado`     → valor do card "Total enviado"
- *     - `stats.engajamento.taxa_abertura`     → valor do card "Taxa abertura" (%)
- *     - `stats.engajamento.taxa_resposta`     → valor do card "Taxa resposta" (%)  ← v2.1
- *     - `stats.engajamento.taxa_bounce`       → valor do card "Taxa bounce"   (%)
- *   O badge "aguardando motor" continua respeitando a flag
- *   `stats.engajamento.aguardando_motor` do backend: aparece SÓ quando
- *   não há nenhum envio no período selecionado (zero por zero não tem
- *   taxa fazer sentido) — caso contrário, mostra os números reais.
+ *   foram CONECTADOS aos dados reais.
  *
  * v1.0 (Fase 8 — 01/06/2026): primeira versão.
- *   - 6 KPIs de status (Total, Ativas, Agendadas, Em rascunho, Pausadas,
- *     Concluídas) — DADOS REAIS hoje.
- *   - 4 KPIs de engajamento (Enviado / Abertura / Resposta / Bounce) com
- *     badge "aguardando motor de disparo" (placeholder) — populam quando
- *     os webhooks existirem.   (v2.1: Clique → Resposta)
- *   - Distribuição por responsável / vertical / domínio (3 tabelas).
- *   - Lista de campanhas em andamento (até 20).
- *   - Saúde da base: opt-outs, leads aptos, e alerta se há leads SEM
- *     vertical.
  *
  * RBAC vem PRONTO do backend (api/crm-analytics.ts): a página apenas
  * mostra o que recebeu. Admin/Gestão de R&S enxergam tudo; demais perfis
@@ -117,7 +76,6 @@ const PERIODOS = [
 
 type PeriodoId = (typeof PERIODOS)[number]['id'];
 
-// 🆕 v3.0 — Sub-tabs internas da página
 const ABAS = [
   { id: 'visao-geral', label: 'Visão Geral', icon: 'fa-solid fa-chart-line' },
   { id: 'painel-campanha', label: 'Painel Campanha', icon: 'fa-solid fa-bullseye' },
@@ -125,7 +83,6 @@ const ABAS = [
 
 type AbaId = (typeof ABAS)[number]['id'];
 
-// 🆕 v3.0 — Filtro de status do frame Engajamento
 const STATUS_FILTRO_ENGAJAMENTO = [
   { id: 'todas', label: 'Todas' },
   { id: 'ativas', label: 'Ativas' },
@@ -159,7 +116,7 @@ interface CampanhaAtiva {
   responsavel: string;
   dias_rodando: number | null;
   taxa_abertura: number | null;
-  taxa_resposta: number | null;   // 🆕 v2.1 — substituiu taxa_clique
+  taxa_resposta: number | null;
   aguardando_motor: boolean;
 }
 
@@ -167,7 +124,8 @@ interface DashboardStats {
   ator: { id: number; nome: string; tipo: string; ve_tudo: boolean } | null;
   periodo: PeriodoId;
   inicio_periodo: string;
-  status_filtro_engajamento?: StatusFiltroEngajamentoId; // 🆕 v3.0 (echo do backend)
+  status_filtro_engajamento?: StatusFiltroEngajamentoId;
+  campanha_id_engajamento?: number | null; // 🆕 v3.1 (echo do backend)
   status_campanhas: {
     rascunho: number;
     agendada: number;
@@ -179,7 +137,7 @@ interface DashboardStats {
   engajamento: {
     total_enviado: number;
     taxa_abertura: number;
-    taxa_resposta: number;   // 🆕 v2.1 — substituiu taxa_clique
+    taxa_resposta: number;
     taxa_bounce: number;
     aguardando_motor: boolean;
   };
@@ -203,6 +161,19 @@ interface DashboardResponse {
   error?: string;
 }
 
+// 🆕 v3.1 — Item simplificado do dropdown (não precisamos de todos os campos)
+interface CampanhaDropdownItem {
+  id: number;
+  nome: string;
+  status: string;
+}
+
+interface ListarCampanhasDropdownResp {
+  success: boolean;
+  campanhas: CampanhaDropdownItem[];
+  error?: string;
+}
+
 interface AcompanhamentoPageProps {
   currentUser: CurrentUserLite;
 }
@@ -212,7 +183,6 @@ interface AcompanhamentoPageProps {
 // ════════════════════════════════════════════════════════════
 
 const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) => {
-  // get é referência estável (lição da AssinaturasPage v1.1)
   const { get } = useCrmApi(ANALYTICS_API_URL);
 
   const atorEmail =
@@ -225,34 +195,75 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<ToastMensagem | null>(null);
 
-  // 🆕 v3.0 — Sub-tab ativa
   const [abaAtiva, setAbaAtiva] = useState<AbaId>('visao-geral');
 
-  // 🆕 v3.0 — Filtro de status do frame Engajamento (default 'todas')
   const [statusFiltroEngajamento, setStatusFiltroEngajamento] =
     useState<StatusFiltroEngajamentoId>('todas');
 
-  // ── Carregar ──────────────────────────────────────────────
+  // 🆕 v3.1 — Filtro de campanha específica do frame Engajamento
+  const [campanhaIdEngajamento, setCampanhaIdEngajamento] = useState<number | null>(null);
+  const [campanhasDropdown, setCampanhasDropdown] = useState<CampanhaDropdownItem[]>([]);
+  const [loadingCampanhasDropdown, setLoadingCampanhasDropdown] = useState(false);
+
+  // ── Carregar dashboard ────────────────────────────────────
   const carregar = useCallback(async () => {
     if (!atorEmail) return;
     setLoading(true);
-    const resp = await get<DashboardResponse>('dashboard_stats', {
+
+    // Monta params dinamicamente — só envia campanha_id_engajamento se selecionada
+    const params: Record<string, string | number> = {
       user_email: atorEmail,
       periodo,
-      // 🆕 v3.0 — restringe o frame Engajamento por status (não afeta outras seções)
       status_filtro_engajamento: statusFiltroEngajamento,
-    });
+    };
+    if (campanhaIdEngajamento !== null) {
+      params.campanha_id_engajamento = campanhaIdEngajamento;
+    }
+
+    const resp = await get<DashboardResponse>('dashboard_stats', params);
     if (resp.ok && resp.data?.success) {
       setStats(resp.data.stats);
     } else {
       setToast({ tipo: 'error', texto: resp.error || 'Falha ao carregar dashboard' });
     }
     setLoading(false);
-  }, [get, atorEmail, periodo, statusFiltroEngajamento]);
+  }, [get, atorEmail, periodo, statusFiltroEngajamento, campanhaIdEngajamento]);
 
   useEffect(() => {
     carregar();
   }, [carregar]);
+
+  // 🆕 v3.1 — Carregar lista de campanhas para o dropdown do frame Engajamento
+  //   Chama sem `responsavel_id` — o backend respeita RBAC do ator
+  //   (GC/SDR só vê as próprias; Admin vê todas).
+  const carregarCampanhasDropdown = useCallback(async () => {
+    if (!atorEmail) return;
+    let cancelado = false;
+
+    setLoadingCampanhasDropdown(true);
+    const resp = await get<ListarCampanhasDropdownResp>('listar_campanhas_dropdown', {
+      user_email: atorEmail,
+      status_filtro: 'todas',
+    });
+
+    if (cancelado) return;
+
+    if (resp.ok && resp.data?.success) {
+      setCampanhasDropdown(resp.data.campanhas);
+    }
+    setLoadingCampanhasDropdown(false);
+
+    return () => {
+      cancelado = true;
+    };
+  }, [get, atorEmail]);
+
+  useEffect(() => {
+    carregarCampanhasDropdown();
+  }, [carregarCampanhasDropdown]);
+
+  // 🆕 v3.1 — Flag derivada: campanha específica está selecionada
+  const campanhaEspecificaSelecionada = campanhaIdEngajamento !== null;
 
   // ────────────────────────────────────────────────────────────
   // RENDER
@@ -312,7 +323,7 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
         />
       ) : (
         <>
-          {/* 🆕 v3.0 — Sub-tabs internas */}
+          {/* Sub-tabs internas */}
           <div className="bg-white rounded-lg border border-gray-200 p-1 inline-flex gap-1">
             {ABAS.map((aba) => (
               <button
@@ -331,7 +342,7 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
           </div>
 
           {/* ════════════════════════════════════════════════════════
-              ABA: VISÃO GERAL — conteúdo original v2.1 preservado
+              ABA: VISÃO GERAL
               ════════════════════════════════════════════════════════ */}
           {abaAtiva === 'visao-geral' && (
             <>
@@ -351,40 +362,69 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
               </section>
 
               {/* ──────────── Seção 2: Engajamento & Entregabilidade ──────────── */}
-              {/* 🆕 v2.0 — conectado aos dados reais. A flag `aguardando_motor`
-                  continua respeitada (do backend): quando não houve nenhum
-                  envio no período, mostra placeholder. Caso contrário, números
-                  reais.
-                  🆕 v3.0 — pill-group de filtro de status no topo (Todas/Ativas/
-                  Pausadas/Finalizadas). Default 'todas' preserva comportamento. */}
+              {/* 🆕 v3.1 — dropdown de campanha específica + pill-group de status
+                  na mesma linha do título. Quando campanha específica selecionada,
+                  pill-group fica visualmente desabilitado. */}
               <section>
                 <div className="mb-1 flex items-center justify-between gap-3 flex-wrap">
                   <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                     <i className="fa-solid fa-envelope-open-text text-gray-400"></i>
                     Engajamento & Entregabilidade
                   </h2>
-                  {/* 🆕 v3.0 — Filtro de status do engajamento */}
-                  <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-                    {STATUS_FILTRO_ENGAJAMENTO.map((f) => (
-                      <button
-                        key={f.id}
-                        onClick={() => setStatusFiltroEngajamento(f.id)}
-                        className={`px-3 py-1 rounded-md text-xs font-medium transition ${
-                          statusFiltroEngajamento === f.id
-                            ? 'bg-white text-blue-700 shadow-sm'
-                            : 'text-gray-500 hover:text-gray-700'
-                        }`}
-                      >
-                        {f.label}
-                      </button>
-                    ))}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* 🆕 v3.1 — Dropdown de campanha específica */}
+                    <select
+                      value={campanhaIdEngajamento ?? 'todas'}
+                      onChange={(e) =>
+                        setCampanhaIdEngajamento(
+                          e.target.value === 'todas' ? null : Number(e.target.value)
+                        )
+                      }
+                      disabled={loadingCampanhasDropdown}
+                      className="px-3 py-1.5 border border-gray-300 rounded-md text-xs bg-white max-w-[240px] hover:border-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-gray-50 disabled:text-gray-400"
+                      title="Filtrar por campanha específica"
+                    >
+                      <option value="todas">Todas as campanhas</option>
+                      {campanhasDropdown.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.nome}
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Pill-group de status (desabilitado se campanha específica) */}
+                    <div
+                      className={`flex items-center gap-1 bg-gray-100 rounded-lg p-1 transition-opacity ${
+                        campanhaEspecificaSelecionada ? 'opacity-40 pointer-events-none' : ''
+                      }`}
+                      title={
+                        campanhaEspecificaSelecionada
+                          ? 'Desabilitado: campanha específica selecionada'
+                          : ''
+                      }
+                    >
+                      {STATUS_FILTRO_ENGAJAMENTO.map((f) => (
+                        <button
+                          key={f.id}
+                          onClick={() => setStatusFiltroEngajamento(f.id)}
+                          className={`px-3 py-1 rounded-md text-xs font-medium transition ${
+                            statusFiltroEngajamento === f.id
+                              ? 'bg-white text-blue-700 shadow-sm'
+                              : 'text-gray-500 hover:text-gray-700'
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
                 {stats.engajamento.aguardando_motor ? (
                   <p className="text-xs text-gray-500 mb-3">
                     <i className="fa-solid fa-clock mr-1 text-amber-500"></i>
-                    Sem envios no período — os números abaixo aparecem quando as
-                    campanhas começarem a disparar.
+                    {campanhaEspecificaSelecionada
+                      ? 'Sem envios para esta campanha no período — selecione outra campanha ou volte para "Todas as campanhas".'
+                      : 'Sem envios no período — os números abaixo aparecem quando as campanhas começarem a disparar.'}
                   </p>
                 ) : (
                   <p className="text-xs text-gray-500 mb-3">
@@ -393,6 +433,11 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
                     {stats.engajamento.total_enviado > 0 && (
                       <span className="ml-1 text-gray-400">
                         ({stats.engajamento.total_enviado.toLocaleString('pt-BR')} envios no período)
+                      </span>
+                    )}
+                    {campanhaEspecificaSelecionada && (
+                      <span className="ml-1 text-blue-600 font-medium">
+                        • filtrado por 1 campanha
                       </span>
                     )}
                   </p>
@@ -611,7 +656,7 @@ const AcompanhamentoPage: React.FC<AcompanhamentoPageProps> = ({ currentUser }) 
           )}
 
           {/* ════════════════════════════════════════════════════════
-              🆕 ABA: PAINEL CAMPANHA — drill-down por step
+              ABA: PAINEL CAMPANHA
               ════════════════════════════════════════════════════════ */}
           {abaAtiva === 'painel-campanha' && (
             <PainelCampanhaTab

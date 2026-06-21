@@ -2,35 +2,56 @@
  * PainelCampanhaTab.tsx — Sub-aba "Painel Campanha" do Acompanhamento
  *
  * Caminho: src/components/crm/acompanhamento/PainelCampanhaTab.tsx
- * Versão: 1.0 (21/06/2026)
+ * Versão: 1.1 (21/06/2026)
  *
- * Drill-down de performance por step (e-mail individual) de UMA campanha
- * selecionada. 3 filtros cascateados:
- *   F1 — Responsável (GC/SDR): RBAC aplicado pelo backend
- *        • Admin / Gestão R&S: dropdown completo (Todos + GC/SDR ativos)
- *        • GC / Analista R&S / SDR: travado no próprio (campo desabilitado)
- *   F2 — Status: Todas / Ativas / Pausadas / Finalizadas
- *   F3 — Campanha: lista filtrada por F1+F2; força seleção (sem agregação
- *        cross-campanha — cada campanha tem sua própria sequência de steps,
- *        somar steps de N campanhas não faria sentido analítico).
+ * v1.1 (21/06/2026): 2 ajustes para alinhar com a Visão Geral.
  *
- * Backend: 3 actions em api/crm-analytics.ts v2.2:
- *   - listar_responsaveis        → popula F1
- *   - listar_campanhas_dropdown  → popula F3 (cascateado em F1+F2)
- *   - metricas_por_step          → popula a tabela quando F3 selecionada
+ *     1) Seção de KPIs macro entre os filtros e a tabela. 5 cards
+ *        (Total enviado | Taxa abertura | Taxa resposta | Taxa bounce |
+ *        Opt-Outs) calculados a partir de `stepsMetricas` — sem chamada
+ *        extra ao backend. Taxas usam média ponderada por enviados (mesma
+ *        lógica da linha "Total"). Aparecem só quando uma campanha está
+ *        selecionada E tem pelo menos 1 envio (caso contrário, fica
+ *        apenas o empty state da tabela).
  *
- * Período: herdado do parent (AcompanhamentoPage). Mudar o período no
- *   cabeçalho re-dispara `metricas_por_step` automaticamente via dependência
- *   do useCallback.
+ *     2) Coluna OPT-OUT na tabela, após Taxa Bounce. Implementação
+ *        Opção B (decisão de produto 21/06/2026): conta envios em
+ *        `email_fila` cancelados por opt-out (`motivo_cancelamento LIKE
+ *        'opt_out_%'`).
  *
- * Estado vazio: se nenhuma campanha selecionada, mostra placeholder
- *   "Selecione uma campanha para ver a performance por step".
+ *        ⚠️ NOTA SOBRE INTERPRETAÇÃO: como o opt-out cancela TODOS os
+ *        steps pendentes do lead, 1 lead que opta após o step 1 conta
+ *        1× nos steps 2, 3 e 4 (não no step 1, que já foi enviado).
+ *        A soma dos steps NÃO equivale a leads distintos em opt-out.
+ *        Rodapé da tabela documenta isso explicitamente.
+ *
+ *   Backend correspondente: api/crm-analytics.ts v2.3 (mesma sessão) —
+ *   action `metricas_por_step` agora retorna `opt_outs` por step.
+ *
+ * v1.0 (21/06/2026): drill-down de performance por step (e-mail
+ *   individual) de UMA campanha selecionada. 3 filtros cascateados:
+ *     F1 — Responsável (GC/SDR): RBAC aplicado pelo backend
+ *     F2 — Status: Todas / Ativas / Pausadas / Finalizadas
+ *     F3 — Campanha: lista filtrada por F1+F2; força seleção (sem
+ *          agregação cross-campanha — cada campanha tem sua própria
+ *          sequência de steps, somar steps de N campanhas não faria
+ *          sentido analítico).
+ *
+ *   Backend: 3 actions em api/crm-analytics.ts v2.2:
+ *     - listar_responsaveis        → popula F1
+ *     - listar_campanhas_dropdown  → popula F3 (cascateado em F1+F2)
+ *     - metricas_por_step          → popula a tabela quando F3 selecionada
+ *
+ *   Período: herdado do parent (AcompanhamentoPage). Mudar o período no
+ *     cabeçalho re-dispara `metricas_por_step` automaticamente via
+ *     dependência do useCallback.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useCrmApi } from '../shared/hooks/useCrmApi';
 import EmptyState from '../shared/components/EmptyState';
 import Toast, { ToastMensagem } from '../shared/components/Toast';
+import KpiCard from '../shared/components/KpiCard';
 
 // ════════════════════════════════════════════════════════════
 // CONSTANTES
@@ -66,6 +87,7 @@ interface CampanhaOpt {
   inicio_envio: string | null;
 }
 
+// 🆕 v1.1 — `opt_outs` adicionado pelo backend v2.3
 interface StepMetricas {
   step_id: number;
   ordem: number;
@@ -74,6 +96,7 @@ interface StepMetricas {
   taxa_abertura: number;
   taxa_resposta: number;
   taxa_bounce: number;
+  opt_outs: number;
 }
 
 interface ListarResponsaveisResp {
@@ -151,7 +174,6 @@ const PainelCampanhaTab: React.FC<PainelCampanhaTabProps> = ({
       if (resp.ok && resp.data?.success) {
         setResponsaveis(resp.data.responsaveis);
         setTravadoNoProprio(resp.data.travado_no_proprio);
-        // Quando travado no próprio, já posiciona o filtro nele
         if (resp.data.travado_no_proprio && resp.data.responsaveis[0]) {
           setFiltroResponsavel(resp.data.responsaveis[0].id);
         }
@@ -170,7 +192,6 @@ const PainelCampanhaTab: React.FC<PainelCampanhaTabProps> = ({
   const carregarCampanhas = useCallback(async () => {
     if (!atorEmail) return;
     setLoadingCampanhas(true);
-    // Ao mudar F1 ou F2, limpa F3 e a tabela (consistência da cascata)
     setFiltroCampanhaId(null);
     setStepsMetricas([]);
     setNomeCampanha('');
@@ -197,7 +218,7 @@ const PainelCampanhaTab: React.FC<PainelCampanhaTabProps> = ({
     carregarCampanhas();
   }, [carregarCampanhas]);
 
-  // ── Carregar métricas por step (quando F3 selecionada OU período muda) ──
+  // ── Carregar métricas por step ────────────────────────────────
   const carregarMetricasStep = useCallback(async () => {
     if (!atorEmail || filtroCampanhaId === null) {
       setStepsMetricas([]);
@@ -224,12 +245,18 @@ const PainelCampanhaTab: React.FC<PainelCampanhaTabProps> = ({
     carregarMetricasStep();
   }, [carregarMetricasStep]);
 
-  // ── Totais agregados (rodapé da tabela) ──────────────────────
-  // Média ponderada pelo número de enviados de cada step.
+  // ── Totais agregados (KPIs macro + rodapé da tabela) ──────────
+  // Taxas: média ponderada pelo número de enviados de cada step (acomoda
+  // steps com volumes diferentes — step 1 sempre tem mais envios que o
+  // step 3 porque cancelamentos ocorrem ao longo do funil).
+  // Opt-outs: SOMA DIRETA (contagem discreta, não taxa). Vide nota da v1.1
+  // no header — soma pode contar 1 lead várias vezes pela natureza da
+  // Opção B (cancelamentos da fila).
   const totais = (() => {
     const totalEnv = stepsMetricas.reduce((a, s) => a + s.enviados, 0);
+    const totalOpt = stepsMetricas.reduce((a, s) => a + s.opt_outs, 0);
     if (totalEnv === 0) {
-      return { enviados: 0, taxa_abertura: 0, taxa_resposta: 0, taxa_bounce: 0 };
+      return { enviados: 0, taxa_abertura: 0, taxa_resposta: 0, taxa_bounce: 0, opt_outs: totalOpt };
     }
     const ponderada = (campo: 'taxa_abertura' | 'taxa_resposta' | 'taxa_bounce') =>
       stepsMetricas.reduce((a, s) => a + s.enviados * s[campo], 0) / totalEnv;
@@ -238,8 +265,12 @@ const PainelCampanhaTab: React.FC<PainelCampanhaTabProps> = ({
       taxa_abertura: ponderada('taxa_abertura'),
       taxa_resposta: ponderada('taxa_resposta'),
       taxa_bounce: ponderada('taxa_bounce'),
+      opt_outs: totalOpt,
     };
   })();
+
+  // 🆕 v1.1 — Flag para mostrar KPIs macro: campanha selecionada E tem dados
+  const mostrarKpisMacro = filtroCampanhaId !== null && stepsMetricas.length > 0 && !loadingSteps;
 
   // ────────────────────────────────────────────────────────────
   // RENDER
@@ -338,12 +369,75 @@ const PainelCampanhaTab: React.FC<PainelCampanhaTabProps> = ({
         </div>
       </section>
 
+      {/* ──────────── 🆕 v1.1 — KPIs macro da campanha ──────────── */}
+      {mostrarKpisMacro && (
+        <section>
+          <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+            <i className="fa-solid fa-envelope-open-text text-gray-400"></i>
+            Engajamento & Entregabilidade
+            <span className="text-xs text-gray-500 font-normal">— {nomeCampanha}</span>
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <KpiCard
+              label="Total enviado"
+              valor={totais.enviados.toLocaleString('pt-BR')}
+              icon="fa-solid fa-paper-plane"
+              cor="gray"
+              detalhe="no período selecionado"
+            />
+            <KpiCard
+              label="Taxa abertura"
+              valor={totais.taxa_abertura.toFixed(1)}
+              icon="fa-solid fa-eye"
+              cor={
+                totais.taxa_abertura >= 20 ? 'green' :
+                totais.taxa_abertura >= 10 ? 'amber' :
+                'gray'
+              }
+              sufixo="%"
+              detalhe="aberturas / enviados"
+            />
+            <KpiCard
+              label="Taxa resposta"
+              valor={totais.taxa_resposta.toFixed(1)}
+              icon="fa-solid fa-reply"
+              cor={
+                totais.taxa_resposta >= 5 ? 'green' :
+                totais.taxa_resposta >= 2 ? 'amber' :
+                'gray'
+              }
+              sufixo="%"
+              detalhe="respondidos / enviados"
+            />
+            <KpiCard
+              label="Taxa bounce"
+              valor={totais.taxa_bounce.toFixed(1)}
+              icon="fa-solid fa-triangle-exclamation"
+              cor={
+                totais.taxa_bounce >= 5 ? 'red' :
+                totais.taxa_bounce >= 2 ? 'amber' :
+                'green'
+              }
+              sufixo="%"
+              detalhe="bounces / enviados"
+            />
+            <KpiCard
+              label="Opt-Outs"
+              valor={totais.opt_outs.toLocaleString('pt-BR')}
+              icon="fa-solid fa-ban"
+              cor={totais.opt_outs > 0 ? 'red' : 'gray'}
+              detalhe="envios cancelados"
+            />
+          </div>
+        </section>
+      )}
+
       {/* ──────────── Tabela de performance por step ──────────── */}
       <section>
         <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
           <i className="fa-solid fa-list-check text-gray-400"></i>
           <span>Performance por e-mail</span>
-          {nomeCampanha && (
+          {nomeCampanha && !mostrarKpisMacro && (
             <span className="text-xs text-gray-500 font-normal">— {nomeCampanha}</span>
           )}
         </h2>
@@ -376,6 +470,8 @@ const PainelCampanhaTab: React.FC<PainelCampanhaTabProps> = ({
                   <th className="px-4 py-3 font-medium text-right">Taxa Abertura</th>
                   <th className="px-4 py-3 font-medium text-right">Taxa Resposta</th>
                   <th className="px-4 py-3 font-medium text-right">Taxa Bounce</th>
+                  {/* 🆕 v1.1 — Coluna OPT-OUT */}
+                  <th className="px-4 py-3 font-medium text-right">Opt-Out</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -433,10 +529,21 @@ const PainelCampanhaTab: React.FC<PainelCampanhaTabProps> = ({
                         </span>
                       )}
                     </td>
+                    {/* 🆕 v1.1 — Coluna OPT-OUT (contagem absoluta) */}
+                    <td className="px-4 py-3 text-right">
+                      {s.opt_outs === 0 ? (
+                        <span className="text-gray-400">0</span>
+                      ) : (
+                        <span className="text-red-600 font-medium inline-flex items-center gap-1">
+                          <i className="fa-solid fa-ban text-xs"></i>
+                          {s.opt_outs.toLocaleString('pt-BR')}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))}
 
-                {/* Linha de Totais (média ponderada por enviados) */}
+                {/* Linha de Totais (média ponderada por enviados + soma direta de opt_outs) */}
                 {stepsMetricas.length > 1 && (
                   <tr className="bg-gray-50 font-medium border-t-2 border-gray-200">
                     <td className="px-4 py-3 text-gray-900">
@@ -457,18 +564,43 @@ const PainelCampanhaTab: React.FC<PainelCampanhaTabProps> = ({
                     <td className="px-4 py-3 text-right text-gray-700">
                       {totais.enviados === 0 ? '—' : `${totais.taxa_bounce.toFixed(2)}%`}
                     </td>
+                    {/* 🆕 v1.1 — Total Opt-Outs (soma direta) */}
+                    <td className="px-4 py-3 text-right">
+                      {totais.opt_outs === 0 ? (
+                        <span className="text-gray-400">0</span>
+                      ) : (
+                        <span className="text-red-600 font-medium">
+                          {totais.opt_outs.toLocaleString('pt-BR')}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 )}
               </tbody>
             </table>
 
-            {/* Nota de rodapé sobre período */}
+            {/* Nota de rodapé sobre período + Opção B */}
             {stepsMetricas.length > 0 && (
-              <div className="px-4 py-2 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 flex items-center gap-2">
-                <i className="fa-solid fa-circle-info text-gray-400"></i>
-                Métricas filtradas pelo período selecionado no cabeçalho. Cada evento
-                (envio, abertura, resposta, bounce) é contado apenas se ocorreu dentro
-                da janela.
+              <div className="px-4 py-2.5 bg-gray-50 border-t border-gray-200 text-xs text-gray-500 space-y-1">
+                <div className="flex items-start gap-2">
+                  <i className="fa-solid fa-circle-info text-gray-400 mt-0.5"></i>
+                  <span>
+                    Envios/aberturas/respostas/bounces filtrados pelo período
+                    selecionado no cabeçalho — cada evento é contado apenas se
+                    ocorreu dentro da janela.
+                  </span>
+                </div>
+                {/* 🆕 v1.1 — Nota explicando a Opção B */}
+                <div className="flex items-start gap-2">
+                  <i className="fa-solid fa-ban text-gray-400 mt-0.5"></i>
+                  <span>
+                    <strong>Opt-Out:</strong> conta envios cancelados por
+                    descadastramento (cumulativo, sem filtro de período). 1 lead
+                    que opta após o step 1 conta 1× em cada step subsequente
+                    cancelado — a soma da coluna pode superar o número de leads
+                    distintos em opt-out.
+                  </span>
+                </div>
               </div>
             )}
           </div>
