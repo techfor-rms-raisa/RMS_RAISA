@@ -3,7 +3,45 @@
  *   prospect_leads (motor='importacao_lista') → email_leads (CRM)
  *
  * Caminho: lib/promover-email-lead.ts
- * Versão: 1.2 (19/06/2026 — FIX Bug ownership: email_empresas herda reservado_por)
+ * Versão: 1.3 (22/06/2026 — FIX erro_delete_prospect: troca DELETE por UPDATE status='no_crm')
+ *
+ * 🆕 v1.3 (22/06/2026 — FIX erro_delete_prospect em "Promover Lead manual"):
+ *   Os DOIS `.delete()` em `prospect_leads` (caso (2b) duplicado e caso (5)
+ *   pós-INSERT) foram trocados por `.update({ status: 'no_crm' })`.
+ *
+ *   Causa raiz (diagnosticada em 22/06/2026 via SQL direto em Production):
+ *   o DELETE estava falhando em todos os casos, mesmo com a FK
+ *   `email_leads_prospect_lead_id_fkey` declarada como `ON DELETE SET NULL`.
+ *   A query de `information_schema` confirmou que existem outras FKs
+ *   apontando para `prospect_leads.id` com `delete_rule='NO ACTION'`:
+ *     - `prospect_leads_lead_anterior_id_fkey` (auto-referência)
+ *     - `prospect_revalidacao_log_lead_id_novo_fkey`
+ *   Sempre que o prospect a deletar é referenciado por algum desses,
+ *   o DELETE é rejeitado pelo Postgres (erro 23503) e o helper devolve
+ *   `motivo: 'erro_delete_prospect'`. A UI exibe "Falha ao promover".
+ *
+ *   Solução adotada (consistente com o restante do código):
+ *   marcar o prospect com `status='no_crm'`, padrão já usado pelas actions
+ *   `importar_prospects` (linhas 497-500 do api/crm-leads.ts) e
+ *   `promover_para_campanha` (linhas 631-635) há meses. O valor 'no_crm'
+ *   já está no CHECK constraint `prospect_leads_status_check` (migration
+ *   30/05/2026) e o frontend do Prospect Engine já filtra por
+ *   `status != 'no_crm'` — efeito visual idêntico ao DELETE, sem
+ *   inconsistência de FK e preservando histórico/auditoria.
+ *
+ *   Mudança CIRÚRGICA — apenas o `.delete()` virou `.update()` nos 2
+ *   pontos. Todo o resto (logs, mensagens, retorno do enum, motivos,
+ *   exports) permanece IDÊNTICO à v1.2 para preservar:
+ *     - Compatibilidade com PromoverLeadModal.tsx (que lê o enum)
+ *     - Compatibilidade com qualquer outro caller atual (auto-promoção)
+ *     - Contrato do tipo `MotivoPromocao` exportado
+ *
+ *   Como o motivo `'erro_delete_prospect'` continua existindo no enum,
+ *   se algum dia o UPDATE falhar (caso raríssimo: lead deletado por
+ *   outra sessão, race condition), o token de erro continua semanticamente
+ *   correto ("falha ao remover prospect da fila"). Renomeação para
+ *   `'erro_update_prospect'` foi avaliada e descartada por exigir mudança
+ *   em pelo menos 1 outro arquivo (modal) e quebrar a regra cirúrgica.
  *
  * 🆕 v1.2 (19/06/2026 — FIX Bug ownership empresa):
  *   Ao criar uma nova empresa em `email_empresas` durante a promoção,
@@ -51,19 +89,19 @@
  * salvaguardas:
  *
  *   1. Idempotência: se já existe email_lead com mesmo email,
- *      NÃO duplica. Apenas DELETE do prospect (lead já estava no CRM).
+ *      NÃO duplica. Apenas marca prospect com status='no_crm'
+ *      (lead já estava no CRM).
  *   2. LGPD: se o email já está em opt_out=true, NÃO promove
- *      e NÃO deleta o prospect (mantém histórico). Marca o
+ *      e NÃO toca no prospect (mantém histórico). Marca o
  *      motivo para o caller decidir o que fazer.
  *   3. Atomicidade lógica: INSERT email_lead PRIMEIRO; só faz
- *      DELETE prospect SE INSERT bem-sucedido. Se DELETE falhar
+ *      UPDATE prospect SE INSERT bem-sucedido. Se UPDATE falhar
  *      depois (caso raro), o lead em email_leads já é útil e
  *      pode ser sincronizado depois.
  *
  * Reusabilidade: também pode ser chamado por uma futura refatoração
- * da action `importar_prospects` em api/crm-leads.ts (que hoje faz
- * UPDATE status='no_crm' em vez de DELETE). Não está sendo refatorada
- * agora para manter escopo cirúrgico desta sub-fase.
+ * da action `importar_prospects` em api/crm-leads.ts (que já faz
+ * UPDATE status='no_crm' — agora 100% alinhado com este helper).
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -149,7 +187,7 @@ export async function promoverParaEmailLeads(params: {
 
   if (existente) {
     // (2a) Opt-out: LGPD impede promoção e mantém histórico no
-    // prospect (não deletamos — registro fica como "tentativa").
+    // prospect (não tocamos — registro fica como "tentativa").
     if (existente.opt_out) {
       console.warn(`⚠️ [promover-email-lead] LGPD opt_out bloqueou promoção do prospect_id=${prospect.id} (email já em email_leads.id=${existente.id} com opt_out=true)`);
       return {
@@ -159,17 +197,19 @@ export async function promoverParaEmailLeads(params: {
       };
     }
 
-    // (2b) Lead já existe sem opt-out: não duplicamos. DELETE
-    // do prospect (base transitória limpa). O lead em email_leads
-    // continua intacto, sem regressão dos dados eventualmente mais
-    // atualizados que já estavam lá.
+    // (2b) Lead já existe sem opt-out: não duplicamos. Marca prospect
+    // como 'no_crm' (base transitória limpa do ponto de vista do front,
+    // que filtra status != 'no_crm'). O lead em email_leads continua
+    // intacto, sem regressão dos dados eventualmente mais atualizados
+    // que já estavam lá.
+    // 🆕 v1.3 — antes era DELETE, virou UPDATE (FKs com NO ACTION quebravam o DELETE).
     const { error: errDel } = await supabase
       .from('prospect_leads')
-      .delete()
+      .update({ status: 'no_crm' })
       .eq('id', prospect.id);
 
     if (errDel) {
-      console.error(`❌ [promover-email-lead] DELETE prospect_id=${prospect.id} (caso duplicado) falhou: ${errDel.message}`);
+      console.error(`❌ [promover-email-lead] UPDATE prospect_id=${prospect.id} status='no_crm' (caso duplicado) falhou: ${errDel.message}`);
       return { promovido: false, motivo: 'erro_delete_prospect', email_lead_id: existente.id };
     }
     return { promovido: false, motivo: 'lead_ja_existia', email_lead_id: existente.id };
@@ -239,15 +279,19 @@ export async function promoverParaEmailLeads(params: {
     return { promovido: false, motivo: 'erro_insert_lead' };
   }
 
-  // ── (5) DELETE prospect_lead (TRANSFERIR — base transitória) ─
+  // ── (5) Marca prospect como 'no_crm' (TRANSFERIR — base transitória) ─
+  // 🆕 v1.3 — antes era DELETE, virou UPDATE. Padrão consistente com
+  // api/crm-leads.ts actions importar_prospects e promover_para_campanha.
+  // Sai do front do Prospect Engine (filtro status != 'no_crm'), preserva
+  // histórico e auditoria, evita conflito com FKs NO ACTION.
   const { error: errDel } = await supabase
     .from('prospect_leads')
-    .delete()
+    .update({ status: 'no_crm' })
     .eq('id', prospect.id);
 
   if (errDel) {
     // Lead em email_leads já existe — não rollback. Logamos e seguimos.
-    console.error(`❌ [promover-email-lead] DELETE prospect_id=${prospect.id} falhou APÓS INSERT em email_lead_id=${novoLead.id}: ${errDel.message}`);
+    console.error(`❌ [promover-email-lead] UPDATE prospect_id=${prospect.id} status='no_crm' falhou APÓS INSERT em email_lead_id=${novoLead.id}: ${errDel.message}`);
     return {
       promovido:     true,    // do ponto de vista do CRM, foi promovido
       motivo:        'erro_delete_prospect',
