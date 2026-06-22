@@ -362,8 +362,21 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   });
   const importH = useImportProspects();
   // 🆕 v1.2 (Fase 8-Inbox)
-  const respostasH = useRespostas();
-  const invalidosH = useInvalidos();
+  // 🆕 v1.11 (22/06/2026) — RBAC propagado também para useRespostas v1.1
+  //   (filtro por dono da CAMPANHA) e useInvalidos v1.2 (filtro por dono
+  //   do LEAD, mesma regra do useLeads v1.3).
+  const respostasH = useRespostas({
+    currentUser: {
+      id: currentUser.id,
+      tipo_usuario: currentUser.tipo_usuario,
+    },
+  });
+  const invalidosH = useInvalidos({
+    currentUser: {
+      id: currentUser.id,
+      tipo_usuario: currentUser.tipo_usuario,
+    },
+  });
   // 🆕 v1.4 (Lead RBAC fix) — fontes p/ o LeadFormModal
   const tiposCampanhaH = useTiposCampanha();
   const responsaveisH = useResponsaveis();

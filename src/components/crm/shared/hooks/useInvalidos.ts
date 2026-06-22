@@ -2,7 +2,24 @@
  * useInvalidos.ts — Hook de gestão de E-mails Inválidos
  *
  * Caminho: src/components/crm/shared/hooks/useInvalidos.ts
- * Versão: 1.1 (F8 — Aba Inválidos lead-centric — 16/06/2026)
+ * Versão: 1.2 (RBAC de visibilidade — 22/06/2026)
+ *
+ * v1.2 (22/06/2026 — RBAC na aba "E-mails Inválidos"):
+ *   Adicionado `currentUser` em UseInvalidosOptions para propagação ao
+ *   backend v1.21 na action `listar_invalidos`. Sem isso, o backend
+ *   retorna 400 (validação defensiva).
+ *
+ *   Regra implementada no backend (mesma do useLeads v1.3):
+ *     - Admin             → vê todos inválidos
+ *     - SDR               → vê CRECI todos + outros onde reservado_por = ele
+ *     - Gestão Comercial  → NUNCA vê CRECI + apenas onde reservado_por = ele
+ *
+ *   Mudança aditiva e retrocompatível: `currentUser` é opcional na
+ *   assinatura mas, se omitido, o backend retorna 400 e o hook degrada
+ *   gracefully (mantém estado anterior + log de warning).
+ *
+ *   Dep array atualizada com `currentUser?.id` e `currentUser?.tipo_usuario`
+ *   para recarregar automaticamente em troca de usuário.
  *
  * v1.1 (16/06/2026 — F8): O formato de resposta da API permanece idêntico
  *   ({ success, itens, total, page, limit, total_pages }), por isso a
@@ -44,6 +61,13 @@ interface ListarInvalidosResponse {
 interface UseInvalidosOptions {
   apiUrl?: string;
   pageSize?: number;
+  // 🆕 v1.2 — Identificação do usuário corrente para RBAC backend.
+  //   Propagado para listar_invalidos (filtro de visibilidade).
+  //   Sem isso, listar_invalidos retorna 400 (defesa em camadas).
+  currentUser?: {
+    id: number;
+    tipo_usuario: string;
+  };
 }
 
 // ════════════════════════════════════════════════════════════
@@ -53,6 +77,8 @@ interface UseInvalidosOptions {
 export function useInvalidos(options: UseInvalidosOptions = {}) {
   const apiUrl = options.apiUrl ?? '/api/crm-leads';
   const pageSize = options.pageSize ?? 30;
+  // 🆕 v1.2 — currentUser para RBAC backend
+  const currentUser = options.currentUser;
 
   const api = useCrmApi(apiUrl);
 
@@ -75,6 +101,12 @@ export function useInvalidos(options: UseInvalidosOptions = {}) {
         limit: pageSize,
       };
       if (busca) params.busca = busca;
+      // 🆕 v1.2 — propagar currentUser para RBAC (crm-leads.ts v1.21).
+      //   Sem esses 2 params, o backend retorna 400 — defesa em camadas.
+      if (currentUser) {
+        params.current_user_id = currentUser.id;
+        params.current_user_tipo = currentUser.tipo_usuario;
+      }
 
       const resp = await api.get<ListarInvalidosResponse>('listar_invalidos', params);
       if (resp.ok && resp.data?.success) {
@@ -86,7 +118,7 @@ export function useInvalidos(options: UseInvalidosOptions = {}) {
     } finally {
       setLoading(false);
     }
-  }, [api, pagina, pageSize, busca]);
+  }, [api, pagina, pageSize, busca, currentUser?.id, currentUser?.tipo_usuario]);
 
   return {
     // Listagem
