@@ -34,6 +34,17 @@
  *        Biblioteca de Copys do CRM).
  *      • Typos corrigidos: "oportuidade" → "oportunidade",
  *        "acesso nosso site" → "acesse nosso site".
+ *  - v1.2.2 (22/06/2026): ajuste de copy do texto do WhatsApp:
+ *      • Removida a expressão "do CRECI" da mensagem padrão
+ *        (`WHATSAPP_TEXTO_PADRAO`). A mensagem passa de "auxiliar
+ *        Corretores do CRECI, a recuperar comissões..." para "auxiliar
+ *        Corretores, a recuperar comissões...". Decisão de produto
+ *        (Messias, 22/06): a palavra "CRECI" na mensagem inicial pode
+ *        criar uma associação institucional indesejada com o órgão
+ *        regulador; o público-alvo já é, por construção, composto de
+ *        corretores cadastrados no CRECI. Alteração 100% cirúrgica:
+ *        apenas a constante WHATSAPP_TEXTO_PADRAO mudou, nenhuma outra
+ *        linha de código foi tocada.
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
@@ -113,8 +124,8 @@ const PAGE_SIZE = 50;
 // corrigidos para "oportunidade" e "acesse".
 const WHATSAPP_TEXTO_PADRAO =
   'Olá {name}, espero que esteja bem!  Sou Débora da TechCob. ' +
-  'Estamos com uma oportunidade interessante para auxiliar Corretores do ' +
-  'CRECI, a recuperar comissões em atraso. Assista nosso video, se precisar ' +
+  'Estamos com uma oportunidade interessante para auxiliar Corretores, a ' +
+  'recuperar comissões em atraso. Assista nosso video, se precisar ' +
   'de mais detalhes, me chame aqui ou  acesse nosso site:  ' +
   'https://techcob.com.br/ci';
 
