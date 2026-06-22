@@ -2,6 +2,55 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.18 (22/06/2026 — FIX bug arquitetural do 1000 em listar_leads_para_vinculo_em_lote):
+ *    Substituídas as 2 queries de pré-cálculo de `idsBloqueadosAtivas` e
+ *    `idsEmEncerradas` na action `listar_leads_para_vinculo_em_lote` por
+ *    chamadas RPC ao Postgres (`crm_leads_em_campanhas_ativas()` e
+ *    `crm_leads_em_campanhas_encerradas()`).
+ *
+ *    Causa raiz (diagnosticada em 22/06/2026 via SQL direto em Production):
+ *    o cliente Supabase JS aplica LIMIT 1000 silencioso a todo .select()
+ *    sem .range() / .limit() explícito. Em Production, `email_lead_campanhas`
+ *    com filtro de status ativa/pausada/agendada retornava 1017 linhas;
+ *    o cliente truncou em 1000 sem warning. 17 lead_ids ficaram FORA do
+ *    array `idsBloqueadosAtivas` → escaparam do filtro `.not('id', 'in', ...)`
+ *    da query principal → apareceram na UI como "falsos disponíveis".
+ *
+ *    Sintoma reportado: SDR Débora viu 16 leads (dos 17 vazados) na lista
+ *    "Selecione os leads" da aba Vincular em Lote → ao tentar vincular,
+ *    a defesa em camadas (passo 6 do helper `vincularLeadACampanha`)
+ *    bloqueou todos com "Lead já vinculado a campanha em andamento" →
+ *    tela "Falha total — 0 de 16 vinculados".
+ *
+ *    Mesmo bug arquitetural identificado no CHECKPOINT 21/06 (Painel
+ *    Campanha → KPIs truncados pelo limite de 1000). Mesma classe de
+ *    solução: RPC function Postgres com agregação no banco, JS recebe
+ *    apenas os IDs já consolidados (sem trafegar as 1017+ linhas).
+ *
+ *    Impacto operacional do bug em Production: ZERO duplicação real.
+ *    A defesa em camadas (Fase B v1.10) impediu qualquer INSERT errado.
+ *    O sintoma foi APENAS cosmético — lista falsa de "disponíveis" +
+ *    tela "Falha total" ao tentar vincular. Lição arquitetural: as
+ *    travas Fase B do helper pagaram em proteção real, mesmo causando
+ *    o ruído UX.
+ *
+ *    Mudança cirúrgica: apenas o bloco de pré-cálculo (linhas 1424-1476
+ *    da v1.17) foi substituído por 2 chamadas .rpc(). Defesa em
+ *    profundidade adicionada: se a RPC não existe (migration não aplicada),
+ *    retorna 500 com mensagem clara em vez de devolver listagem corrompida.
+ *
+ *    Pareada com migration `sql/2026-06-22_crm_leads_em_campanhas_rpc.sql`
+ *    (CREATE OR REPLACE FUNCTION crm_leads_em_campanhas_ativas() +
+ *    crm_leads_em_campanhas_encerradas()). Aplicar em Preview E
+ *    Production ANTES do deploy desta versão do backend.
+ *
+ *    Frontend ZERO alteração — contrato JSON 100% idêntico.
+ *
+ *    Auditoria preventiva PENDENTE (backlog CHECKPOINT 21/06 + reforço
+ *    desta sessão): grep em todos os endpoints procurando outros
+ *    `.select(...)` sem `.range()`/`.limit()`/`head:true` que possam vir
+ *    a sofrer do mesmo limite quando os volumes crescerem.
+ *
  *  - v1.17 (22/06/2026 — B1: SDR distribuidor de Leads CRECI):
  *    Mudança CIRÚRGICA no helper `vincularLeadACampanha` (linha do passo 5):
  *    a TRAVA (d) Fase B `camp.responsavel_id === lead.reservado_por` é
@@ -1421,35 +1470,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // ── 2) Pré-cálculo: IDs bloqueados / IDs em encerradas ─
         //   (depende do parâmetro outras_campanhas; defaults para 'excluir').
+        // 🆕 v1.18 (22/06/2026): substituído pull-and-aggregate por RPC functions
+        //   Postgres. As queries antigas faziam .from('email_lead_campanhas').select()
+        //   sem .range() — sofriam do limite silencioso de 1000 do cliente Supabase JS.
+        //   Em 22/06, com 1017 vínculos ativos em Production, 17 IDs ficavam fora do
+        //   array `idsBloqueadosAtivas`, vazando como "falsos disponíveis" na UI.
+        //   Solução: RPC functions agregam no Postgres (sem limite) e devolvem só os IDs.
+        //   Pareada com migration sql/2026-06-22_crm_leads_em_campanhas_rpc.sql.
         let idsBloqueadosAtivas: number[] = [];
         let idsEmEncerradas: number[] = [];
 
         if (outrasCampanhas === 'excluir' || outrasCampanhas === 'so_encerradas') {
           const { data: vinculosAtivos, error: errVA } = await supabase
-            .from('email_lead_campanhas')
-            .select('lead_id, email_campanhas!inner(status)')
-            .in('email_campanhas.status', ['ativa', 'pausada', 'agendada']);
+            .rpc('crm_leads_em_campanhas_ativas');
           if (errVA) {
-            console.error('[crm-leads] erro vinculosAtivos:', errVA.message);
-            return res.status(500).json({ success: false, error: errVA.message });
+            console.error('[crm-leads] erro rpc crm_leads_em_campanhas_ativas:', errVA.message);
+            // Defesa em profundidade: se a RPC não existe (migration não aplicada),
+            // retorna 500 com mensagem clara em vez de devolver listagem corrompida.
+            return res.status(500).json({
+              success: false,
+              error:
+                `Erro ao consultar vínculos ativos: ${errVA.message}. ` +
+                `Verifique se a migration sql/2026-06-22_crm_leads_em_campanhas_rpc.sql ` +
+                `foi aplicada no banco.`,
+            });
           }
-          idsBloqueadosAtivas = Array.from(
-            new Set((vinculosAtivos || []).map((v: any) => v.lead_id))
-          );
+          idsBloqueadosAtivas = (vinculosAtivos || []).map((v: any) => Number(v.lead_id));
         }
 
         if (outrasCampanhas === 'so_encerradas') {
           const { data: vinculosEncerrados, error: errVE } = await supabase
-            .from('email_lead_campanhas')
-            .select('lead_id, email_campanhas!inner(status)')
-            .in('email_campanhas.status', ['encerrada']);
+            .rpc('crm_leads_em_campanhas_encerradas');
           if (errVE) {
-            console.error('[crm-leads] erro vinculosEncerrados:', errVE.message);
-            return res.status(500).json({ success: false, error: errVE.message });
+            console.error('[crm-leads] erro rpc crm_leads_em_campanhas_encerradas:', errVE.message);
+            return res.status(500).json({
+              success: false,
+              error:
+                `Erro ao consultar vínculos encerrados: ${errVE.message}. ` +
+                `Verifique se a migration sql/2026-06-22_crm_leads_em_campanhas_rpc.sql ` +
+                `foi aplicada no banco.`,
+            });
           }
-          idsEmEncerradas = Array.from(
-            new Set((vinculosEncerrados || []).map((v: any) => v.lead_id))
-          );
+          idsEmEncerradas = (vinculosEncerrados || []).map((v: any) => Number(v.lead_id));
           // Se não houver nenhum lead em campanha encerrada, retorno cedo —
           // saved-cycles e evita .in('id', [vazio]) que o PostgREST não aceita.
           if (idsEmEncerradas.length === 0) {
