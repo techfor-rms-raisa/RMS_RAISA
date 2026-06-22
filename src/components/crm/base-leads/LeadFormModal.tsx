@@ -2,7 +2,37 @@
  * LeadFormModal.tsx — Modal de criar/editar lead
  *
  * Caminho: src/components/crm/base-leads/LeadFormModal.tsx
- * Versão: 1.3 (UX LinkedIn affordance — 19/06/2026)
+ * Versão: 1.4 (B1 — SDR distribuidor de Leads CRECI — 22/06/2026)
+ *
+ * v1.4 (22/06/2026 — B1: SDR pode editar "Reservado para" em Leads CRECI):
+ *   Estende a regra do v1.1 que permitia apenas Admin alternar o campo
+ *   `reservado_por` no form. Agora SDR também pode editá-lo, MAS apenas
+ *   quando o lead em edição/criação está na vertical CRECI.
+ *
+ *   Decisão de produto Messias 22/06: a Campanha CRECI é única e
+ *   operacionalmente centralizada pelo SDR responsável (Débora), que
+ *   precisa redistribuir Leads CRECI coletados por toda a equipe
+ *   (Tatiana, Marcos, Messias e outros) via Chrome Extension para
+ *   alocá-los à Campanha CRECI. Verticais B2B (Service Center, Outsourcing
+ *   IA, Help Desk etc.) preservam o modelo original: cada GC opera seus
+ *   próprios leads.
+ *
+ *   Mudança 100% cirúrgica: introduzida derivada `podeEditarResponsavel`
+ *   = `isAdmin || (isSDR && verticalAtualEhCreci)`. Substitui `isAdmin`
+ *   em 3 pontos do JSX (renderização do dropdown, fallback travado,
+ *   warning "Nenhum usuário GC/SDR disponível") + `nomeResponsavelTravado`.
+ *   Demais campos, modal de Opt-Out, validações e effects preservados.
+ *
+ *   Reatividade: a habilitação re-avalia automaticamente quando o
+ *   usuário muda a vertical no dropdown — chave de UX para evitar
+ *   "campo bloqueado fantasma".
+ *
+ *   Pareado com:
+ *     - VincularEmLoteTab.tsx v2.1 + useVincularEmLote v1.1 (frontend
+ *       da aba "Vincular em Lote" passa a permitir SDR ver leads de
+ *       outros responsáveis quando vertical_destino === 'CRECI')
+ *     - api/crm-leads.ts v1.17 (relaxa a TRAVA (d) do helper
+ *       `vincularLeadACampanha` quando `camp.tipo === 'CRECI'`)
  *
  * v1.3 (19/06/2026 — UX LinkedIn): o campo "LinkedIn" agora exibe um ícone
  *   azul oficial do LinkedIn (#0A66C2) à direita do input, posicionado em
@@ -152,6 +182,21 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
   // 🆕 v1.1 — Detecta se o Admin pode editar o seletor de responsável
   const isAdmin = currentUser.tipo_usuario === 'Administrador';
 
+  // 🆕 v1.4 (22/06/2026 — B1) — SDR pode editar "Reservado para" quando
+  //   o lead é da vertical CRECI. Decisão de produto Messias 22/06:
+  //   SDR é o distribuidor operacional dos Leads CRECI (coletados em
+  //   massa pela equipe via Chrome Extension) para a Campanha CRECI
+  //   única. Para outras verticais, mantém o comportamento legado
+  //   (texto travado com o próprio nome).
+  //
+  //   ATENÇÃO: usamos `form.vertical` (não `lead.vertical`) para que
+  //   a habilitação seja REATIVA: se o usuário trocar a vertical no
+  //   dropdown, o seletor de responsável atualiza no mesmo render.
+  const isSDR = currentUser.tipo_usuario === 'SDR';
+  const verticalAtualEhCreci =
+    String(form.vertical || '').trim().toUpperCase() === 'CRECI';
+  const podeEditarResponsavel = isAdmin || (isSDR && verticalAtualEhCreci);
+
   // 🆕 v1.1 — Validação para habilitar o botão Salvar
   const verticalOk = !!(form.vertical && String(form.vertical).trim());
   const responsavelOk = !!form.reservado_por;
@@ -159,7 +204,10 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
     !!form.nome && !!form.email && verticalOk && responsavelOk && !loading;
 
   // 🆕 v1.1 — Texto informativo do responsável travado (não-admin)
-  const nomeResponsavelTravado = !isAdmin ? currentUser.nome_usuario : null;
+  // 🔄 v1.4 — agora também desbloqueia para SDR em vertical CRECI.
+  const nomeResponsavelTravado = !podeEditarResponsavel
+    ? currentUser.nome_usuario
+    : null;
 
   // ────────────────────────────────────────────────────────
   // 🆕 v1.2 — Visibilidade e estado do botão "Opt-Out"
@@ -343,8 +391,8 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Reservado para *
               </label>
-              {isAdmin ? (
-                // Admin: seletor (obrigatório escolher entre GC/SDR)
+              {podeEditarResponsavel ? (
+                // Admin (sempre) OU SDR em vertical CRECI (v1.4): seletor habilitado
                 <select
                   value={form.reservado_por ?? ''}
                   onChange={(e) =>
@@ -363,7 +411,7 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
                   ))}
                 </select>
               ) : (
-                // GC/SDR: texto fixo travado em si mesmo
+                // GC/SDR fora do escopo CRECI + outros tipos: texto fixo travado em si mesmo
                 <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-700">
                   <i className="fa-solid fa-user-lock text-gray-400"></i>
                   <span>
@@ -374,7 +422,7 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
                   </span>
                 </div>
               )}
-              {isAdmin && responsaveis.length === 0 && (
+              {podeEditarResponsavel && responsaveis.length === 0 && (
                 <p className="text-xs text-amber-600 mt-1">
                   ⚠️ Nenhum usuário GC/SDR disponível para responsabilizar.
                 </p>

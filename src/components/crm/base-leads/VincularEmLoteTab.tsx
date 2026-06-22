@@ -2,7 +2,36 @@
  * VincularEmLoteTab.tsx — Aba "Vincular em Lote" do CRM
  *
  * Caminho: src/components/crm/base-leads/VincularEmLoteTab.tsx
- * Versão: 2.0 (Refator V2 — Sessão 2 de 3 — 17/06/2026)
+ * Versão: 2.1 (B1 — SDR distribuidor CRECI — 22/06/2026)
+ *
+ * v2.1 (22/06/2026 — B1: SDR pode distribuir Leads CRECI de outros):
+ *   Estende a regra do v2.0 que permitia apenas Admin filtrar por
+ *   responsável. Agora SDR também consegue, MAS apenas quando
+ *   `verticalDestino === 'CRECI'`. Decisão de produto Messias 22/06.
+ *
+ *   Justificativa: a Campanha CRECI é única e operacionalmente
+ *   centralizada pelo SDR responsável (Débora), que precisa vincular
+ *   à campanha leads coletados por toda a equipe via Chrome Extension.
+ *
+ *   Mudança 100% cirúrgica: introduzida derivada `podeVerLeadsDeOutros`
+ *   = `isAdmin || (isSDR && destinoEhCreci)`. Aplicada em 4 pontos:
+ *     - Filtro "Responsável" no painel de filtros agora aparece quando
+ *       podeVerLeadsDeOutros (badge muda: "Admin" vs "CRECI")
+ *     - Coluna "Resp." no header da tabela (1 ponto)
+ *     - Célula "Resp." na linha do lead (1 ponto)
+ *     - colSpans das linhas vazia/loading da tabela (2 pontos)
+ *     - Texto "para você" do empty state de campanhas (1 ponto)
+ *
+ *   Pareado com:
+ *     - useVincularEmLote v1.1 (fetch agnóstico a responsavel_id nesse
+ *       cenário — caminho real onde o backend recebe ou não o filtro)
+ *     - LeadFormModal v1.4 (SDR pode reatribuir reservado_por em Leads CRECI)
+ *     - api/crm-leads v1.17 (helper vincularLeadACampanha relaxa trava (d)
+ *       de match de responsável quando camp.tipo === 'CRECI')
+ *
+ *   Métrica de origem preservada: `email_leads.criado_por` (string)
+ *   continua registrando quem inseriu o lead originalmente. Apenas o
+ *   vínculo da campanha é cross-owner.
  *
  * v2.0 (17/06/2026 — refator V2): refator completo conforme mockup aprovado em
  *   16/06/2026 (CHECKPOINT_2026-06-16.md Frente 6). Mudanças estruturais:
@@ -150,6 +179,16 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
   const isAdmin = currentUser.tipo_usuario === 'Administrador';
   const destinoEhCreci = h.verticalDestino === 'CRECI';
 
+  // 🆕 v2.1 (22/06/2026 — B1) — SDR pode operar Leads de outros responsáveis
+  //   quando vertical_destino === 'CRECI'. Decisão de produto Messias 22/06.
+  //   Equivale a `isAdmin` em todos os usos onde a permissão de
+  //   "ver/operar leads de outros responsáveis" é o discriminante.
+  //   Pareado com useVincularEmLote v1.1 (fetch agnóstico ao responsavel_id
+  //   nesse caso) e api/crm-leads v1.17 (trava (d) relaxada no helper
+  //   `vincularLeadACampanha` para vertical CRECI).
+  const isSDR = currentUser.tipo_usuario === 'SDR';
+  const podeVerLeadsDeOutros = isAdmin || (isSDR && destinoEhCreci);
+
   // ── Header do botão (verde quando tudo "manter"; âmbar quando há "alterar")
   const botaoCor = h.temMudancaVertical
     ? 'bg-amber-500 hover:bg-amber-600'
@@ -281,7 +320,7 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                 <p className="text-xs text-orange-600 mt-1">
                   <i className="fa-solid fa-triangle-exclamation"></i> Nenhuma
                   campanha <strong>{h.verticalDestino}</strong> em status
-                  ativa/pausada/agendada disponível {!isAdmin ? 'para você' : ''}.
+                  ativa/pausada/agendada disponível {!podeVerLeadsDeOutros ? 'para você' : ''}.
                 </p>
               )}
           </div>
@@ -543,14 +582,14 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                 </select>
               </div>
 
-              {/* Responsável — Admin only */}
-              {isAdmin && (
+              {/* Responsável — Admin sempre, SDR apenas em distribuição CRECI (v2.1 — B1) */}
+              {podeVerLeadsDeOutros && (
                 <div>
                   <label className="text-xs font-medium text-gray-700 block mb-1">
                     <i className="fa-solid fa-user-tie text-purple-500"></i>{' '}
                     Responsável
                     <span className="text-xs px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded ml-1">
-                      Admin
+                      {isAdmin ? 'Admin' : 'CRECI'}
                     </span>
                   </label>
                   <select
@@ -579,7 +618,9 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                     ))}
                   </select>
                   <p className="text-xs text-gray-500 mt-1">
-                    SDR/GC só veem os próprios leads.
+                    {isAdmin
+                      ? 'SDR/GC só veem os próprios leads (exceto SDR em CRECI).'
+                      : 'Distribuição CRECI: você pode filtrar por quem coletou.'}
                   </p>
                 </div>
               )}
@@ -699,7 +740,7 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                       title="abertos × 1 + cliques × 3 + respostas × 10"
                     ></i>
                   </th>
-                  {isAdmin && <th className="p-3">Resp.</th>}
+                  {podeVerLeadsDeOutros && <th className="p-3">Resp.</th>}
                   <th className="p-3">Cadastro</th>
                   <th className="p-3 text-right">Ação no vínculo</th>
                 </tr>
@@ -708,7 +749,7 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                 {h.loadingLeads ? (
                   <tr>
                     <td
-                      colSpan={isAdmin ? 9 : 8}
+                      colSpan={podeVerLeadsDeOutros ? 9 : 8}
                       className="p-8 text-center text-gray-500"
                     >
                       <i className="fa-solid fa-spinner fa-spin mr-2"></i>
@@ -718,7 +759,7 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                 ) : h.leads.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={isAdmin ? 9 : 8}
+                      colSpan={podeVerLeadsDeOutros ? 9 : 8}
                       className="p-8 text-center text-gray-500"
                     >
                       <p>Nenhum lead disponível com os filtros atuais.</p>
@@ -812,7 +853,7 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                             {detalheEngajamento(lead)}
                           </div>
                         </td>
-                        {isAdmin && (
+                        {podeVerLeadsDeOutros && (
                           <td className="p-3 text-xs text-gray-600">
                             {lead.responsavel_nome || '—'}
                           </td>

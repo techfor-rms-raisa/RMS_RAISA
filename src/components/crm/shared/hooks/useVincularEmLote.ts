@@ -2,7 +2,42 @@
  * useVincularEmLote.ts — Hook orquestrador da aba "Vincular em Lote"
  *
  * Caminho: src/components/crm/shared/hooks/useVincularEmLote.ts
- * Versão: 1.0 (Sessão 2 do "Vincular em Lote v2" — 17/06/2026)
+ * Versão: 1.1 (B1 — SDR distribuidor CRECI — 22/06/2026)
+ *
+ * v1.1 (22/06/2026 — B1: SDR pode operar Leads CRECI de outros responsáveis):
+ *   Estende a regra de visibilidade do fetch para que SDR não seja
+ *   travado em `responsavel_id=currentUser.id` quando estiver
+ *   distribuindo Leads CRECI. Decisão de produto Messias 22/06.
+ *
+ *   Mudança 100% cirúrgica: introduzida derivada local em cada um dos
+ *   3 fetches:
+ *     const ehDistribuicaoCreciSDR =
+ *       currentUser.tipo_usuario === 'SDR' && verticalDestino === 'CRECI';
+ *     const podeVerLeadsDeOutros = isAdmin || ehDistribuicaoCreciSDR;
+ *
+ *   Aplicada em:
+ *     (1) carregarMetadados — fetch de setores/UFs/cidades/responsáveis
+ *         agora pode ser cross-owner para SDR em CRECI. Dep array
+ *         atualizada para `[currentUser.id, currentUser.tipo_usuario,
+ *         isAdmin, verticalDestino]`. useEffect agora dispara quando
+ *         carregarMetadados é recriado (verticalDestino mudou).
+ *     (2) carregarCampanhas — mesmo padrão. Permite SDR ver Campanha
+ *         CRECI mesmo quando criada por outro responsável.
+ *     (3) carregarLeads — ramo Admin agora reúsa para SDR-em-CRECI:
+ *         respeita filtrosAplicados.responsavelId (null = todos da
+ *         equipe). Caso contrário, força responsavel_id=currentUser.id
+ *         (regra original Fase B v1.10 preservada para outras verticais).
+ *
+ *   Pareado com:
+ *     - VincularEmLoteTab v2.1 (UI: filtro Responsável + coluna Resp.
+ *       visíveis quando podeVerLeadsDeOutros)
+ *     - LeadFormModal v1.4 (SDR pode reatribuir reservado_por em Leads CRECI)
+ *     - api/crm-leads v1.17 (helper vincularLeadACampanha relaxa trava
+ *       (d) de match de responsável quando camp.tipo === 'CRECI')
+ *
+ *   Métrica de origem preservada via email_leads.criado_por (string).
+ *
+ * v1.0 (Sessão 2 do "Vincular em Lote v2" — 17/06/2026)
  *
  * Encapsula TODA a lógica de estado / fetch / filtros / paginação / seleção
  * / submissão da aba VincularEmLoteTab, deixando o componente focado apenas
@@ -381,7 +416,14 @@ export function useVincularEmLote(
   const carregarMetadados = useCallback(async () => {
     setLoadingMetadados(true);
     try {
-      const responsavelParam = !isAdmin
+      // 🆕 v1.1 (22/06/2026 — B1) — SDR comporta-se como Admin no fetch
+      //   de metadados quando vertical de destino é CRECI. Permite que o
+      //   SDR veja setores/UFs/cidades/responsáveis da BASE COMPLETA
+      //   (e não só os leads dele) para distribuir Leads CRECI.
+      const ehDistribuicaoCreciSDR =
+        currentUser.tipo_usuario === 'SDR' && verticalDestino === 'CRECI';
+      const podeVerLeadsDeOutros = isAdmin || ehDistribuicaoCreciSDR;
+      const responsavelParam = !podeVerLeadsDeOutros
         ? `&responsavel_id=${currentUser.id}`
         : '';
       const url =
@@ -405,12 +447,16 @@ export function useVincularEmLote(
     } finally {
       setLoadingMetadados(false);
     }
-  }, [currentUser.id, isAdmin]);
+    // 🔄 v1.1 — verticalDestino + currentUser.tipo_usuario adicionados às deps
+    //   (essencial para refrescar os metadados quando SDR muda para/de CRECI).
+  }, [currentUser.id, currentUser.tipo_usuario, isAdmin, verticalDestino]);
 
   useEffect(() => {
     carregarMetadados();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // 🔄 v1.1 — disparar quando verticalDestino muda (SDR ↔ CRECI alterna
+    //   o escopo dos metadados). carregarMetadados é re-criado quando
+    //   verticalDestino muda, então o effect dispara automaticamente.
+  }, [carregarMetadados]);
 
   // ════════════════════════════════════════════════════════════
   // CARREGAR CAMPANHAS quando vertical mudar
@@ -423,7 +469,15 @@ export function useVincularEmLote(
     }
     setLoadingCampanhas(true);
     try {
-      const responsavelParam = !isAdmin
+      // 🆕 v1.1 (22/06/2026 — B1) — Mesma regra de carregarMetadados:
+      //   SDR em distribuição CRECI vê TODAS as campanhas CRECI
+      //   (independentemente de quem é o responsavel_id), não só as suas.
+      //   Necessário para o caso real onde a Campanha CRECI é criada
+      //   por Admin/Gestão mas operada pelo SDR.
+      const ehDistribuicaoCreciSDR =
+        currentUser.tipo_usuario === 'SDR' && verticalDestino === 'CRECI';
+      const podeVerLeadsDeOutros = isAdmin || ehDistribuicaoCreciSDR;
+      const responsavelParam = !podeVerLeadsDeOutros
         ? `&responsavel_id=${currentUser.id}`
         : '';
       const url =
@@ -445,7 +499,8 @@ export function useVincularEmLote(
     } finally {
       setLoadingCampanhas(false);
     }
-  }, [verticalDestino, isAdmin, currentUser.id, currentUser.nome_usuario]);
+    // 🔄 v1.1 — adicionado currentUser.tipo_usuario na dep array
+  }, [verticalDestino, isAdmin, currentUser.id, currentUser.nome_usuario, currentUser.tipo_usuario]);
 
   useEffect(() => {
     carregarCampanhas();
@@ -481,9 +536,16 @@ export function useVincularEmLote(
         params.set('outras_campanhas', filtrosAplicados.outrasCampanhas);
       }
       if (buscaDebounced) params.set('busca', buscaDebounced);
-      // Para admin: usa o filtro "responsavelId" (null = todos);
-      // Para SDR/GC: forçado em currentUser.id (já no backend, mas reforça).
-      if (isAdmin) {
+      // 🆕 v1.1 (22/06/2026 — B1) — SDR em distribuição CRECI comporta-se
+      //   como Admin: respeita o filtro UI "responsavelId" (null = todos
+      //   da equipe). Permite que SDR distribua Leads CRECI coletados por
+      //   qualquer GC/SDR para a Campanha CRECI.
+      //   Para outras verticais (não-CRECI), SDR/GC continuam travados em
+      //   ver apenas os próprios leads (regra original Fase B v1.10).
+      const ehDistribuicaoCreciSDR =
+        currentUser.tipo_usuario === 'SDR' && verticalDestino === 'CRECI';
+      const podeVerLeadsDeOutros = isAdmin || ehDistribuicaoCreciSDR;
+      if (podeVerLeadsDeOutros) {
         if (filtrosAplicados.responsavelId !== null) {
           params.set(
             'responsavel_id',
@@ -532,6 +594,7 @@ export function useVincularEmLote(
     buscaDebounced,
     isAdmin,
     currentUser.id,
+    currentUser.tipo_usuario, // 🆕 v1.1 — usado pela regra B1 (ehDistribuicaoCreciSDR)
     perPage,
     offset,
   ]);

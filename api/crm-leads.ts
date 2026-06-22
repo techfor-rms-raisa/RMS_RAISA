@@ -2,6 +2,45 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.17 (22/06/2026 — B1: SDR distribuidor de Leads CRECI):
+ *    Mudança CIRÚRGICA no helper `vincularLeadACampanha` (linha do passo 5):
+ *    a TRAVA (d) Fase B `camp.responsavel_id === lead.reservado_por` é
+ *    RELAXADA quando `camp.tipo === 'CRECI'`.
+ *
+ *    Decisão de produto Messias 22/06: a Campanha CRECI é única e operada
+ *    pelo SDR responsável (Débora), que centraliza a distribuição dos
+ *    leads coletados em massa por toda a equipe (Tatiana, Marcos, Messias)
+ *    via Chrome Extension. A regra original "responsavel_id===reservado_por"
+ *    foi pensada para verticais B2B (cada GC opera leads próprios) e não
+ *    se aplica ao fluxo operacional centralizado CRECI.
+ *
+ *    Implementação: 1 linha de código + comentário longo explicando a
+ *    decisão. Os outros 6 passos do helper (status, data_encerramento,
+ *    vertical match, duplicação, opt-out, bounce) PERMANECEM IDÊNTICOS.
+ *    Métrica de origem preservada via `email_leads.criado_por` (não
+ *    afetada por esta mudança). O `email_leads.reservado_por` do lead
+ *    NÃO é mutado pelo helper — apenas o vínculo da campanha em
+ *    `email_lead_campanhas` e o enfileiramento em `email_fila` são
+ *    criados, exatamente como antes.
+ *
+ *    Pareado com:
+ *      - useVincularEmLote v1.1 (frontend permite SDR ver leads de outros
+ *        responsáveis quando vertical_destino === 'CRECI')
+ *      - VincularEmLoteTab v2.1 (UI de filtros expandida para SDR + CRECI)
+ *      - LeadFormModal v1.4 (SDR pode reatribuir reservado_por em Leads
+ *        CRECI manualmente, se preferir o caminho alternativo)
+ *
+ *    Risco controlado: a relaxação é localizada (1 condição), só impacta
+ *    a vertical CRECI, e a defesa CRECI bidirecional (vertical match
+ *    no passo 4) PERMANECE intacta. Para outras verticais, a trava (d)
+ *    continua ativa.
+ *
+ *    Smoke esperado: SDR Débora abre Vincular em Lote → vertical_destino
+ *    = CRECI → filtra responsável = Marcos Rossi → lista leads CRECI de
+ *    Marcos → seleciona N leads → vincula à Campanha CRECI cujo
+ *    responsavel_id = Débora.id → tudo sucesso (sem error 'Lead está
+ *    reservado a outro usuário').
+ *
  *  - v1.16.2 (17/06/2026 — Vincular em Lote v2 — Sessão 3 fix de smoke):
  *    Três correções cirúrgicas descobertas durante o smoke test em Preview
  *    (Cenário B — Conversíveis com mudança vertical). Pareada com o
@@ -3024,7 +3063,30 @@ async function vincularLeadACampanha(
   }
 
   // 5. Validar match de responsável (Fase B trava)
-  if (camp.responsavel_id !== lead.reservado_por) {
+  // 🆕 v1.17 (22/06/2026 — B1: SDR distribuidor de Leads CRECI):
+  //   A trava de match `responsavel_id === reservado_por` é RELAXADA
+  //   quando a campanha é da vertical CRECI. Decisão de produto
+  //   Messias 22/06: a Campanha CRECI é única e operada por SDR (Débora),
+  //   que centraliza a distribuição dos leads coletados por toda a equipe
+  //   (Tatiana, Marcos, Messias, etc.) via Chrome Extension.
+  //
+  //   A regra original `responsavel_id===reservado_por` faz sentido em
+  //   verticais B2B (Service Center, Outsourcing IA, etc.) onde cada GC
+  //   opera leads próprios, mas não no fluxo CRECI que é centralizado.
+  //
+  //   Métrica de origem PRESERVADA: `email_leads.criado_por` (string)
+  //   continua registrando quem inseriu o lead originalmente — só o
+  //   vínculo da campanha vira cross-owner. O `reservado_por` do lead
+  //   tampouco é mutado por este helper (apenas o vínculo com a campanha
+  //   em email_lead_campanhas + enfileiramento em email_fila).
+  //
+  //   Pareado com:
+  //     - useVincularEmLote v1.1 (frontend permite SDR ver leads de
+  //       outros responsáveis quando vertical_destino === 'CRECI')
+  //     - VincularEmLoteTab v2.1 (UI do filtro Responsável aparece para SDR)
+  //     - LeadFormModal v1.4 (SDR pode reatribuir reservado_por em
+  //       Leads CRECI manualmente, se preferir)
+  if (camp.tipo !== 'CRECI' && camp.responsavel_id !== lead.reservado_por) {
     return {
       success: false,
       error: 'Lead está reservado a outro usuário — não pode entrar em campanha sob responsabilidade diferente.',
