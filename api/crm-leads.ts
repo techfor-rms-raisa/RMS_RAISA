@@ -2,6 +2,51 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.19 (22/06/2026 — HOTFIX da v1.18: RPC com TABLE também sofria do 1000):
+ *    A v1.18 tentou resolver o bug do 1000 substituindo
+ *    `.from('email_lead_campanhas').select()` por `.rpc('crm_leads_em_campanhas_ativas')`,
+ *    onde a function tinha `RETURNS TABLE (lead_id BIGINT)`. Erro de design:
+ *    PostgREST trata functions com RETURNS TABLE como SELECTs regulares e
+ *    aplica o MESMO limite default de 1000 do cliente Supabase JS. O bug
+ *    foi APENAS movido da query antiga para a chamada RPC — sintoma 100%
+ *    idêntico em Production após o deploy v1.18: 17 leads vazando.
+ *
+ *    Diagnóstico final (rastreamento de causa-raiz em 22/06):
+ *      - SQL direto: SELECT COUNT(*) FROM crm_leads_em_campanhas_ativas() = 1017 ✓
+ *      - Via Supabase JS: idsBloqueadosAtivas.length = 1000 (truncado)
+ *      - Leads vazando: 1017 - 1000 = 17 — aritmética exata
+ *
+ *    Solução definitiva: mudar tipo de retorno da function para BIGINT[]
+ *    (array escalar). Functions que retornam array escalar são tratadas
+ *    pelo PostgREST como UMA ÚNICA linha (com a coluna sendo o array
+ *    completo). NÃO sofrem do limite de 1000.
+ *
+ *    Mudanças mínimas no backend (este arquivo):
+ *      - Consumo de `data` muda de `[{lead_id: number}]` para `number[]`
+ *      - Linhas afetadas: 1498 e 1514 do v1.18, agora 1499 e 1518 com
+ *        `Array.isArray(...) ? ...map(Number) : []`
+ *      - Mensagem de erro atualizada para apontar para a migration v2
+ *
+ *    Pareada com migration
+ *    `sql/2026-06-22_crm_leads_em_campanhas_rpc_v2_fix_bigint_array.sql`
+ *    que aplica CREATE OR REPLACE FUNCTION com RETURNS BIGINT[]. Idempotente.
+ *    Aplicar em Preview E Production ANTES do deploy desta versão.
+ *
+ *    Lição arquitetural REFORÇADA (será adicionada ao CONTEXT.md): o limite
+ *    de 1000 do cliente Supabase JS NÃO se aplica apenas a `.from().select()`,
+ *    mas também a RPCs com `RETURNS TABLE` / `RETURNS SETOF`. Para retornar
+ *    listas grandes via RPC sem sofrer do limite, usar tipos array escalares:
+ *    BIGINT[], TEXT[], JSONB. A migration corretiva (v2) explica o padrão.
+ *
+ *    Frontend ZERO alteração (contrato JSON 100% idêntico).
+ *
+ *    Auditoria preventiva: PRIORIDADE AGORA ALTA. Esta é a 3ª ocorrência
+ *    da família do 1000 em 2 dias (CHECKPOINT 21/06: Painel Campanha +
+ *    helper calcularTaxasPorCampanha; v1.18 desta sessão; v1.19 que
+ *    finalmente fecha). Necessário grep guiado em todos os endpoints
+ *    procurando .select() sem .range()/.limit()/head:true E .rpc() de
+ *    functions com RETURNS TABLE/SETOF.
+ *
  *  - v1.18 (22/06/2026 — FIX bug arquitetural do 1000 em listar_leads_para_vinculo_em_lote):
  *    Substituídas as 2 queries de pré-cálculo de `idsBloqueadosAtivas` e
  *    `idsEmEncerradas` na action `listar_leads_para_vinculo_em_lote` por
@@ -1470,13 +1515,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // ── 2) Pré-cálculo: IDs bloqueados / IDs em encerradas ─
         //   (depende do parâmetro outras_campanhas; defaults para 'excluir').
-        // 🆕 v1.18 (22/06/2026): substituído pull-and-aggregate por RPC functions
-        //   Postgres. As queries antigas faziam .from('email_lead_campanhas').select()
-        //   sem .range() — sofriam do limite silencioso de 1000 do cliente Supabase JS.
-        //   Em 22/06, com 1017 vínculos ativos em Production, 17 IDs ficavam fora do
-        //   array `idsBloqueadosAtivas`, vazando como "falsos disponíveis" na UI.
-        //   Solução: RPC functions agregam no Postgres (sem limite) e devolvem só os IDs.
-        //   Pareada com migration sql/2026-06-22_crm_leads_em_campanhas_rpc.sql.
+        // 🆕 v1.19 (22/06/2026 — HOTFIX da v1.18): as 2 RPCs agora retornam
+        //   BIGINT[] (array escalar) em vez de TABLE (lead_id BIGINT). Functions
+        //   com RETURNS TABLE também sofriam do limite default de 1000 do
+        //   cliente Supabase JS — apenas movemos o bug do `.from().select()`
+        //   para o `.rpc()`. O retorno array escalar é tratado como UMA linha,
+        //   sem limite. Pareada com migration
+        //   sql/2026-06-22_crm_leads_em_campanhas_rpc_v2_fix_bigint_array.sql
+        //   que precisa ser aplicada ANTES desta versão do backend.
         let idsBloqueadosAtivas: number[] = [];
         let idsEmEncerradas: number[] = [];
 
@@ -1491,11 +1537,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               success: false,
               error:
                 `Erro ao consultar vínculos ativos: ${errVA.message}. ` +
-                `Verifique se a migration sql/2026-06-22_crm_leads_em_campanhas_rpc.sql ` +
+                `Verifique se a migration sql/2026-06-22_crm_leads_em_campanhas_rpc_v2_fix_bigint_array.sql ` +
                 `foi aplicada no banco.`,
             });
           }
-          idsBloqueadosAtivas = (vinculosAtivos || []).map((v: any) => Number(v.lead_id));
+          // 🆕 v1.19 — RPC agora retorna BIGINT[] (não TABLE). data é o array
+          //   DIRETO de bigints. Cada bigint vira string em JSON, daí o Number().
+          idsBloqueadosAtivas = Array.isArray(vinculosAtivos)
+            ? vinculosAtivos.map((id: any) => Number(id))
+            : [];
         }
 
         if (outrasCampanhas === 'so_encerradas') {
@@ -1507,11 +1557,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               success: false,
               error:
                 `Erro ao consultar vínculos encerrados: ${errVE.message}. ` +
-                `Verifique se a migration sql/2026-06-22_crm_leads_em_campanhas_rpc.sql ` +
+                `Verifique se a migration sql/2026-06-22_crm_leads_em_campanhas_rpc_v2_fix_bigint_array.sql ` +
                 `foi aplicada no banco.`,
             });
           }
-          idsEmEncerradas = (vinculosEncerrados || []).map((v: any) => Number(v.lead_id));
+          // 🆕 v1.19 — array DIRETO de bigints (vide acima)
+          idsEmEncerradas = Array.isArray(vinculosEncerrados)
+            ? vinculosEncerrados.map((id: any) => Number(id))
+            : [];
           // Se não houver nenhum lead em campanha encerrada, retorno cedo —
           // saved-cycles e evita .in('id', [vazio]) que o PostgREST não aceita.
           if (idsEmEncerradas.length === 0) {
