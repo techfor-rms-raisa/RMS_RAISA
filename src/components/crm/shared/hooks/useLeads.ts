@@ -2,7 +2,28 @@
  * useLeads.ts — Hook de gestão de Leads
  *
  * Caminho: src/components/crm/shared/hooks/useLeads.ts
- * Versão: 1.2 (Ordenação configurável — 13/06/2026)
+ * Versão: 1.3 (RBAC de visibilidade — 22/06/2026)
+ *
+ * v1.3 (22/06/2026 — RBAC na aba "Meus Leads"):
+ *   Adicionado `currentUser` em UseLeadsOptions para propagação ao backend
+ *   v1.20 nas actions `listar_leads` e `stats`. Sem isso, o backend retorna
+ *   400 (validação defensiva no listar_leads) ou KPI zerado (stats).
+ *
+ *   Regra de visibilidade implementada no backend (Messias, 22/06/2026):
+ *     - Admin             → vê tudo
+ *     - SDR               → vê todos CRECI + apenas seus em outras verticais
+ *     - Gestão Comercial  → NUNCA vê CRECI + apenas onde é reservado_por
+ *
+ *   Mudança aditiva e retrocompatível em nível de TIPOS — `currentUser` é
+ *   opcional na assinatura (caller pode omitir), mas se omitido as queries
+ *   ao backend NÃO trafegarão os params e o backend reage com 400. Logo,
+ *   o caller (BaseLeadsPage v1.10) PRECISA passar currentUser para o
+ *   funcionamento normal. A omissão proposital (testes, hooks futuros)
+ *   resulta em hook não-funcional mas seguro.
+ *
+ *   Dep arrays atualizadas: `currentUser?.id` e `currentUser?.tipo_usuario`
+ *   incluídos em `carregar` e `carregarStats` para recarregar
+ *   automaticamente se o usuário trocar (login/logout/impersonate).
  *
  * v1.2 (13/06/2026 — Reorganização Prospect/Lead):
  *   Adicionado estado `ordenarPor` para alimentar o novo dropdown
@@ -96,6 +117,14 @@ interface StatsResponse {
 interface UseLeadsOptions {
   apiUrl?: string;
   pageSize?: number;
+  // 🆕 v1.3 — Identificação do usuário corrente para RBAC backend.
+  //   Propagado para listar_leads (filtro de visibilidade) e stats
+  //   (filtro do KPI "LEADS"). Sem isso, listar_leads retorna 400 e
+  //   stats retorna totalLeads=0 (fail-safe defensivo).
+  currentUser?: {
+    id: number;
+    tipo_usuario: string;
+  };
 }
 
 // ════════════════════════════════════════════════════════════
@@ -105,6 +134,8 @@ interface UseLeadsOptions {
 export function useLeads(options: UseLeadsOptions = {}) {
   const apiUrl = options.apiUrl ?? '/api/crm-leads';
   const pageSize = options.pageSize ?? 30;
+  // 🆕 v1.3 — currentUser para RBAC. Sem default — caller decide.
+  const currentUser = options.currentUser;
 
   const api = useCrmApi(apiUrl);
 
@@ -144,6 +175,12 @@ export function useLeads(options: UseLeadsOptions = {}) {
       // 🆕 v1.2 — propagar ordenação para o backend (action listar_leads
       //   do crm-leads.ts v1.14). Whitelist validada no servidor.
       if (ordenarPor) params.ordenar_por = ordenarPor;
+      // 🆕 v1.3 — propagar currentUser para RBAC (crm-leads.ts v1.20).
+      //   Sem esses 2 params, o backend retorna 400 — defesa em camadas.
+      if (currentUser) {
+        params.current_user_id = currentUser.id;
+        params.current_user_tipo = currentUser.tipo_usuario;
+      }
 
       const resp = await api.get<ListarLeadsResponse>('listar_leads', params);
       if (resp.ok && resp.data?.success) {
@@ -155,7 +192,7 @@ export function useLeads(options: UseLeadsOptions = {}) {
     } finally {
       setLoading(false);
     }
-  }, [api, pagina, pageSize, busca, filtroFunil, ordenarPor]);
+  }, [api, pagina, pageSize, busca, filtroFunil, ordenarPor, currentUser?.id, currentUser?.tipo_usuario]);
 
   // ════════════════════════════════════════════════════════════
   // STATS
@@ -163,14 +200,22 @@ export function useLeads(options: UseLeadsOptions = {}) {
 
   const carregarStats = useCallback(async () => {
     try {
-      const resp = await api.get<StatsResponse>('stats');
+      // 🆕 v1.3 — propagar currentUser para RBAC do KPI "LEADS"
+      //   (crm-leads.ts v1.20 action stats). Sem currentUser, KPI vem 0
+      //   (fail-safe defensivo — não trava a página).
+      const params: Record<string, string | number> = {};
+      if (currentUser) {
+        params.current_user_id = currentUser.id;
+        params.current_user_tipo = currentUser.tipo_usuario;
+      }
+      const resp = await api.get<StatsResponse>('stats', params);
       if (resp.ok && resp.data?.success) {
         setStats(resp.data.stats);
       }
     } catch (err) {
       console.error('Erro ao carregar stats:', err);
     }
-  }, [api]);
+  }, [api, currentUser?.id, currentUser?.tipo_usuario]);
 
   // ════════════════════════════════════════════════════════════
   // SALVAR (criar ou atualizar)
