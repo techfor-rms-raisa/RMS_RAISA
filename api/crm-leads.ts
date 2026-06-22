@@ -2,6 +2,69 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.21 (22/06/2026 — RBAC em listar_invalidos e listar_respostas):
+ *    Continuação da decisão de produto Messias 22/06/2026 (vide v1.20).
+ *    Estende o RBAC para as 2 abas restantes da Base de Leads:
+ *
+ *      Action listar_invalidos (aba "E-mails Inválidos"):
+ *        MESMA regra do listar_leads v1.20 (filtro por dono do LEAD).
+ *        Admin             → sem filtro
+ *        SDR               → (vertical=CRECI) OR (reservado_por=userId)
+ *        Gestão Comercial  → (vertical!=CRECI) AND (reservado_por=userId)
+ *        outros tipos      → fail-safe (lista vazia)
+ *
+ *      Action listar_respostas (aba "Respostas Campanhas"):
+ *        Filtro por dono da CAMPANHA (não do lead). Decisão de produto:
+ *          "Cada Campanha é criada para um determinado GC/SDR."
+ *        A resposta é um evento da campanha → quem está conduzindo é
+ *        quem responde ao reply.
+ *
+ *        Admin             → sem filtro
+ *        SDR / GC          → email_campanhas.responsavel_id = userId
+ *
+ *        Implementação: pré-cálculo das campanhas do usuário corrente
+ *        (1 query simples em email_campanhas) e aplicação de
+ *        `.in('campanha_id', [...])` no SELECT principal. Early-return
+ *        para operador sem campanhas (lista vazia direta).
+ *
+ *        Volume típico: dezenas de campanhas por operador (longe do
+ *        limite de URL do PostgREST). Se algum dia escalar (>500 campanhas
+ *        por operador), migrar para RPC com RETURNS BIGINT[] (padrão
+ *        estabelecido no fix do 1000 limit em listar_leads_para_vinculo_em_lote).
+ *
+ *    Mudanças cirúrgicas:
+ *      • Action listar_invalidos: leitura de current_user_id/tipo + validação
+ *        defensiva + bloco RBAC entre o filtro D2 e o filtro de busca textual.
+ *      • Action listar_respostas: leitura dos mesmos params + pré-cálculo de
+ *        campanhaIdsPermitidas + early-return se vazio + `.in()` na query
+ *        principal de respostas.
+ *      • Tabs (InvalidosTab, RespostasTab): ZERO alteração — contrato JSON
+ *        100% idêntico, só o conjunto de itens devolvido fica menor.
+ *
+ *    Frontend pareado:
+ *      • useInvalidos.ts v1.1 → v1.2 — aceita currentUser e propaga.
+ *      • useRespostas.ts v1.0 → v1.1 — aceita currentUser e propaga.
+ *      • BaseLeadsPage.tsx — passa currentUser para useInvalidos() e useRespostas()
+ *        (mesma técnica já aplicada ao useLeads em v1.20).
+ *
+ *    Smoke esperado em Production:
+ *      • Marcos (GC, id=8) — aba "E-mails Inválidos": só vê inválidos
+ *        com vertical != CRECI e reservado_por = 8. KPI de aba diminui.
+ *      • Marcos — aba "Respostas Campanhas": só vê respostas de campanhas
+ *        que ele criou.
+ *      • Débora (SDR, id=18) — aba "Inválidos": vê CRECI todos + outros
+ *        onde é reservado_por.
+ *      • Débora — aba "Respostas": vê apenas respostas das campanhas
+ *        que ela criou (incluindo CRECI 01).
+ *      • Admin (você): comportamento atual preservado em ambas as abas.
+ *
+ *    Riscos:
+ *      • Operador sem nenhuma campanha → aba "Respostas Campanhas" vazia.
+ *        Mensagem padrão do EmptyState cobre o caso.
+ *      • Auditoria preventiva: outros callers de listar_invalidos/listar_respostas
+ *        sem currentUser quebram com 400. Próxima sessão: grep em todo o
+ *        frontend (provavelmente nenhum além de useInvalidos/useRespostas).
+ *
  *  - v1.20 (22/06/2026 — RBAC de visibilidade na aba "Meus Leads"):
  *    Decisão de produto (Messias, 22/06/2026 — sessão final do dia):
  *      • Cada GC/SDR no Form "Base de Leads" aba "Meus Leads" vê APENAS
@@ -1266,9 +1329,73 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       //
       // Resposta: { success, itens: RespostaInbox[], total, page, limit }
       if (action === 'listar_respostas') {
-        const { busca = '', page = '1', limit = '30' } = req.query as Record<string, string>;
+        const {
+          busca = '',
+          page = '1',
+          limit = '30',
+          // 🆕 v1.21 — RBAC por DONO DA CAMPANHA. Decisão de produto
+          //   (Messias, 22/06/2026): "Cada Campanha é criada para um
+          //   determinado GC/SDR" → cada operador recebe apenas respostas
+          //   das campanhas onde é responsavel_id. Diferente do
+          //   listar_invalidos (que é por dono do LEAD): aqui é por dono
+          //   da CAMPANHA — a resposta é um evento da campanha, e quem
+          //   está conduzindo é quem responde ao reply.
+          current_user_id,
+          current_user_tipo,
+        } = req.query as Record<string, string>;
         const limitNum = Math.max(1, Math.min(parseInt(limit) || 30, 200));
         const pageNum = Math.max(1, parseInt(page) || 1);
+
+        // 🆕 v1.21 — Validação defensiva
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error:
+              'Parâmetros obrigatórios ausentes: current_user_id e current_user_tipo. ' +
+              'A action listar_respostas requer identificação do usuário corrente para aplicar RBAC.',
+          });
+        }
+        const currentUserIdNum = parseInt(current_user_id);
+        if (isNaN(currentUserIdNum) || currentUserIdNum < 1) {
+          return res.status(400).json({
+            success: false,
+            error: `current_user_id inválido: "${current_user_id}"`,
+          });
+        }
+
+        // 🆕 v1.21 — Pré-cálculo das campanhas do usuário corrente.
+        //   Para Admin: campanhaIdsPermitidas = null (sem restrição).
+        //   Para outros: SELECT id FROM email_campanhas WHERE responsavel_id = userId.
+        //   Volume típico esperado: dezenas de campanhas por operador →
+        //   abaixo do limite de URL do PostgREST. Se algum dia esse volume
+        //   crescer (>500 campanhas por operador), migrar para RPC com
+        //   RETURNS BIGINT[] (padrão estabelecido no fix do 1000 limit).
+        let campanhaIdsPermitidas: number[] | null = null;
+        if (current_user_tipo !== 'Administrador') {
+          const { data: campsDoUsuario, error: errCamps } = await supabase
+            .from('email_campanhas')
+            .select('id')
+            .eq('responsavel_id', currentUserIdNum);
+          if (errCamps) {
+            console.error('[crm-leads] erro pré-cálculo campanhas RBAC:', errCamps.message);
+            return res.status(500).json({ success: false, error: errCamps.message });
+          }
+          campanhaIdsPermitidas = (campsDoUsuario || []).map((c: any) => c.id);
+
+          // Early-return: operador sem campanhas → não tem respostas para ver.
+          //   Saved-cycles + evita o efeito colateral de `.in('campanha_id', [])`
+          //   no PostgREST (que aceita mas pode confundir o operador).
+          if (campanhaIdsPermitidas.length === 0) {
+            return res.status(200).json({
+              success: true,
+              itens: [],
+              total: 0,
+              page: pageNum,
+              limit: limitNum,
+              total_pages: 0,
+            });
+          }
+        }
 
         // Trazemos um teto generoso (500 mais recentes) e paginamos no Node.
         // Para volumes maiores, migramos para uma VIEW SQL
@@ -1276,11 +1403,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const TETO_POR_FONTE = 500;
 
         // ── Respostas (única fonte do feed após v1.13) ──
-        const { data: respostas, error: errR } = await supabase
+        // 🆕 v1.21 — Filtro RBAC aplicado ANTES do order/limit:
+        let respostasQuery = supabase
           .from('email_respostas')
           .select('id, lead_id, campanha_id, de_email, de_nome, assunto, corpo_texto, classificacao, lido, recebido_em')
           .order('recebido_em', { ascending: false })
           .limit(TETO_POR_FONTE);
+        if (campanhaIdsPermitidas !== null) {
+          respostasQuery = respostasQuery.in('campanha_id', campanhaIdsPermitidas);
+        }
+        const { data: respostas, error: errR } = await respostasQuery;
         if (errR) throw errR;
 
         // ── Lookups em batch (apenas respostas após v1.13) ──
@@ -1442,10 +1574,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       //
       // Resposta: { success, itens: InvalidoItem[], total, page, limit }
       if (action === 'listar_invalidos') {
-        const { busca = '', page = '1', limit = '30' } = req.query as Record<string, string>;
+        const {
+          busca = '',
+          page = '1',
+          limit = '30',
+          // 🆕 v1.21 — RBAC de visibilidade na aba "E-mails Inválidos".
+          //   Mesma regra do listar_leads v1.20: cada operador vê apenas
+          //   seus inválidos (consistente — se o lead é meu, eu vejo se
+          //   ele virou inválido). Decisão de produto (Messias, 22/06/2026):
+          //     "Cada GC/SDR só consegue vincular um Lead atribuído a ele."
+          //   Por simetria, só pode ver inválidos atribuídos a si.
+          current_user_id,
+          current_user_tipo,
+        } = req.query as Record<string, string>;
         const limitNum = Math.max(1, Math.min(parseInt(limit) || 30, 200));
         const pageNum = Math.max(1, parseInt(page) || 1);
         const offset = (pageNum - 1) * limitNum;
+
+        // 🆕 v1.21 — Validação defensiva. Mesmo padrão do listar_leads v1.20:
+        //   sem currentUser não é seguro listar (potencial vazamento RBAC).
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error:
+              'Parâmetros obrigatórios ausentes: current_user_id e current_user_tipo. ' +
+              'A action listar_invalidos requer identificação do usuário corrente para aplicar RBAC.',
+          });
+        }
+        const currentUserIdNum = parseInt(current_user_id);
+        if (isNaN(currentUserIdNum) || currentUserIdNum < 1) {
+          return res.status(400).json({
+            success: false,
+            error: `current_user_id inválido: "${current_user_id}"`,
+          });
+        }
 
         // Critério D2 — bounced=true OR motivo_invalidacao IS NOT NULL
         // Exclui leads em opt-out (eles têm aba própria — Opt-Out).
@@ -1462,6 +1624,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .order('bounced_em', { ascending: false, nullsFirst: false })
           .order('atualizado_em', { ascending: false })
           .range(offset, offset + limitNum - 1);
+
+        // 🆕 v1.21 — RBAC: mesma regra do listar_leads v1.20 (vide cabeçalho).
+        //   Aplicado APÓS o critério D2 (bounced/motivo) e ANTES da busca textual.
+        //
+        //   Mapa:
+        //     Admin             → sem filtro (vê todos inválidos)
+        //     SDR               → (vertical=CRECI) OR (reservado_por=userId)
+        //     Gestão Comercial  → (vertical!=CRECI) AND (reservado_por=userId)
+        //     outros tipos      → fail-safe (lista vazia)
+        if (current_user_tipo === 'Administrador') {
+          // Sem filtro adicional
+        } else if (current_user_tipo === 'SDR') {
+          query = query.or(`vertical.eq.CRECI,reservado_por.eq.${currentUserIdNum}`);
+        } else if (current_user_tipo === 'Gestão Comercial') {
+          query = query.neq('vertical', 'CRECI');
+          query = query.eq('reservado_por', currentUserIdNum);
+        } else {
+          query = query.eq('id', -1);
+        }
 
         if (busca && busca.trim().length > 0) {
           const q = busca.trim();
