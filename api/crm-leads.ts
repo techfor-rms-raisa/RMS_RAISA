@@ -2,6 +2,66 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.20 (22/06/2026 — RBAC de visibilidade na aba "Meus Leads"):
+ *    Decisão de produto (Messias, 22/06/2026 — sessão final do dia):
+ *      • Cada GC/SDR no Form "Base de Leads" aba "Meus Leads" vê APENAS
+ *        os leads sob sua responsabilidade (reservado_por = ele).
+ *      • Leads CRECI aparecem para o GC EXCLUSIVAMENTE no Form CRECI
+ *        → aba "Meus Leads Salvos" (tabela corretores_creci, filtrada
+ *        por analista = nome_usuario).
+ *      • Quando o lead CRECI é promovido para Base de Leads, somente
+ *        SDR e Admin podem vê-lo lá e movê-lo para Campanha CRECI.
+ *      • Admin vê tudo.
+ *
+ *    Mapa RBAC implementado:
+ *      Admin             → sem filtro (vê tudo)
+ *      SDR               → (vertical=CRECI) OR (reservado_por=userId)
+ *      Gestão Comercial  → (vertical!=CRECI) AND (reservado_por=userId)
+ *      outros tipos      → fail-safe (lista vazia)
+ *
+ *    Mudanças cirúrgicas:
+ *      • Action `listar_leads`: leitura de 2 novos query params obrigatórios
+ *        (current_user_id, current_user_tipo), validação defensiva (400 se
+ *        ausentes/inválidos), aplicação do filtro RBAC após filtros de
+ *        elegibilidade e antes de filtros opcionais do operador.
+ *      • Action `stats`: mesmo filtro aplicado APENAS ao contador
+ *        totalLeads (KPI "LEADS" do header). Os demais KPIs ficam globais
+ *        (sem decisão de produto pedindo restrição). Fallback sem
+ *        currentUser: retorna 0 em totalLeads (não trava a página).
+ *
+ *    Frontend pareado:
+ *      • useLeads.ts v1.2 → v1.3 — aceita currentUser nas options e propaga
+ *        no querystring de listar_leads e stats.
+ *      • BaseLeadsPage.tsx — passa currentUser para useLeads().
+ *
+ *    Decisão de coluna para "gerados/gravados por eles":
+ *      Optamos por reservado_por (FK app_users) e NÃO criado_por (text).
+ *      Razão: reservado_por reflete a responsabilidade ATUAL — quando o
+ *      Admin reatribui um lead, ele transita corretamente entre operadores.
+ *      criado_por preservaria a visibilidade histórica para sempre,
+ *      gerando ambiguidade sobre "de quem é o lead hoje". reservado_por é
+ *      o padrão de CRM esperado.
+ *
+ *    Congruência com B1 da mesma sessão (22/06/2026 manhã):
+ *      • B1 (LeadFormModal v1.4 + VincularEmLoteTab v2.1) permite SDR
+ *        EDITAR/VINCULAR leads CRECI de outros analistas. Este v1.20
+ *        complementa: SDR também VÊ todos os leads CRECI em "Meus Leads"
+ *        da Base de Leads (sem restrição por reservado_por para CRECI).
+ *      • Para GC, a regra é mais restritiva: nem vê CRECI nem pode editar
+ *        leads de outros (regra B1 manteve trava (d) do helper para
+ *        não-CRECI).
+ *
+ *    Smoke esperado em Production:
+ *      • Marcos (GC, id=8): KPI "LEADS" cai de 1692 para apenas os leads
+ *        dele em verticais não-CRECI. Aba "Meus Leads" mostra os mesmos.
+ *      • Débora (SDR, id=18): vê todos leads CRECI + seus leads não-CRECI.
+ *      • Admin (você): KPI continua mostrando 1692.
+ *
+ *    Risco: se algum endpoint chamar listar_leads SEM passar currentUser,
+ *    vai retornar 400. Auditoria preventiva já está no backlog do
+ *    CHECKPOINT 22/06 — verificar outros callers durante a próxima
+ *    sessão (provavelmente nenhum, mas vale conferir).
+ *
  *  - v1.19 (22/06/2026 — HOTFIX da v1.18: RPC com TABLE também sofria do 1000):
  *    A v1.18 tentou resolver o bug do 1000 substituindo
  *    `.from('email_lead_campanhas').select()` por `.rpc('crm_leads_em_campanhas_ativas')`,
@@ -820,8 +880,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           page = '1',
           limit = '30',
           ordenar_por = 'recentes',          // 🆕 v1.14
+          // 🆕 v1.20 — RBAC de visibilidade na aba "Meus Leads" da Base de Leads.
+          //   Recebe quem é o usuário corrente para aplicar a regra:
+          //     - Admin       : vê tudo (sem filtro)
+          //     - SDR         : vê todos CRECI + apenas seus em outras verticais
+          //     - GC          : NUNCA vê CRECI + apenas onde é reservado_por
+          //   Decisão de produto (Messias, 22/06/2026 — sessão final do dia):
+          //     "Cada GC/SDR vê apenas leads gerados/gravados por eles
+          //     (reservado_por). Leads CRECI aparecem só no Form CRECI
+          //     para o GC que inseriu. Quando movidos para Base de Leads,
+          //     somente SDR/Admin podem ver e mover para Campanha CRECI."
+          current_user_id,
+          current_user_tipo,
         } = req.query as Record<string, string>;
         const offset = (parseInt(page) - 1) * parseInt(limit);
+
+        // 🆕 v1.20 — Validação defensiva. Sem currentUser, NÃO é seguro listar.
+        //   O frontend (useLeads v1.3) sempre passa esses 2 params. Se chegou
+        //   sem eles, é caller mal configurado ou tentativa de bypass — recusamos.
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error:
+              'Parâmetros obrigatórios ausentes: current_user_id e current_user_tipo. ' +
+              'A action listar_leads requer identificação do usuário corrente para aplicar RBAC.',
+          });
+        }
+        const currentUserIdNum = parseInt(current_user_id);
+        if (isNaN(currentUserIdNum) || currentUserIdNum < 1) {
+          return res.status(400).json({
+            success: false,
+            error: `current_user_id inválido: "${current_user_id}"`,
+          });
+        }
 
         let query = supabase
           .from('email_leads')
@@ -847,6 +938,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         //   SQL, mas a duplicação é pequena e local.
         query = query.not('bounced', 'is', true);
         query = query.is('motivo_invalidacao', null);
+
+        // 🆕 v1.20 (22/06/2026) — RBAC de visibilidade na aba "Meus Leads".
+        //   Aplicado APÓS os filtros de elegibilidade (opt_out, bounced,
+        //   motivo_invalidacao) e ANTES dos filtros opcionais do operador
+        //   (busca, funil, tags) — esses são REFINAMENTOS por cima do RBAC.
+        //
+        //   Mapa:
+        //     Admin             → sem filtro adicional (vê tudo)
+        //     SDR               → (vertical=CRECI) OR (reservado_por=userId)
+        //     Gestão Comercial  → (vertical!=CRECI) AND (reservado_por=userId)
+        //     outros tipos      → bloqueio defensivo (lista vazia)
+        //
+        //   Justificativa por perfil:
+        //     - SDR distribui CRECI (regra B1 de 22/06/2026), portanto precisa
+        //       ver todos os leads CRECI mesmo quando reservado_por != ele
+        //       (incluindo reservado_por=NULL — leads recém-promovidos do CreciPage).
+        //     - GC executa em verticais não-CRECI sobre leads sob sua
+        //       responsabilidade. CRECI fica EXCLUSIVAMENTE no Form CRECI →
+        //       aba "Meus Leads Salvos", para o GC que capturou.
+        //
+        //   Idempotência com outros filtros: este RBAC é AND-composto com os
+        //   filtros opcionais (busca, funil, tags), garantindo que um GC NUNCA
+        //   veja leads de outras pessoas mesmo via filtros refinados.
+        if (current_user_tipo === 'Administrador') {
+          // Sem filtro adicional — Admin vê tudo
+        } else if (current_user_tipo === 'SDR') {
+          // SDR: vê todos CRECI + apenas seus em outras verticais
+          query = query.or(`vertical.eq.CRECI,reservado_por.eq.${currentUserIdNum}`);
+        } else if (current_user_tipo === 'Gestão Comercial') {
+          // GC: NUNCA vê CRECI + apenas onde é reservado_por
+          query = query.neq('vertical', 'CRECI');
+          query = query.eq('reservado_por', currentUserIdNum);
+        } else {
+          // Perfis não mapeados (ex.: futuros tipos) — fail-safe: lista vazia.
+          //   Preferimos retornar 0 leads a expor tudo por default.
+          //   Quando um novo tipo for criado, esta action precisa de adição
+          //   explícita acima, não cair no default.
+          query = query.eq('id', -1);
+        }
 
         // 🆕 v1.14 (13/06/2026) — Ordenação configurável.
         //   Whitelist defensiva — qualquer valor desconhecido em
@@ -1016,6 +1146,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── STATS (contadores gerais) ────────────────
       if (action === 'stats') {
+        // 🆕 v1.20 — RBAC nos KPIs. O contador "LEADS" do header da página
+        //   "Base de Leads" precisa refletir o universo VISÍVEL ao usuário
+        //   logado, não o universo absoluto. Sem isso, GC veria "LEADS: 1692"
+        //   mas só conseguiria abrir os seus N — divergência confusa.
+        //
+        //   Aplicamos o filtro APENAS em totalLeads (o KPI do header). Os
+        //   demais (totalProspects, totalClientes, totalEmpresas, totalOptOut,
+        //   totalRespostas, totalInvalidos) ficam globais — eles alimentam
+        //   contadores administrativos da página e ainda não há decisão de
+        //   produto pedindo restrição.
+        //
+        //   Política de fallback (sem currentUser): mostra totalLeads=0 ao
+        //   invés de retornar erro. O endpoint /stats não é crítico de UI —
+        //   uma página renderiza ainda assim, só com KPI zerado, e o operador
+        //   pode investigar.
+        const currentUserIdRaw = req.query.current_user_id as string | undefined;
+        const currentUserTipoStats = req.query.current_user_tipo as string | undefined;
+        const currentUserIdNumStats = currentUserIdRaw ? parseInt(currentUserIdRaw) : NaN;
+
         const { count: totalEmpresas } = await supabase
           .from('email_empresas').select('id', { count: 'exact', head: true });
 
@@ -1024,10 +1173,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         //   para refletir a base ATIVA (que efetivamente pode receber
         //   campanhas). O contador total_optout abaixo continua mostrando
         //   o universo de descadastros (vivos eternamente — LGPD).
-        const { count: totalLeads } = await supabase
+        // 🆕 v1.20 — totalLeads agora respeita o RBAC (vide cabeçalho acima).
+        let queryTotalLeads = supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
           .eq('funil_status', 'lead')
           .not('opt_out', 'is', true);
+
+        if (currentUserTipoStats === 'Administrador') {
+          // Sem filtro adicional
+        } else if (currentUserTipoStats === 'SDR' && !isNaN(currentUserIdNumStats)) {
+          queryTotalLeads = queryTotalLeads.or(
+            `vertical.eq.CRECI,reservado_por.eq.${currentUserIdNumStats}`
+          );
+        } else if (currentUserTipoStats === 'Gestão Comercial' && !isNaN(currentUserIdNumStats)) {
+          queryTotalLeads = queryTotalLeads
+            .neq('vertical', 'CRECI')
+            .eq('reservado_por', currentUserIdNumStats);
+        } else {
+          // Sem currentUser → fail-safe: 0 (não trava a página)
+          queryTotalLeads = queryTotalLeads.eq('id', -1);
+        }
+
+        const { count: totalLeads } = await queryTotalLeads;
 
         const { count: totalProspects } = await supabase
           .from('email_leads').select('id', { count: 'exact', head: true })

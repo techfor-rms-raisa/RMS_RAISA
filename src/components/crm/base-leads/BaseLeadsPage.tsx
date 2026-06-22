@@ -348,7 +348,18 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
 
   // ── Hooks ──
   const empresasH = useEmpresas();
-  const leadsH = useLeads();
+  // 🆕 v1.11 (22/06/2026) — RBAC de visibilidade na aba "Meus Leads".
+  //   Passa o currentUser para useLeads v1.3, que propaga para o backend
+  //   crm-leads.ts v1.20 (actions listar_leads e stats).
+  //   Decisão de produto: cada GC/SDR vê apenas leads sob sua
+  //   responsabilidade (reservado_por); GC nunca vê CRECI; SDR vê todos
+  //   CRECI; Admin vê tudo.
+  const leadsH = useLeads({
+    currentUser: {
+      id: currentUser.id,
+      tipo_usuario: currentUser.tipo_usuario,
+    },
+  });
   const importH = useImportProspects();
   // 🆕 v1.2 (Fase 8-Inbox)
   const respostasH = useRespostas();
