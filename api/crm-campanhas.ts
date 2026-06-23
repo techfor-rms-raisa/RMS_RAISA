@@ -2090,3 +2090,4 @@ function renderAssinatura(a: any): string {
   </div>
 </div>`.trim();
 }
+
