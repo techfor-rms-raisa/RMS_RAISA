@@ -1,3 +1,41 @@
+/**
+ * api/prospect-leads.ts — Listagem e atualização de prospect_leads
+ *   (Prospect Engine: "Minhas Empresas" + "Meus Prospects Salvos")
+ *
+ * Histórico:
+ *  - v1.1 (23/06/2026 — Limpeza estrutural da aba "Meus Prospects Salvos"):
+ *    Excluir por padrão da listagem origem='leads' os 2 estados que NÃO
+ *    são "investigação ativa" — bug visual reportado por Messias após
+ *    notar que leads importados via Excel apareciam tanto em "Meus
+ *    Prospects Salvos" quanto em "Leads Importados" e "Meus Leads"
+ *    simultaneamente (duplicação confusa).
+ *
+ *    Filtros adicionados (apenas quando NÃO há override explícito):
+ *      • motor='importacao_lista' → leads importados via Sub-fase 3.D
+ *        têm aba dedicada "Leads Importados" no BaseLeadsPage.
+ *      • status IN ('no_crm', 'em_campanha') → leads já promovidos ao
+ *        CRM aparecem em "Meus Leads" da Base de Leads — sumir da
+ *        listagem do Prospect Engine evita poluição visual.
+ *
+ *    Override de auditoria preservado: passar `?motor=importacao_lista`
+ *    ou `?status=no_crm` explicitamente desliga o filtro padrão
+ *    correspondente — admin/desenvolvedor pode investigar histórico
+ *    sem perda de capabilidade.
+ *
+ *    Validação dimensional (Production 23/06/2026):
+ *      - 226 leads vão sumir da aba (225 importados + 1 gemini promovido)
+ *      - 3104 leads continuam visíveis (investigação ativa legítima)
+ *      - 132 dos 133 promovidos JÁ existem em email_leads (zero perda
+ *        de informação — só duplicação visual eliminada)
+ *
+ *    Pareado com (mesma janela de entrega):
+ *      • Nenhuma mudança no frontend ProspectSearchPage.tsx — backend
+ *        absorve toda a regra (decisão arquitetural: filtros estruturais
+ *        devem ficar no backend para consistência entre clientes).
+ *
+ *  - v1.0 — versão original (sem cabeçalho de versionamento).
+ */
+
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
@@ -84,6 +122,36 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             query = query.like('motor', 'cv_%');
         } else if (origem === 'leads') {
             query = query.not('motor', 'like', 'cv_%');
+
+            // 🆕 v1.1 (23/06/2026) — Limpeza estrutural da aba "Meus Prospects Salvos".
+            //
+            //   FILTRO A — Excluir leads importados via Excel/CSV (Sub-fase 3.D).
+            //   Esses leads têm uma aba dedicada ("Leads Importados" no
+            //   BaseLeadsPage), onde são revalidados pelo Gemini e auto-promovidos
+            //   para email_leads. Aparecer também aqui causa confusão estrutural
+            //   (lead "duplicado" em 3 lugares: Leads Importados + Meus Leads +
+            //   Meus Prospects Salvos).
+            //
+            //   Override de auditoria: passar `?motor=importacao_lista`
+            //   explicitamente desliga o filtro padrão (admin pode investigar).
+            if (!motor) {
+                query = query.neq('motor', 'importacao_lista');
+            }
+
+            //   FILTRO B — Excluir leads já promovidos ao CRM.
+            //   Status 'no_crm' = promovido via botão "Campanhas" do ProspectSearchPage
+            //   (action promover_para_campanha em crm-leads).
+            //   Status 'em_campanha' = legado (comentário no código frontend menciona
+            //   esse valor; preservado por compatibilidade caso ainda exista no banco).
+            //   Em ambos os casos, o lead já está em email_leads e visível em
+            //   "Meus Leads" da Base de Leads — manter aqui é poluição visual.
+            //
+            //   Override de auditoria: passar `?status=no_crm` ou `?status=em_campanha`
+            //   explicitamente desliga o filtro padrão (admin pode auditar histórico
+            //   de promoções).
+            if (!status) {
+                query = query.neq('status', 'no_crm').neq('status', 'em_campanha');
+            }
         }
 
         if (status)          query = query.eq('status', status);
