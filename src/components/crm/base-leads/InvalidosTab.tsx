@@ -450,3 +450,4 @@ const InvalidosTab: React.FC<InvalidosTabProps> = ({
 };
 
 export default InvalidosTab;
+
