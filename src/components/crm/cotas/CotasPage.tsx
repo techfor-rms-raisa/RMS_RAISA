@@ -2,15 +2,40 @@
  * src/components/crm/cotas/CotasPage.tsx
  *
  * Caminho: src/components/crm/cotas/CotasPage.tsx
- * Versão:  1.0 (23/06/2026 — Aba "Cotas" — parametrização Messias)
+ * Versão:  1.1 (23/06/2026 — FIX RBAC tipo→tipo_usuario + CurrentUserLite)
  *
- * Página da aba "Cotas" no menu CRM & Campanhas. Lista usuários ativos
- * com tipo Administrador/Gestão Comercial/SDR e permite ao Admin
- * editar a coluna `app_users.cota_revalidacao_diaria` por linha.
+ * 🆕 v1.1 (23/06/2026 — FIX 2 bugs descobertos no smoke):
+ *   1. Campo RBAC errado: a interface inline `tipo: string` foi substituída
+ *      pela interface canônica `CurrentUserLite` (de '../types/crm.types'),
+ *      consistente com todos os demais componentes do módulo CRM
+ *      (CampanhasPage, CopysPage, ConfiguracoesPage, AcompanhamentoPage,
+ *      BaseLeadsPage). O campo correto do tipo de perfil em todo o
+ *      codebase é `tipo_usuario` (não `tipo`). Confirmado por grep:
+ *      zero ocorrências de `currentUser.tipo` no projeto inteiro;
+ *      100% das ocorrências usam `currentUser.tipo_usuario`.
+ *   2. Container correto: este componente é renderizado por
+ *      ConfiguracoesPage v1.2 (Configurações CRM → aba "Cotas"), NÃO
+ *      pelo CRMLayout (que foi revertido v1.6 → v1.7). Decisão Messias
+ *      23/06/2026: o lugar certo para parametrizações administrativas
+ *      é a view 'crm_config' do menu lateral, ao lado de "Tipos de
+ *      Campanha" e "Domínios de Envio".
+ *
+ *   Mudanças cirúrgicas (2 pontos):
+ *     - Interface `CotasPageProps`: agora `currentUser: CurrentUserLite`.
+ *     - Guard de RBAC defensivo: `currentUser.tipo` → `currentUser.tipo_usuario`.
+ *
+ *   Demais comportamentos (useCotas, tabela editável, validação, toasts,
+ *   agrupamento por tipo) permanecem idênticos à v1.0.
+ *
+ * v1.0 (23/06/2026 — Aba "Cotas" — parametrização Messias):
+ *   Página da aba "Cotas". Lista usuários ativos com tipo Administrador,
+ *   Gestão Comercial ou SDR e permite ao Admin editar a coluna
+ *   `app_users.cota_revalidacao_diaria` por linha.
  *
  * Acesso (RBAC):
- *   - Filtro de renderização da aba: CRMLayout v1.6 só monta este
- *     componente se currentUser.tipo === 'Administrador'.
+ *   - Renderização da aba: ConfiguracoesPage v1.2 só monta este
+ *     componente se currentUser.tipo_usuario === 'Administrador'
+ *     (TABS_FILTRADAS).
  *   - Defesa em profundidade: backend faz o mesmo lock server-side
  *     (api/crm-cotas.ts exigirAdmin), então mesmo que o frontend
  *     vaze para outro tipo de usuário, nenhuma mutação acontece.
@@ -28,14 +53,11 @@
  */
 
 import React, { useState, useMemo } from 'react';
+import type { CurrentUserLite } from '../types/crm.types';
 import { useCotas, type CotaUsuario } from '../shared/hooks/useCotas';
 
 interface CotasPageProps {
-  currentUser: {
-    id:   number;
-    tipo: string;
-    nome_usuario?: string;
-  };
+  currentUser: CurrentUserLite;
 }
 
 interface ToastMsg {
@@ -144,7 +166,9 @@ const CotasPage: React.FC<CotasPageProps> = ({ currentUser }) => {
   }, [cotas]);
 
   // ── Guard de RBAC client-side (defesa em camadas) ────────────────
-  if (currentUser.tipo !== 'Administrador') {
+  // 🆕 v1.1 (23/06/2026) — Campo corrigido: `tipo_usuario` (padrão real
+  //   do codebase), não `tipo` (que não existe na interface User).
+  if (currentUser.tipo_usuario !== 'Administrador') {
     return (
       <div className="p-6">
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
