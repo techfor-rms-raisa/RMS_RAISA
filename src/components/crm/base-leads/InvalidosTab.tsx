@@ -2,7 +2,32 @@
  * InvalidosTab.tsx — Aba "Inválidos" (LEADS com email inválido)
  *
  * Caminho: src/components/crm/base-leads/InvalidosTab.tsx
- * Versão: 1.2 (F8 — Spinner no botão Recovery — 16/06/2026)
+ * Versão: 1.3 (Botão Promover para leads recuperados — 23/06/2026)
+ *
+ * v1.3 (23/06/2026 — Botão Promover para recuperação de inválidos):
+ *   Adiciona o botão "Promover" (purple) ao lado de Editar/Recovery,
+ *   permitindo enviar de volta para uma campanha um lead que teve o
+ *   email corrigido (manualmente via Editar, automaticamente via
+ *   Recovery 3.A, ou nunca teve bounce real como nos casos
+ *   f7_pre_campanha / no_match).
+ *
+ *   Regra de visibilidade (alinhada com Messias 23/06/2026):
+ *     • Botão APARECE somente quando `item.bounced === false`
+ *     • Quando `bounced === true` (email ainda não corrigido), o botão
+ *       NÃO aparece — UX explícita: "primeiro edite o email"
+ *
+ *   Lógica de habilitação:
+ *     • Habilitado:  bounced=false E callback presente E não em loading
+ *     • Spinner:     lead em `promovendoLeadIds`
+ *     • Disabled:    durante Recovery em andamento (mesma corrida que
+ *                    Editar — evita ações simultâneas no mesmo lead)
+ *
+ *   Novas props (todas opcionais — degradação graciosa):
+ *     • onPromover?: (leadId) => void — abre o modal de seleção de campanha
+ *     • promovendoLeadIds?: number[] — leads em chamada ativa de promoção
+ *
+ *   Nenhuma mudança nas regras visuais existentes (Editar, Recovery,
+ *   badges, paginação). Cirurgia aditiva.
  *
  * v1.2 (16/06/2026 — F8 release final): adiciona prop opcional
  *   `recoveringLeadIds?: number[]` para mostrar feedback visual durante
@@ -59,7 +84,10 @@
 import React from 'react';
 import EmptyState from '../shared/components/EmptyState';
 import { formatDateTime } from '../types/crm.constants';
-import type { InvalidoItem } from '../types/crm.types';
+// 🆕 v1.3 (23/06/2026) — usar o tipo estendido do hook (inclui `bounced`).
+//   Quando crm.types.ts for revisado em entrega futura, migrar para
+//   `import type { InvalidoItem } from '../types/crm.types'`.
+import type { InvalidoItem } from '../shared/hooks/useInvalidos';
 
 // ════════════════════════════════════════════════════════════
 // PROPS
@@ -95,6 +123,23 @@ export interface InvalidosTabProps {
    * Prop opcional — quando ausente, comportamento da v1.1 (sem feedback).
    */
   recoveringLeadIds?: number[];
+  /**
+   * 🆕 v1.3 (23/06/2026 — Recuperação para campanha) — Clique no botão
+   * "Promover" (purple). Recebe o lead_id. O container (BaseLeadsPage)
+   * abre o modal RecuperarParaCampanhaModal para escolher a campanha.
+   *
+   * Quando ausente, o botão "Promover" NÃO aparece (degradação graciosa).
+   */
+  onPromover?: (leadId: number) => void;
+  /**
+   * 🆕 v1.3 (23/06/2026) — Lista de lead_ids atualmente em chamada de
+   * recuperação para campanha (POST recuperar_invalido_para_campanha em
+   * andamento). Quando o lead está no array:
+   *   • Botão "Promover" mostra spinner + fica disabled
+   *   • Botões "Editar" e "Recovery" também ficam disabled (evita corrida)
+   * Prop opcional.
+   */
+  promovendoLeadIds?: number[];
 }
 
 // ════════════════════════════════════════════════════════════
@@ -148,12 +193,20 @@ const InvalidosTab: React.FC<InvalidosTabProps> = ({
   onEditarLead,
   onTentarRecovery,
   recoveringLeadIds,
+  onPromover,
+  promovendoLeadIds,
 }) => {
   const totalPaginas = Math.max(1, Math.ceil(total / pageSize));
   // 🆕 v1.2 — Set para lookup O(1) ao decidir se um lead está em loading
   const recoveringSet = React.useMemo(
     () => new Set(recoveringLeadIds || []),
     [recoveringLeadIds],
+  );
+  // 🆕 v1.3 (23/06/2026) — Set para lookup O(1) de leads em recuperação
+  //   (chamada POST recuperar_invalido_para_campanha em andamento).
+  const promovendoSet = React.useMemo(
+    () => new Set(promovendoLeadIds || []),
+    [promovendoLeadIds],
   );
 
   return (
@@ -210,7 +263,21 @@ const InvalidosTab: React.FC<InvalidosTabProps> = ({
                 const recoveryEsgotado = tentativas >= 3;
                 // 🆕 v1.2 — lead em Recovery em andamento (chamada ativa)
                 const recoveryEmAndamento = recoveringSet.has(item.lead_id);
-                const podeRecovery = !!onTentarRecovery && !recoveryEsgotado && !recoveryEmAndamento;
+                // 🆕 v1.3 (23/06/2026) — lead em recuperação para campanha
+                //   (chamada POST recuperar_invalido_para_campanha em andamento).
+                const promovendoEmAndamento = promovendoSet.has(item.lead_id);
+                // 🆕 v1.3 — qualquer chamada ativa bloqueia as outras ações
+                //   no mesmo lead (evita corrida).
+                const qualquerChamadaAtiva = recoveryEmAndamento || promovendoEmAndamento;
+                const podeRecovery = !!onTentarRecovery && !recoveryEsgotado && !qualquerChamadaAtiva;
+                // 🆕 v1.3 — Promover só aparece quando bounced=false (email já
+                //   corrigido manualmente OU automaticamente OU nunca houve
+                //   bounce real — casos f7_pre_campanha / no_match em que
+                //   motivo_invalidacao foi setado sem bounce).
+                //   Fallback defensivo: se `bounced` vier undefined (backend
+                //   pré-v1.22 ou erro de serialização), NÃO mostramos o botão.
+                const emailRecuperado = item.bounced === false;
+                const podePromover = !!onPromover && emailRecuperado && !qualquerChamadaAtiva;
 
                 return (
                   <tr key={item.lead_id} className="hover:bg-gray-50">
@@ -245,25 +312,65 @@ const InvalidosTab: React.FC<InvalidosTabProps> = ({
                     </td>
                     <td className="px-3 py-2.5 text-right">
                       <div className="inline-flex gap-1.5">
-                        {/* Editar cadastro — disabled durante Recovery (v1.2 — evita corrida) */}
+                        {/* Editar cadastro — disabled durante Recovery ou Promoção (v1.3 — evita corrida) */}
                         <button
-                          disabled={recoveryEmAndamento}
-                          onClick={() => !recoveryEmAndamento && onEditarLead(item.lead_id)}
+                          disabled={qualquerChamadaAtiva}
+                          onClick={() => !qualquerChamadaAtiva && onEditarLead(item.lead_id)}
                           className={[
                             'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                            recoveryEmAndamento
+                            qualquerChamadaAtiva
                               ? 'bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-200'
                               : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200',
                           ].join(' ')}
                           title={
                             recoveryEmAndamento
                               ? 'Aguarde — Recovery em andamento'
-                              : 'Abrir cadastro do lead para corrigir o e-mail'
+                              : promovendoEmAndamento
+                                ? 'Aguarde — Promoção em andamento'
+                                : 'Abrir cadastro do lead para corrigir o e-mail'
                           }
                         >
                           <i className="fa-solid fa-pen-to-square"></i>
                           Editar
                         </button>
+
+                        {/* 🆕 v1.3 (23/06/2026) — Promover para campanha (purple).
+                            Só aparece quando bounced=false (email já corrigido).
+                            Quando bounced=true, o botão simplesmente não renderiza —
+                            UX explícita: "primeiro edite o email". */}
+                        {onPromover && emailRecuperado && (
+                          <button
+                            disabled={!podePromover}
+                            onClick={() => podePromover && onPromover(item.lead_id)}
+                            className={[
+                              'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors',
+                              podePromover
+                                ? 'bg-purple-50 text-purple-700 hover:bg-purple-100 border border-purple-200'
+                                : promovendoEmAndamento
+                                  ? 'bg-blue-50 text-blue-700 border border-blue-200 cursor-wait'
+                                  : 'bg-gray-50 text-gray-400 cursor-not-allowed border border-gray-200',
+                            ].join(' ')}
+                            title={
+                              promovendoEmAndamento
+                                ? 'Vinculando à campanha...'
+                                : recoveryEmAndamento
+                                  ? 'Aguarde — Recovery em andamento'
+                                  : 'Recuperar este lead para uma campanha (email já corrigido)'
+                            }
+                          >
+                            {promovendoEmAndamento ? (
+                              <>
+                                <i className="fa-solid fa-spinner fa-spin"></i>
+                                Vinculando...
+                              </>
+                            ) : (
+                              <>
+                                <i className="fa-solid fa-rocket"></i>
+                                Promover
+                              </>
+                            )}
+                          </button>
+                        )}
 
                         {/* Tentar Recovery — opcional (degradação graciosa) */}
                         {onTentarRecovery && (
@@ -281,9 +388,11 @@ const InvalidosTab: React.FC<InvalidosTabProps> = ({
                             title={
                               recoveryEmAndamento
                                 ? 'Recovery em andamento (pode levar até ~60s)'
-                                : recoveryEsgotado
-                                  ? 'Tentativas de Recovery esgotadas (3/3) — corrija o e-mail manualmente'
-                                  : 'Tentar encontrar o e-mail correto via motor de Recovery'
+                                : promovendoEmAndamento
+                                  ? 'Aguarde — Promoção em andamento'
+                                  : recoveryEsgotado
+                                    ? 'Tentativas de Recovery esgotadas (3/3) — corrija o e-mail manualmente'
+                                    : 'Tentar encontrar o e-mail correto via motor de Recovery'
                             }
                           >
                             {recoveryEmAndamento ? (

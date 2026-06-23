@@ -2,6 +2,72 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.22 (23/06/2026 — Recuperação de Leads Inválidos para Campanha):
+ *    Funcionalidade nova solicitada por Messias em Production. Quando um
+ *    lead dá bounce em uma campanha, ele é movido para a aba "E-mails
+ *    Inválidos" (bounced=true + motivo_invalidacao preenchido). Hoje o
+ *    GC/SDR só tinha 2 ações disponíveis: Editar (corrigir o email) e
+ *    Recovery (motor automático 3.A com Snov.io). Ambos resolvem o
+ *    PRIMEIRO passo (corrigir o endereço), mas o SEGUNDO passo (mandar
+ *    de volta para uma campanha) exigia navegação manual para o wizard
+ *    de campanhas ou para a aba Vincular em Lote — fricção desnecessária.
+ *
+ *    Mudanças nesta versão:
+ *
+ *      (1) Whitelist COLUNAS_EDITAVEIS_LEAD ganha 'motivo_invalidacao'.
+ *          Bug latente registrado em CHECKPOINTs anteriores: PATCH
+ *          atualizar_lead descartava silenciosamente qualquer tentativa
+ *          de limpar este campo (filtro pickEditable). Sem essa correção,
+ *          a nova action `recuperar_invalido_para_campanha` não conseguia
+ *          limpar o motivo via fluxo padrão. Decisão de produto Messias
+ *          23/06/2026: liberar edição para Admin e para o caso de
+ *          recuperação automática (próximo item).
+ *
+ *      (2) Action GET listar_invalidos passa a retornar 2 novos campos
+ *          no objeto de cada item:
+ *            • `bounced` (boolean) — usado pelo frontend para decidir
+ *              se renderiza o botão "Promover" (regra: só aparece quando
+ *              bounced=false — o lead foi recuperado, manualmente via
+ *              Editar ou automaticamente via Recovery 3.A).
+ *            • `vertical` (string | null) — contexto exibido pelo
+ *              RecuperarParaCampanhaModal sem precisar de requisição extra.
+ *          Mudança aditiva: caller legado que ignora os campos continua
+ *          funcionando.
+ *
+ *      (3) Nova action POST `recuperar_invalido_para_campanha`. Recebe
+ *          { lead_id, campanha_id, criado_por } e executa em sequência:
+ *            a) Carrega o lead de email_leads (404 se não existir).
+ *            b) Validação defensiva: bounced=false (rejeita com 400 se
+ *               ainda bounced — frontend já filtra, mas defesa em
+ *               profundidade contra race conditions).
+ *            c) Validação defensiva: opt_out=false (LGPD).
+ *            d) Chama vincularLeadACampanha (helper estável v1.17) que
+ *               aplica TODAS as 7 validações canônicas: status da campanha,
+ *               data_encerramento, vertical match, responsavel match (com
+ *               relaxamento CRECI v1.17), duplicação simultânea, opt-out
+ *               legacy.
+ *            e) Se vinculação OK: limpa motivo_invalidacao + bounced_motivo
+ *               em email_leads (lead sai da aba Inválidos pelo critério
+ *               D2: bounced=false AND motivo_invalidacao IS NULL).
+ *            f) Registra histórico tipo='recuperacao_invalido' (auditoria).
+ *
+ *          Retorna 201 com { lead, vinculo } em sucesso ou 400 com erro
+ *          estruturado. Operação atômica do ponto de vista de produto:
+ *          se a vinculação falha (vertical incompatível, etc.), o
+ *          motivo_invalidacao NÃO é limpo — lead permanece visível na
+ *          aba para o usuário tentar outra campanha ou outra correção.
+ *
+ *    Sem mudanças em schema (nenhuma migração necessária). Usa apenas
+ *    colunas já existentes em email_leads e email_lead_historico.
+ *
+ *    Pareado com (mesma entrega):
+ *      • useInvalidos.ts v1.3 (método recuperarParaCampanha)
+ *      • InvalidosTab.tsx v1.3 (botão Promover purple)
+ *      • BaseLeadsPage.tsx v1.15 (handler + state + modal)
+ *      • RecuperarParaCampanhaModal.tsx (componente NOVO)
+ *      • crm-campanhas.ts SEM MUDANÇAS (action
+ *        listar_campanhas_disponiveis_para_lead já aceita lead_id).
+ *
  *  - v1.22 (23/06/2026 — RBAC nos contadores stats: respostas, inválidos e opt-out):
  *    Completa a aplicação do RBAC iniciada em v1.20/v1.21. Resolve bug
  *    reportado por Messias 23/06/2026 (smoke caso Marcos Rossi/GC):
@@ -825,6 +891,12 @@ const COLUNAS_EDITAVEIS_LEAD = [
   // 🆕 v1.7 (05/06/2026 — Lead RBAC fix)
   'vertical',
   'apto_campanha',
+  // 🆕 v1.22 (23/06/2026 — Recuperação de Inválidos): permite que a
+  //   action `recuperar_invalido_para_campanha` limpe esse campo (lead
+  //   sai da aba Inválidos) e que o Admin possa corrigir manualmente
+  //   via Editar Lead. Antes da v1.22, qualquer tentativa de limpar
+  //   este campo era silenciosamente descartada por `pickEditable`.
+  'motivo_invalidacao',
 ] as const;
 
 const COLUNAS_EDITAVEIS_EMPRESA = [
@@ -1796,7 +1868,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let query = supabase
           .from('email_leads')
           .select(
-            'id, nome, email, empresa_id, bounced, bounced_em, bounced_motivo, ' +
+            'id, nome, email, vertical, empresa_id, bounced, bounced_em, bounced_motivo, ' +
             'motivo_invalidacao, tentativas_recovery, recovery_em, atualizado_em, ' +
             'email_empresas(id, nome)',
             { count: 'exact' }
@@ -1865,6 +1937,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             bounced_em: l.bounced_em ?? null,
             tentativas_recovery: l.tentativas_recovery ?? 0,
             recovery_em: l.recovery_em ?? null,
+            // 🆕 v1.22 (23/06/2026 — Recuperação de Inválidos): flag
+            //   booleana usada pelo frontend (InvalidosTab v1.3) para
+            //   decidir se mostra o botão "Promover". Regra: só aparece
+            //   quando bounced=false (email já foi corrigido — manualmente
+            //   via Editar, automaticamente via Recovery 3.A, ou nunca
+            //   teve bounce verdadeiro como nos casos f7_pre_campanha /
+            //   no_match em que motivo_invalidacao foi setado sem bounce).
+            bounced: l.bounced === true,
+            // 🆕 v1.22 — Vertical do lead, exibida no
+            //   RecuperarParaCampanhaModal como contexto para o usuário.
+            //   Pode ser NULL para leads pré-v1.7 (deveria ter sido
+            //   preenchida na promoção/criação; quando ausente, o
+            //   backend rejeita a recuperação com erro claro).
+            vertical: l.vertical ?? null,
           };
         });
 
@@ -3207,6 +3293,210 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           campanha_nome: campanha.nome,
           campanha_status: campanha.status,
           ...resultados,
+        });
+      }
+
+      // ─────────────────────────────────────────────────────────
+      // 🆕 v1.22 (23/06/2026) — POST `recuperar_invalido_para_campanha`
+      // ─────────────────────────────────────────────────────────
+      //
+      // Recupera um lead da aba "E-mails Inválidos" para uma campanha.
+      // Disparado pelo botão "Promover" do InvalidosTab v1.3, que aparece
+      // somente quando o lead foi previamente CORRIGIDO (bounced=false +
+      // motivo_invalidacao IS NOT NULL).
+      //
+      // Cenário típico:
+      //   1. Lead recebe hard bounce em campanha → webhook seta
+      //      bounced=true + motivo_invalidacao='bounce' (ou similar).
+      //   2. Lead aparece na aba Inválidos (botões: Editar, Recovery).
+      //   3. GC/SDR corrige o email (Editar) ou Recovery 3.A encontra
+      //      novo email → backend reseta bounced=false automaticamente
+      //      (atualizar_lead v1.11) mas motivo_invalidacao permanece
+      //      preenchido (proposital — lead continua na aba como
+      //      "pronto para promover").
+      //   4. GC/SDR clica em "Promover" → escolhe campanha no modal
+      //      RecuperarParaCampanhaModal → chama esta action.
+      //
+      // Body esperado:
+      //   { lead_id: number, campanha_id: number, criado_por: string }
+      //
+      // Validações (defesa em profundidade — frontend já filtra):
+      //   - Lead existe em email_leads
+      //   - lead.bounced === false (rejeita com 400 se ainda bounced)
+      //   - lead.opt_out === false (rejeita por LGPD)
+      //   - Helper vincularLeadACampanha aplica as 7 validações canônicas
+      //     (status campanha, data_encerramento, vertical, responsavel,
+      //     duplicação simultânea, opt-out legacy).
+      //
+      // Efeitos colaterais:
+      //   - INSERT em email_lead_campanhas (status='ativa', step_atual=1)
+      //   - Eventuais INSERTs em email_fila (se campanha já iniciou)
+      //   - UPDATE em email_leads: motivo_invalidacao=NULL,
+      //     bounced_motivo=NULL, atualizado_em=NOW(). Lead sai da aba
+      //     Inválidos pelo critério D2 (bounced=false AND
+      //     motivo_invalidacao IS NULL).
+      //   - INSERT em email_lead_historico tipo='recuperacao_invalido'.
+      //
+      // Atomicidade lógica:
+      //   - Se vinculação falha (vertical incompatível, campanha encerrada,
+      //     etc.), motivo_invalidacao NÃO é limpo. Lead permanece visível
+      //     na aba para outra tentativa. Sem rollback complexo necessário.
+      //   - Se UPDATE da limpeza falha após vincular_lead_a_campanha
+      //     bem-sucedido (raro): logamos warning mas retornamos sucesso —
+      //     o lead já está na campanha e o motivo será reclassificado
+      //     na próxima leitura da aba (consistência eventual).
+      //
+      // Retorno: 201 { success, lead, vinculo } ou 400 { success, error }.
+      //
+      if (action === 'recuperar_invalido_para_campanha') {
+        const { lead_id, campanha_id, criado_por } = body;
+
+        if (!lead_id || !campanha_id || !criado_por) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id, campanha_id e criado_por são obrigatórios',
+          });
+        }
+
+        // 1. Carregar lead completo (precisa de vertical/reservado_por para
+        //    o helper + bounced/opt_out para validação defensiva).
+        const { data: lead, error: errLead } = await supabase
+          .from('email_leads')
+          .select(
+            'id, nome, email, vertical, reservado_por, bounced, opt_out, ' +
+            'motivo_invalidacao, bounced_motivo'
+          )
+          .eq('id', lead_id)
+          .maybeSingle();
+
+        if (errLead) throw errLead;
+        if (!lead) {
+          return res.status(404).json({ success: false, error: 'Lead não encontrado' });
+        }
+
+        // 2. Validação defensiva: bounced=false (frontend já oculta o botão,
+        //    mas defesa contra race condition — Recovery pode ter falhado
+        //    e setado bounced=true entre o render e o clique).
+        if (lead.bounced === true) {
+          return res.status(400).json({
+            success: false,
+            error:
+              'Lead ainda está marcado como bounced=true. Corrija o email ' +
+              '(botão Editar) antes de promover para uma campanha.',
+          });
+        }
+
+        // 3. Validação defensiva: opt_out (LGPD — defesa em profundidade,
+        //    helper também checa, mas falhamos cedo com mensagem clara).
+        if (lead.opt_out === true) {
+          return res.status(400).json({
+            success: false,
+            error: 'Lead está em opt-out — não pode entrar em campanha (LGPD).',
+          });
+        }
+
+        // 4. Validação: lead precisa ter vertical e responsável (pré-requisitos
+        //    do helper, mas falhamos cedo com mensagem específica).
+        if (!lead.vertical || !String(lead.vertical).trim()) {
+          return res.status(400).json({
+            success: false,
+            error: 'Lead sem Vertical de Negócios definida — defina antes de promover.',
+          });
+        }
+        if (!lead.reservado_por) {
+          return res.status(400).json({
+            success: false,
+            error: 'Lead sem responsável (reservado_por) — atribua antes de promover.',
+          });
+        }
+
+        // 5. Vincular via helper canônico (7 validações + enfileiramento).
+        //    Helper retorna estruturado {success, error?, vinculo?} — sem
+        //    exceções. Passamos bounced=false explícito (otimização: helper
+        //    não precisa consultar o banco de novo).
+        const resultadoVinculo = await vincularLeadACampanha(
+          supabase,
+          {
+            id: lead.id,
+            nome: lead.nome,
+            email: lead.email,
+            vertical: lead.vertical,
+            reservado_por: lead.reservado_por,
+            bounced: false,
+            opt_out: false,
+          },
+          Number(campanha_id),
+          criado_por,
+        );
+
+        if (!resultadoVinculo.success) {
+          // Vinculação rejeitada — NÃO limpamos motivo_invalidacao.
+          // Lead continua na aba Inválidos para nova tentativa.
+          return res.status(400).json({
+            success: false,
+            error: resultadoVinculo.error,
+          });
+        }
+
+        // 6. Limpeza pós-vinculação: motivo_invalidacao + bounced_motivo
+        //    para o lead sair da aba Inválidos. bounced JÁ é false (foi
+        //    validado no passo 2). bounced_em mantemos como auditoria
+        //    histórica (quando bouncou pela primeira vez) — só limpamos
+        //    bounced_motivo (último motivo raw do Resend, já consumido).
+        const { error: errLimpeza } = await supabase
+          .from('email_leads')
+          .update({
+            motivo_invalidacao: null,
+            bounced_motivo: null,
+            atualizado_em: new Date().toISOString(),
+          })
+          .eq('id', lead_id);
+
+        if (errLimpeza) {
+          // Inconsistência rara: vinculação OK mas limpeza falhou.
+          // O lead JÁ está na campanha — não falhamos a operação inteira.
+          console.warn(
+            `⚠️ [crm-leads/recuperar_invalido] Lead ${lead_id} vinculado à campanha ${campanha_id} ` +
+            `mas falhou ao limpar motivo_invalidacao: ${errLimpeza.message}. ` +
+            `Lead permanecerá visível na aba Inválidos até intervenção manual.`
+          );
+        }
+
+        // 7. Histórico para auditoria — sempre, mesmo se limpeza falhou.
+        await supabase.from('email_lead_historico').insert({
+          lead_id: lead_id,
+          tipo: 'recuperacao_invalido',
+          descricao:
+            `Lead recuperado da aba E-mails Inválidos e vinculado à campanha "${resultadoVinculo.vinculo?.campanha_nome}". ` +
+            `Motivo de invalidação anterior: ${lead.motivo_invalidacao || 'não registrado'}. ` +
+            `Email atual: "${lead.email}".`,
+          dados: {
+            campanha_id: resultadoVinculo.vinculo?.campanha_id,
+            campanha_nome: resultadoVinculo.vinculo?.campanha_nome,
+            campanha_status: resultadoVinculo.vinculo?.campanha_status,
+            motivo_invalidacao_anterior: lead.motivo_invalidacao,
+            bounced_motivo_anterior: lead.bounced_motivo,
+            email: lead.email,
+            enfileirados: resultadoVinculo.vinculo?.enfileirados ?? 0,
+          },
+          criado_por,
+        });
+
+        console.log(
+          `✅ [crm-leads/recuperar_invalido] Lead ${lead_id} (${lead.email}) recuperado → ` +
+          `campanha ${campanha_id} (${resultadoVinculo.vinculo?.campanha_nome}) ` +
+          `[enfileirados=${resultadoVinculo.vinculo?.enfileirados ?? 0}]`
+        );
+
+        return res.status(201).json({
+          success: true,
+          lead: {
+            id: lead.id,
+            nome: lead.nome,
+            email: lead.email,
+          },
+          vinculo: resultadoVinculo.vinculo,
+          mensagem: `Lead recuperado e vinculado à campanha "${resultadoVinculo.vinculo?.campanha_nome}".`,
         });
       }
 
