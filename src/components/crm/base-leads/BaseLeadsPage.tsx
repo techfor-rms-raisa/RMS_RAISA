@@ -2,9 +2,42 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.14 (Sub-fase 3.D refino — Anti-duplicidade — 18/06/2026)
+ * Versão: 1.15 (Recuperação de inválidos para campanha — 23/06/2026)
  *
- * 🆕 v1.14 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade de importação):
+ * 🆕 v1.15 (23/06/2026 — Recuperação de inválidos para campanha):
+ *   Adiciona o fluxo "Promover" na aba "E-mails Inválidos". Quando o
+ *   lead foi previamente corrigido (bounced=false), o gestor/SDR pode
+ *   recuperá-lo diretamente para uma campanha sem precisar navegar
+ *   para o Wizard ou para a aba Vincular em Lote.
+ *
+ *   Mudanças cirúrgicas:
+ *    - Novo import: RecuperarParaCampanhaModal.
+ *    - Novo state: `recuperandoLeadItem` (objeto do InvalidoItem
+ *      selecionado — guardamos o objeto inteiro para evitar requisição
+ *      adicional, já temos nome/email/vertical do listar_invalidos v1.22).
+ *    - Novo state: `recuperandoLeadIds` (Set<number>) para mostrar
+ *      spinner no botão Promover enquanto a chamada está em andamento.
+ *    - Handler `handleAbrirRecuperar(leadId)`: encontra o item na
+ *      listagem corrente e abre o modal.
+ *    - Handler `handleConfirmarRecuperacao(leadId, campanhaId)`: chama
+ *      `invalidosH.recuperarParaCampanha`, mostra feedback, fecha o
+ *      modal e recarrega aba+stats em sucesso.
+ *    - <InvalidosTab> recebe 2 props novas: `onPromover` e
+ *      `promovendoLeadIds`.
+ *    - RecuperarParaCampanhaModal instanciado junto dos demais modais.
+ *
+ *   Dependência runtime:
+ *     • Backend crm-leads.ts v1.22 (action recuperar_invalido_para_campanha
+ *       + listar_invalidos com bounced/vertical no payload).
+ *     • useInvalidos.ts v1.3 (método recuperarParaCampanha).
+ *     • InvalidosTab.tsx v1.3 (botão Promover purple).
+ *     • RecuperarParaCampanhaModal.tsx v1.0 (componente novo).
+ *
+ *   Compatibilidade: InvalidosTab v1.3 mantém props opcionais — se
+ *   `onPromover` for omitido, o botão Promover não aparece (degradação
+ *   graciosa preservada).
+ *
+ * v1.14 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade de importação):
  *   Cirurgia mínima: passa a nova prop `onVerificarDuplicidade` ao
  *   `ImportarListaLeadsModal` v1.1, ligando ao método
  *   `leadsImportadosH.verificarDuplicidade` do hook v1.4. Permite ao
@@ -306,6 +339,10 @@ import EditarLeadImportadoModal from './EditarLeadImportadoModal';
 import type { LeadImportado } from '../shared/hooks/useLeadsImportados';
 // 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026)
 import PromoverLeadModal from './PromoverLeadModal';
+// 🆕 v1.15 (Recuperação de inválidos para campanha — 23/06/2026)
+import RecuperarParaCampanhaModal from '../campanhas/RecuperarParaCampanhaModal';
+// 🆕 v1.15 — InvalidoItem estendido (com bounced + vertical do backend v1.22)
+import type { InvalidoItem } from '../shared/hooks/useInvalidos';
 
 import KpiCard from '../shared/components/KpiCard';
 import type { CurrentUserLite, Empresa, Lead } from '../types/crm.types';
@@ -403,6 +440,16 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   // estado muda. O componente filho usa este Set para mostrar spinner
   // no botão "Recovery" dos leads que estão sendo processados.
   const [recoveringLeadIds, setRecoveringLeadIds] = useState<Set<number>>(new Set());
+
+  // 🆕 v1.15 (23/06/2026 — Recuperação de inválidos para campanha):
+  //   Item completo do InvalidoItem selecionado pelo botão "Promover" do
+  //   InvalidosTab v1.3. Guardamos o objeto inteiro (não só o ID) porque
+  //   o backend listar_invalidos v1.22 já devolve nome/email/vertical no
+  //   payload — evitamos uma requisição extra ao detalhe_lead.
+  const [recuperandoLeadItem, setRecuperandoLeadItem] = useState<InvalidoItem | null>(null);
+  // Set imutável de leads em chamada ativa de recuperação (POST). O
+  // InvalidosTab usa para mostrar spinner no botão Promover.
+  const [recuperandoLeadIds, setRecuperandoLeadIds] = useState<Set<number>>(new Set());
 
   // ── Efeitos: carregar dados ──
   useEffect(() => {
@@ -666,6 +713,92 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       // Recarrega aba + stats — independente do resultado
       invalidosH.carregar();
       leadsH.carregarStats();
+    }
+  };
+
+  // ════════════════════════════════════════════════════════════
+  // 🆕 v1.15 (23/06/2026) — RECUPERAR INVÁLIDO PARA CAMPANHA
+  // ════════════════════════════════════════════════════════════
+  //
+  // Fluxo do botão "Promover" da aba E-mails Inválidos (InvalidosTab v1.3):
+  //
+  //   1. handleAbrirRecuperar(leadId): encontra o item na listagem corrente
+  //      e abre o modal RecuperarParaCampanhaModal. Não faz requisição
+  //      extra — o item já tem nome/email/vertical do listar_invalidos v1.22.
+  //
+  //   2. RecuperarParaCampanhaModal carrega campanhas via
+  //      GET /api/crm-campanhas?action=listar_campanhas_disponiveis_para_lead
+  //      &lead_id={leadId} (action existente desde 09/06/2026, aceita lead_id).
+  //
+  //   3. Usuário escolhe campanha → modal invoca onConfirmar(leadId, campanhaId).
+  //
+  //   4. handleConfirmarRecuperacao(leadId, campanhaId):
+  //      - Marca leadId em recuperandoLeadIds (spinner aparece no botão).
+  //      - Chama invalidosH.recuperarParaCampanha → backend v1.22.
+  //      - Sucesso: alert verde, fecha modal, recarrega aba + stats.
+  //      - Erro:    alert vermelho, modal continua aberto (usuário pode
+  //                 tentar outra campanha sem ter que reabrir tudo).
+  //      - Sempre: remove leadId de recuperandoLeadIds (spinner some).
+  //
+  // RBAC: o botão Promover só aparece para leads com bounced=false (regra
+  //   do InvalidosTab v1.3). O backend v1.22 valida de novo em defesa em
+  //   profundidade (proteção contra race conditions).
+
+  const handleAbrirRecuperar = (leadId: number) => {
+    const item = invalidosH.itens.find((i: InvalidoItem) => i.lead_id === leadId);
+    if (!item) {
+      alert('Lead não encontrado na listagem atual — recarregue a página.');
+      return;
+    }
+    setRecuperandoLeadItem(item);
+  };
+
+  const handleConfirmarRecuperacao = async (leadId: number, campanhaId: number) => {
+    // Marca como em-andamento (spinner no botão Promover do InvalidosTab)
+    setRecuperandoLeadIds((prev) => {
+      const next = new Set(prev);
+      next.add(leadId);
+      return next;
+    });
+
+    try {
+      const resultado = await invalidosH.recuperarParaCampanha(
+        leadId,
+        campanhaId,
+        currentUser.nome_usuario,
+      );
+
+      if (resultado.success) {
+        const nomeCamp = resultado.vinculo?.campanha_nome || 'campanha';
+        const enfileirados = resultado.vinculo?.enfileirados ?? 0;
+        alert(
+          `✅ Lead recuperado com sucesso!\n\n` +
+          `Vinculado à campanha: "${nomeCamp}"\n` +
+          (enfileirados > 0
+            ? `Emails enfileirados imediatamente: ${enfileirados}\n\n`
+            : `O lead receberá os emails quando a campanha iniciar.\n\n`) +
+          `O lead saiu da aba "E-mails Inválidos".`,
+        );
+        setRecuperandoLeadItem(null); // fecha o modal
+        invalidosH.carregar();
+        leadsH.carregarStats();
+      } else {
+        // Modal CONTINUA aberto — usuário pode tentar outra campanha sem
+        // reabrir tudo. Mostramos o erro estruturado do backend.
+        alert(
+          `❌ Não foi possível recuperar o lead:\n\n${resultado.error || 'Erro desconhecido.'}`,
+        );
+      }
+    } catch (err: any) {
+      alert(
+        `❌ Erro de rede ao recuperar lead:\n\n${err?.message || 'desconhecido'}`,
+      );
+    } finally {
+      setRecuperandoLeadIds((prev) => {
+        const next = new Set(prev);
+        next.delete(leadId);
+        return next;
+      });
     }
   };
 
@@ -1057,6 +1190,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
 
         {/* 🆕 v1.2 (Fase 8-Inbox) — Aba Inválidos */}
         {/* 🆕 v1.10 (16/06/2026 — F8) — props onTentarRecovery + recoveringLeadIds */}
+        {/* 🆕 v1.15 (23/06/2026 — Recuperação) — props onPromover + promovendoLeadIds */}
         {abaAtiva === 'invalidos' && (
           <InvalidosTab
             itens={invalidosH.itens}
@@ -1074,6 +1208,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             onEditarLead={abrirEditarLeadPorId}
             onTentarRecovery={handleTentarRecovery}
             recoveringLeadIds={Array.from(recoveringLeadIds)}
+            onPromover={handleAbrirRecuperar}
+            promovendoLeadIds={Array.from(recuperandoLeadIds)}
           />
         )}
 
@@ -1183,6 +1319,25 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           return r;
         }}
         onFechar={() => setPromovendoLead(null)}
+      />
+
+      {/* 🆕 v1.15 (23/06/2026 — Recuperação de inválidos para campanha)
+          Disparado pelo botão "Promover" (purple) da aba E-mails Inválidos
+          quando o lead tem bounced=false (email já foi corrigido). */}
+      <RecuperarParaCampanhaModal
+        aberto={recuperandoLeadItem !== null}
+        leadId={recuperandoLeadItem?.lead_id ?? null}
+        leadNome={recuperandoLeadItem?.lead_nome ?? ''}
+        leadEmail={recuperandoLeadItem?.lead_email ?? ''}
+        leadVertical={recuperandoLeadItem?.vertical ?? null}
+        criadoPorEmail={currentUser.nome_usuario}
+        isLoading={
+          recuperandoLeadItem
+            ? recuperandoLeadIds.has(recuperandoLeadItem.lead_id)
+            : false
+        }
+        onFechar={() => setRecuperandoLeadItem(null)}
+        onConfirmar={handleConfirmarRecuperacao}
       />
 
       {/* ════════════════════════════════════════════════════════════ */}
