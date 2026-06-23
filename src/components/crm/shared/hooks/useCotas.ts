@@ -2,20 +2,27 @@
  * src/components/crm/shared/hooks/useCotas.ts
  *
  * Caminho: src/components/crm/shared/hooks/useCotas.ts
- * Versão:  1.0 (23/06/2026 — Aba "Cotas" — parametrização Messias)
+ * Versão:  1.1 (23/06/2026 — FIX coluna tipo → tipo_usuario)
  *
- * Hook orquestrador da aba "Cotas" no menu CRM & Campanhas.
- * Encapsula:
- *   • listar()  — GET  /api/crm-cotas?action=listar_cotas
- *   • salvar()  — POST /api/crm-cotas?action=atualizar_cota
+ * 🆕 v1.1 (23/06/2026 — FIX naming do campo de tipo de perfil):
+ *   Alinhado com api/crm-cotas.ts v1.1, que passou a retornar
+ *   `tipo_usuario` (nome real da coluna em app_users), em vez de `tipo`.
+ *   Frontend (CotasPage v1.2) consome o campo com o nome novo.
  *
- * RBAC server-side: o backend faz lock duro de Administrador. Este hook
- * NÃO duplica a checagem (o backend é a fonte de verdade), mas espera
- * que o componente que chama já tenha filtrado a renderização pela aba
- * existir só para Admins (CRMLayout v1.6).
+ *   Mudança cirúrgica:
+ *     - CotaUsuario.tipo → CotaUsuario.tipo_usuario
+ *     - Type TipoUsuarioComCota preservado (mesmos valores).
  *
- * Naming convention v1.6: prefixo `use-` no frontend, sem colisão de
- * bundle com `api/crm-cotas.ts` que tem prefixo `crm-`.
+ * v1.0 (23/06/2026 — Aba "Cotas" — parametrização Messias):
+ *   Hook orquestrador da aba "Cotas" no menu CRM & Campanhas.
+ *   Encapsula:
+ *     • listar()  — GET  /api/crm-cotas?action=listar_cotas
+ *     • salvar()  — POST /api/crm-cotas?action=atualizar_cota
+ *
+ *   RBAC server-side: o backend faz lock duro de Administrador. Este hook
+ *   NÃO duplica a checagem (o backend é a fonte de verdade), mas espera
+ *   que o componente que chama já tenha filtrado a renderização pela aba
+ *   existir só para Admins (ConfiguracoesPage v1.2 — TABS_FILTRADAS).
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -29,7 +36,9 @@ export type TipoUsuarioComCota = 'Administrador' | 'Gestão Comercial' | 'SDR';
 export interface CotaUsuario {
   id:                       number;
   nome_usuario:             string;
-  tipo:                     TipoUsuarioComCota;
+  // 🆕 v1.1 (23/06/2026) — campo corrigido: tipo_usuario (era 'tipo').
+  //   Alinha com a coluna real do banco app_users.tipo_usuario.
+  tipo_usuario:             TipoUsuarioComCota;
   ativo:                    boolean;
   cota_revalidacao_diaria:  number;
 }
@@ -47,7 +56,8 @@ export interface AtualizarCotaResponse {
   success:        boolean;
   target_user_id?: number;
   nome_usuario?:  string;
-  tipo?:          string;
+  // 🆕 v1.1 (23/06/2026) — alinhado com api/crm-cotas v1.1.
+  tipo_usuario?:  string;
   cota_diaria?:   number;
   error?:         string;
 }

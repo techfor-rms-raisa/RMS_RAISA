@@ -2,9 +2,21 @@
  * src/components/crm/cotas/CotasPage.tsx
  *
  * Caminho: src/components/crm/cotas/CotasPage.tsx
- * Versão:  1.1 (23/06/2026 — FIX RBAC tipo→tipo_usuario + CurrentUserLite)
+ * Versão:  1.2 (23/06/2026 — FIX naming c.tipo → c.tipo_usuario)
  *
- * 🆕 v1.1 (23/06/2026 — FIX 2 bugs descobertos no smoke):
+ * 🆕 v1.2 (23/06/2026 — FIX naming alinhado ao backend v1.1):
+ *   No agrupamento por tipo (useMemo cotasPorTipo) o componente usava
+ *   `c.tipo` para indexar o objeto `grupos`. Após a correção do backend
+ *   (api/crm-cotas.ts v1.1) e do hook (useCotas.ts v1.1), o campo
+ *   correto é `c.tipo_usuario`.
+ *
+ *   Sem este fix, `grupos[c.tipo]` sempre retornaria undefined e a
+ *   tabela ficaria vazia mesmo com dados chegando.
+ *
+ *   Mudança cirúrgica (1 ponto):
+ *     - cotasPorTipo: `grupos[c.tipo]` → `grupos[c.tipo_usuario]`.
+ *
+ * v1.1 (23/06/2026 — FIX 2 bugs descobertos no smoke):
  *   1. Campo RBAC errado: a interface inline `tipo: string` foi substituída
  *      pela interface canônica `CurrentUserLite` (de '../types/crm.types'),
  *      consistente com todos os demais componentes do módulo CRM
@@ -153,6 +165,9 @@ const CotasPage: React.FC<CotasPageProps> = ({ currentUser }) => {
   };
 
   // ── Agrupamento por tipo (estilo visual de seções) ────────────────
+  // 🆕 v1.2 (23/06/2026) — campo `tipo_usuario` (era `tipo`), alinhado com
+  //   api/crm-cotas.ts v1.1 e useCotas.ts v1.1. Sem este fix, o índice
+  //   era undefined e a tabela ficava vazia.
   const cotasPorTipo = useMemo(() => {
     const grupos: Record<string, CotaUsuario[]> = {
       'Administrador':    [],
@@ -160,7 +175,7 @@ const CotasPage: React.FC<CotasPageProps> = ({ currentUser }) => {
       'SDR':              [],
     };
     cotas.forEach(c => {
-      if (grupos[c.tipo]) grupos[c.tipo].push(c);
+      if (grupos[c.tipo_usuario]) grupos[c.tipo_usuario].push(c);
     });
     return grupos;
   }, [cotas]);

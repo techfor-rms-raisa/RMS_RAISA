@@ -2,12 +2,39 @@
  * api/crm-cotas.ts — Gestão de cotas diárias de revalidação (RBAC Admin)
  *
  * Caminho: api/crm-cotas.ts
- * Versão:  1.0 (23/06/2026 — Parametrização da cota Messias)
+ * Versão:  1.1 (23/06/2026 — FIX coluna app_users.tipo → tipo_usuario)
+ *
+ * 🆕 v1.1 (23/06/2026 — FIX HTTP 500 "column app_users.tipo does not exist"):
+ *   Causa raiz (smoke 23/06/2026 14:35):
+ *     A v1.0 escrevia `app_users.tipo`, mas o nome real da coluna no
+ *     banco é `app_users.tipo_usuario` (padrão usado em todos os outros
+ *     backends: crm-config.ts, crm-analytics.ts, crm-webhook.ts,
+ *     prospect-leads.ts, prospect-stats.ts).
+ *
+ *   Erro retornado ao frontend (HTTP 500):
+ *     `{"success":false,"error":"Erro ao validar admin: column app_users.tipo does not exist"}`
+ *
+ *   Fix cirúrgico em 7 pontos:
+ *     1. exigirAdmin SELECT: `tipo` → `tipo_usuario`.
+ *     2. exigirAdmin comparação: `data.tipo` → `data.tipo_usuario`.
+ *     3. handleListarCotas SELECT: `tipo` → `tipo_usuario`.
+ *     4. handleListarCotas filter: `.in('tipo', ...)` → `.in('tipo_usuario', ...)`.
+ *     5. handleListarCotas order: `.order('tipo', ...)` → `.order('tipo_usuario', ...)`.
+ *     6. handleAtualizarCota SELECT: `tipo` → `tipo_usuario`.
+ *     7. handleAtualizarCota comparação: `target.tipo` → `target.tipo_usuario`.
+ *
+ *   Mudança correspondente no contrato JSON de resposta:
+ *     Antes (v1.0): `cotas: [{ id, nome_usuario, tipo, cota_revalidacao_diaria }]`
+ *     Agora (v1.1): `cotas: [{ id, nome_usuario, tipo_usuario, cota_revalidacao_diaria }]`
+ *
+ *   Frontend correspondente:
+ *     - useCotas.ts v1.1: CotaUsuario.tipo → CotaUsuario.tipo_usuario.
+ *     - CotasPage.tsx v1.2: c.tipo → c.tipo_usuario no agrupamento.
  *
  * ════════════════════════════════════════════════════════════════════
  * RESPONSABILIDADE
  * ════════════════════════════════════════════════════════════════════
- * Endpoint dedicado para a aba "Cotas" no menu CRM & Campanhas. Permite
+ * Endpoint dedicado para a aba "Cotas" em Configurações CRM. Permite
  * ao Administrador visualizar e editar a coluna `cota_revalidacao_diaria`
  * em `app_users` para cada GC/SDR/Admin ativo.
  *
@@ -28,15 +55,15 @@
  * ════════════════════════════════════════════════════════════════════
  *
  * GET /api/crm-cotas?action=listar_cotas&user_id={admin_id}
- *   RBAC: app_users[admin_id].tipo === 'Administrador'
+ *   RBAC: app_users[admin_id].tipo_usuario === 'Administrador'
  *   Retorna a lista de usuários ativos com tipo GC/SDR/Admin + cota atual,
  *   ordenados por tipo (Admin → GC → SDR) e nome.
  *   Resposta:
  *     {
  *       success: true,
  *       cotas: [
- *         { id: 1, nome_usuario: "Paulo Malvezzi", tipo: "Administrador", cota_revalidacao_diaria: 50 },
- *         { id: 2, nome_usuario: "Messias Vieira",  tipo: "Gestão Comercial", cota_revalidacao_diaria: 50 },
+ *         { id: 1, nome_usuario: "Paulo Malvezzi", tipo_usuario: "Administrador", cota_revalidacao_diaria: 50 },
+ *         { id: 2, nome_usuario: "Messias Vieira",  tipo_usuario: "Gestão Comercial", cota_revalidacao_diaria: 50 },
  *         ...
  *       ],
  *       cota_min: 0,
@@ -46,12 +73,13 @@
  *
  * POST /api/crm-cotas?action=atualizar_cota
  *   Body: { admin_user_id: number, target_user_id: number, cota_diaria: number }
- *   RBAC: app_users[admin_user_id].tipo === 'Administrador'
+ *   RBAC: app_users[admin_user_id].tipo_usuario === 'Administrador'
  *   Validações:
  *     - cota_diaria deve ser número inteiro entre 0 e 500
- *     - target_user_id deve existir e ter tipo em { Administrador, Gestão Comercial, SDR }
+ *     - target_user_id deve existir e ter tipo_usuario em
+ *       { Administrador, Gestão Comercial, SDR }
  *   Resposta de sucesso:
- *     { success: true, target_user_id, nome_usuario, cota_diaria }
+ *     { success: true, target_user_id, nome_usuario, tipo_usuario, cota_diaria }
  *
  * ════════════════════════════════════════════════════════════════════
  * SEGURANÇA (⚠️ Claude Riscos)
@@ -101,7 +129,7 @@ async function exigirAdmin(user_id: number): Promise<GuardResult> {
   }
   const { data, error } = await supabase
     .from('app_users')
-    .select('id, nome_usuario, tipo, ativo')
+    .select('id, nome_usuario, tipo_usuario, ativo')
     .eq('id', user_id)
     .maybeSingle();
   if (error) {
@@ -113,7 +141,7 @@ async function exigirAdmin(user_id: number): Promise<GuardResult> {
   if (!data.ativo) {
     return { ok: false, status: 403, mensagem: 'Usuário inativo não pode acessar esta aba.' };
   }
-  if (data.tipo !== 'Administrador') {
+  if (data.tipo_usuario !== 'Administrador') {
     return { ok: false, status: 403, mensagem: 'Acesso restrito: apenas Administrador pode gerenciar cotas.' };
   }
   return { ok: true, nome: data.nome_usuario };
@@ -160,11 +188,11 @@ async function handleListarCotas(req: VercelRequest, res: VercelResponse) {
 
   const { data, error } = await supabase
     .from('app_users')
-    .select('id, nome_usuario, tipo, ativo, cota_revalidacao_diaria')
-    .in('tipo', [...TIPOS_COM_COTA])
+    .select('id, nome_usuario, tipo_usuario, ativo, cota_revalidacao_diaria')
+    .in('tipo_usuario', [...TIPOS_COM_COTA])
     .eq('ativo', true)
-    .order('tipo',         { ascending: true })
-    .order('nome_usuario', { ascending: true });
+    .order('tipo_usuario',  { ascending: true })
+    .order('nome_usuario',  { ascending: true });
 
   if (error) {
     console.error(`❌ [crm-cotas/listar] ${error.message}`);
@@ -214,7 +242,7 @@ async function handleAtualizarCota(req: VercelRequest, res: VercelResponse) {
   // contra alguém tentando alterar cota de "Operador Email" etc).
   const { data: target, error: errBusca } = await supabase
     .from('app_users')
-    .select('id, nome_usuario, tipo, ativo')
+    .select('id, nome_usuario, tipo_usuario, ativo')
     .eq('id', targetId)
     .maybeSingle();
 
@@ -224,10 +252,10 @@ async function handleAtualizarCota(req: VercelRequest, res: VercelResponse) {
   if (!target) {
     return res.status(404).json({ success: false, error: 'Usuário alvo não encontrado.' });
   }
-  if (!(TIPOS_COM_COTA as readonly string[]).includes(target.tipo)) {
+  if (!(TIPOS_COM_COTA as readonly string[]).includes(target.tipo_usuario)) {
     return res.status(400).json({
       success: false,
-      error:   `Usuário do tipo '${target.tipo}' não tem cota gerenciável (apenas ${TIPOS_COM_COTA.join(', ')}).`,
+      error:   `Usuário do tipo '${target.tipo_usuario}' não tem cota gerenciável (apenas ${TIPOS_COM_COTA.join(', ')}).`,
     });
   }
 
@@ -256,7 +284,7 @@ async function handleAtualizarCota(req: VercelRequest, res: VercelResponse) {
     success:        true,
     target_user_id: targetId,
     nome_usuario:   target.nome_usuario,
-    tipo:           target.tipo,
+    tipo_usuario:   target.tipo_usuario,
     cota_diaria:    cota,
   });
 }
