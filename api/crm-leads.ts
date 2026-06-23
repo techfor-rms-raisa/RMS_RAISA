@@ -2,6 +2,65 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.22 (23/06/2026 — RBAC nos contadores stats: respostas, inválidos e opt-out):
+ *    Completa a aplicação do RBAC iniciada em v1.20/v1.21. Resolve bug
+ *    reportado por Messias 23/06/2026 (smoke caso Marcos Rossi/GC):
+ *    badges das abas "Respostas Campanhas" (10), "E-mails Inválidos" (46)
+ *    e "Opt-Out" (18) mostravam totais GLOBAIS enquanto as listagens
+ *    abriam vazias por causa do RBAC. Divergência confusa.
+ *
+ *    Causa raiz: action `stats` v1.20 só implementou RBAC em totalLeads.
+ *    Os outros 3 contadores ficaram globais (comentário das linhas
+ *    1217-1221 da v1.20 dizia "ainda não há decisão de produto pedindo
+ *    restrição"). A decisão chegou — restringir.
+ *
+ *    Mudanças cirúrgicas na action `stats`:
+ *
+ *      total_respostas:
+ *        Replica EXATAMENTE a regra de listar_respostas v1.21
+ *        (RBAC por dono da CAMPANHA, não do lead):
+ *          Admin             → count global em email_respostas
+ *          Outros            → pré-busca campanhaIdsPermitidas via
+ *                              email_campanhas.responsavel_id = userId,
+ *                              count em email_respostas com .in('campanha_id', ids)
+ *          Operador sem camp → 0 (early-return semântico)
+ *          Sem currentUser   → 0 (fail-safe — KPI não trava a página)
+ *
+ *      total_invalidos:
+ *        Replica EXATAMENTE a regra de listar_invalidos v1.21
+ *        (RBAC por dono do LEAD):
+ *          Admin             → count global em email_leads
+ *                              (bounced OR motivo_invalidacao)
+ *          SDR               → (vertical=CRECI) OR (reservado_por=userId)
+ *          Gestão Comercial  → (vertical!=CRECI) AND (reservado_por=userId)
+ *          Sem currentUser   → 0 (fail-safe)
+ *
+ *      total_optout:
+ *        Decisão Messias 23/06/2026: opt-outs cujo email corresponde
+ *        a um LEAD VISÍVEL ao usuário (mesma regra de listar_invalidos).
+ *        Implementação:
+ *          Admin             → count global em email_optout
+ *          Outros            → pré-busca emails de email_leads RBAC-filtrado
+ *                              (sem opt_out=true para não duplicar universo),
+ *                              count em email_optout com .in('email', emails)
+ *                              + chunking se >300 emails (URL guard PostgREST)
+ *          Sem currentUser   → 0 (fail-safe)
+ *
+ *    Performance/risco (⚠️ Claude Riscos):
+ *      - Pré-busca de campanhaIdsPermitidas: típico <100 IDs/operador
+ *        (já validado em listar_respostas v1.21).
+ *      - Pré-busca de emails para opt-out RBAC: cap de 5000 leads por
+ *        operador (limit defensivo). Marcos = 72 leads → trivial.
+ *        Acima disso, chunking em blocos de 300 emails para não estourar
+ *        o limite de URL do PostgREST. Cada chunk gera 1 count adicional.
+ *      - SELECT email em email_leads é leve (indexado).
+ *      - Caso extremo (Admin com cap): nunca atinge — Admin tem early
+ *        path sem RBAC, count global.
+ *
+ *    Backwards-compatible: contrato JSON inalterado. As 3 chaves
+ *    (total_respostas, total_invalidos, total_optout) continuam
+ *    existindo no payload — agora com valores RBAC-filtrados.
+ *
  *  - v1.21 (22/06/2026 — RBAC em listar_invalidos e listar_respostas):
  *    Continuação da decisão de produto Messias 22/06/2026 (vide v1.20).
  *    Estende o RBAC para as 2 abas restantes da Base de Leads:
@@ -1214,19 +1273,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         //   logado, não o universo absoluto. Sem isso, GC veria "LEADS: 1692"
         //   mas só conseguiria abrir os seus N — divergência confusa.
         //
-        //   Aplicamos o filtro APENAS em totalLeads (o KPI do header). Os
-        //   demais (totalProspects, totalClientes, totalEmpresas, totalOptOut,
-        //   totalRespostas, totalInvalidos) ficam globais — eles alimentam
-        //   contadores administrativos da página e ainda não há decisão de
-        //   produto pedindo restrição.
+        // 🆕 v1.22 (23/06/2026) — RBAC EXTENDIDO para mais 3 contadores:
+        //   total_respostas, total_invalidos e total_optout. Sem isso,
+        //   badges das abas mostravam totais GLOBAIS mas listagens abriam
+        //   vazias (caso Marcos Rossi/GC reportado por Messias 23/06).
+        //   Decisão de produto: badges precisam refletir o que a listagem
+        //   mostra. Regras replicam EXATAMENTE listar_respostas v1.21,
+        //   listar_invalidos v1.21 e (para opt-out) regra simétrica via
+        //   JOIN por email com email_leads RBAC-filtrado.
         //
-        //   Política de fallback (sem currentUser): mostra totalLeads=0 ao
-        //   invés de retornar erro. O endpoint /stats não é crítico de UI —
-        //   uma página renderiza ainda assim, só com KPI zerado, e o operador
-        //   pode investigar.
+        //   Contadores que permanecem GLOBAIS (sem decisão de produto):
+        //     totalProspects, totalClientes, totalEmpresas, totalCampanhas.
+        //
+        //   Política de fallback (sem currentUser): todos os contadores
+        //   com RBAC retornam 0 ao invés de erro. O endpoint /stats não
+        //   é crítico de UI — a página renderiza, só com KPIs zerados,
+        //   e o operador pode investigar (typically: useLeads não
+        //   propagou currentUser por bug de integração).
         const currentUserIdRaw = req.query.current_user_id as string | undefined;
         const currentUserTipoStats = req.query.current_user_tipo as string | undefined;
         const currentUserIdNumStats = currentUserIdRaw ? parseInt(currentUserIdRaw) : NaN;
+        const hasValidUser =
+          !isNaN(currentUserIdNumStats) &&
+          (currentUserTipoStats === 'Administrador' ||
+           currentUserTipoStats === 'SDR' ||
+           currentUserTipoStats === 'Gestão Comercial');
 
         const { count: totalEmpresas } = await supabase
           .from('email_empresas').select('id', { count: 'exact', head: true });
@@ -1269,31 +1340,142 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('funil_status', 'cliente')
           .not('opt_out', 'is', true);
 
-        const { count: totalOptOut } = await supabase
-          .from('email_optout').select('id', { count: 'exact', head: true });
-
         const { count: totalCampanhas } = await supabase
           .from('email_campanhas').select('id', { count: 'exact', head: true });
 
-        // 🆕 v1.5 — agregados das abas "Respostas" e "Inválidos"
-        // (Fase 8-fix2: badges sempre populados, sem precisar abrir a aba).
-        const { count: totalRespostas } = await supabase
-          .from('email_respostas').select('id', { count: 'exact', head: true });
+        // ════════════════════════════════════════════════════════════
+        // 🆕 v1.22 — total_respostas COM RBAC
+        // ════════════════════════════════════════════════════════════
+        //   Replica EXATAMENTE a regra de listar_respostas v1.21:
+        //   RBAC por dono da CAMPANHA (responsavel_id). Decisão de produto
+        //   Messias 22/06/2026: "Cada Campanha é criada para um determinado
+        //   GC/SDR" → operador só vê respostas das campanhas onde é dono.
+        //
+        //   Performance: pré-busca de IDs de campanhas (tipicamente <100
+        //   por operador). Volume validado em produção pela v1.21.
+        let totalRespostas: number = 0;
+        if (currentUserTipoStats === 'Administrador') {
+          const { count } = await supabase
+            .from('email_respostas').select('id', { count: 'exact', head: true });
+          totalRespostas = count || 0;
+        } else if (hasValidUser) {
+          const { data: campsDoUsuario } = await supabase
+            .from('email_campanhas')
+            .select('id')
+            .eq('responsavel_id', currentUserIdNumStats);
+          const campIds = (campsDoUsuario || []).map((c: any) => c.id);
+          if (campIds.length > 0) {
+            const { count } = await supabase
+              .from('email_respostas').select('id', { count: 'exact', head: true })
+              .in('campanha_id', campIds);
+            totalRespostas = count || 0;
+          }
+          // Operador sem campanhas → totalRespostas continua 0.
+        }
+        // Sem currentUser válido → totalRespostas continua 0 (fail-safe).
 
+        // ════════════════════════════════════════════════════════════
+        // 🆕 v1.22 — total_invalidos COM RBAC
+        // ════════════════════════════════════════════════════════════
+        //   Replica EXATAMENTE a regra de listar_invalidos v1.21:
+        //   RBAC por dono do LEAD (mesmo padrão de totalLeads v1.20).
+        //
         // 🆕 v1.15 (16/06/2026 — F8): total_invalidos passa a contar LEADS,
         //   não eventos de email_fila. Critério D2:
         //     bounced=true  OR  motivo_invalidacao IS NOT NULL
-        //   Resultado: badge reflete leads únicos, sincronizado com a
-        //   nova fonte do listar_invalidos abaixo. Antes da v1.15 podia
-        //   acontecer de o badge mostrar "15" e a aba abrir só 8 leads
-        //   (porque havia 15 eventos de bounce em 8 leads distintos).
-        //
         //   Filtro `not('opt_out', 'is', true)` defensivo: opt-out tem
         //   aba própria, não deve contar como inválido na aba Inválidos.
-        const { count: totalInvalidos } = await supabase
+        let queryTotalInvalidos = supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
           .or('bounced.eq.true,motivo_invalidacao.not.is.null')
           .not('opt_out', 'is', true);
+
+        if (currentUserTipoStats === 'Administrador') {
+          // Sem filtro adicional — count global.
+        } else if (currentUserTipoStats === 'SDR' && !isNaN(currentUserIdNumStats)) {
+          queryTotalInvalidos = queryTotalInvalidos.or(
+            `vertical.eq.CRECI,reservado_por.eq.${currentUserIdNumStats}`
+          );
+        } else if (currentUserTipoStats === 'Gestão Comercial' && !isNaN(currentUserIdNumStats)) {
+          queryTotalInvalidos = queryTotalInvalidos
+            .neq('vertical', 'CRECI')
+            .eq('reservado_por', currentUserIdNumStats);
+        } else {
+          // Sem currentUser válido → fail-safe: 0
+          queryTotalInvalidos = queryTotalInvalidos.eq('id', -1);
+        }
+        const { count: totalInvalidos } = await queryTotalInvalidos;
+
+        // ════════════════════════════════════════════════════════════
+        // 🆕 v1.22 — total_optout COM RBAC
+        // ════════════════════════════════════════════════════════════
+        //   Decisão Messias 23/06/2026: opt-outs cujo email corresponde
+        //   a um LEAD VISÍVEL ao usuário (mesma regra de listar_invalidos).
+        //
+        //   email_optout NÃO tem FK direta para email_leads — só compartilha
+        //   o campo `email`. Por isso é JOIN implícito via .in('email', [...]).
+        //
+        //   Performance:
+        //     - Admin sempre vai pelo caminho rápido (count global, 1 query).
+        //     - GC/SDR: pré-busca de emails (cap defensivo de 5000 leads).
+        //       Marcos = 72 leads → trivial. Acima de 300 emails, chunking
+        //       em blocos para não estourar URL do PostgREST.
+        //     - SELECT email em email_leads é leve (campo indexado).
+        const CAP_LEADS_PARA_RBAC_OPTOUT = 5000;
+        const CHUNK_EMAILS_URL = 300;
+        let totalOptOut: number = 0;
+        if (currentUserTipoStats === 'Administrador') {
+          const { count } = await supabase
+            .from('email_optout').select('id', { count: 'exact', head: true });
+          totalOptOut = count || 0;
+        } else if (hasValidUser) {
+          // Pré-busca de emails visíveis ao usuário, aplicando a MESMA regra
+          // de RBAC do listar_invalidos (por dono do LEAD).
+          let qEmails = supabase
+            .from('email_leads')
+            .select('email')
+            .not('email', 'is', null)
+            .limit(CAP_LEADS_PARA_RBAC_OPTOUT);
+          if (currentUserTipoStats === 'SDR') {
+            qEmails = qEmails.or(
+              `vertical.eq.CRECI,reservado_por.eq.${currentUserIdNumStats}`
+            );
+          } else if (currentUserTipoStats === 'Gestão Comercial') {
+            qEmails = qEmails
+              .neq('vertical', 'CRECI')
+              .eq('reservado_por', currentUserIdNumStats);
+          }
+          const { data: emailsData } = await qEmails;
+          const emails = Array.from(new Set(
+            ((emailsData || [])
+              .map((r: any) => (r.email || '').toLowerCase().trim())
+              .filter(Boolean) as string[])
+          ));
+
+          if (emails.length > 0) {
+            // Chunking se exceder o tamanho seguro do URL PostgREST.
+            if (emails.length <= CHUNK_EMAILS_URL) {
+              const { count } = await supabase
+                .from('email_optout').select('id', { count: 'exact', head: true })
+                .in('email', emails);
+              totalOptOut = count || 0;
+            } else {
+              let somaChunks = 0;
+              for (let i = 0; i < emails.length; i += CHUNK_EMAILS_URL) {
+                const chunk = emails.slice(i, i + CHUNK_EMAILS_URL);
+                const { count } = await supabase
+                  .from('email_optout').select('id', { count: 'exact', head: true })
+                  .in('email', chunk);
+                somaChunks += (count || 0);
+              }
+              // Como email é único em email_optout (UNIQUE constraint),
+              // a soma dos chunks é correta sem risco de duplicação.
+              totalOptOut = somaChunks;
+            }
+          }
+          // Operador sem emails visíveis → totalOptOut continua 0.
+        }
+        // Sem currentUser válido → totalOptOut continua 0 (fail-safe).
 
         return res.status(200).json({
           success: true,
@@ -1302,10 +1484,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             total_leads: totalLeads || 0,
             total_prospects: totalProspects || 0,
             total_clientes: totalClientes || 0,
-            total_optout: totalOptOut || 0,
+            total_optout: totalOptOut,
             total_campanhas: totalCampanhas || 0,
-            // 🆕 v1.5
-            total_respostas: totalRespostas || 0,
+            // 🆕 v1.22 — agora RBAC-filtrados (eram globais até v1.21)
+            total_respostas: totalRespostas,
             total_invalidos: totalInvalidos || 0,
           }
         });
