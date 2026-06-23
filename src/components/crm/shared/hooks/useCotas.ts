@@ -2,9 +2,17 @@
  * src/components/crm/shared/hooks/useCotas.ts
  *
  * Caminho: src/components/crm/shared/hooks/useCotas.ts
- * Versão:  1.1 (23/06/2026 — FIX coluna tipo → tipo_usuario)
+ * Versão:  1.2 (23/06/2026 — FIX coluna ativo → ativo_usuario)
  *
- * 🆕 v1.1 (23/06/2026 — FIX naming do campo de tipo de perfil):
+ * 🆕 v1.2 (23/06/2026 — FIX HTTP 500 "column app_users.ativo does not exist"):
+ *   Alinha com api/crm-cotas.ts v1.2, que passou a usar `ativo_usuario`
+ *   (nome real da coluna em app_users), em vez de `ativo`. Frontend
+ *   consome o campo com o nome novo.
+ *
+ *   Mudança cirúrgica:
+ *     - CotaUsuario.ativo → CotaUsuario.ativo_usuario
+ *
+ * v1.1 (23/06/2026 — FIX naming do campo de tipo de perfil):
  *   Alinhado com api/crm-cotas.ts v1.1, que passou a retornar
  *   `tipo_usuario` (nome real da coluna em app_users), em vez de `tipo`.
  *   Frontend (CotasPage v1.2) consome o campo com o nome novo.
@@ -39,7 +47,9 @@ export interface CotaUsuario {
   // 🆕 v1.1 (23/06/2026) — campo corrigido: tipo_usuario (era 'tipo').
   //   Alinha com a coluna real do banco app_users.tipo_usuario.
   tipo_usuario:             TipoUsuarioComCota;
-  ativo:                    boolean;
+  // 🆕 v1.2 (23/06/2026) — campo corrigido: ativo_usuario (era 'ativo').
+  //   Alinha com a coluna real do banco app_users.ativo_usuario.
+  ativo_usuario:            boolean;
   cota_revalidacao_diaria:  number;
 }
 
