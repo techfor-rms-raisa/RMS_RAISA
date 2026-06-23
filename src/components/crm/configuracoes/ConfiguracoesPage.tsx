@@ -2,7 +2,36 @@
  * ConfiguracoesPage.tsx — Página "Configurações CRM"
  *
  * Caminho: src/components/crm/configuracoes/ConfiguracoesPage.tsx
- * Versão: 1.1 (13/06/2026)
+ * Versão: 1.2 (23/06/2026 — Aba "Cotas" — parametrização Messias)
+ *
+ * 🆕 v1.2 (23/06/2026 — Aba "Cotas" parametrização):
+ *   Adiciona a 3ª sub-aba "Cotas" ao container Configurações CRM. Permite
+ *   ao Admin parametrizar a coluna `app_users.cota_revalidacao_diaria`
+ *   para cada GC/SDR/Admin ativo (range 0–500, default 50).
+ *
+ *   Decisões de produto Messias 23/06/2026:
+ *     Q1 → Escopo: SÓ aba "Leads Importados" (revalidação Gemini Vercel).
+ *     Q2 → RBAC:   só Administrador vê/edita.
+ *
+ *   RBAC em CAMADAS (defesa em profundidade):
+ *     1. Sidebar.tsx: bloqueia view 'crm_config' para perfis fora de
+ *        ['Administrador', 'Gestão de R&S'].
+ *     2. Esta página: PERFIS_AUTORIZADOS continua sendo o gate de entrada
+ *        (Admin + Gestão de R&S podem entrar nas abas Tipos/Domínios).
+ *     3. NOVO em v1.2: TABS_FILTRADAS filtra a aba 'cotas' SE
+ *        currentUser.tipo_usuario !== 'Administrador'. Gestão de R&S
+ *        entra na página mas NÃO vê a aba Cotas (só Tipos + Domínios).
+ *     4. Backend (api/crm-cotas.ts): lock duro server-side via
+ *        exigirAdmin — se algum não-Admin vazasse por estado, nenhuma
+ *        mutação seria possível.
+ *
+ *   Mudanças cirúrgicas (3 pontos):
+ *     - Import de CotasPage.
+ *     - Type ConfigTab ganha 'cotas'.
+ *     - TABS ganha entry pronta=true.
+ *     - Render: novo `{activeTab === 'cotas' && <CotasPage ... />}`.
+ *     - Filtro `TABS_FILTRADAS` aplicado no map da sub-nav e no fallback
+ *       do `TABS.find(...)` (mantém o padrão da página).
  *
  * v1.1 (13/06/2026 — Fase 1 da reorganização Prospect/Lead):
  *   Reduzidas as sub-abas de 5 → 2. As 3 abas removidas migraram para
@@ -37,6 +66,8 @@ import type { CurrentUserLite } from '../types/crm.types';
 import { DOMINIOS_ENVIO } from '../types/crm.constants';
 import EmptyState from '../shared/components/EmptyState';
 import TiposCampanhaTab from './TiposCampanhaTab';
+// 🆕 v1.2 (23/06/2026) — Aba "Cotas" (RBAC Admin via TABS_FILTRADAS).
+import CotasPage from '../cotas/CotasPage';
 // 🆕 v1.1 (13/06/2026) — OptOutTab MOVIDO para a Base de Leads.
 //   O arquivo ./OptOutTab.tsx permanece no repo apenas para histórico
 //   Git e não é mais importado aqui.
@@ -45,9 +76,10 @@ import TiposCampanhaTab from './TiposCampanhaTab';
 // TIPOS
 // ════════════════════════════════════════════════════════════
 
-// 🆕 v1.1 (13/06/2026) — Sub-abas reduzidas a 'tipos' e 'dominios'.
-//   - 'optout' / 'invalidos' / 'correspondencia' removidos (ver cabeçalho).
-type ConfigTab = 'tipos' | 'dominios';
+// 🆕 v1.2 (23/06/2026) — Sub-abas: 'tipos' | 'dominios' | 'cotas' (NOVA).
+//   'cotas' só aparece para Administrador (filtragem em TABS_FILTRADAS).
+// 🆕 v1.1 (13/06/2026) — 'optout' / 'invalidos' / 'correspondencia' removidos.
+type ConfigTab = 'tipos' | 'dominios' | 'cotas';
 
 interface ConfigTabDef {
   id: ConfigTab;
@@ -83,9 +115,22 @@ const TABS: ConfigTabDef[] = [
     pronta: false,
     fase: 'Fase 5',
   },
+  // 🆕 v1.2 (23/06/2026) — Aba "Cotas" (RBAC Admin via TABS_FILTRADAS).
+  //   Parametriza app_users.cota_revalidacao_diaria por usuário.
+  //   Visível APENAS para tipo_usuario='Administrador' (filtragem mais
+  //   restrita que a página em si, que aceita Admin + Gestão de R&S).
+  {
+    id: 'cotas',
+    label: 'Cotas',
+    icon: 'fa-solid fa-gauge',
+    descricao: 'Limite diário de revalidação Gemini por GC/SDR/Admin (range 0–500)',
+    pronta: true,
+  },
 ];
 
 const PERFIS_AUTORIZADOS = ['Administrador', 'Gestão de R&S'];
+// 🆕 v1.2 (23/06/2026) — RBAC mais restrito para a aba Cotas dentro da página.
+const PERFIS_VEM_COTAS = ['Administrador'];
 
 // ════════════════════════════════════════════════════════════
 // COMPONENTE
@@ -106,7 +151,17 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = ({ currentUser }) =>
     );
   }
 
-  const tabAtual = TABS.find((t) => t.id === activeTab) || TABS[0];
+  // 🆕 v1.2 (23/06/2026) — TABS filtradas por RBAC granular.
+  //   A aba "Cotas" é mais restrita que a página: só Administrador a vê.
+  //   Gestão de R&S entra na página, mas vê só "Tipos de Campanha" e
+  //   "Domínios de Envio". Defesa em camadas: backend api/crm-cotas.ts
+  //   também faz lock duro server-side via exigirAdmin.
+  const podeVerCotas = PERFIS_VEM_COTAS.includes(currentUser?.tipo_usuario || '');
+  const TABS_FILTRADAS = TABS.filter((t) => (t.id === 'cotas' ? podeVerCotas : true));
+
+  // 🆕 v1.2 — fallback do find usa TABS_FILTRADAS para evitar abrir aba
+  //   filtrada caso activeTab já esteja em 'cotas' por algum estado anterior.
+  const tabAtual = TABS_FILTRADAS.find((t) => t.id === activeTab) || TABS_FILTRADAS[0];
 
   return (
     <div className="space-y-6">
@@ -128,7 +183,8 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = ({ currentUser }) =>
       {/* Sub-nav horizontal */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
         <nav className="flex flex-wrap border-b border-gray-200">
-          {TABS.map((tab) => {
+          {/* 🆕 v1.2 (23/06/2026) — Usa TABS_FILTRADAS para esconder "Cotas" de não-Admin */}
+          {TABS_FILTRADAS.map((tab) => {
             const ativo = tab.id === activeTab;
             return (
               <button
@@ -166,6 +222,8 @@ const ConfiguracoesPage: React.FC<ConfiguracoesPageProps> = ({ currentUser }) =>
         <div className="p-6">
           {activeTab === 'tipos' && <TiposCampanhaTab currentUser={currentUser} />}
           {activeTab === 'dominios' && <DominiosPlaceholder />}
+          {/* 🆕 v1.2 (23/06/2026) — Aba Cotas (RBAC Admin via TABS_FILTRADAS). */}
+          {activeTab === 'cotas' && <CotasPage currentUser={currentUser} />}
         </div>
       </div>
     </div>

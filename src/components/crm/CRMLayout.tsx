@@ -2,7 +2,7 @@
  * CRMLayout.tsx — Container do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/CRMLayout.tsx
- * Versão: 1.6 (Aba "Cotas" — parametrização de revalidação — 23/06/2026)
+ * Versão: 1.7 (Rollback da v1.6 — aba "Cotas" movida para Configurações — 23/06/2026)
  *
  * Histórico:
  *  - v1.0 (Fase 1A): Esqueleto com placeholders nas 6 sub-páginas.
@@ -14,21 +14,29 @@
  *    CRMLayout agora exibe apenas 3 abas: Campanhas, Copys e Assinaturas.
  *  - v1.5 (01/06/2026 - Fase D): Aba "Assinaturas" ligada ao AssinaturasPage
  *    (gestão pelo Admin, leitura para os demais). Placeholder removido.
- *  - v1.6 (23/06/2026): Aba "Cotas" adicionada (NOVA). RBAC RESTRITO:
- *    visível APENAS para tipo='Administrador'. Decisão Messias 23/06/2026:
- *    Admin parametriza a cota diária de revalidação Gemini de cada
- *    GC/SDR/Admin na coluna app_users.cota_revalidacao_diaria (range 0–500,
- *    default 50). Backend (api/crm-cotas.ts) faz lock duro de Admin
- *    server-side; este filtro client-side só evita que a aba apareça.
- *    Refator cirúrgico interno: o render condicional ternário aninhado
- *    da v1.5 (3 abas) virou switch (4 abas) para legibilidade, sem
- *    alteração visual ou comportamental.
+ *  - v1.6 (23/06/2026): Aba "Cotas" adicionada — ❌ CONTÊINER ERRADO.
+ *  - v1.7 (23/06/2026): ROLLBACK de v1.6 → retorna ao estado da v1.5.
+ *    A aba "Cotas" foi movida para o seu lugar correto: a página
+ *    "Configurações CRM" (ConfiguracoesPage v1.2). O contêiner certo
+ *    para parametrizações administrativas é a view 'crm_config' do
+ *    menu lateral, junto com "Tipos de Campanha" e "Domínios de Envio".
+ *    O CRMLayout volta a abrigar exclusivamente fluxos operacionais
+ *    de campanha (Campanhas / Copys / Assinaturas).
  *
- * Status das sub-páginas (que ainda estão aqui):
+ *    Reversão cirúrgica (4 reversões):
+ *      1. Import de CotasPage removido.
+ *      2. Type CRMTab volta a ser 'campanhas' | 'copys' | 'assinaturas'.
+ *      3. TABS volta a ter 3 entries (cotas removida).
+ *      4. tabsVisiveis volta a ser `TABS` direto (sem filtro RBAC) e
+ *         o switch volta a ternário aninhado (igual v1.5).
+ *
+ *    Estado final = idêntico à v1.5. Diferença: apenas o cabeçalho
+ *    documenta o histórico v1.6 → v1.7 para rastreabilidade Git.
+ *
+ * Status das sub-páginas (atual):
  *  - Campanhas      → ✅ implementado (Fase 1D)
  *  - Copys          → ✅ implementado (Fase 4B)
  *  - Assinaturas    → ✅ implementado (Fase D)
- *  - Cotas          → ✅ implementado (v1.6 — RBAC Admin)
  */
 
 import React, { useState } from 'react';
@@ -36,14 +44,12 @@ import { User } from '@/types';
 import CampanhasPage from './campanhas/CampanhasPage';
 import CopysPage from './copys/CopysPage';
 import AssinaturasPage from './assinaturas/AssinaturasPage';
-// 🆕 v1.6 (23/06/2026) — Aba Cotas (RBAC Admin)
-import CotasPage from './cotas/CotasPage';
 
 // ════════════════════════════════════════════════════════════
 // TIPOS
 // ════════════════════════════════════════════════════════════
 
-type CRMTab = 'campanhas' | 'copys' | 'assinaturas' | 'cotas';
+type CRMTab = 'campanhas' | 'copys' | 'assinaturas';
 
 interface CRMTabDef {
   id: CRMTab;
@@ -79,13 +85,6 @@ const TABS: CRMTabDef[] = [
     icon: 'fa-solid fa-signature',
     descricao: 'Assinaturas pessoais para campanhas',
   },
-  // 🆕 v1.6 (23/06/2026) — Cotas (RBAC Admin via filtro em tabsVisiveis)
-  {
-    id: 'cotas',
-    label: 'Cotas',
-    icon: 'fa-solid fa-gauge',
-    descricao: 'Limite diário de revalidação por GC/SDR/Admin (parametrizável)',
-  },
 ];
 
 // ════════════════════════════════════════════════════════════
@@ -100,16 +99,7 @@ const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
   // Todas as abas atuais são visíveis para todos os perfis com acesso ao módulo.
   // O RBAC fino acontece DENTRO de cada sub-página (ex: CopysPage decide quem
   // pode criar/editar; CampanhasPage idem).
-  //
-  // 🆕 v1.6 (23/06/2026) — Aba "Cotas" é EXCEÇÃO: só Administrador vê.
-  //   Defesa em camadas: este filtro client-side só esconde a entrada do
-  //   menu. O backend api/crm-cotas.ts faz o lock duro server-side
-  //   (exigirAdmin) — se algum usuário não-Admin vazasse para a aba via
-  //   manipulação direta do estado, nenhuma mutação seria possível.
-  const tabsVisiveis = TABS.filter((tab) => {
-    if (tab.id === 'cotas') return currentUser.tipo === 'Administrador';
-    return true;
-  });
+  const tabsVisiveis = TABS;
 
   const tabAtual: CRMTabDef =
     tabsVisiveis.find((t) => t.id === activeTab) || tabsVisiveis[0];
@@ -167,27 +157,13 @@ const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
 
         {/* CONTENT */}
         <div className="p-6">
-          {/*
-            🆕 v1.6 (23/06/2026) — Render condicional convertido em switch
-            para acomodar 4 abas sem ternários aninhados. Comportamento e
-            estilo idênticos à v1.5; apenas estrutura interna mais legível.
-            CotasPage renderiza somente quando a aba estiver visível
-            (tabsVisiveis já filtrou pelo tipo='Administrador').
-          */}
-          {(() => {
-            switch (tabAtual.id) {
-              case 'campanhas':
-                return <CampanhasPage currentUser={currentUser} />;
-              case 'copys':
-                return <CopysPage currentUser={currentUser} />;
-              case 'assinaturas':
-                return <AssinaturasPage currentUser={currentUser} />;
-              case 'cotas':
-                return <CotasPage currentUser={currentUser} />;
-              default:
-                return null;
-            }
-          })()}
+          {tabAtual.id === 'campanhas' ? (
+            <CampanhasPage currentUser={currentUser} />
+          ) : tabAtual.id === 'copys' ? (
+            <CopysPage currentUser={currentUser} />
+          ) : (
+            <AssinaturasPage currentUser={currentUser} />
+          )}
         </div>
       </div>
     </div>
@@ -195,7 +171,8 @@ const CRMLayout: React.FC<CRMLayoutProps> = ({ currentUser }) => {
 };
 
 // ════════════════════════════════════════════════════════════
-// (PlaceholderConteudo removido na v1.5 — não há mais aba em backlog)
+// (PlaceholderConteudo removido na v1.5 — não há mais aba em backlog.
+//  v1.6 errada/v1.7 rollback documentados no cabeçalho.)
 // ════════════════════════════════════════════════════════════
 
 export default CRMLayout;
