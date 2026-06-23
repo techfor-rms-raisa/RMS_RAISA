@@ -730,17 +730,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (leadExistente?.id) leadIdReal = leadExistente.id;
         }
 
-        // Campanhas já vinculadas ao lead (status atual da CAMPANHA é o que
-        // bloqueia, não o status do vínculo). Vínculo cancelado de campanha
-        // concluída/excluída NÃO bloqueia novo vínculo em outra campanha.
+        // Campanhas já vinculadas ao lead — bloqueio considera DUAS dimensões:
+        //   • status da CAMPANHA (deve estar em ativa/pausada/agendada)
+        //   • status do VÍNCULO (deve estar em ativa/pausada)
+        //
+        // 🔧 BUGFIX (23/06/2026) — Antes desta correção, o filtro olhava
+        //   APENAS para o status da campanha. Resultado: leads que tinham
+        //   bouncedo em uma campanha ativa (mas cuja fila foi cancelada
+        //   e o vínculo deveria ser 'bounced') continuavam bloqueando
+        //   re-vinculação mesmo após correção do email. Caso forense:
+        //   Rafael Baroni (lead 1740, Campanha_06) — vínculo em 'ativa'
+        //   apesar do bounce confirmado, motivo_invalidacao='bloqueado',
+        //   bounced=false (após edição). Tela mostrava "Lead já vinculado
+        //   a 1 campanha(s)" no fluxo de Promover da aba E-mails Inválidos.
+        //
+        //   Correção pareada com crm-webhook v1.16 (que agora marca o
+        //   vínculo como 'bounced' no momento do bounce) e backfill SQL
+        //   2026-06-23_backfill_vinculos_bounced.sql (corrige histórico).
+        //
+        //   Vínculos terminais ('bounced', 'cancelado', 'concluida', etc.)
+        //   NÃO bloqueiam re-vinculação — o lead pode entrar de novo na
+        //   mesma campanha (se for o caso) ou em outra.
         let campanhasBloqueadas: number[] = [];
         if (leadIdReal) {
           const { data: vinculos } = await supabase
             .from('email_lead_campanhas')
-            .select('campanha_id, email_campanhas!inner(status)')
+            .select('campanha_id, status, email_campanhas!inner(status)')
             .eq('lead_id', leadIdReal);
           campanhasBloqueadas = (vinculos || [])
-            .filter((v: any) => ['ativa', 'pausada', 'agendada'].includes(v.email_campanhas?.status))
+            .filter((v: any) =>
+              ['ativa', 'pausada', 'agendada'].includes(v.email_campanhas?.status) &&
+              ['ativa', 'pausada'].includes(v.status)
+            )
             .map((v: any) => v.campanha_id);
         }
 

@@ -3,6 +3,50 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.16 — 23/06/2026 — Atualização do VÍNCULO lead↔campanha após hard bounce
+ *   (descoberto via caso forense do Rafael Baroni — sessão de Messias).
+ *
+ *   Bug raiz descoberto:
+ *     Quando um lead deu hard bounce em uma campanha, o webhook v1.15.1
+ *     marcava `email_leads.bounced=true` e cancelava `email_fila` pendente
+ *     daquele email, MAS deixava o vínculo em `email_lead_campanhas` com
+ *     status='ativa'. Resultado: lead em estado "fantasma" — não recebe
+ *     mais emails (fila cancelada), mas tecnicamente "ainda está na
+ *     campanha". O `listar_campanhas_disponiveis_para_lead` rejeitava
+ *     re-vinculação dizendo "Lead já vinculado a 1 campanha(s)", mesmo
+ *     após edição do email + reset de bounced.
+ *
+ *   Validação forense (queries SQL em Production 23/06/2026):
+ *     - Zero triggers em email_leads/email_lead_campanhas/email_fila.
+ *     - Função recalcular_contadores_campanha é só agregação (não toca
+ *       em email_lead_campanhas).
+ *     - Sem CHECK constraint na coluna status de email_lead_campanhas
+ *       (aceita qualquer string).
+ *     - 41 vínculos em status='bounced' em Production — origem
+ *       provavelmente backfill manual antigo (sem evidência em código).
+ *     - Rafael Baroni (lead 1740, Campanha_06): bounced=false (após
+ *       edição), motivo_invalidacao='bloqueado', status_vinculo='ativa'
+ *       (CONFIRMA o bug fantasma).
+ *
+ *   Mudança nesta versão (cirúrgica, no bloco (A) hard bounce):
+ *     Adicionado UPDATE em email_lead_campanhas SET status='bounced'
+ *     WHERE lead_id=X AND campanha_id=Y AND status='ativa'. O filtro
+ *     `status='ativa'` garante idempotência (re-disparo de webhook não
+ *     sobrescreve outros estados como 'pausada' ou 'concluida').
+ *
+ *   Pareado com (mesma entrega):
+ *     - crm-campanhas.ts — bugfix em listar_campanhas_disponiveis_para_lead
+ *       para filtrar pelo status do VÍNCULO além do status da CAMPANHA.
+ *     - crm-leads.ts v1.22.1 — mesmo bugfix no helper vincularLeadACampanha
+ *       (etapa 6 — defesa em profundidade) + Promover na aba Inválidos.
+ *     - db/scripts/2026-06-23_backfill_vinculos_bounced.sql — backfill
+ *       agressivo para corrigir vínculos fantasma históricos (Rafael
+ *       Baroni e quaisquer outros similares), via email_fila como fonte
+ *       da verdade.
+ *
+ *   Decisão arquitetural: NÃO precisa migration SQL para CHECK constraint
+ *   (não há constraint; coluna aceita qualquer string).
+ *
  * v1.15.1 — 16/06/2026 — F8 FIX: classificarMotivoBounce retorna CÓDIGOS
  *   técnicos snake_case (não strings em português).
  *
@@ -1447,6 +1491,57 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           `[crm-webhook] 📛 Lead ${fila.lead_id} (${fila.destinatario_email}) marcado como bounced. ` +
           `Código: "${motivoClassificado}". Raw: ${motivoBounce}`,
         );
+      }
+
+      // 🆕 v1.16 (23/06/2026) — Marcar o VÍNCULO específico como bounced.
+      //
+      //   Sem isso, o vínculo em email_lead_campanhas continua status='ativa'
+      //   mesmo após a fila ter sido cancelada (bloco C-bounce abaixo). Isso
+      //   cria estado "fantasma": lead não recebe mais emails, mas o
+      //   listar_campanhas_disponiveis_para_lead acha que ele "ainda está
+      //   ativo" e bloqueia re-vinculação após correção do email (caso do
+      //   Rafael Baroni, 23/06/2026).
+      //
+      //   Filtro `status='ativa'` garante idempotência:
+      //     - Re-disparo do webhook (Resend faz retries) não sobrescreve
+      //       outros estados como 'pausada', 'concluida' ou 'cancelada'.
+      //     - Vínculos que NÃO sejam mais 'ativa' são preservados.
+      //
+      //   Operação separada do UPDATE de email_leads para isolar falhas:
+      //   se o UPDATE acima do lead funcionou, o UPDATE do vínculo abaixo
+      //   ainda tem valor mesmo se o anterior tivesse falhado.
+      //
+      //   Falha aqui é loggada como WARNING (não ERROR) — o lead já está
+      //   marcado como bounced (efeito principal preservado). Apenas a
+      //   re-vinculação direta fica bloqueada até intervenção.
+      if (fila.campanha_id) {
+        const { data: vinculosBounced, error: errVinc } = await supabase
+          .from('email_lead_campanhas')
+          .update({ status: 'bounced' })
+          .eq('lead_id', fila.lead_id)
+          .eq('campanha_id', fila.campanha_id)
+          .eq('status', 'ativa')
+          .select('id');
+
+        if (errVinc) {
+          console.warn(
+            `[crm-webhook] ⚠️ Falha ao atualizar vínculo email_lead_campanhas ` +
+            `(lead ${fila.lead_id}, campanha ${fila.campanha_id}): ${errVinc.message}`,
+          );
+        } else {
+          const total = vinculosBounced?.length || 0;
+          if (total > 0) {
+            console.log(
+              `[crm-webhook] 🔗 Vínculo lead-campanha marcado como bounced: ` +
+              `lead ${fila.lead_id} × campanha ${fila.campanha_id} (${total} vínculo atualizado)`,
+            );
+          } else {
+            console.log(
+              `[crm-webhook] ℹ️ Nenhum vínculo ativo para atualizar (lead ${fila.lead_id} × ` +
+              `campanha ${fila.campanha_id}) — provavelmente já estava em outro estado terminal.`,
+            );
+          }
+        }
       }
     }
 

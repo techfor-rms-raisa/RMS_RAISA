@@ -2,6 +2,29 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.22.1 (23/06/2026 — Bugfix etapa 6 do helper vincularLeadACampanha):
+ *    Hotfix consolidado com v1.22 (Recuperação de Leads Inválidos).
+ *    Descoberto via caso forense do Rafael Baroni (lead 1740, Campanha_06):
+ *    a etapa 6 do helper (defesa em profundidade contra duplicação)
+ *    filtrava APENAS pelo status da CAMPANHA, ignorando o status do
+ *    VÍNCULO. Resultado: leads que bouncearam em uma campanha ativa
+ *    (vínculo deveria ser 'bounced' após webhook v1.16) continuavam
+ *    sendo rejeitados pela defesa em profundidade.
+ *
+ *    Mudança cirúrgica na etapa 6: adicionar filtro
+ *    `['ativa', 'pausada'].includes(v.status)` ao lado do filtro
+ *    existente sobre o status da campanha. Vínculos terminais
+ *    ('bounced', 'cancelado', 'concluida') NÃO bloqueiam mais
+ *    re-vinculação — comportamento esperado para o caso de recuperação
+ *    de leads inválidos pela aba E-mails Inválidos.
+ *
+ *    Pareado com (mesma entrega):
+ *      • crm-webhook.ts v1.16 (UPDATE no vínculo após hard bounce)
+ *      • crm-campanhas.ts (bugfix idêntico em
+ *        listar_campanhas_disponiveis_para_lead)
+ *      • db/scripts/2026-06-23_backfill_vinculos_bounced.sql (corrige
+ *        vínculos fantasma históricos via email_fila como fonte da verdade)
+ *
  *  - v1.22 (23/06/2026 — Recuperação de Leads Inválidos para Campanha):
  *    Funcionalidade nova solicitada por Messias em Production. Quando um
  *    lead dá bounce em uma campanha, ele é movido para a aba "E-mails
@@ -4031,13 +4054,26 @@ async function vincularLeadACampanha(
   // 6. Defesa em profundidade — duplicação simultânea
   //    (decisão de produto 09/06/2026: bloquear lead em múltiplas
   //    campanhas ativa/pausada/agendada para evitar spam ao contato).
+  //
+  // 🔧 v1.22.1 BUGFIX (23/06/2026) — Antes desta correção, o filtro
+  //   considerava APENAS o status da CAMPANHA. Resultado: vínculos
+  //   em estado terminal ('bounced', 'cancelado', 'concluida') em
+  //   campanhas ainda ativas eram tratados como conflito, bloqueando
+  //   re-vinculação legítima de leads recuperados (caso forense Rafael
+  //   Baroni, 23/06/2026 — vide cabeçalho v1.22.1).
+  //
+  //   Correção: adicionado filtro `['ativa', 'pausada'].includes(v.status)`
+  //   para considerar apenas vínculos ATIVOS como conflito. Vínculos
+  //   terminais não bloqueiam mais.
   const { data: vinculosExistentes } = await supabase
     .from('email_lead_campanhas')
-    .select('campanha_id, email_campanhas!inner(status, nome)')
+    .select('campanha_id, status, email_campanhas!inner(status, nome)')
     .eq('lead_id', lead.id);
 
   const conflitos = (vinculosExistentes || []).filter(
-    (v: any) => ['ativa', 'pausada', 'agendada'].includes(v.email_campanhas?.status)
+    (v: any) =>
+      ['ativa', 'pausada', 'agendada'].includes(v.email_campanhas?.status) &&
+      ['ativa', 'pausada'].includes(v.status)
   );
   if (conflitos.length > 0) {
     const nomes = conflitos.map((v: any) => `"${v.email_campanhas?.nome}"`).join(', ');
