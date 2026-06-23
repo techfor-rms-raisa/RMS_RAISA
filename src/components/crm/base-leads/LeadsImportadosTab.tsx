@@ -2,9 +2,32 @@
  * LeadsImportadosTab.tsx — Aba "Leads Importados" do BaseLeadsPage
  *
  * Caminho: src/components/crm/base-leads/LeadsImportadosTab.tsx
- * Versão: 1.4 (UX LinkedIn discreto na tabela — 19/06/2026)
+ * Versão: 1.5 (Cota parametrizada — 23/06/2026)
  *
- * 🆕 v1.4 (19/06/2026 — UX LinkedIn): pequeno ícone azul oficial do LinkedIn
+ * 🆕 v1.5 (23/06/2026 — Cota parametrizada por usuário):
+ *   Remove o hardcode `/ 50` do badge "Cota Revalidação hoje" e passa
+ *   a renderizar o total vindo do hook (`cotaTotal`). O hook lê a cota
+ *   diária parametrizada do backend (`app_users.cota_revalidacao_diaria`,
+ *   via helper lib/cota-diaria.ts).
+ *
+ *   Decisão Messias 23/06/2026:
+ *     - Cada GC/SDR/Admin tem cota individual (range 0–500).
+ *     - Aba "Cotas" no menu CRM & Campanhas permite Admin editar.
+ *     - Default mantém 50 (compatível com comportamento anterior).
+ *
+ *   Mudanças cirúrgicas (linhas atingidas):
+ *     - Linha ~184: troca o literal `50` por `{cotaTotal}` no badge.
+ *     - Linha ~190 (banner "X restantes"): regra de aviso passa a usar
+ *       o cotaTotal vindo do hook (10% como threshold genérico, em
+ *       vez do absoluto de 10 que assumia 50 fixo). Mantém amber-600.
+ *     - Destructure de `hook` ganha `cotaTotal`.
+ *
+ *   Backwards-compatible: se o hook ainda não tiver `cotaTotal` (em
+ *   ambiente em rolling deploy), usa fallback `cotaTotal ?? 50`.
+ *
+ * v1.4 (UX LinkedIn discreto na tabela — 19/06/2026)
+ *
+ * v1.4 (19/06/2026 — UX LinkedIn): pequeno ícone azul oficial do LinkedIn
  *   (#0A66C2) ao lado do nome do lead na coluna principal, EXIBIDO APENAS
  *   quando `l.linkedin_url` está preenchido. Click abre o perfil em nova
  *   aba (target=_blank, rel=noreferrer) e usa stopPropagation para não
@@ -151,6 +174,8 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
   const {
     leads, total, page, perPage, apenasMeus, filtroStatus,
     ordenacao, busca, loading, cotaConsumidaHoje, cotaResidual,
+    // 🆕 v1.5 (23/06/2026) — cota total parametrizada (substitui o /50 hardcoded)
+    cotaTotal,
     validandoLeadIds,
     setPage, setPerPage, setApenasMeus, setFiltroStatus,
     setOrdenacao, setBusca,
@@ -158,6 +183,16 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
   } = hook;
 
   const totalPaginas = Math.max(1, Math.ceil(total / perPage));
+
+  // 🆕 v1.5 — fallback defensivo. Se cotaTotal não vier do hook (ex: durante
+  //   rolling deploy do backend), usa 50 (mesmo default histórico do sistema).
+  const cotaTotalSafe = cotaTotal ?? 50;
+
+  // 🆕 v1.5 — threshold relativo de aviso (10% da cota), em vez do absoluto
+  //   de 10 que assumia 50 fixo. Para cotaTotal=50 segue avisando em ≤5;
+  //   para cotaTotal=200, avisa em ≤20; etc. Mínimo 5 para evitar avisar
+  //   tarde demais em cotas muito altas.
+  const limiteAvisoRestante = Math.max(5, Math.floor(cotaTotalSafe * 0.1));
 
   // Validação individual de 1 lead (botão da coluna Ações)
   const onValidar = useCallback(async (lead: LeadImportado) => {
@@ -181,8 +216,8 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
           Mostrando <strong className="text-gray-900">{total} leads importados</strong>
           {apenasMeus && ' reservados para você'}
           <span className="text-gray-400">·</span>
-          Cota Revalidação hoje: <strong className="text-gray-900">{cotaConsumidaHoje} / 50</strong>
-          {cotaResidual > 0 && cotaResidual <= 10 && (
+          Cota Revalidação hoje: <strong className="text-gray-900">{cotaConsumidaHoje} / {cotaTotalSafe}</strong>
+          {cotaResidual > 0 && cotaResidual <= limiteAvisoRestante && (
             <span className="text-amber-600 text-xs font-medium">
               <i className="fa-solid fa-triangle-exclamation"></i> {cotaResidual} restantes
             </span>

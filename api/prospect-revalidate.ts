@@ -1,6 +1,38 @@
 /**
  * api/prospect-revalidate.ts — Orquestrador da Revalidação de Leads Importados
  *
+ * v1.8 (23/06/2026 — Parametrização da cota diária por usuário)
+ *   Remove o hardcode `COTA_DIARIA_POR_GESTOR = 50` e passa a ler a cota
+ *   parametrizada da nova coluna `app_users.cota_revalidacao_diaria`
+ *   (migration 2026-06-23_app_users_cota_revalidacao.sql) via helper
+ *   compartilhado `lib/cota-diaria.ts`.
+ *
+ *   Decisão Messias 23/06/2026:
+ *     Q1: Escopo SÓ aba "Leads Importados" (este endpoint + GET listar).
+ *     Q2: aba "Cotas" RBAC Admin (api/crm-cotas.ts novo).
+ *     D1: Range 0–500 (CHECK no banco).
+ *     D2: Default novo usuário = 50 (idêntico ao hardcode anterior).
+ *
+ *   Mudanças cirúrgicas:
+ *     - Novo import: `obterCotaDiaria` de '../lib/cota-diaria.js'.
+ *     - Constante `COTA_DIARIA_POR_GESTOR = 50` MANTIDA como fallback
+ *       de UI/log apenas (não usada mais para enforcement). Comentário
+ *       explicativo adicionado.
+ *     - Linha ~1186 (handler): `cotaConsumida` permanece; agora
+ *       `cotaDiariaUser = await obterCotaDiaria(supabase, user_id)`
+ *       precede o cálculo de `cotaResidual`.
+ *     - Mensagens de erro `cota_esgotada` / `cota_excedida` agora
+ *       reportam `cota_diaria: cotaDiariaUser` (não a constante).
+ *
+ *   Backwards-compatible: contrato HTTP de saída inalterado (mesmo nome
+ *   das chaves `cota_diaria`, `cota_consumida_hoje`, `cota_residual`).
+ *   Fail-safe: se SELECT em app_users falhar (cenário raro), helper
+ *   retorna 50 — comportamento equivalente ao da constante anterior.
+ *
+ *   IMPORTANTE: a linha 1169 (`if (modo === 'lote' && leads.length > 50)`)
+ *   NÃO foi alterada. Aquele 50 é uma proteção técnica de payload
+ *   (anti-DOS), não a cota do usuário — manter como está.
+ *
  * v1.7 (19/06/2026 — FIX Bug auto-promoção 3.D: aceita status='promovido')
  *   Ajuste cirúrgico de 1 linha na condição da ETAPA 5 (auto-promoção
  *   prospect_leads → email_leads). A versão v1.2 (Sub-fase 3.D) só
@@ -195,6 +227,8 @@ import { promoverParaEmailLeads } from '../lib/promover-email-lead.js';
 // 🆕 v1.6 (18/06/2026 — Refator lib/) — Cascade in-process elimina HTTP 401 em Preview
 import { validarEmailCascade } from '../lib/validate-emails.js';
 import { buscarEmailPorNome  } from '../lib/email-finder.js';
+// 🆕 v1.8 (23/06/2026 — Cota parametrizável) — Helper compartilhado de cota diária
+import { obterCotaDiaria } from '../lib/cota-diaria.js';
 
 export const config = { maxDuration: 60 };
 
@@ -210,6 +244,15 @@ const supabase = createClient(
 // 🗑️ v1.6 (18/06/2026) — PUBLIC_BASE_URL removido: não há mais chamadas
 //   fetch() cross-function. Cascade chama libs in-process. Se algum dia
 //   for necessário fazer chamada HTTP externa, ler do env diretamente.
+//
+// 🔄 v1.8 (23/06/2026) — COTA_DIARIA_POR_GESTOR rebaixada a constante
+//   de referência apenas. O enforcement agora consulta a coluna
+//   `app_users.cota_revalidacao_diaria` via helper `obterCotaDiaria()`
+//   da lib/cota-diaria.ts. O valor 50 aqui é o mesmo do DEFAULT da
+//   migration 2026-06-23_app_users_cota_revalidacao.sql e do helper
+//   (fail-safe). Mantida para documentação histórica + protege a
+//   linha 1170 (`leads.length > 50` em modo lote) que é uma proteção
+//   técnica de payload (anti-DOS), NÃO a cota de negócio.
 const COTA_DIARIA_POR_GESTOR   = 50;
 const DELAY_ANTI_RATE_LIMIT_MS = 300;
 
@@ -1182,15 +1225,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
   }
 
-  // ── COTA RESIDUAL (Seção 4.6)
-  const cotaConsumida = await contarValidacoesHoje(user_id);
-  const cotaResidual  = COTA_DIARIA_POR_GESTOR - cotaConsumida;
+  // ── COTA RESIDUAL (Seção 4.6) — 🔄 v1.8 (23/06/2026): cota parametrizada por usuário
+  //   Antes (até v1.7): const cotaResidual = COTA_DIARIA_POR_GESTOR - cotaConsumida;
+  //   Agora: SELECT em app_users.cota_revalidacao_diaria (helper compartilhado
+  //   lib/cota-diaria.ts). Helper tem fail-safe: se SELECT falhar, retorna 50
+  //   (mesmo valor da constante anterior) — operação NÃO bloqueia por leitura.
+  const cotaConsumida   = await contarValidacoesHoje(user_id);
+  const cotaDiariaUser  = await obterCotaDiaria(supabase, user_id);
+  const cotaResidual    = cotaDiariaUser - cotaConsumida;
   if (cotaResidual <= 0) {
     return res.status(400).json({
       success: false,
       error:   'cota_esgotada',
       mensagem: `Você já validou ${cotaConsumida} leads hoje. Cota esgotada. Tente novamente amanhã às 00:00 BRT.`,
-      cota_diaria:    COTA_DIARIA_POR_GESTOR,
+      cota_diaria:    cotaDiariaUser,
       cota_consumida: cotaConsumida,
       cota_residual:  0,
     });
@@ -1200,7 +1248,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       success: false,
       error:   'cota_excedida',
       mensagem: `Você já validou ${cotaConsumida} leads hoje. Esta importação tem ${leads.length} leads. Reduza para ${cotaResidual} ou tente amanhã às 00:00 BRT.`,
-      cota_diaria:    COTA_DIARIA_POR_GESTOR,
+      cota_diaria:    cotaDiariaUser,
       cota_consumida: cotaConsumida,
       cota_residual:  cotaResidual,
       leads_recebidos: leads.length,
@@ -1263,6 +1311,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   return res.status(200).json({
     success:             true,
     user_id,
+    // 🆕 v1.8 — devolve a cota PARAMETRIZADA do usuário (não mais a constante)
+    cota_diaria:         cotaDiariaUser,
     cota_consumida_hoje: cotaConsumida + leads.length,
     cota_residual:       Math.max(0, cotaResidual - leads.length),
     resumo,

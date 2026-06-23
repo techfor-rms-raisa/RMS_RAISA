@@ -2,9 +2,61 @@
  * api/revalidacao-leads-importados.ts — Listagem + Edição + Promoção + Anti-dup
  *
  * Caminho: api/revalidacao-leads-importados.ts
- * Versão: 1.5 (Sub-fase 3.D refino — 18/06/2026 — Anti-duplicidade)
+ * Versão: 1.6 (FIX bug "Promovido não some" + Cota parametrizada — 23/06/2026)
  *
- * 🆕 v1.5 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade de importação):
+ * 🆕 v1.6 (23/06/2026 — FIX bug "Promovido não some" + Cota parametrizada):
+ *
+ *   ⚡ FIX bug "Promovido não some" da aba "Leads Importados":
+ *     Causa raiz (diagnosticada 23/06/2026):
+ *       1. lib/promover-email-lead.ts v1.0–v1.2 fazia DELETE em prospect_leads,
+ *          mas o DELETE falhava silenciosamente por FK (prospect_revalidacao_log
+ *          com NO ACTION). Mesmo assim o helper retornava promovido=true.
+ *       2. Em 22/06 o helper foi atualizado para v1.3: troca DELETE por
+ *          UPDATE status='no_crm' (cf. doc do próprio helper, alinhada com
+ *          o padrão de api/crm-leads.ts importar_prospects/promover_para_campanha).
+ *       3. PORÉM o handler `handleListarLeadsImportados` aqui (até v1.5)
+ *          NÃO filtrava por `status != 'no_crm'` na query base — então leads
+ *          marcados como 'no_crm' continuavam aparecendo na aba "Leads
+ *          Importados" com badge "Promovido", causando confusão para o usuário
+ *          (lead aparecia em DUAS abas: "Meus Leads" + "Leads Importados").
+ *
+ *     Decisão Messias 23/06/2026 (Q3): só "Promovido" deve SUMIR da aba.
+ *       Demais status (trocou_empresa, nao_localizado, ttl_nao_atingido,
+ *       dominio_invalido, opt_out, atualizado) continuam visíveis para
+ *       revisão ou auditoria.
+ *
+ *     Fix cirúrgico (1 linha):
+ *       - `handleListarLeadsImportados`: adiciona `.neq('status', 'no_crm')`
+ *         imediatamente após o `.eq('motor', 'importacao_lista')`.
+ *       - Backfill complementar: SQL 2026-06-23_backfill_leads_promovido_orfaos.sql
+ *         alinha o estado dos órfãos antigos (Bernardo/Antonio/Ana do smoke #3
+ *         de 19/06) marcando status='no_crm', para sumirem da aba imediatamente
+ *         após o deploy do FIX (sem precisar revalidar de novo).
+ *
+ *   📐 COTA PARAMETRIZADA POR USUÁRIO:
+ *     Remove o hardcode `COTA_DIARIA_POR_GESTOR = 50` e passa a ler a cota
+ *     parametrizada da nova coluna `app_users.cota_revalidacao_diaria`
+ *     (migration 2026-06-23_app_users_cota_revalidacao.sql) via helper
+ *     compartilhado `lib/cota-diaria.ts`.
+ *
+ *     Decisão Messias 23/06/2026 (Q1+Q2+D1+D2):
+ *       Q1: Escopo APENAS aba "Leads Importados" (este endpoint + prospect-revalidate).
+ *       Q2: aba "Cotas" RBAC Admin (api/crm-cotas.ts novo).
+ *       D1: Range 0–500 (CHECK no banco).
+ *       D2: Default novo usuário = 50 (idêntico ao hardcode anterior).
+ *
+ *     Mudanças cirúrgicas:
+ *       - Novo import: `obterCotaDiaria` de '../lib/cota-diaria.js'.
+ *       - Constante `COTA_DIARIA_POR_GESTOR = 50` MANTIDA como fallback de
+ *         referência (não usada mais para enforcement). Comentário adicionado.
+ *       - handleListarLeadsImportados: `cotaDiaria` agora vem do helper.
+ *         Retorno `cota_diaria` no JSON reflete o valor parametrizado.
+ *
+ *     Backwards-compatible: chaves do JSON (`cota_diaria`, `cota_consumida_hoje`,
+ *     `cota_residual`) preservadas. Frontend continua lendo das mesmas chaves.
+ *     Fail-safe: helper retorna 50 se SELECT falhar — operação NÃO bloqueia.
+ *
+ * v1.5 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade de importação):
  *   Adiciona action POST `?action=verificar_duplicidade` que classifica cada
  *   email de uma lista contra 3 fontes simultaneamente:
  *     - `email_leads.email`     → status 'em_email_leads'  (lead ativo no CRM)
@@ -139,6 +191,8 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 // 🆕 v1.3 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual)
 import { promoverParaEmailLeads } from '../lib/promover-email-lead.js';
+// 🆕 v1.6 (23/06/2026 — Cota parametrizável)
+import { obterCotaDiaria } from '../lib/cota-diaria.js';
 
 export const config = { maxDuration: 30 };
 
@@ -147,6 +201,10 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// 🔄 v1.6 (23/06/2026) — COTA_DIARIA_POR_GESTOR rebaixada a constante de
+//   referência. Enforcement agora consulta app_users.cota_revalidacao_diaria
+//   via obterCotaDiaria() do lib/cota-diaria.ts. Mantida sincronizada com
+//   o DEFAULT 50 da migration e do helper (fail-safe).
 const COTA_DIARIA_POR_GESTOR = 50;
 const PER_PAGE_DEFAULT = 30;
 const PER_PAGE_ALLOWED = new Set([30, 50, 100]);
@@ -230,10 +288,24 @@ async function handleListar(req: VercelRequest, res: VercelResponse) {
   if (!PER_PAGE_ALLOWED.has(per_page)) per_page = PER_PAGE_DEFAULT;
 
   // ── Monta a query base
+  //
+  // 🔧 v1.6 (23/06/2026) — FIX bug "Promovido não some" da aba.
+  //   Adiciona `.neq('status', 'no_crm')` para esconder leads que já foram
+  //   promovidos para email_leads (lib/promover-email-lead.ts v1.3+ marca
+  //   o prospect com status='no_crm' após o INSERT na transferência).
+  //   Antes deste fix, leads "Promovido" continuavam aparecendo na aba
+  //   junto com "Meus Leads", confundindo o usuário (smoke #3 19/06:
+  //   Bernardo Carneiro, Antonio Melo, Ana Samora).
+  //   Decisão Messias 23/06 (Q3): só "Promovido" some — demais status
+  //   (trocou_empresa, nao_localizado, etc) continuam visíveis na aba.
+  //   O filtro `status != 'no_crm'` consegue isso porque APENAS o helper
+  //   de promoção marca status='no_crm'. Demais status_atualizacao
+  //   preservam o status anterior do prospect (default 'novo').
   let query = supabase
     .from('prospect_leads')
     .select('*', { count: 'exact' })
-    .eq('motor', 'importacao_lista');
+    .eq('motor', 'importacao_lista')
+    .neq('status', 'no_crm');
 
   if (apenasMeus) {
     query = query.eq('reservado_por', user_id);
@@ -281,8 +353,13 @@ async function handleListar(req: VercelRequest, res: VercelResponse) {
   }
 
   // ── Cota (compartilhada com prospect-revalidate)
+  //
+  // 🔄 v1.6 (23/06/2026) — cota parametrizada por usuário (não mais constante).
+  //   Lê app_users.cota_revalidacao_diaria via helper compartilhado.
+  //   Fail-safe: se SELECT falhar, helper retorna 50 (mesmo valor anterior).
   const cotaConsumida = await contarValidacoesHoje(user_id);
-  const cotaResidual  = Math.max(0, COTA_DIARIA_POR_GESTOR - cotaConsumida);
+  const cotaDiaria    = await obterCotaDiaria(supabase, user_id);
+  const cotaResidual  = Math.max(0, cotaDiaria - cotaConsumida);
 
   return res.status(200).json({
     success: true,
@@ -290,7 +367,7 @@ async function handleListar(req: VercelRequest, res: VercelResponse) {
     total:   count ?? 0,
     page,
     per_page,
-    cota_diaria:         COTA_DIARIA_POR_GESTOR,
+    cota_diaria:         cotaDiaria,
     cota_consumida_hoje: cotaConsumida,
     cota_residual:       cotaResidual,
   });

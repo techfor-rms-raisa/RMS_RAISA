@@ -2,9 +2,35 @@
  * useLeadsImportados.ts — Hook orquestrador da aba "Leads Importados"
  *
  * Caminho: src/components/crm/shared/hooks/useLeadsImportados.ts
- * Versão: 1.4 (Sub-fase 3.D refino — 18/06/2026 — Anti-duplicidade)
+ * Versão: 1.5 (Cota parametrizada — 23/06/2026)
  *
- * 🆕 v1.4 (Sub-fase 3.D refino — 18/06/2026):
+ * 🆕 v1.5 (23/06/2026 — Cota parametrizada por usuário):
+ *   Adiciona o estado `cotaTotal` (o limite diário do usuário, agora
+ *   parametrizável via aba "Cotas") ao retorno do hook. O componente
+ *   LeadsImportadosTab v1.5 consome via destructure para renderizar
+ *   o badge "Cota Revalidação hoje: X / {cotaTotal}" em vez do
+ *   hardcoded `/ 50`.
+ *
+ *   Decisão Messias 23/06/2026:
+ *     - cota_diaria já vinha sendo retornada pelo backend (chave
+ *       `cota_diaria` no JSON do GET /api/revalidacao-leads-importados
+ *       e do POST /api/prospect-revalidate).
+ *     - Antes da v1.5, o hook IGNORAVA essa chave e o frontend usava
+ *       `50` hardcoded no JSX. Agora o hook captura e propaga.
+ *
+ *   Mudanças cirúrgicas:
+ *     - Novo state `cotaTotal: number` (default null/0 antes da 1ª carga,
+ *       depois reflete o valor do backend).
+ *     - `carregar()` lê `data.cota_diaria` e seta `cotaTotal`.
+ *     - `validarLead()` e `importarLote()` também atualizam cotaTotal
+ *       quando o POST devolve essa chave (a partir da v1.8 do backend).
+ *     - Retorno público ganha `cotaTotal`.
+ *
+ *   Backwards-compatible: se o backend não retornar `cota_diaria` (ex:
+ *   rolling deploy), o estado fica em `null` e o componente usa
+ *   fallback `cotaTotal ?? 50` no JSX (mesmo default histórico).
+ *
+ * v1.4 (Sub-fase 3.D refino — 18/06/2026 — Anti-duplicidade)
  *   • Novo método `verificarDuplicidade(emails)` que chama POST
  *     /api/revalidacao-leads-importados?action=verificar_duplicidade.
  *     Retorna o status de cada email contra `email_leads`, `email_optout`
@@ -241,6 +267,10 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
   const [loading, setLoading]                   = useState(false);
   const [cotaConsumidaHoje, setCotaConsumidaHoje] = useState(0);
   const [cotaResidual, setCotaResidual]         = useState(50);
+  // 🆕 v1.5 (23/06/2026) — Cota total parametrizada vinda do backend.
+  //   `null` antes da 1ª carga (componente usa fallback 50). Após
+  //   carregar(), reflete app_users.cota_revalidacao_diaria do usuário.
+  const [cotaTotal, setCotaTotal]               = useState<number | null>(null);
 
   // ── Estado de ações por linha (spinners) ────────────────
   const [validandoLeadIds, setValidandoLeadIds] = useState<Set<number>>(new Set());
@@ -265,6 +295,10 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
         setTotal(data.total || 0);
         setCotaConsumidaHoje(data.cota_consumida_hoje ?? 0);
         setCotaResidual(data.cota_residual ?? 50);
+        // 🆕 v1.5 — captura a cota PARAMETRIZADA do usuário (substitui hardcode /50 do JSX)
+        if (typeof data.cota_diaria === 'number') {
+          setCotaTotal(data.cota_diaria);
+        }
       } else {
         console.error('[useLeadsImportados] Erro:', data?.error);
         setLeads([]);
@@ -320,6 +354,10 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
       // Atualiza cota local
       setCotaConsumidaHoje(data.cota_consumida_hoje ?? cotaConsumidaHoje);
       setCotaResidual(data.cota_residual ?? cotaResidual);
+      // 🆕 v1.5 — captura cota total parametrizada quando backend retorna (v1.8+)
+      if (typeof data.cota_diaria === 'number') {
+        setCotaTotal(data.cota_diaria);
+      }
       return { ok: true, status };
     } catch (err: any) {
       return { ok: false, mensagem: err?.message || 'Falha de rede' };
@@ -415,6 +453,10 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
         }
         if (typeof data?.cota_residual === 'number') {
           setCotaResidual(data.cota_residual);
+        }
+        // 🆕 v1.5 — captura cota total parametrizada quando backend retorna (v1.8+)
+        if (typeof data?.cota_diaria === 'number') {
+          setCotaTotal(data.cota_diaria);
         }
       } catch (err: any) {
         falhas++;
@@ -603,6 +645,8 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     busca, setBusca,
     loading,
     cotaConsumidaHoje, cotaResidual,
+    // 🆕 v1.5 (23/06/2026) — cota total parametrizada por usuário (substitui /50 hardcoded)
+    cotaTotal,
 
     // estado por linha
     validandoLeadIds,
