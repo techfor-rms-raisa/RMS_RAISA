@@ -2,9 +2,35 @@
  * api/crm-cotas.ts — Gestão de cotas diárias de revalidação (RBAC Admin)
  *
  * Caminho: api/crm-cotas.ts
- * Versão:  1.1 (23/06/2026 — FIX coluna app_users.tipo → tipo_usuario)
+ * Versão:  1.2 (23/06/2026 — FIX coluna app_users.ativo → ativo_usuario)
  *
- * 🆕 v1.1 (23/06/2026 — FIX HTTP 500 "column app_users.tipo does not exist"):
+ * 🆕 v1.2 (23/06/2026 — FIX HTTP 500 "column app_users.ativo does not exist"):
+ *   Segundo erro de naming após a v1.1. Causa raiz idêntica: campo do
+ *   banco não é `ativo`, é `ativo_usuario` (confirmado em CSV oficial da
+ *   tabela enviado por Messias 23/06 17:50 e no padrão de
+ *   crm-webhook.ts:754 que usa `ativo_usuario`).
+ *
+ *   Mapa completo das colunas de app_users (CSV 23/06):
+ *     id, nome_usuario, email_usuario, senha_usuario, ativo_usuario,
+ *     receber_alertas_email, tipo_usuario, gestor_rs_id, perfil_id,
+ *     ultimo_acesso, created_at, updated_at, papel, supervisor_id,
+ *     cota_leads_diaria, cota_atualizada_em, cota_atualizada_por,
+ *     cota_revalidacao_diaria (criada pela migration de 23/06).
+ *
+ *   Fix cirúrgico em 5 pontos:
+ *     1. exigirAdmin SELECT: `ativo` → `ativo_usuario`.
+ *     2. exigirAdmin comparação: `data.ativo` → `data.ativo_usuario`.
+ *     3. handleListarCotas SELECT: `ativo` → `ativo_usuario`.
+ *     4. handleListarCotas filter: `.eq('ativo', true)` → `.eq('ativo_usuario', true)`.
+ *     5. handleAtualizarCota SELECT: `ativo` → `ativo_usuario`.
+ *
+ *   Lição aplicada (regra #15 do projeto): SEMPRE investigar nomes
+ *   de colunas reais ANTES de criar queries. A consulta inicial em
+ *   crm-config.ts/crm-analytics.ts NÃO mostrava `ativo` (sempre era
+ *   `tipo_usuario` ou apenas `nome_usuario`); foi necessário um SELECT
+ *   completo (information_schema ou dump CSV) para mapear todas.
+ *
+ * v1.1 (23/06/2026 — FIX HTTP 500 "column app_users.tipo does not exist"):
  *   Causa raiz (smoke 23/06/2026 14:35):
  *     A v1.0 escrevia `app_users.tipo`, mas o nome real da coluna no
  *     banco é `app_users.tipo_usuario` (padrão usado em todos os outros
@@ -129,7 +155,7 @@ async function exigirAdmin(user_id: number): Promise<GuardResult> {
   }
   const { data, error } = await supabase
     .from('app_users')
-    .select('id, nome_usuario, tipo_usuario, ativo')
+    .select('id, nome_usuario, tipo_usuario, ativo_usuario')
     .eq('id', user_id)
     .maybeSingle();
   if (error) {
@@ -138,7 +164,7 @@ async function exigirAdmin(user_id: number): Promise<GuardResult> {
   if (!data) {
     return { ok: false, status: 403, mensagem: 'Usuário não encontrado.' };
   }
-  if (!data.ativo) {
+  if (!data.ativo_usuario) {
     return { ok: false, status: 403, mensagem: 'Usuário inativo não pode acessar esta aba.' };
   }
   if (data.tipo_usuario !== 'Administrador') {
@@ -188,9 +214,9 @@ async function handleListarCotas(req: VercelRequest, res: VercelResponse) {
 
   const { data, error } = await supabase
     .from('app_users')
-    .select('id, nome_usuario, tipo_usuario, ativo, cota_revalidacao_diaria')
+    .select('id, nome_usuario, tipo_usuario, ativo_usuario, cota_revalidacao_diaria')
     .in('tipo_usuario', [...TIPOS_COM_COTA])
-    .eq('ativo', true)
+    .eq('ativo_usuario', true)
     .order('tipo_usuario',  { ascending: true })
     .order('nome_usuario',  { ascending: true });
 
@@ -242,7 +268,7 @@ async function handleAtualizarCota(req: VercelRequest, res: VercelResponse) {
   // contra alguém tentando alterar cota de "Operador Email" etc).
   const { data: target, error: errBusca } = await supabase
     .from('app_users')
-    .select('id, nome_usuario, tipo_usuario, ativo')
+    .select('id, nome_usuario, tipo_usuario, ativo_usuario')
     .eq('id', targetId)
     .maybeSingle();
 
