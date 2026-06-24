@@ -2,6 +2,55 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.22.2 (24/06/2026 — Bugfix etapas 8 + 9 do helper para Recuperação):
+ *    Hotfix descoberto pela falha real do Rafael Baroni em Production
+ *    (24/06/2026 ~08:24 BRT). O botão "Promover" abria o modal, listava a
+ *    campanha elegível corretamente (graças ao bugfix v1.22.1 da etapa 6),
+ *    mas ao clicar "Confirmar recuperação" o backend retornava:
+ *      "Falha ao vincular lead à campanha: duplicate key value violates
+ *       unique constraint 'email_lead_campanhas_unique'"
+ *
+ *    Causa raiz: a etapa 8 do helper `vincularLeadACampanha` fazia INSERT
+ *    incondicional em email_lead_campanhas (que tem UNIQUE em lead_id +
+ *    campanha_id). Após o backfill executado hoje em Production, o vínculo
+ *    do Rafael (id=1061) estava em status='bounced' — a v1.22.1 deixou
+ *    de bloquear na validação, mas o INSERT seguiu bate-cabeça com a
+ *    unique. Bug em camadas: meio caminho na entrega anterior.
+ *
+ *    Risco silencioso descoberto na investigação: email_fila NÃO tem
+ *    unique em (lead_id, campanha_id, step_id) — apenas PK (id). Se o
+ *    INSERT da etapa 8 tivesse passado, a etapa 9 DUPLICARIA silenciosamente
+ *    a fila (4 linhas antigas em estado terminal + 4 novas = 8 totais
+ *    para o mesmo lead/campanha). Bug funcional mascarado por ausência
+ *    de constraint.
+ *
+ *    Mudança cirúrgica — 4 pontos no arquivo:
+ *
+ *      (A) Helper `vincularLeadACampanha`: novo opt `modoRecuperacao?: boolean`
+ *          (default false → ZERO regressão para callers existentes).
+ *
+ *      (B) Etapa 8 do helper: quando `modoRecuperacao=true`, UPSERT com
+ *          onConflict='lead_id,campanha_id' em vez de INSERT puro. Vínculo
+ *          terminal (bounced/cancelado/concluida) é REATIVADO para
+ *          status='ativa', step_atual=1, adicionado_em=NOW().
+ *
+ *      (C) Etapa 9 do helper: quando `modoRecuperacao=true`, DELETE prévio
+ *          em email_fila WHERE lead_id=X AND campanha_id=Y antes do INSERT
+ *          dos novos rows. Sem isso, fila terminal antiga coexistiria com
+ *          a fila nova (sem erro, mas com lixo de dados visível em
+ *          dashboards de Acompanhamento).
+ *
+ *      (D) Etapa 11 do helper: tipo de histórico vira 'campanha_recuperada'
+ *          (em vez de 'campanha_vinculada') quando `modoRecuperacao=true`.
+ *          Permite métricas separadas de leads "salvos" da aba Inválidos
+ *          e auditoria mais limpa.
+ *
+ *      (E) Action `recuperar_invalido_para_campanha`: passa
+ *          `{ modoRecuperacao: true }` ao helper. Mudança de 1 linha.
+ *
+ *    Pareado com (mesma entrega):
+ *      • CHECKPOINT_2026-06-24 (a criar) — registro forense + lições
+ *
  *  - v1.22.1 (23/06/2026 — Bugfix etapa 6 do helper vincularLeadACampanha):
  *    Hotfix consolidado com v1.22 (Recuperação de Leads Inválidos).
  *    Descoberto via caso forense do Rafael Baroni (lead 1740, Campanha_06):
@@ -3437,6 +3486,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         //    Helper retorna estruturado {success, error?, vinculo?} — sem
         //    exceções. Passamos bounced=false explícito (otimização: helper
         //    não precisa consultar o banco de novo).
+        //
+        // 🆕 v1.22.2 (24/06/2026) — `modoRecuperacao: true` instrui o helper
+        //    a fazer UPSERT no vínculo (etapa 8), DELETE prévio na fila
+        //    (etapa 9) e gravar histórico tipo='campanha_recuperada' (etapa
+        //    11). Necessário porque leads vindos da aba Inválidos
+        //    NORMALMENTE já têm vínculo terminal pré-existente (bounced/
+        //    cancelado/concluida) — INSERT puro batia em unique constraint.
         const resultadoVinculo = await vincularLeadACampanha(
           supabase,
           {
@@ -3450,6 +3506,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           },
           Number(campanha_id),
           criado_por,
+          { modoRecuperacao: true },
         );
 
         if (!resultadoVinculo.success) {
@@ -3978,6 +4035,31 @@ async function vincularLeadACampanha(
      * dry-run primeiro → UPDATE vertical → execução real.
      */
     dryRun?: boolean;
+    /**
+     * 🆕 v1.22.2 (24/06/2026) — quando true, o helper assume cenário de
+     * REATIVAÇÃO de vínculo terminal (caso típico: lead vindo da aba
+     * "E-mails Inválidos" via action `recuperar_invalido_para_campanha`).
+     *
+     * Efeitos:
+     *   - Etapa 8 (vínculo): UPSERT em email_lead_campanhas usando
+     *     onConflict='lead_id,campanha_id'. Vínculo terminal
+     *     (bounced/cancelado/concluida) vira status='ativa', step_atual=1,
+     *     adicionado_em=NOW(). Sem o flag, INSERT bate em unique constraint.
+     *
+     *   - Etapa 9 (fila): DELETE prévio em email_fila WHERE lead_id+campanha_id
+     *     antes do INSERT dos novos rows. Como email_fila NÃO tem unique em
+     *     (lead_id, campanha_id, step_id), o INSERT sem DELETE duplicaria
+     *     silenciosamente linhas (bug funcional mascarado por ausência de
+     *     constraint).
+     *
+     *   - Etapa 11 (histórico): tipo='campanha_recuperada' (em vez de
+     *     'campanha_vinculada'). Permite auditoria separada e métricas de
+     *     leads "salvos" da aba Inválidos.
+     *
+     * Default false → zero regressão para callers existentes
+     * (vincular_em_lote, criar_lead, atualizar_lead, etc).
+     */
+    modoRecuperacao?: boolean;
   }
 ): Promise<ResultadoVinculo> {
   // 1. Buscar campanha
@@ -4146,15 +4228,32 @@ async function vincularLeadACampanha(
     return { success: true };
   }
 
-  // 8. Inserir vínculo
-  const { error: errVinc } = await supabase
-    .from('email_lead_campanhas')
-    .insert({
-      lead_id: lead.id,
-      campanha_id: camp.id,
-      status: 'ativa',
-      step_atual: 1,
-    });
+  // 8. Inserir vínculo (ou reativar se vínculo terminal pré-existente)
+  //
+  // 🆕 v1.22.2 (24/06/2026) — UPSERT semântico em modoRecuperacao:
+  //   - Sem flag (default): INSERT puro — comportamento histórico para
+  //     vinculação NORMAL (lead novo). Falha se vínculo já existir
+  //     (correto: evita duplicação acidental no fluxo de criação).
+  //   - Com flag (true): UPSERT com onConflict='lead_id,campanha_id'.
+  //     Vínculo terminal (bounced/cancelado/concluida) é REATIVADO para
+  //     status='ativa', step_atual=1, adicionado_em=NOW(). Necessário
+  //     porque email_lead_campanhas_unique bloqueia INSERT em (lead_id,
+  //     campanha_id) repetido.
+  const dadosVinculo = {
+    lead_id: lead.id,
+    campanha_id: camp.id,
+    status: 'ativa',
+    step_atual: 1,
+    adicionado_em: new Date().toISOString(),
+  };
+
+  const { error: errVinc } = opts?.modoRecuperacao
+    ? await supabase
+        .from('email_lead_campanhas')
+        .upsert(dadosVinculo, { onConflict: 'lead_id,campanha_id' })
+    : await supabase
+        .from('email_lead_campanhas')
+        .insert(dadosVinculo);
 
   if (errVinc) {
     return {
@@ -4170,6 +4269,29 @@ async function vincularLeadACampanha(
   //    crm-campanhas.ts > mudar_status. Não precisamos fazer aqui.
   let enfileirados = 0;
   if (camp.inicio_envio) {
+    // 🆕 v1.22.2 (24/06/2026) — Limpeza prévia da fila em modoRecuperacao.
+    //   email_fila NÃO tem unique em (lead_id, campanha_id, step_id),
+    //   apenas PK em (id). Logo, o INSERT abaixo sem DELETE prévio
+    //   DUPLICARIA silenciosamente as linhas: o lead recuperado teria
+    //   na fila tanto os rows TERMINAIS (bounce/cancelado/concluido)
+    //   da campanha anterior quanto os rows NOVOS pendentes. Dashboards
+    //   de Acompanhamento da Campanha mostrariam lixo. DELETE só corre
+    //   no modo recuperação — fluxo normal de criação não tem fila prévia.
+    if (opts?.modoRecuperacao) {
+      const { error: errDelFila } = await supabase
+        .from('email_fila')
+        .delete()
+        .eq('lead_id', lead.id)
+        .eq('campanha_id', camp.id);
+
+      if (errDelFila) {
+        return {
+          success: false,
+          error: `Vínculo reativado mas falha ao limpar fila antiga: ${errDelFila.message}`,
+        };
+      }
+    }
+
     const { data: steps, error: errSteps } = await supabase
       .from('email_campanha_steps')
       .select('id, ordem, delay_dias')
@@ -4246,11 +4368,20 @@ async function vincularLeadACampanha(
   // 11. Registrar no histórico do lead
   // 🆕 v1.16.2 — campanha_id agora populado (FK) para permitir queries
   //   auditoria "todas as movimentações da campanha X".
+  //
+  // 🆕 v1.22.2 (24/06/2026) — Distinção semântica em modoRecuperacao:
+  //   - 'campanha_vinculada' → vinculação NORMAL (lead novo na campanha)
+  //   - 'campanha_recuperada' → REATIVAÇÃO de vínculo terminal pela aba
+  //     E-mails Inválidos. Permite consultas separadas (ex: "quantos
+  //     leads salvamos da aba Inválidos este mês") e auditoria mais clara.
+  const tipoHistorico = opts?.modoRecuperacao ? 'campanha_recuperada' : 'campanha_vinculada';
+  const verboHistorico = opts?.modoRecuperacao ? 'Recuperado para' : 'Vinculado à';
+
   await supabase.from('email_lead_historico').insert({
     lead_id: lead.id,
     campanha_id: camp.id,
-    tipo: 'campanha_vinculada',
-    descricao: `Vinculado à campanha "${camp.nome}" (ID ${camp.id})${enfileirados > 0 ? ` — ${enfileirados} envio(s) agendado(s)` : ''}`,
+    tipo: tipoHistorico,
+    descricao: `${verboHistorico} campanha "${camp.nome}" (ID ${camp.id})${enfileirados > 0 ? ` — ${enfileirados} envio(s) agendado(s)` : ''}`,
     criado_por: criadoPor,
   });
 
