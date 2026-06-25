@@ -54,6 +54,32 @@
  *   de 20, com barra de progresso e contadores em tempo real.
  * - Admin pode cancelar a qualquer momento; processo é idempotente,
  *   então re-execução continua de onde parou.
+ *
+ * v4.5 (25/06/2026 — Fase 4 da normalização de empresas):
+ * - Botão admin "Normalizar" ao lado de "Reconciliar CVs", visível
+ *   apenas para tipo_usuario = 'Administrador'.
+ * - Mostra contador de nomes distintos de empresa em prospect_leads.
+ * - Ao clicar abre modal explicando as regras (sufixos legais
+ *   removidos, Title Case com proteção de siglas, etc) e dispara
+ *   loop automático de chamadas POST /api/prospect-empresa-normalize
+ *   em lotes de 50 nomes por vez.
+ * - Idempotente: rodar 2x não bagunça (nomes já normalizados são
+ *   detectados e pulados).
+ * - Auditoria completa em empresa_normalizacao_log.
+ * - ESCOPO Opção A: SÓ prospect_leads.empresa_nome (não toca
+ *   email_empresas, email_leads, etc).
+ *
+ * v4.6 (25/06/2026 — hotfix detecção de estagnação nos loops):
+ * - Reconciliação CV: detecta quando o lote processa pessoas mas
+ *   "restantes" não diminui — caso de pessoas sem motor classificável
+ *   (skills/cargos não batem com nenhuma keyword de cv_alocacao,
+ *   cv_infra, cv_ia_ml, cv_sap). Sem proteção, o loop pega sempre
+ *   os mesmos IDs (paginação ORDER BY p.id ASC + filtro pl.id IS NULL).
+ *   Validado em 25/06/2026 com loop que rodou 4.234 vezes em vez de
+ *   347 — 3 pessoas ficaram em limbo girando.
+ * - Normalização: garante que offset SEMPRE avança no loop, evitando
+ *   travamento por offset_proximo malformado.
+ * - Ambas correções defensivas, não mudam comportamento normal.
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -271,6 +297,19 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     });
     const cancelarReconciliacaoRef = useRef(false);
 
+    // 🆕 v4.5 (25/06/2026 — Fase 4 normalização de empresas) — Admin only
+    const [normalizacaoTotal, setNormalizacaoTotal] = useState<number | null>(null);
+    const [mostrarModalNormalizacao, setMostrarModalNormalizacao] = useState(false);
+    const [normalizacaoStatus, setNormalizacaoStatus] = useState<'idle' | 'rodando' | 'concluido' | 'erro'>('idle');
+    const [normalizacaoProgresso, setNormalizacaoProgresso] = useState({
+        totalInicial: 0,
+        processados: 0,
+        modificados: 0,
+        leadsAtualizados: 0,
+        erros: 0,
+    });
+    const cancelarNormalizacaoRef = useRef(false);
+
     // ============================================
     // TOGGLES
     // ============================================
@@ -384,6 +423,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
         const LIMITE_LOTE = 20;
         let restantes = totalInicial;
+        let restantesAnterior = totalInicial; // 🆕 v4.6 — rastreio para detectar estagnação
         const acumulado = { processados: 0, leadsInseridos: 0, leadsIgnorados: 0, erros: 0 };
 
         while (restantes > 0 && !cancelarReconciliacaoRef.current) {
@@ -417,6 +457,15 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
                 if (data?.terminou) break;
 
+                // 🆕 v4.6 — detecção de estagnação: lote processou pessoas mas restantes não diminuiu
+                // Significa que as mesmas pessoas estão voltando (sem motor classificável).
+                // Para o loop e mostra como "concluído" — admin vê o número correto de restantes.
+                if (Number(data?.processados) > 0 && restantes >= restantesAnterior) {
+                    console.warn(`[reconcile] estagnação detectada: ${Number(data?.processados)} processados mas restantes ${restantesAnterior} → ${restantes}. Encerrando loop.`);
+                    break;
+                }
+                restantesAnterior = restantes;
+
                 // Pequena pausa entre lotes — não martelar serverless
                 await new Promise(r => setTimeout(r, 500));
             } catch {
@@ -434,6 +483,110 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         setReconciliacaoPendentes(restantes);
         carregarKpis();
     }, [currentUser?.id, carregarKpis]);
+
+    // 🆕 v4.5 (Fase 4 normalização) — carregar total inicial de nomes distintos
+    const carregarNormalizacaoTotal = useCallback(async () => {
+        if (currentUser?.tipo_usuario !== 'Administrador') return;
+        try {
+            const resp = await fetch('/api/prospect-empresa-normalize');
+            const data = await resp.json();
+            setNormalizacaoTotal(typeof data?.total === 'number' ? data.total : 0);
+        } catch {
+            setNormalizacaoTotal(0);
+        }
+    }, [currentUser?.tipo_usuario]);
+
+    useEffect(() => {
+        carregarNormalizacaoTotal();
+    }, [carregarNormalizacaoTotal]);
+
+    // 🆕 v4.5 — loop automático de normalização em lotes de 50
+    const executarNormalizacao = useCallback(async () => {
+        if (!currentUser?.id) return;
+
+        cancelarNormalizacaoRef.current = false;
+        setNormalizacaoStatus('rodando');
+
+        // Pegar total inicial
+        let totalInicial = 0;
+        try {
+            const r = await fetch('/api/prospect-empresa-normalize');
+            const d = await r.json();
+            totalInicial = typeof d?.total === 'number' ? d.total : 0;
+        } catch {
+            totalInicial = 0;
+        }
+
+        if (totalInicial === 0) {
+            setNormalizacaoStatus('concluido');
+            return;
+        }
+
+        setNormalizacaoProgresso({
+            totalInicial,
+            processados: 0,
+            modificados: 0,
+            leadsAtualizados: 0,
+            erros: 0,
+        });
+
+        const LIMITE_LOTE = 50;
+        let offset = 0;
+        const acumulado = { processados: 0, modificados: 0, leadsAtualizados: 0, erros: 0 };
+
+        while (offset < totalInicial && !cancelarNormalizacaoRef.current) {
+            try {
+                const resp = await fetch('/api/prospect-empresa-normalize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: currentUser.id,
+                        offset,
+                        limite: LIMITE_LOTE,
+                    }),
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    setNormalizacaoStatus('erro');
+                    break;
+                }
+
+                acumulado.processados      += Number(data?.processados)       || 0;
+                acumulado.modificados      += Number(data?.modificados)       || 0;
+                acumulado.leadsAtualizados += Number(data?.leads_atualizados) || 0;
+                acumulado.erros            += Array.isArray(data?.erros) ? data.erros.length : 0;
+
+                // 🆕 v4.6 — guard de progresso: offset SEMPRE precisa avançar para evitar loop infinito
+                const offsetAnterior = offset;
+                offset = Number(data?.offset_proximo) || (offset + LIMITE_LOTE);
+                if (offset <= offsetAnterior) {
+                    console.warn(`[normalize] offset não avançou (${offsetAnterior} → ${offset}). Encerrando loop.`);
+                    break;
+                }
+
+                setNormalizacaoProgresso({
+                    totalInicial,
+                    ...acumulado,
+                });
+
+                if (data?.terminou) break;
+
+                // Pequena pausa entre lotes — não martelar serverless
+                await new Promise(r => setTimeout(r, 300));
+            } catch {
+                setNormalizacaoStatus('erro');
+                break;
+            }
+        }
+
+        if (cancelarNormalizacaoRef.current || offset >= totalInicial) {
+            setNormalizacaoStatus('concluido');
+        }
+
+        carregarNormalizacaoTotal();
+        carregarKpis();
+    }, [currentUser?.id, carregarKpis, carregarNormalizacaoTotal]);
 
     // ============================================
     // RECEBER LEADS DA PROSPECT EXTENSION
@@ -1719,6 +1872,24 @@ A empresa ficará disponível para a equipe.`)) return;
                     Reconciliar CVs
                     <span className="ml-0.5 bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
                         {reconciliacaoPendentes}
+                    </span>
+                </button>
+            )}
+
+            {/* 🆕 v4.5 — Botão admin Normalizar empresas (Fase 4) */}
+            {currentUser?.tipo_usuario === 'Administrador' && normalizacaoTotal !== null && normalizacaoTotal > 0 && (
+                <button
+                    onClick={() => {
+                        setNormalizacaoStatus('idle');
+                        setMostrarModalNormalizacao(true);
+                    }}
+                    title={`Normalizar nomes de ${normalizacaoTotal} empresa${normalizacaoTotal > 1 ? 's' : ''} distinta${normalizacaoTotal > 1 ? 's' : ''}`}
+                    className="ml-1 px-3 py-1.5 text-xs font-medium text-cyan-700 hover:text-cyan-800 bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                    <i className="fa-solid fa-wand-magic-sparkles"></i>
+                    Normalizar
+                    <span className="ml-0.5 bg-cyan-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                        {normalizacaoTotal}
                     </span>
                 </button>
             )}
@@ -3610,6 +3781,183 @@ A empresa ficará disponível para a equipe.`)) return;
                                 setMostrarModalReconciliacao(false);
                                 setReconciliacaoStatus('idle');
                                 carregarPendentesReconciliacao();
+                            }}
+                            className="w-full px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                        >
+                            Fechar
+                        </button>
+                    </>
+                )}
+            </div>
+        </div>
+    )}
+
+    {/* ════════════════════════════════════════════════════════ */}
+    {/* 🆕 v4.5 — MODAL DE NORMALIZAÇÃO DE EMPRESAS (Admin only)  */}
+    {/* ════════════════════════════════════════════════════════ */}
+    {mostrarModalNormalizacao && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+                {normalizacaoStatus === 'idle' && (
+                    <>
+                        <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-wand-magic-sparkles text-cyan-600"></i>
+                            Normalizar Nomes de Empresa
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-3">
+                            A base atual tem <span className="font-bold text-cyan-700">{normalizacaoTotal}</span> nomes distintos de empresa em prospect_leads. Vou verificar cada um e padronizar conforme as regras abaixo.
+                        </p>
+                        <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3 mb-3 text-xs text-cyan-900">
+                            <p className="font-semibold mb-1">📋 Regras aplicadas:</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                                <li>Espaços extras removidos (trim + colapsa duplos)</li>
+                                <li>Pontuação final removida (. , ;)</li>
+                                <li>Sufixos legais removidos: Ltda, SA, ME, EPP, EIRELI, Inc, Corp, Ltd, LLC, Cia</li>
+                                <li>Title Case com proteção de siglas (NTT, SAP, IBM, etc) e preposições (de, da, do, e)</li>
+                            </ul>
+                        </div>
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-xs text-amber-800">
+                            <p className="font-semibold mb-1">⚠️ Antes de iniciar:</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                                <li>Processamento em lotes de 50 por vez</li>
+                                <li>Tempo total estimado: ~{Math.ceil(((normalizacaoTotal || 0) * 0.05) / 60)} minutos</li>
+                                <li>Não feche essa aba durante o processo</li>
+                                <li>Idempotente — rodar de novo não bagunça</li>
+                                <li>Cada mudança fica registrada em <code className="bg-amber-100 px-1 rounded">empresa_normalizacao_log</code> para auditoria</li>
+                                <li><strong>ESCOPO:</strong> só altera <code className="bg-amber-100 px-1 rounded">prospect_leads.empresa_nome</code>, não toca CRM/campanhas</li>
+                            </ul>
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                            <button
+                                onClick={() => setMostrarModalNormalizacao(false)}
+                                className="px-4 py-2 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={executarNormalizacao}
+                                className="px-4 py-2 text-sm bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors flex items-center gap-2"
+                            >
+                                <i className="fa-solid fa-play"></i>
+                                Iniciar Normalização
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {normalizacaoStatus === 'rodando' && (
+                    <>
+                        <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-spinner fa-spin text-cyan-600"></i>
+                            Normalizando empresas...
+                        </h3>
+                        <div className="mb-3">
+                            <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                <span>Progresso</span>
+                                <span className="font-semibold">
+                                    {normalizacaoProgresso.processados} / {normalizacaoProgresso.totalInicial}
+                                </span>
+                            </div>
+                            <div className="bg-gray-100 rounded-full h-3 overflow-hidden">
+                                <div
+                                    className="bg-cyan-600 h-3 transition-all duration-300"
+                                    style={{ width: `${Math.min(100, (normalizacaoProgresso.processados / Math.max(normalizacaoProgresso.totalInicial, 1)) * 100)}%` }}
+                                />
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+                            <div className="bg-cyan-50 rounded-lg p-2">
+                                <div className="text-[10px] text-cyan-700 uppercase font-semibold">Modificados</div>
+                                <div className="text-lg font-bold text-cyan-700">{normalizacaoProgresso.modificados}</div>
+                            </div>
+                            <div className="bg-green-50 rounded-lg p-2">
+                                <div className="text-[10px] text-green-700 uppercase font-semibold">Leads Atualizados</div>
+                                <div className="text-lg font-bold text-green-700">{normalizacaoProgresso.leadsAtualizados}</div>
+                            </div>
+                            <div className="bg-red-50 rounded-lg p-2">
+                                <div className="text-[10px] text-red-700 uppercase font-semibold">Erros</div>
+                                <div className="text-lg font-bold text-red-700">{normalizacaoProgresso.erros}</div>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => { cancelarNormalizacaoRef.current = true; }}
+                            disabled={cancelarNormalizacaoRef.current}
+                            className="w-full px-4 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                        >
+                            <i className="fa-solid fa-stop mr-1.5"></i>
+                            {cancelarNormalizacaoRef.current ? 'Finalizando lote atual...' : 'Cancelar (preserva o que já normalizou)'}
+                        </button>
+                    </>
+                )}
+
+                {normalizacaoStatus === 'concluido' && (
+                    <>
+                        <h3 className="text-lg font-bold text-green-700 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-circle-check"></i>
+                            Normalização Concluída
+                        </h3>
+                        <div className="space-y-2 text-sm text-gray-700 mb-5 bg-gray-50 rounded-lg p-3">
+                            <div className="flex justify-between">
+                                <span>Nomes verificados:</span>
+                                <strong>{normalizacaoProgresso.processados}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Nomes modificados:</span>
+                                <strong className="text-cyan-700">{normalizacaoProgresso.modificados}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Leads atualizados:</span>
+                                <strong className="text-green-700">{normalizacaoProgresso.leadsAtualizados}</strong>
+                            </div>
+                            {normalizacaoProgresso.erros > 0 && (
+                                <div className="flex justify-between">
+                                    <span>Erros encontrados:</span>
+                                    <strong className="text-red-700">{normalizacaoProgresso.erros}</strong>
+                                </div>
+                            )}
+                            {normalizacaoProgresso.modificados === 0 && (
+                                <div className="bg-green-100 border border-green-300 rounded p-2 mt-2 text-green-800 text-xs">
+                                    ✨ Tudo já estava normalizado!
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => {
+                                setMostrarModalNormalizacao(false);
+                                setNormalizacaoStatus('idle');
+                                carregarKpis();
+                            }}
+                            className="w-full px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                            Fechar
+                        </button>
+                    </>
+                )}
+
+                {normalizacaoStatus === 'erro' && (
+                    <>
+                        <h3 className="text-lg font-bold text-red-700 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-triangle-exclamation"></i>
+                            Erro na Normalização
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-4">
+                            Algo deu errado durante o processamento. O que já tinha sido normalizado até o erro está salvo. Você pode tentar novamente — o sistema continua de onde parou (idempotente).
+                        </p>
+                        <div className="grid grid-cols-2 gap-3 mb-5 text-center text-sm">
+                            <div className="bg-cyan-50 rounded p-2">
+                                <div className="text-[10px] text-cyan-700 uppercase">Modificados</div>
+                                <div className="text-lg font-bold text-cyan-700">{normalizacaoProgresso.modificados}</div>
+                            </div>
+                            <div className="bg-red-50 rounded p-2">
+                                <div className="text-[10px] text-red-700 uppercase">Erros</div>
+                                <div className="text-lg font-bold text-red-700">{normalizacaoProgresso.erros}</div>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => {
+                                setMostrarModalNormalizacao(false);
+                                setNormalizacaoStatus('idle');
+                                carregarNormalizacaoTotal();
                             }}
                             className="w-full px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
                         >
