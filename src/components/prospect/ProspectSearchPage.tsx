@@ -68,6 +68,18 @@
  * - Auditoria completa em empresa_normalizacao_log.
  * - ESCOPO Opção A: SÓ prospect_leads.empresa_nome (não toca
  *   email_empresas, email_leads, etc).
+ *
+ * v4.6 (25/06/2026 — hotfix detecção de estagnação nos loops):
+ * - Reconciliação CV: detecta quando o lote processa pessoas mas
+ *   "restantes" não diminui — caso de pessoas sem motor classificável
+ *   (skills/cargos não batem com nenhuma keyword de cv_alocacao,
+ *   cv_infra, cv_ia_ml, cv_sap). Sem proteção, o loop pega sempre
+ *   os mesmos IDs (paginação ORDER BY p.id ASC + filtro pl.id IS NULL).
+ *   Validado em 25/06/2026 com loop que rodou 4.234 vezes em vez de
+ *   347 — 3 pessoas ficaram em limbo girando.
+ * - Normalização: garante que offset SEMPRE avança no loop, evitando
+ *   travamento por offset_proximo malformado.
+ * - Ambas correções defensivas, não mudam comportamento normal.
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -411,6 +423,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
         const LIMITE_LOTE = 20;
         let restantes = totalInicial;
+        let restantesAnterior = totalInicial; // 🆕 v4.6 — rastreio para detectar estagnação
         const acumulado = { processados: 0, leadsInseridos: 0, leadsIgnorados: 0, erros: 0 };
 
         while (restantes > 0 && !cancelarReconciliacaoRef.current) {
@@ -443,6 +456,15 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                 });
 
                 if (data?.terminou) break;
+
+                // 🆕 v4.6 — detecção de estagnação: lote processou pessoas mas restantes não diminuiu
+                // Significa que as mesmas pessoas estão voltando (sem motor classificável).
+                // Para o loop e mostra como "concluído" — admin vê o número correto de restantes.
+                if (Number(data?.processados) > 0 && restantes >= restantesAnterior) {
+                    console.warn(`[reconcile] estagnação detectada: ${Number(data?.processados)} processados mas restantes ${restantesAnterior} → ${restantes}. Encerrando loop.`);
+                    break;
+                }
+                restantesAnterior = restantes;
 
                 // Pequena pausa entre lotes — não martelar serverless
                 await new Promise(r => setTimeout(r, 500));
@@ -534,7 +556,14 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
                 acumulado.modificados      += Number(data?.modificados)       || 0;
                 acumulado.leadsAtualizados += Number(data?.leads_atualizados) || 0;
                 acumulado.erros            += Array.isArray(data?.erros) ? data.erros.length : 0;
+
+                // 🆕 v4.6 — guard de progresso: offset SEMPRE precisa avançar para evitar loop infinito
+                const offsetAnterior = offset;
                 offset = Number(data?.offset_proximo) || (offset + LIMITE_LOTE);
+                if (offset <= offsetAnterior) {
+                    console.warn(`[normalize] offset não avançou (${offsetAnterior} → ${offset}). Encerrando loop.`);
+                    break;
+                }
 
                 setNormalizacaoProgresso({
                     totalInicial,
@@ -3945,3 +3974,4 @@ A empresa ficará disponível para a equipe.`)) return;
 };
 
 export default ProspectSearchPage;
+
