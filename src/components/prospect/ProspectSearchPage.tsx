@@ -80,6 +80,21 @@
  * - Normalização: garante que offset SEMPRE avança no loop, evitando
  *   travamento por offset_proximo malformado.
  * - Ambas correções defensivas, não mudam comportamento normal.
+ *
+ * v4.7 (25/06/2026 — hotfix finalização do modal de progresso):
+ * - Reconciliação CV: o status só transitava para 'concluido' quando
+ *   cancelado OU restantes===0. Quando o hotfix v4.6 disparava break
+ *   por estagnação (3 pessoas em limbo), nenhuma condição era satisfeita
+ *   e o modal ficava PRESO em 'rodando' eternamente.
+ * - Normalização: o status só transitava para 'concluido' quando
+ *   cancelado OU offset>=totalInicial. Mas o backend retorna terminou=true
+ *   antes do offset chegar lá (porque o total REAL de nomes distintos
+ *   diminui durante a execução — nomes colidem ao normalizar). Resultado:
+ *   modal preso em ~98% de progresso.
+ * - Solução comum: finalização via functional updater
+ *     setStatus(prev => prev === 'rodando' ? 'concluido' : prev)
+ *   Cobre TODOS os caminhos de saída (break, terminou, estagnação, erro).
+ *   Não pisa em 'erro' que já foi setado dentro do try/catch.
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -474,11 +489,13 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             }
         }
 
-        if (cancelarReconciliacaoRef.current) {
-            setReconciliacaoStatus('concluido');
-        } else if (restantes === 0) {
-            setReconciliacaoStatus('concluido');
-        }
+        // 🐛 v4.7 — Finalização robusta: SEMPRE transitar de 'rodando' para
+        // 'concluido' ao sair do loop, exceto se já estiver em 'erro'.
+        // Cobre TODOS os caminhos de saída: cancelamento, terminou=true,
+        // estagnação (hotfix v4.6), e qualquer break não previsto.
+        // Sem isso, o modal ficava preso em 'rodando' eternamente quando
+        // a estagnação era detectada (caso das 3 pessoas em "limbo").
+        setReconciliacaoStatus(prev => prev === 'rodando' ? 'concluido' : prev);
 
         setReconciliacaoPendentes(restantes);
         carregarKpis();
@@ -580,9 +597,14 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             }
         }
 
-        if (cancelarNormalizacaoRef.current || offset >= totalInicial) {
-            setNormalizacaoStatus('concluido');
-        }
+        // 🐛 v4.7 — Finalização robusta: SEMPRE transitar de 'rodando' para
+        // 'concluido' ao sair do loop, exceto se já estiver em 'erro'.
+        // Cobre TODOS os caminhos de saída, incluindo: backend retorna
+        // terminou=true quando offset_proximo ainda é menor que totalInicial
+        // (acontece porque o total real DIMINUI durante a normalização —
+        // nomes "Acme" e "ACME LTDA" colidem em "Acme" e o count cai).
+        // Sem isso, o modal ficava preso em 'rodando' em offset≈98% do total.
+        setNormalizacaoStatus(prev => prev === 'rodando' ? 'concluido' : prev);
 
         carregarNormalizacaoTotal();
         carregarKpis();
