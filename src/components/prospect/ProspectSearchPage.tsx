@@ -42,6 +42,18 @@
  *   do CRM). Sem mudança da chave interna da aba ('leads' continua
  *   sendo o discriminator) e sem mudança de RBAC ou lógica.
  * - Comentários atualizados para refletir o vocabulário "Prospects".
+ *
+ * v4.4 (25/06/2026 — Fase 3 da reconciliação CV):
+ * - Botão admin "Reconciliar CVs" ao lado de "Nova Pesquisa", visível
+ *   apenas para tipo_usuario = 'Administrador'.
+ * - Mostra contador de candidatos com CV cadastrado mas SEM leads
+ *   correspondentes em prospect_leads (backlog do bug silencioso
+ *   de 91 dias descoberto em 25/06/2026).
+ * - Ao clicar abre modal de confirmação; ao iniciar dispara loop
+ *   automático de chamadas POST /api/prospect-cv-reconcile em lotes
+ *   de 20, com barra de progresso e contadores em tempo real.
+ * - Admin pode cancelar a qualquer momento; processo é idempotente,
+ *   então re-execução continua de onde parou.
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -245,6 +257,20 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     // Controle de queries já executadas — para marcação visual
     const [queriesExecutadas, setQueriesExecutadas]     = useState<Set<string>>(new Set());
 
+    // 🆕 v4.4 (25/06/2026 — Fase 3 reconciliação CV) — Admin only
+    const [reconciliacaoPendentes, setReconciliacaoPendentes] = useState<number | null>(null);
+    const [mostrarModalReconciliacao, setMostrarModalReconciliacao] = useState(false);
+    const [reconciliacaoStatus, setReconciliacaoStatus] = useState<'idle' | 'rodando' | 'concluido' | 'erro'>('idle');
+    const [reconciliacaoProgresso, setReconciliacaoProgresso] = useState({
+        totalInicial: 0,
+        processados: 0,
+        leadsInseridos: 0,
+        leadsIgnorados: 0,
+        restantes: 0,
+        erros: 0,
+    });
+    const cancelarReconciliacaoRef = useRef(false);
+
     // ============================================
     // TOGGLES
     // ============================================
@@ -308,6 +334,106 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     useEffect(() => {
         carregarKpis();
     }, [carregarKpis]);
+
+    // 🆕 v4.4 (Fase 3 reconciliação CV) — carregar count de candidatos pendentes
+    const carregarPendentesReconciliacao = useCallback(async () => {
+        if (currentUser?.tipo_usuario !== 'Administrador') return;
+        try {
+            const resp = await fetch('/api/prospect-cv-reconcile');
+            const data = await resp.json();
+            setReconciliacaoPendentes(typeof data?.pendentes === 'number' ? data.pendentes : 0);
+        } catch {
+            setReconciliacaoPendentes(0);
+        }
+    }, [currentUser?.tipo_usuario]);
+
+    useEffect(() => {
+        carregarPendentesReconciliacao();
+    }, [carregarPendentesReconciliacao]);
+
+    // 🆕 v4.4 — loop automático de reconciliação em lotes de 20
+    const executarReconciliacao = useCallback(async () => {
+        if (!currentUser?.id) return;
+
+        cancelarReconciliacaoRef.current = false;
+        setReconciliacaoStatus('rodando');
+
+        // Pegar total inicial para a barra de progresso
+        let totalInicial = 0;
+        try {
+            const r = await fetch('/api/prospect-cv-reconcile');
+            const d = await r.json();
+            totalInicial = typeof d?.pendentes === 'number' ? d.pendentes : 0;
+        } catch {
+            totalInicial = 0;
+        }
+
+        if (totalInicial === 0) {
+            setReconciliacaoStatus('concluido');
+            return;
+        }
+
+        setReconciliacaoProgresso({
+            totalInicial,
+            processados: 0,
+            leadsInseridos: 0,
+            leadsIgnorados: 0,
+            restantes: totalInicial,
+            erros: 0,
+        });
+
+        const LIMITE_LOTE = 20;
+        let restantes = totalInicial;
+        const acumulado = { processados: 0, leadsInseridos: 0, leadsIgnorados: 0, erros: 0 };
+
+        while (restantes > 0 && !cancelarReconciliacaoRef.current) {
+            try {
+                const resp = await fetch('/api/prospect-cv-reconcile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: currentUser.id, limite: LIMITE_LOTE }),
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    setReconciliacaoStatus('erro');
+                    break;
+                }
+
+                acumulado.processados   += Number(data?.processados)     || 0;
+                acumulado.leadsInseridos += Number(data?.leads_inseridos) || 0;
+                acumulado.leadsIgnorados += Number(data?.leads_ignorados) || 0;
+                acumulado.erros          += Array.isArray(data?.erros) ? data.erros.length : 0;
+                restantes = Number(data?.restantes) || 0;
+
+                setReconciliacaoProgresso({
+                    totalInicial,
+                    processados:    acumulado.processados,
+                    leadsInseridos: acumulado.leadsInseridos,
+                    leadsIgnorados: acumulado.leadsIgnorados,
+                    restantes,
+                    erros:          acumulado.erros,
+                });
+
+                if (data?.terminou) break;
+
+                // Pequena pausa entre lotes — não martelar serverless
+                await new Promise(r => setTimeout(r, 500));
+            } catch {
+                setReconciliacaoStatus('erro');
+                break;
+            }
+        }
+
+        if (cancelarReconciliacaoRef.current) {
+            setReconciliacaoStatus('concluido');
+        } else if (restantes === 0) {
+            setReconciliacaoStatus('concluido');
+        }
+
+        setReconciliacaoPendentes(restantes);
+        carregarKpis();
+    }, [currentUser?.id, carregarKpis]);
 
     // ============================================
     // RECEBER LEADS DA PROSPECT EXTENSION
@@ -1578,6 +1704,24 @@ A empresa ficará disponível para a equipe.`)) return;
                 <i className="fa-solid fa-rotate-right"></i>
                 Nova Pesquisa
             </button>
+
+            {/* 🆕 v4.4 — Botão admin Reconciliar CVs (Fase 3) */}
+            {currentUser?.tipo_usuario === 'Administrador' && reconciliacaoPendentes !== null && reconciliacaoPendentes > 0 && (
+                <button
+                    onClick={() => {
+                        setReconciliacaoStatus('idle');
+                        setMostrarModalReconciliacao(true);
+                    }}
+                    title={`Reconciliar ${reconciliacaoPendentes} candidato${reconciliacaoPendentes > 1 ? 's' : ''} com CV cadastrado mas sem leads gerados`}
+                    className="ml-1 px-3 py-1.5 text-xs font-medium text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                    <i className="fa-solid fa-arrows-rotate"></i>
+                    Reconciliar CVs
+                    <span className="ml-0.5 bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                        {reconciliacaoPendentes}
+                    </span>
+                </button>
+            )}
         </div>
 
         {/* ══════════════════════════════════════════ */}
@@ -3301,6 +3445,180 @@ A empresa ficará disponível para a equipe.`)) return;
             onClose={() => setSelecaoCampanhaAberta(null)}
             onConfirm={executarPromocao}
         />
+    )}
+
+    {/* ════════════════════════════════════════════════════════ */}
+    {/* 🆕 v4.4 — MODAL DE RECONCILIAÇÃO DE CVs (Admin only)      */}
+    {/* ════════════════════════════════════════════════════════ */}
+    {mostrarModalReconciliacao && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+                {reconciliacaoStatus === 'idle' && (
+                    <>
+                        <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-arrows-rotate text-amber-600"></i>
+                            Reconciliar CVs Pendentes
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-3">
+                            Existem <span className="font-bold text-amber-700">{reconciliacaoPendentes}</span> candidato{(reconciliacaoPendentes || 0) > 1 ? 's' : ''} com CV cadastrado mas sem empresas extraídas para a Base de Prospects.
+                        </p>
+                        <p className="text-sm text-gray-600 mb-4">
+                            Esse backlog é do período em que o sistema de extração automática esteve em falha silenciosa (27/03 a 25/06). Reconciliar vai processar cada CV e gerar os leads correspondentes.
+                        </p>
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-xs text-amber-800">
+                            <p className="font-semibold mb-1">⚠️ Antes de iniciar:</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                                <li>Processamento em lotes de 20 por vez</li>
+                                <li>Cada CV consulta IA + APIs externas (~1-2s cada)</li>
+                                <li>Tempo total estimado: ~{Math.ceil(((reconciliacaoPendentes || 0) * 1.5) / 60)} minutos</li>
+                                <li>Não feche essa aba durante o processo</li>
+                                <li>Você pode cancelar a qualquer momento — o que já foi processado fica salvo</li>
+                            </ul>
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                            <button
+                                onClick={() => setMostrarModalReconciliacao(false)}
+                                className="px-4 py-2 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={executarReconciliacao}
+                                className="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors flex items-center gap-2"
+                            >
+                                <i className="fa-solid fa-play"></i>
+                                Iniciar Reconciliação
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {reconciliacaoStatus === 'rodando' && (
+                    <>
+                        <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-spinner fa-spin text-blue-600"></i>
+                            Reconciliando CVs...
+                        </h3>
+                        <div className="mb-3">
+                            <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                <span>Progresso</span>
+                                <span className="font-semibold">
+                                    {reconciliacaoProgresso.processados} / {reconciliacaoProgresso.totalInicial}
+                                </span>
+                            </div>
+                            <div className="bg-gray-100 rounded-full h-3 overflow-hidden">
+                                <div
+                                    className="bg-blue-600 h-3 transition-all duration-300"
+                                    style={{ width: `${Math.min(100, (reconciliacaoProgresso.processados / Math.max(reconciliacaoProgresso.totalInicial, 1)) * 100)}%` }}
+                                />
+                            </div>
+                            <div className="text-[10px] text-gray-500 mt-1 text-right">
+                                Restam {reconciliacaoProgresso.restantes}
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+                            <div className="bg-green-50 rounded-lg p-2">
+                                <div className="text-[10px] text-green-700 uppercase font-semibold">Leads</div>
+                                <div className="text-lg font-bold text-green-700">{reconciliacaoProgresso.leadsInseridos}</div>
+                            </div>
+                            <div className="bg-amber-50 rounded-lg p-2">
+                                <div className="text-[10px] text-amber-700 uppercase font-semibold">Ignorados</div>
+                                <div className="text-lg font-bold text-amber-700">{reconciliacaoProgresso.leadsIgnorados}</div>
+                            </div>
+                            <div className="bg-red-50 rounded-lg p-2">
+                                <div className="text-[10px] text-red-700 uppercase font-semibold">Erros</div>
+                                <div className="text-lg font-bold text-red-700">{reconciliacaoProgresso.erros}</div>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => { cancelarReconciliacaoRef.current = true; }}
+                            disabled={cancelarReconciliacaoRef.current}
+                            className="w-full px-4 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                        >
+                            <i className="fa-solid fa-stop mr-1.5"></i>
+                            {cancelarReconciliacaoRef.current ? 'Finalizando lote atual...' : 'Cancelar (preserva o que já processou)'}
+                        </button>
+                    </>
+                )}
+
+                {reconciliacaoStatus === 'concluido' && (
+                    <>
+                        <h3 className="text-lg font-bold text-green-700 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-circle-check"></i>
+                            Reconciliação Concluída
+                        </h3>
+                        <div className="space-y-2 text-sm text-gray-700 mb-5 bg-gray-50 rounded-lg p-3">
+                            <div className="flex justify-between">
+                                <span>Candidatos processados:</span>
+                                <strong>{reconciliacaoProgresso.processados}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Empresas inseridas como leads:</span>
+                                <strong className="text-green-700">{reconciliacaoProgresso.leadsInseridos}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Empresas ignoradas (dup/exclusão):</span>
+                                <strong className="text-amber-700">{reconciliacaoProgresso.leadsIgnorados}</strong>
+                            </div>
+                            {reconciliacaoProgresso.erros > 0 && (
+                                <div className="flex justify-between">
+                                    <span>Erros encontrados:</span>
+                                    <strong className="text-red-700">{reconciliacaoProgresso.erros}</strong>
+                                </div>
+                            )}
+                            {reconciliacaoProgresso.restantes > 0 && (
+                                <div className="flex justify-between border-t border-gray-200 pt-2 mt-2">
+                                    <span>Restantes para próxima vez:</span>
+                                    <strong>{reconciliacaoProgresso.restantes}</strong>
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => {
+                                setMostrarModalReconciliacao(false);
+                                setReconciliacaoStatus('idle');
+                                carregarLeadsSalvos();
+                            }}
+                            className="w-full px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                            Fechar
+                        </button>
+                    </>
+                )}
+
+                {reconciliacaoStatus === 'erro' && (
+                    <>
+                        <h3 className="text-lg font-bold text-red-700 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-triangle-exclamation"></i>
+                            Erro na Reconciliação
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-4">
+                            Algo deu errado durante o processamento. O que já tinha sido inserido até o erro está salvo. Você pode tentar novamente — o sistema continua de onde parou.
+                        </p>
+                        <div className="grid grid-cols-2 gap-3 mb-5 text-center text-sm">
+                            <div className="bg-green-50 rounded p-2">
+                                <div className="text-[10px] text-green-700 uppercase">Inseridos</div>
+                                <div className="text-lg font-bold text-green-700">{reconciliacaoProgresso.leadsInseridos}</div>
+                            </div>
+                            <div className="bg-red-50 rounded p-2">
+                                <div className="text-[10px] text-red-700 uppercase">Erros</div>
+                                <div className="text-lg font-bold text-red-700">{reconciliacaoProgresso.erros}</div>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => {
+                                setMostrarModalReconciliacao(false);
+                                setReconciliacaoStatus('idle');
+                                carregarPendentesReconciliacao();
+                            }}
+                            className="w-full px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                        >
+                            Fechar
+                        </button>
+                    </>
+                )}
+            </div>
+        </div>
     )}
     </div>
     </>
