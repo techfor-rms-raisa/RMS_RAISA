@@ -9,10 +9,21 @@
  * - POST { modo: 'pessoa', pessoa_id } → extração de um candidato específico (trigger automático)
  * - POST { modo: 'marcar_exportado', lead_id, user_id } → marcar lead como exportado
  *
- * Versão: 1.1
- * Data: 25/03/2026
+ * Versão: 1.2
+ * Data: 26/06/2026
  * v1.1: empresa_dominio não recebe mais domínio pessoal do candidato
  *       (gmail, hotmail, outlook etc.) — campo fica null para preenchimento manual
+ * v1.2 (26/06/2026): hotfix bug do parser de empresa_nome.
+ *       Auditoria de 25/06/2026 revelou 260 nomes inválidos (~6% da base):
+ *       - Categoria A (LIXO): "Formação Acadêmica:", "Localidade:", áreas genéricas
+ *       - Categoria B (DADO VÁLIDO com prefixo): "Experiência: PicPay" → "PicPay"
+ *       - Categoria C (DADO VÁLIDO com sufixo): "Bradesco\nexperiência" → "Bradesco"
+ *       Função sanitizarEmpresaCV() expandida com 3 tratamentos:
+ *       1. Quebras de linha internas → pega apenas a primeira linha não-vazia
+ *       2. Prefixos LIXO → NULLifica (Formação Acadêmica:, Localidade:, etc)
+ *       3. Prefixos REMOVÍVEIS → remove só o rótulo, preserva o nome real
+ *       4. Sufixos rotuladores ("experiência") → remove
+ *       Lista EMPRESA_INVALIDA_CV também expandida com áreas funcionais.
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -162,20 +173,114 @@ async function resolverDominioPorIA(empresaNome: string): Promise<string | null>
 
 // ─── SANITIZAÇÃO DE DADOS ──────────────────────────────────
 const EMPRESA_INVALIDA_CV = new Set([
+    // Originais (v1.0)
     'tempo integral', 'autônomo', 'autonomo', 'freelancer',
     'cto', 'coo', 'cfo', 'ceo', 'cio', 'ciso',
     'gerente de ti', 'gerente de projetos', 'gerente de projetos senior',
     'coordenador de ti', 'coordenadora de ti',
     'diretor geral', 'diretor de ti', 'analista de ti',
     'analista de infraestrutura sap business one',
+    // 🐛 v1.2 (26/06/2026) — adicionados após auditoria de 260 inválidos
+    // Áreas funcionais (não são empresas)
+    'gestão de pessoas', 'gestao de pessoas',
+    'gestão de ti', 'gestao de ti',
+    'governança de ti', 'governanca de ti',
+    'recursos humanos',
+    'tecnologia da informação', 'tecnologia da informacao',
+    'engenharia de software',
+    'engenharia de dados',
+    'engenharia de redes',
+    // Cargos genéricos sem empresa
+    'profissional de tecnologia da informação',
+    'profissional de ti',
+    'profissional de tecnologia',
+    'executivo de ti',
+    // Single-word genéricos
+    'pessoas', 'experiência', 'experiencia', 'formação', 'formacao',
 ]);
+
+// 🐛 v1.2 — Prefixos que indicam LIXO PURO (nome inteiro descartado)
+const PREFIXOS_LIXO_CV: RegExp[] = [
+    /^forma[çc][ãa]o\s+acad[êe]mica\s*:/i,    // "Formação Acadêmica: FGV"
+    /^localidade\s*:/i,                         // "Localidade: São Paulo"
+    /^cidade\s*:/i,
+    /^estado\s*:/i,
+    /^pa[ií]s\s*:/i,
+    /^endere[çc]o\s*:/i,
+    /^atua[çc][ãa]o\s*:/i,                      // "Atuação: TI"
+    /^cargo\s*:/i,                              // "Cargo: Gerente"
+    /^fun[çc][ãa]o\s*:/i,
+    /^[áa]rea\s*:/i,
+    /^perfil\s*:/i,
+    /^objetivo\s*:/i,
+    /^idioma\s*:/i,
+    /^idiomas\s*:/i,
+    /^contato\s*:/i,
+    /^email\s*:/i,
+    /^telefone\s*:/i,
+    /^linkedin\s*:/i,
+];
+
+// 🐛 v1.2 — Prefixos REMOVÍVEIS (mantém o nome real após o rótulo)
+const PREFIXOS_REMOVIVEIS_CV: RegExp[] = [
+    /^experi[êe]ncia\s*:\s*/i,                  // "Experiência: PicPay" → "PicPay"
+    /^empresa\s*:\s*/i,                          // "Empresa: Bradesco" → "Bradesco"
+    /^companhia\s*:\s*/i,
+    /^organiza[çc][ãa]o\s*:\s*/i,
+];
+
+// 🐛 v1.2 — Sufixos rotuladores a remover
+const SUFIXOS_REMOVIVEIS_CV: RegExp[] = [
+    /\s+experi[êe]ncia\s*$/i,                   // "Bradesco experiência" → "Bradesco"
+    /\s+atua[çc][ãa]o\s*$/i,
+];
 
 function sanitizarEmpresaCV(nome: string | null | undefined): string | null {
     if (!nome) return null;
-    const trimmed = nome.trim();
+    let trimmed = nome.trim();
     if (!trimmed) return null;
+
+    // 🐛 v1.2 — (1) Quebras de linha internas: pega só a primeira linha não-vazia
+    //              Cobre "Grupo Dpsp\nexperiência" → "Grupo Dpsp"
+    //              E "Bradesco\nauditor de TI" → "Bradesco"
+    if (trimmed.includes('\n') || trimmed.includes('\r')) {
+        const linhas = trimmed
+            .split(/[\r\n]+/)
+            .map(l => l.trim())
+            .filter(l => l.length > 0);
+        trimmed = linhas[0] || '';
+        if (!trimmed) return null;
+    }
+
+    // 🐛 v1.2 — (2) Prefixos LIXO: descarta o nome inteiro
+    //              "Formação Acadêmica: FGV" → null (FGV não é a empresa do candidato)
+    //              "Localidade: São Paulo" → null
+    for (const regex of PREFIXOS_LIXO_CV) {
+        if (regex.test(trimmed)) return null;
+    }
+
+    // 🐛 v1.2 — (3) Prefixos REMOVÍVEIS: remove rótulo, preserva nome
+    //              "Experiência: PicPay" → "PicPay"
+    for (const regex of PREFIXOS_REMOVIVEIS_CV) {
+        const novo = trimmed.replace(regex, '').trim();
+        if (novo && novo !== trimmed) {
+            trimmed = novo;
+            break;
+        }
+    }
+
+    // 🐛 v1.2 — (4) Sufixos rotuladores: remove
+    //              "Bradesco experiência" → "Bradesco"
+    for (const regex of SUFIXOS_REMOVIVEIS_CV) {
+        trimmed = trimmed.replace(regex, '').trim();
+    }
+
+    if (!trimmed) return null;
+
+    // Lista original (e expandida em v1.2) de cargos/áreas funcionais inválidos
     if (EMPRESA_INVALIDA_CV.has(trimmed.toLowerCase())) return null;
     if (trimmed.length > 100) return null;
+
     return trimmed
         .toLowerCase()
         .replace(/(?:^|\s|[-\/&(])(\S)/g, (match) => match.toUpperCase());
