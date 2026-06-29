@@ -69,3 +69,6 @@ dist/
 
 # Script Python local de revalidacao LinkedIn (roda agendado na maquina do Messias)
 scripts/revalidacao_linkedin/
+
+vercel-env-audit/
+.env*
