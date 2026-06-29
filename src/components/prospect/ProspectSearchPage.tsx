@@ -95,6 +95,26 @@
  *     setStatus(prev => prev === 'rodando' ? 'concluido' : prev)
  *   Cobre TODOS os caminhos de saída (break, terminou, estagnação, erro).
  *   Não pisa em 'erro' que já foi setado dentro do try/catch.
+ *
+ * v4.8 (29/06/2026 — Domínios Turnover, nova aba comercial):
+ * - Aba "Domínios Turnover" visível para Administrador, Admin,
+ *   Gestão Comercial e SDR. Lista o ranking de domínios em
+ *   prospect_leads ordenado por incidência (= turnover percebido).
+ * - Backend: view materializada mv_dominios_turnover + endpoint
+ *   /api/prospect-dominios-turnover (actions: listar, stats, refresh,
+ *   marcar_trabalhado, desmarcar_trabalhado, exportar_csv).
+ * - Calibração de tiers baseada em dados reais (top 50 inspecionado
+ *   em 29/06/2026): S≥40, A 20-39, B 10-19, C 5-9, D<5.
+ * - Unificação automática .com.br → .com quando ambos existem
+ *   (caso PicPay: 83+21 = 104 leads consolidados).
+ * - Marcação "já trabalhado" GLOBAL (visível a todos), governada
+ *   pelo endpoint: só o próprio autor OU Administrador pode desmarcar.
+ * - Filtros: busca por domínio, tier (S/A/B/C/D), "Esconder os
+ *   já trabalhados pela equipe". Paginação 50/página.
+ * - Ações por linha: 🎯 Prospectar (leva à aba "Nova Busca" com
+ *   domínio pré-preenchido), 📋 Copiar, 🔖 Marcar/Desmarcar.
+ * - Refresh manual via botão "Atualizar agora" (chama
+ *   refresh_dominios_turnover RPC com CONCURRENTLY).
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -170,6 +190,23 @@ interface ProspectLead {
     vertical:           string | null;
 }
 
+// 🆕 v4.8 (29/06/2026) — Domínios Turnover
+interface DominioTurnover {
+    empresa_dominio:        string;
+    total_leads:            number;
+    pessoas_distintas:      number;
+    variantes_nome:         number;
+    pct_com_email:          number | null;
+    primeiro_lead:          string | null;
+    ultimo_lead:            string | null;
+    tier:                   'S' | 'A' | 'B' | 'C' | 'D';
+    aliases:                string[] | null;
+    trabalhado_por_id:      number | null;
+    trabalhado_por_nome:    string | null;
+    trabalhado_em:          string | null;
+    trabalhado_observacao:  string | null;
+}
+
 // ============================================
 // CONSTANTES
 // ============================================
@@ -197,7 +234,7 @@ const SENIORIDADES = [
 // COMPONENTE PRINCIPAL
 // ============================================
 interface ProspectSearchPageProps {
-    initialTab?: 'busca' | 'empresas' | 'leads' | 'exclusoes';
+    initialTab?: 'busca' | 'empresas' | 'leads' | 'exclusoes' | 'dominios_turnover';
 }
 
 const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'busca' }) => {
@@ -219,7 +256,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [toastMsg, setToastMsg]                       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
 
     // Abas
-    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'empresas'|'leads'|'exclusoes'>(initialTab ?? 'busca');
+    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'empresas'|'leads'|'exclusoes'|'dominios_turnover'>(initialTab ?? 'busca');
 
     // Sincronizar abaAtiva quando initialTab mudar
     // (ex: usuário navega de "Buscar Leads" → "Meus Prospects" sem desmontar o componente)
@@ -324,6 +361,40 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
         erros: 0,
     });
     const cancelarNormalizacaoRef = useRef(false);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 🆕 v4.8 (29/06/2026 — Domínios Turnover) — GC / SDR / Admin
+    // ════════════════════════════════════════════════════════════════════════
+    const [dominiosTurnover, setDominiosTurnover]               = useState<DominioTurnover[]>([]);
+    const [loadingDominiosTurnover, setLoadingDominiosTurnover] = useState(false);
+    const [dtBusca, setDtBusca]                                 = useState('');
+    const [dtTier, setDtTier]                                   = useState('');           // '' | 'S' | 'A' | 'B' | 'C' | 'D'
+    const [dtApenasNaoTrabalhados, setDtApenasNaoTrabalhados]   = useState(false);
+    const [dtPagina, setDtPagina]                               = useState(1);
+    const [dtTotal, setDtTotal]                                 = useState(0);
+    const [dtTotalPages, setDtTotalPages]                       = useState(0);
+    const ITENS_DT_POR_PAGINA = 50;
+
+    // Stats (cards do topo da aba)
+    const [dtStats, setDtStats]                                 = useState<{
+        total_dominios: number; total_leads: number;
+        tier_s_count: number; tier_a_count: number; tier_b_count: number;
+        tier_c_count: number; tier_d_count: number;
+        total_trabalhados: number;
+    } | null>(null);
+
+    // Refresh (botão "Atualizar agora")
+    const [dtRefreshing, setDtRefreshing]                       = useState(false);
+
+    // Modal de marcar trabalhado
+    const [dtModalMarcar, setDtModalMarcar]                     = useState<DominioTurnover | null>(null);
+    const [dtObservacao, setDtObservacao]                       = useState('');
+    const [dtSalvandoMarcacao, setDtSalvandoMarcacao]           = useState(false);
+    const [dtCopiado, setDtCopiado]                             = useState<string | null>(null);
+
+    // Permissão para usar a aba
+    const podeVerDominiosTurnover = ['Administrador', 'Admin', 'Gestão Comercial', 'SDR']
+        .includes(currentUser?.tipo_usuario || '');
 
     // ============================================
     // TOGGLES
@@ -1373,9 +1444,187 @@ A empresa ficará disponível para a equipe.`)) return;
         }
     }, []);
 
+    // ════════════════════════════════════════════════════════════════════════
+    // 🆕 v4.8 (29/06/2026) — DOMÍNIOS TURNOVER — funções de fetch e ações
+    // ════════════════════════════════════════════════════════════════════════
+
+    /** Carrega stats gerais (cards do topo) + lista paginada. */
+    const carregarDominiosTurnover = useCallback(async () => {
+        if (!podeVerDominiosTurnover) return;
+        setLoadingDominiosTurnover(true);
+        try {
+            // 1) Stats (cards)
+            const resStats  = await fetch('/api/prospect-dominios-turnover?action=stats');
+            const dataStats = await resStats.json();
+            if (dataStats.success) setDtStats(dataStats.stats);
+
+            // 2) Lista paginada
+            const params = new URLSearchParams();
+            params.set('action', 'listar');
+            params.set('page',  String(dtPagina));
+            params.set('limit', String(ITENS_DT_POR_PAGINA));
+            if (dtBusca)                  params.set('busca', dtBusca);
+            if (dtTier)                   params.set('tier',  dtTier);
+            if (dtApenasNaoTrabalhados)   params.set('apenas_nao_trabalhados', 'true');
+
+            const res  = await fetch(`/api/prospect-dominios-turnover?${params}`);
+            const data = await res.json();
+            if (data.success) {
+                setDominiosTurnover(data.dominios || []);
+                setDtTotal(data.total || 0);
+                setDtTotalPages(data.total_pages || 0);
+            } else {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Erro ao carregar domínios.' });
+                setTimeout(() => setToastMsg(null), 4000);
+            }
+        } catch (e: any) {
+            console.error('Erro ao carregar Domínios Turnover:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Falha ao carregar domínios.' });
+            setTimeout(() => setToastMsg(null), 4000);
+        } finally {
+            setLoadingDominiosTurnover(false);
+        }
+    }, [podeVerDominiosTurnover, dtPagina, dtBusca, dtTier, dtApenasNaoTrabalhados]);
+
+    /** Botão "Atualizar agora" — chama refresh_dominios_turnover via RPC. */
+    const atualizarDominiosTurnover = useCallback(async () => {
+        if (!currentUser?.id) return;
+        setDtRefreshing(true);
+        try {
+            const res  = await fetch('/api/prospect-dominios-turnover', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ action: 'refresh', user_id: currentUser.id }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                const ms = data.resultado?.duracao_ms ?? data.duracao_total_ms;
+                setToastMsg({
+                    tipo: 'ok',
+                    msg:  `Atualizado: ${data.resultado?.total_dominios ?? '?'} domínios em ${ms}ms.`,
+                });
+                // Recarrega a lista atual
+                await carregarDominiosTurnover();
+            } else {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Falha ao atualizar.' });
+            }
+        } catch (e: any) {
+            console.error('Erro no refresh:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Erro de rede no refresh.' });
+        } finally {
+            setDtRefreshing(false);
+            setTimeout(() => setToastMsg(null), 4000);
+        }
+    }, [currentUser?.id, carregarDominiosTurnover]);
+
+    /** "Prospectar" — leva à aba Nova Busca com domínio pré-preenchido. */
+    const dtProspectar = useCallback((dominio: string) => {
+        setDomain(dominio);
+        setEmpresaNome('');
+        setAbaAtiva('busca');
+        setToastMsg({
+            tipo: 'ok',
+            msg:  `Domínio "${dominio}" carregado — configure os filtros e clique em Buscar`,
+        });
+        setTimeout(() => setToastMsg(null), 4000);
+    }, []);
+
+    /** "Copiar" — copia domínio para clipboard e dá feedback visual. */
+    const dtCopiar = useCallback(async (dominio: string) => {
+        try {
+            await navigator.clipboard.writeText(dominio);
+            setDtCopiado(dominio);
+            setTimeout(() => setDtCopiado(null), 2000);
+        } catch (e) {
+            console.error('Falha ao copiar:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Não foi possível copiar.' });
+            setTimeout(() => setToastMsg(null), 3000);
+        }
+    }, []);
+
+    /** Salva marcação "trabalhado" (chama endpoint upsert). */
+    const dtSalvarMarcacao = useCallback(async () => {
+        if (!dtModalMarcar || !currentUser?.id) return;
+        setDtSalvandoMarcacao(true);
+        try {
+            const res  = await fetch('/api/prospect-dominios-turnover', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    action:          'marcar_trabalhado',
+                    user_id:         currentUser.id,
+                    empresa_dominio: dtModalMarcar.empresa_dominio,
+                    observacao:      dtObservacao.trim() || null,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setToastMsg({
+                    tipo: 'ok',
+                    msg:  `"${dtModalMarcar.empresa_dominio}" marcado como trabalhado.`,
+                });
+                setDtModalMarcar(null);
+                setDtObservacao('');
+                await carregarDominiosTurnover();
+            } else {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Falha ao salvar.' });
+            }
+        } catch (e: any) {
+            console.error('Erro ao marcar:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Erro de rede ao salvar.' });
+        } finally {
+            setDtSalvandoMarcacao(false);
+            setTimeout(() => setToastMsg(null), 4000);
+        }
+    }, [dtModalMarcar, dtObservacao, currentUser?.id, carregarDominiosTurnover]);
+
+    /** Desmarcar "trabalhado" (apenas autor ou Administrador). */
+    const dtDesmarcar = useCallback(async (dominio: string) => {
+        if (!currentUser?.id) return;
+        if (!confirm(`Desmarcar "${dominio}" como trabalhado?\n\nA marcação será removida para toda a equipe.`)) return;
+        try {
+            const res  = await fetch('/api/prospect-dominios-turnover', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    action:          'desmarcar_trabalhado',
+                    user_id:         currentUser.id,
+                    empresa_dominio: dominio,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setToastMsg({ tipo: 'ok', msg: `"${dominio}" desmarcado.` });
+                await carregarDominiosTurnover();
+            } else {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Falha ao desmarcar.' });
+            }
+        } catch (e: any) {
+            console.error('Erro ao desmarcar:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Erro de rede.' });
+        } finally {
+            setTimeout(() => setToastMsg(null), 4000);
+        }
+    }, [currentUser?.id, carregarDominiosTurnover]);
+
+    /** Exporta CSV respeitando filtros atuais (busca/tier/não trabalhados). */
+    const dtExportarCSV = useCallback(() => {
+        const params = new URLSearchParams();
+        params.set('action', 'exportar_csv');
+        if (dtBusca)                params.set('busca', dtBusca);
+        if (dtTier)                 params.set('tier',  dtTier);
+        if (dtApenasNaoTrabalhados) params.set('apenas_nao_trabalhados', 'true');
+        // Browser inicia download direto (Content-Disposition: attachment)
+        window.location.href = `/api/prospect-dominios-turnover?${params}`;
+    }, [dtBusca, dtTier, dtApenasNaoTrabalhados]);
+
     useEffect(() => {
         if (abaAtiva === 'exclusoes') carregarExclusoes();
     }, [abaAtiva, carregarExclusoes]);
+
+    useEffect(() => {
+        if (abaAtiva === 'dominios_turnover') carregarDominiosTurnover();
+    }, [abaAtiva, carregarDominiosTurnover]);
 
     useEffect(() => {
         if (abaAtiva === 'empresas') carregarLeadsSalvos();
@@ -1858,16 +2107,19 @@ A empresa ficará disponível para a equipe.`)) return;
 
         {/* Abas */}
         <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
-            {(['busca', 'empresas', 'leads', 'exclusoes'] as const).map(aba => (
+            {(['busca', 'empresas', 'leads', 'exclusoes', 'dominios_turnover'] as const)
+                .filter(aba => aba !== 'dominios_turnover' || podeVerDominiosTurnover)
+                .map(aba => (
                 <button key={aba} onClick={() => setAbaAtiva(aba)}
                     className={`px-4 py-2 text-sm font-medium rounded-t transition-colors
                         ${abaAtiva === aba
                             ? 'bg-white border border-b-white border-gray-200 text-blue-600 -mb-px'
                             : 'text-gray-500 hover:text-gray-700'}`}>
-                    {aba === 'busca'     ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
-                     : aba === 'empresas' ? <><i className="fa-solid fa-building mr-2"></i>Lista Empresas</>
-                     : aba === 'leads'   ? <><i className="fa-solid fa-users mr-2"></i>Meus Prospects Salvos</>
-                                        : <><i className="fa-solid fa-ban mr-2 text-red-400"></i>Exclusões</>}
+                    {aba === 'busca'             ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
+                     : aba === 'empresas'         ? <><i className="fa-solid fa-building mr-2"></i>Lista Empresas</>
+                     : aba === 'leads'            ? <><i className="fa-solid fa-users mr-2"></i>Meus Prospects Salvos</>
+                     : aba === 'exclusoes'        ? <><i className="fa-solid fa-ban mr-2 text-red-400"></i>Exclusões</>
+                                                  : <><i className="fa-solid fa-chart-line mr-2 text-emerald-500"></i>Domínios Turnover</>}
                 </button>
             ))}
             {/* Botão Reset — limpa tudo para nova pesquisa */}
@@ -3500,6 +3752,357 @@ A empresa ficará disponível para a equipe.`)) return;
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            )}
+        </>
+        )}
+
+        {/* ══════════════════════════════════════════════════════════ */}
+        {/* 🆕 v4.8 (29/06/2026) — ABA: DOMÍNIOS TURNOVER             */}
+        {/* ══════════════════════════════════════════════════════════ */}
+        {abaAtiva === 'dominios_turnover' && podeVerDominiosTurnover && (
+        <>
+            {/* Cabeçalho explicativo */}
+            <div className="mb-4 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <div className="flex items-start gap-3">
+                    <i className="fa-solid fa-chart-line text-emerald-500 text-lg mt-0.5"></i>
+                    <div className="flex-1">
+                        <p className="text-sm font-semibold text-emerald-800">Domínios Turnover — Ranking de Rotatividade</p>
+                        <p className="text-xs text-emerald-700 mt-0.5">
+                            Cada lead na base veio de um CV — ou seja, uma pessoa que <strong>passou ou saiu</strong> daquela empresa.
+                            Domínios com mais leads = empresas com maior turnover, e portanto maior demanda de reposição.
+                            Use o botão <strong>🎯 Prospectar</strong> para levar o domínio direto à aba Nova Busca.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Cards de stats */}
+            {dtStats && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div className="bg-white border border-gray-200 rounded-xl p-3">
+                        <div className="text-xs text-gray-500 font-medium">TOTAL DE DOMÍNIOS</div>
+                        <div className="text-2xl font-bold text-gray-800 mt-0.5">{dtStats.total_dominios.toLocaleString('pt-BR')}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{dtStats.total_leads.toLocaleString('pt-BR')} leads</div>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-xl p-3">
+                        <div className="text-xs text-gray-500 font-medium">TIERS PREMIUM</div>
+                        <div className="text-2xl font-bold text-amber-600 mt-0.5">{dtStats.tier_s_count} <span className="text-sm text-gray-400">S</span></div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{dtStats.tier_a_count} A · {dtStats.tier_b_count} B</div>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-xl p-3">
+                        <div className="text-xs text-gray-500 font-medium">CAUDA LONGA</div>
+                        <div className="text-2xl font-bold text-gray-500 mt-0.5">{dtStats.tier_c_count + dtStats.tier_d_count}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{dtStats.tier_c_count} C · {dtStats.tier_d_count} D</div>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-xl p-3">
+                        <div className="text-xs text-gray-500 font-medium">JÁ TRABALHADOS</div>
+                        <div className="text-2xl font-bold text-blue-600 mt-0.5">{dtStats.total_trabalhados}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">marcações da equipe</div>
+                    </div>
+                </div>
+            )}
+
+            {/* Barra de filtros + ações */}
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+                <input
+                    type="text"
+                    value={dtBusca}
+                    onChange={e => { setDtBusca(e.target.value); setDtPagina(1); }}
+                    placeholder="Buscar domínio..."
+                    className="flex-1 min-w-[200px] px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                />
+
+                <select
+                    value={dtTier}
+                    onChange={e => { setDtTier(e.target.value); setDtPagina(1); }}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                >
+                    <option value="">Todos os tiers</option>
+                    <option value="S">S (≥40 leads) — Premium</option>
+                    <option value="A">A (20-39) — Alto</option>
+                    <option value="B">B (10-19) — Médio</option>
+                    <option value="C">C (5-9) — Base</option>
+                    <option value="D">D (&lt;5) — Cauda</option>
+                </select>
+
+                <label className="flex items-center gap-1.5 text-xs text-gray-600 px-2">
+                    <input
+                        type="checkbox"
+                        checked={dtApenasNaoTrabalhados}
+                        onChange={e => { setDtApenasNaoTrabalhados(e.target.checked); setDtPagina(1); }}
+                        className="w-3.5 h-3.5 accent-emerald-600"
+                    />
+                    Esconder os já trabalhados
+                </label>
+
+                <button
+                    onClick={() => carregarDominiosTurnover()}
+                    title="Recarregar lista com filtros atuais"
+                    className="px-3 py-1.5 bg-gray-600 text-white rounded-lg text-sm hover:bg-gray-700 flex items-center gap-1"
+                >
+                    <i className="fa-solid fa-magnifying-glass"></i>
+                    Filtrar
+                </button>
+
+                <button
+                    onClick={dtExportarCSV}
+                    title="Exportar lista filtrada como CSV"
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1"
+                >
+                    <i className="fa-solid fa-file-csv"></i>
+                    Exportar CSV
+                </button>
+
+                <button
+                    onClick={atualizarDominiosTurnover}
+                    disabled={dtRefreshing}
+                    title="Recalcula o ranking com base nos leads atuais"
+                    className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 disabled:bg-gray-300 flex items-center gap-1"
+                >
+                    <i className={`fa-solid fa-arrows-rotate ${dtRefreshing ? 'fa-spin' : ''}`}></i>
+                    {dtRefreshing ? 'Atualizando...' : 'Atualizar agora'}
+                </button>
+            </div>
+
+            {/* Tabela */}
+            {loadingDominiosTurnover ? (
+                <div className="text-center py-10 text-gray-400">
+                    <i className="fa-solid fa-spinner fa-spin text-2xl mb-2 block"></i>
+                    Carregando domínios...
+                </div>
+            ) : dominiosTurnover.length === 0 ? (
+                <div className="text-center py-16 text-gray-400">
+                    <i className="fa-solid fa-chart-line text-5xl mb-3 block text-gray-200"></i>
+                    <p className="font-medium">Nenhum domínio encontrado</p>
+                    <p className="text-xs mt-1">Ajuste os filtros ou clique em "Atualizar agora"</p>
+                </div>
+            ) : (
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                    {/* Contador */}
+                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                        <span className="text-xs text-gray-500">
+                            Mostrando <strong>{(dtPagina - 1) * ITENS_DT_POR_PAGINA + 1}</strong>–
+                            <strong>{Math.min(dtPagina * ITENS_DT_POR_PAGINA, dtTotal)}</strong> de <strong>{dtTotal}</strong> domínios
+                        </span>
+                        {dtTotalPages > 1 && (
+                            <div className="flex items-center gap-1 text-xs">
+                                <button
+                                    disabled={dtPagina === 1}
+                                    onClick={() => setDtPagina(1)}
+                                    className="px-2 py-0.5 rounded hover:bg-gray-200 disabled:text-gray-300"
+                                    title="Primeira"
+                                >«</button>
+                                <button
+                                    disabled={dtPagina === 1}
+                                    onClick={() => setDtPagina(p => Math.max(1, p - 1))}
+                                    className="px-2 py-0.5 rounded hover:bg-gray-200 disabled:text-gray-300"
+                                >‹</button>
+                                <span className="px-2 text-gray-600">{dtPagina} / {dtTotalPages}</span>
+                                <button
+                                    disabled={dtPagina === dtTotalPages}
+                                    onClick={() => setDtPagina(p => Math.min(dtTotalPages, p + 1))}
+                                    className="px-2 py-0.5 rounded hover:bg-gray-200 disabled:text-gray-300"
+                                >›</button>
+                                <button
+                                    disabled={dtPagina === dtTotalPages}
+                                    onClick={() => setDtPagina(dtTotalPages)}
+                                    className="px-2 py-0.5 rounded hover:bg-gray-200 disabled:text-gray-300"
+                                    title="Última"
+                                >»</button>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="bg-gray-100 text-left">
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">#</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">DOMÍNIO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">TIER</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-right">LEADS</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-right">PESSOAS</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-right">% C/EMAIL</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ÚLT. ATIV.</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">TRABALHADO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÕES</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {dominiosTurnover.map((d, idx) => {
+                                    const posicao   = (dtPagina - 1) * ITENS_DT_POR_PAGINA + idx + 1;
+                                    const tierColor = d.tier === 'S' ? 'bg-amber-100 text-amber-700 border-amber-300'
+                                                    : d.tier === 'A' ? 'bg-blue-100 text-blue-700 border-blue-300'
+                                                    : d.tier === 'B' ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                                                    : d.tier === 'C' ? 'bg-gray-100 text-gray-700 border-gray-300'
+                                                    :                  'bg-gray-50 text-gray-500 border-gray-200';
+                                    const pctEmail  = d.pct_com_email === null ? null : Number(d.pct_com_email);
+                                    const pctColor  = pctEmail === null   ? 'text-gray-400'
+                                                    : pctEmail >= 80      ? 'text-emerald-600 font-semibold'
+                                                    : pctEmail >= 40      ? 'text-amber-600'
+                                                    :                       'text-red-500';
+                                    const podeDesmarcar = d.trabalhado_por_id !== null
+                                        && (d.trabalhado_por_id === currentUser?.id
+                                            || currentUser?.tipo_usuario === 'Administrador');
+
+                                    return (
+                                        <tr key={d.empresa_dominio}
+                                            className={`border-t border-gray-100 hover:bg-gray-50
+                                                ${d.trabalhado_por_id ? 'bg-blue-50/30' : ''}`}>
+                                            <td className="px-3 py-2 text-xs text-gray-500 text-center font-medium">{posicao}</td>
+                                            <td className="px-3 py-2">
+                                                <div className="font-medium text-gray-800">{d.empresa_dominio}</div>
+                                                {d.aliases && d.aliases.length > 0 && (
+                                                    <div className="text-[10px] text-gray-400 mt-0.5">
+                                                        + {d.aliases.join(', ')}
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2 text-center">
+                                                <span className={`inline-block px-2 py-0.5 text-xs font-bold border rounded ${tierColor}`}>
+                                                    {d.tier}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-2 text-right font-semibold text-gray-800">{d.total_leads}</td>
+                                            <td className="px-3 py-2 text-right text-gray-600">{d.pessoas_distintas}</td>
+                                            <td className={`px-3 py-2 text-right ${pctColor}`}>
+                                                {pctEmail === null ? '—' : `${pctEmail}%`}
+                                            </td>
+                                            <td className="px-3 py-2 text-center text-xs text-gray-500">
+                                                {d.ultimo_lead || '—'}
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                {d.trabalhado_por_nome ? (
+                                                    <div className="text-xs">
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
+                                                            <i className="fa-solid fa-bookmark text-[10px]"></i>
+                                                            {d.trabalhado_por_nome}
+                                                        </span>
+                                                        {d.trabalhado_em && (
+                                                            <span className="text-[10px] text-gray-400 ml-1">
+                                                                {new Date(d.trabalhado_em).toLocaleDateString('pt-BR')}
+                                                            </span>
+                                                        )}
+                                                        {d.trabalhado_observacao && (
+                                                            <div className="text-[10px] text-gray-500 italic mt-0.5 max-w-[180px] truncate"
+                                                                 title={d.trabalhado_observacao}>
+                                                                {d.trabalhado_observacao}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-xs text-gray-300">—</span>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                <div className="flex items-center gap-1 justify-center">
+                                                    <button
+                                                        onClick={() => dtProspectar(d.empresa_dominio)}
+                                                        title="Levar domínio para a aba Nova Busca"
+                                                        className="px-2 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center gap-1"
+                                                    >
+                                                        <i className="fa-solid fa-bullseye"></i>
+                                                        Prospectar
+                                                    </button>
+                                                    <button
+                                                        onClick={() => dtCopiar(d.empresa_dominio)}
+                                                        title="Copiar domínio"
+                                                        className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 flex items-center"
+                                                    >
+                                                        <i className={`fa-solid ${dtCopiado === d.empresa_dominio ? 'fa-check text-emerald-600' : 'fa-copy'}`}></i>
+                                                    </button>
+                                                    {d.trabalhado_por_id === null ? (
+                                                        <button
+                                                            onClick={() => { setDtModalMarcar(d); setDtObservacao(''); }}
+                                                            title="Marcar como já trabalhado (visível para toda a equipe)"
+                                                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 flex items-center gap-1"
+                                                        >
+                                                            <i className="fa-solid fa-bookmark"></i>
+                                                            Marcar
+                                                        </button>
+                                                    ) : podeDesmarcar ? (
+                                                        <button
+                                                            onClick={() => dtDesmarcar(d.empresa_dominio)}
+                                                            title="Desmarcar como trabalhado"
+                                                            className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100 flex items-center gap-1"
+                                                        >
+                                                            <i className="fa-solid fa-bookmark fa-fw"></i>
+                                                            <i className="fa-solid fa-xmark text-[9px]"></i>
+                                                        </button>
+                                                    ) : null}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal — Marcar como trabalhado */}
+            {dtModalMarcar && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+                        <div className="px-6 py-4 border-b border-gray-100">
+                            <h2 className="text-base font-semibold text-gray-800">
+                                <i className="fa-solid fa-bookmark mr-2 text-blue-500"></i>
+                                Marcar como trabalhado
+                            </h2>
+                            <p className="text-xs text-gray-500 mt-1">
+                                A marcação fica <strong>visível para toda a equipe</strong> (Tatiana, Marcos, Roseni, Débora, Paulo).
+                            </p>
+                        </div>
+
+                        <div className="px-6 py-4 space-y-3">
+                            <div>
+                                <label className="text-xs text-gray-500 font-medium">DOMÍNIO</label>
+                                <div className="font-mono text-sm text-gray-800 mt-0.5">
+                                    {dtModalMarcar.empresa_dominio}
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-500 font-medium" htmlFor="dt-obs">
+                                    OBSERVAÇÃO (opcional)
+                                </label>
+                                <textarea
+                                    id="dt-obs"
+                                    value={dtObservacao}
+                                    onChange={e => setDtObservacao(e.target.value)}
+                                    placeholder="Ex: Falamos com o RH, pediram para retomar em agosto"
+                                    rows={3}
+                                    maxLength={500}
+                                    className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                                />
+                                <p className="text-[10px] text-gray-400 mt-0.5 text-right">
+                                    {dtObservacao.length}/500
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="px-6 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-2 rounded-b-2xl">
+                            <button
+                                onClick={() => { setDtModalMarcar(null); setDtObservacao(''); }}
+                                disabled={dtSalvandoMarcacao}
+                                className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-200 rounded-lg"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={dtSalvarMarcacao}
+                                disabled={dtSalvandoMarcacao}
+                                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 flex items-center gap-1"
+                            >
+                                {dtSalvandoMarcacao ? (
+                                    <><i className="fa-solid fa-spinner fa-spin"></i> Salvando...</>
+                                ) : (
+                                    <><i className="fa-solid fa-bookmark"></i> Marcar</>
+                                )}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
