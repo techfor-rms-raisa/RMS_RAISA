@@ -2,7 +2,39 @@
  * RespostasTab.tsx — Aba "CRM E-mail" (antes "Respostas Campanhas")
  *
  * Caminho: src/components/crm/base-leads/RespostasTab.tsx
- * Versão: 2.0 (Pacote P1 — Inbox + Thread em tela cheia — 30/06/2026)
+ * Versão: 2.1 (Pacote P2 — Editor + envio outbound — 30/06/2026)
+ *
+ * v2.1 (30/06/2026 — Pacote P2 "CRM E-mail" Outbound):
+ *   Adiciona o EDITOR DE RESPOSTA no footer da Thread (Estado B). UX
+ *   minimalista para entrega rápida + iteração futura:
+ *
+ *     - <textarea> com altura auto-ajustável (até 12 linhas visíveis)
+ *     - Conversão simples de Markdown leve (negrito **, itálico *, link
+ *       autodetectado) → HTML no momento do envio
+ *     - Sanitização do HTML resultante via `sanitizarHtmlRespostas`
+ *       (defesa em camadas — mesmo o operador interno passa pelo filtro)
+ *     - Footer com indicação clara:
+ *         "Assinatura: <nome do GC/SDR> (campanha)"
+ *         "Cópia para seu Outlook: <email>@techfor.com.br"
+ *     - Botão [Cancelar] + [Enviar resposta]
+ *     - Estado de envio com spinner + mensagem de erro inline
+ *
+ *   Regra RBAC visual (decisão Messias 30/06/2026):
+ *     - Se `podeResponder=true` → editor renderiza normalmente
+ *     - Se `podeResponder=false` → editor é SUBSTITUÍDO por banner
+ *       informativo com o `motivoBloqueio` retornado pelo backend.
+ *       O Admin vê: "Apenas o responsável da campanha pode responder.
+ *       Administrador acessa em modo leitura."
+ *
+ *   Pós-envio bem-sucedido: o hook (v2.1) chama abrirThread() para
+ *   recarregar a timeline — a nova bolha outbound aparece automatica-
+ *   mente sem ação adicional do componente.
+ *
+ *   Out-of-scope nesta versão (entram em P3+):
+ *     - Anexos
+ *     - Templates rápidos
+ *     - Botão "Marcar como lida"
+ *     - Inserção de variáveis ({nome_lead}, {empresa_lead})
  *
  * v2.0 (30/06/2026 — Pacote P1 "CRM E-mail"):
  *   Refatoração estrutural do componente para suportar a nova UX do
@@ -45,7 +77,7 @@
  *   Versão inicial — feed flat de respostas + opt-outs.
  */
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import EmptyState from '../shared/components/EmptyState';
 import { formatDateTime } from '../types/crm.constants';
 import type {
@@ -78,6 +110,30 @@ export interface RespostasTabProps {
   loadingThread: boolean;
   erroThread: string | null;
   onVoltarParaInbox: () => void;
+
+  // 🆕 v2.1 (30/06/2026 — Pacote P2) — Editor + envio outbound
+  /** Quando false, esconde o editor e mostra o `motivoBloqueio`. */
+  podeResponder: boolean;
+  /** Mensagem amigável a exibir quando podeResponder=false. */
+  motivoBloqueio: string | null;
+  /** Loading do envio (POST responder_thread). */
+  enviando: boolean;
+  /** Mensagem de erro da última tentativa de envio. */
+  erroEnvio: string | null;
+  /**
+   * Handler de envio. Recebe corpoTexto, corpoHtml e opcionalmente
+   * o Message-ID a referenciar para threading. Retorna o id da nova
+   * mensagem (ou null em falha).
+   */
+  onResponder: (
+    corpoTexto: string,
+    corpoHtml: string,
+    inReplyToMessageId?: string | null
+  ) => Promise<number | null>;
+  /** Nome amigável do operador logado, para o footer do editor. */
+  currentUserNome?: string;
+  /** Email corporativo do operador (será mostrado como destino do BCC). */
+  currentUserEmail?: string;
 
   /**
    * Click em "Abrir detalhe completo" no header da thread → abre o
@@ -141,6 +197,211 @@ function iniciais(nome: string | null | undefined): string {
   if (partes.length === 1) return partes[0].substring(0, 2).toUpperCase();
   return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
 }
+
+// 🆕 v2.1 (30/06/2026 — Pacote P2) — Conversão texto→HTML minimalista
+// para o editor. Suporta apenas:
+//   - **negrito** → <strong>
+//   - *itálico*  → <em>
+//   - URLs detectadas → <a href>
+//   - parágrafos separados por linha em branco
+//   - quebras de linha simples → <br>
+// Após gerar, passamos por sanitizarHtmlRespostas (defesa em camadas).
+
+/** Escapa HTML especial para evitar injeção via input do operador. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Converte texto editado em HTML básico. */
+function textoParaHtml(texto: string): string {
+  if (!texto || texto.trim().length === 0) return '';
+
+  // Trabalha sobre o texto escapado
+  let html = escapeHtml(texto);
+
+  // URLs autodetectadas (não-greedy, simples)
+  html = html.replace(
+    /(https?:\/\/[^\s<]+)/g,
+    '<a href="$1">$1</a>'
+  );
+
+  // **negrito**
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // *itálico* — após **negrito** para não conflitar
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*([^*]|$)/g, '$1<em>$2</em>$3');
+
+  // Parágrafos: blocos separados por linha(s) em branco
+  const blocos = html.split(/\n\s*\n/);
+  const blocosHtml = blocos
+    .map((b) => b.trim())
+    .filter((b) => b.length > 0)
+    .map((b) => `<p>${b.replace(/\n/g, '<br>')}</p>`);
+
+  return blocosHtml.join('\n');
+}
+
+// ════════════════════════════════════════════════════════════
+// SUB-COMPONENTE: EDITOR DE RESPOSTA (Pacote P2)
+// ════════════════════════════════════════════════════════════
+
+interface EditorRespostaProps {
+  enviando: boolean;
+  erroEnvio: string | null;
+  currentUserNome?: string;
+  currentUserEmail?: string;
+  campanhaNome?: string | null;
+  /** Message-ID da última mensagem (para In-Reply-To). */
+  ultimoMessageId?: string | null;
+  onEnviar: (
+    texto: string,
+    html: string,
+    inReplyToMessageId?: string | null
+  ) => Promise<number | null>;
+}
+
+const EditorResposta: React.FC<EditorRespostaProps> = ({
+  enviando,
+  erroEnvio,
+  currentUserNome,
+  currentUserEmail,
+  campanhaNome,
+  ultimoMessageId,
+  onEnviar,
+}) => {
+  const [texto, setTexto] = useState<string>('');
+  const [previewMode, setPreviewMode] = useState<boolean>(false);
+
+  // HTML preview (sanitizado para defesa em camadas)
+  const htmlPreview = useMemo(() => {
+    const raw = textoParaHtml(texto);
+    return sanitizarHtmlRespostas(raw);
+  }, [texto]);
+
+  const podeEnviar = texto.trim().length > 0 && !enviando;
+
+  const handleEnviar = async () => {
+    if (!podeEnviar) return;
+    const html = textoParaHtml(texto);
+    const htmlSanitizado = sanitizarHtmlRespostas(html);
+    if (!htmlSanitizado || htmlSanitizado.trim().length === 0) return;
+    const novoId = await onEnviar(texto, htmlSanitizado, ultimoMessageId);
+    if (novoId !== null) {
+      // Sucesso: limpa o editor (a thread já foi recarregada pelo hook)
+      setTexto('');
+      setPreviewMode(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 bg-white border border-indigo-200 rounded-lg shadow-sm">
+      {/* Header do editor */}
+      <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2 text-xs text-gray-600">
+          <i className="fa-solid fa-pen-to-square text-indigo-500"></i>
+          <span>
+            Respondendo como{' '}
+            <strong className="text-gray-800">{currentUserNome || 'Operador'}</strong>
+            {campanhaNome && (
+              <>
+                {' '}
+                · campanha <em className="text-indigo-700">{campanhaNome}</em>
+              </>
+            )}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPreviewMode(!previewMode)}
+            disabled={enviando || texto.trim().length === 0}
+            className="text-xs text-indigo-600 hover:text-indigo-800 hover:underline disabled:text-gray-300 disabled:no-underline"
+          >
+            {previewMode ? (
+              <>
+                <i className="fa-regular fa-pen-to-square"></i> Voltar a editar
+              </>
+            ) : (
+              <>
+                <i className="fa-regular fa-eye"></i> Preview
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Corpo do editor (textarea ou preview) */}
+      {previewMode ? (
+        <div
+          className="p-4 min-h-[140px] prose prose-sm max-w-none text-sm text-gray-800 [&_p]:my-2 [&_a]:text-indigo-600"
+          dangerouslySetInnerHTML={{ __html: htmlPreview }}
+        />
+      ) : (
+        <textarea
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          disabled={enviando}
+          placeholder="Digite sua resposta... Suporta **negrito**, *itálico* e links são detectados automaticamente."
+          rows={6}
+          className="w-full p-4 text-sm text-gray-800 border-0 rounded-none focus:outline-none focus:ring-0 resize-y min-h-[140px] max-h-[400px] font-sans"
+        />
+      )}
+
+      {/* Erro de envio */}
+      {erroEnvio && (
+        <div className="px-4 py-2 bg-red-50 border-t border-red-100 text-red-700 text-sm flex items-center gap-2">
+          <i className="fa-solid fa-triangle-exclamation"></i>
+          {erroEnvio}
+        </div>
+      )}
+
+      {/* Footer com infos e ações */}
+      <div className="px-4 py-3 border-t border-gray-100 bg-gray-50 rounded-b-lg flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-xs text-gray-500 flex items-center gap-3 flex-wrap">
+          {currentUserEmail && (
+            <span title="Será enviada cópia oculta para seu email corporativo">
+              <i className="fa-regular fa-envelope text-gray-400"></i>{' '}
+              Cópia para <strong className="text-gray-700">{currentUserEmail}</strong>
+            </span>
+          )}
+          <span title="A assinatura corporativa da campanha será adicionada automaticamente">
+            <i className="fa-solid fa-signature text-gray-400"></i> Assinatura: automática
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setTexto('')}
+            disabled={enviando || texto.length === 0}
+            className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 disabled:opacity-30"
+          >
+            Limpar
+          </button>
+          <button
+            type="button"
+            onClick={handleEnviar}
+            disabled={!podeEnviar}
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            {enviando ? (
+              <>
+                <i className="fa-solid fa-spinner fa-spin"></i> Enviando...
+              </>
+            ) : (
+              <>
+                <i className="fa-solid fa-paper-plane"></i> Enviar resposta
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ════════════════════════════════════════════════════════════
 // SUB-COMPONENTE: BOLHA DE MENSAGEM
@@ -258,6 +519,14 @@ const RespostasTab: React.FC<RespostasTabProps> = ({
   loadingThread,
   erroThread,
   onVoltarParaInbox,
+  // 🆕 v2.1 (30/06/2026 — Pacote P2)
+  podeResponder,
+  motivoBloqueio,
+  enviando,
+  erroEnvio,
+  onResponder,
+  currentUserNome,
+  currentUserEmail,
   onAbrirLead,
 }) => {
   // ── Estado B — Thread aberta em tela cheia ──
@@ -336,14 +605,44 @@ const RespostasTab: React.FC<RespostasTabProps> = ({
           </div>
         )}
 
-        {/* Footer P1: aviso de que responder estará disponível em P2 */}
-        <div className="mt-4 bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-lg text-sm flex items-center gap-2">
-          <i className="fa-solid fa-circle-info"></i>
-          <span>
-            <strong>Em breve:</strong> responder pelo CRM (sem precisar abrir o Outlook).
-            Disponível na próxima entrega (Pacote P2 — editor + envio + assinatura por campanha + BCC corporativo).
-          </span>
-        </div>
+        {/* 🆕 v2.1 (30/06/2026 — Pacote P2) — Editor ou banner de bloqueio RBAC.
+            Quando podeResponder=true: renderiza o editor.
+            Quando podeResponder=false: exibe o motivo retornado pelo backend
+              (ex: "Apenas o responsável da campanha pode responder. 
+              Administrador acessa em modo leitura."). */}
+        {podeResponder ? (
+          <EditorResposta
+            enviando={enviando}
+            erroEnvio={erroEnvio}
+            currentUserNome={currentUserNome}
+            currentUserEmail={currentUserEmail}
+            campanhaNome={threadAtiva.campanha.nome}
+            ultimoMessageId={(() => {
+              // Pega o Message-ID da última msg inbound da timeline para o
+              // header In-Reply-To (continuidade visual no cliente do lead).
+              const inbounds = mensagens.filter((m) => m.direcao === 'inbound');
+              if (inbounds.length === 0) return null;
+              // mensagens já vem ordenada ascendente; última inbound = mais recente
+              const ultima = inbounds[inbounds.length - 1];
+              // P1 não retorna message_id no payload de timeline, então pode
+              // ser undefined — o backend faz fallback para email_respostas
+              // mais recente. Mantém o param opcional para evolução futura.
+              return (ultima as any).message_id || null;
+            })()}
+            onEnviar={onResponder}
+          />
+        ) : (
+          <div className="mt-4 bg-amber-50 border border-amber-200 text-amber-900 p-4 rounded-lg text-sm flex items-start gap-3">
+            <i className="fa-solid fa-lock text-amber-600 text-lg mt-0.5"></i>
+            <div>
+              <p className="font-semibold mb-0.5">Você está em modo leitura</p>
+              <p className="text-amber-800">
+                {motivoBloqueio ||
+                  'Apenas o responsável da campanha pode enviar respostas.'}
+              </p>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

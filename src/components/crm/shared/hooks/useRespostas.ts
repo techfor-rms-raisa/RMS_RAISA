@@ -2,7 +2,22 @@
  * useRespostas.ts — Hook de gestão da aba "CRM E-mail"
  *
  * Caminho: src/components/crm/shared/hooks/useRespostas.ts
- * Versão: 2.0 (Pacote P1 — CRM E-mail Inbox + Thread — 30/06/2026)
+ * Versão: 2.1 (Pacote P2 — Outbound + assinatura + BCC — 30/06/2026)
+ *
+ * v2.1 (30/06/2026 — Pacote P2 "CRM E-mail" Outbound):
+ *   Adiciona o método `responder(corpoTexto, corpoHtml)` que dispara
+ *   a action `responder_thread` do crm-leads v1.25. Refresh automático
+ *   da thread após envio bem-sucedido para o operador ver sua própria
+ *   mensagem aparecer na timeline.
+ *
+ *   Novidades no payload de listar_msgs_thread (v1.25):
+ *     - threadAtiva.campanha.responsavel_id
+ *     - podeResponder (boolean — calculado server-side)
+ *     - motivoBloqueio (string — quando podeResponder=false)
+ *
+ *   Estados adicionados:
+ *     - enviando (boolean) — true enquanto request à Resend acontece
+ *     - erroEnvio (string|null) — última falha de envio
  *
  * v2.0 (30/06/2026 — Pacote P1 "CRM E-mail"):
  *   Refatoração estrutural alinhada à decisão de produto de 30/06/2026
@@ -118,6 +133,9 @@ export interface ThreadHeader {
   campanha: {
     id: number;
     nome: string | null;
+    // 🆕 v2.1 (30/06/2026 — Pacote P2) — Para frontend espelhar a regra
+    //   RBAC do backend (somente responsavel_id pode responder).
+    responsavel_id: number | null;
   };
 }
 
@@ -140,6 +158,18 @@ interface ListarMsgsThreadResponse {
   lead: ThreadHeader['lead'];
   campanha: ThreadHeader['campanha'];
   mensagens: MensagemThread[];
+  // 🆕 v2.1 (30/06/2026 — Pacote P2)
+  pode_responder: boolean;
+  motivo_bloqueio: string | null;
+  error?: string;
+}
+
+interface ResponderThreadResponse {
+  success: boolean;
+  mensagem_id: number | null;
+  message_id_resend: string | null;
+  fila_id_sintetico: number | null;
+  bcc_corporativo: string | null;
   error?: string;
 }
 
@@ -181,6 +211,11 @@ export function useRespostas(options: UseRespostasOptions = {}) {
   const [mensagens, setMensagens] = useState<MensagemThread[]>([]);
   const [loadingThread, setLoadingThread] = useState(false);
   const [erroThread, setErroThread] = useState<string | null>(null);
+  // 🆕 v2.1 (30/06/2026 — Pacote P2) — RBAC + envio outbound
+  const [podeResponder, setPodeResponder] = useState<boolean>(false);
+  const [motivoBloqueio, setMotivoBloqueio] = useState<string | null>(null);
+  const [enviando, setEnviando] = useState<boolean>(false);
+  const [erroEnvio, setErroEnvio] = useState<string | null>(null);
 
   // ════════════════════════════════════════════════════════════
   // CARREGAR INBOX (listar_threads)
@@ -225,6 +260,10 @@ export function useRespostas(options: UseRespostasOptions = {}) {
       setLoadingThread(true);
       setErroThread(null);
       setMensagens([]);
+      // 🆕 v2.1 — Reset dos estados de envio quando abre nova thread
+      setPodeResponder(false);
+      setMotivoBloqueio(null);
+      setErroEnvio(null);
       try {
         const params: Record<string, string | number> = {
           lead_id: leadId,
@@ -244,6 +283,9 @@ export function useRespostas(options: UseRespostasOptions = {}) {
             campanha: resp.data.campanha,
           });
           setMensagens(resp.data.mensagens || []);
+          // 🆕 v2.1 — Aplica RBAC server-side ao state
+          setPodeResponder(!!resp.data.pode_responder);
+          setMotivoBloqueio(resp.data.motivo_bloqueio || null);
         } else {
           setErroThread(resp.data?.error || resp.error || 'Falha ao abrir thread');
         }
@@ -257,6 +299,70 @@ export function useRespostas(options: UseRespostasOptions = {}) {
   );
 
   // ════════════════════════════════════════════════════════════
+  // RESPONDER (envio outbound) — POST responder_thread (Pacote P2)
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Envia uma resposta pelo CRM E-mail dentro da thread aberta.
+   * Após sucesso, recarrega a thread para refletir a nova mensagem
+   * outbound na timeline.
+   *
+   * Retorna o id da nova mensagem em email_respostas (ou null em falha).
+   */
+  const responder = useCallback(
+    async (
+      corpoTexto: string,
+      corpoHtml: string,
+      inReplyToMessageId?: string | null
+    ): Promise<number | null> => {
+      if (!threadAtiva) {
+        setErroEnvio('Não há thread aberta.');
+        return null;
+      }
+      if (!corpoHtml || corpoHtml.trim().length === 0) {
+        setErroEnvio('Corpo da mensagem não pode ser vazio.');
+        return null;
+      }
+      setEnviando(true);
+      setErroEnvio(null);
+      try {
+        const body: Record<string, any> = {
+          lead_id: threadAtiva.lead.id,
+          campanha_id: threadAtiva.campanha.id,
+          corpo_texto: corpoTexto,
+          corpo_html: corpoHtml,
+        };
+        if (inReplyToMessageId) {
+          body.in_reply_to_message_id = inReplyToMessageId;
+        }
+        if (currentUser) {
+          body.current_user_id = currentUser.id;
+          body.current_user_tipo = currentUser.tipo_usuario;
+        }
+        const resp = await api.post<ResponderThreadResponse>(
+          'responder_thread',
+          body
+        );
+        if (!resp.ok || !resp.data?.success) {
+          const errMsg =
+            resp.data?.error || resp.error || 'Falha ao enviar resposta.';
+          setErroEnvio(errMsg);
+          return null;
+        }
+        // Sucesso: recarrega a thread para refletir o outbound na timeline
+        await abrirThread(threadAtiva.lead.id, threadAtiva.campanha.id);
+        return resp.data.mensagem_id;
+      } catch (e: any) {
+        setErroEnvio(e?.message || 'Erro inesperado ao enviar resposta.');
+        return null;
+      } finally {
+        setEnviando(false);
+      }
+    },
+    [api, threadAtiva, currentUser?.id, currentUser?.tipo_usuario, abrirThread]
+  );
+
+  // ════════════════════════════════════════════════════════════
   // VOLTAR PARA INBOX — Estado B → A
   // ════════════════════════════════════════════════════════════
 
@@ -264,6 +370,11 @@ export function useRespostas(options: UseRespostasOptions = {}) {
     setThreadAtiva(null);
     setMensagens([]);
     setErroThread(null);
+    // 🆕 v2.1 — Reset também dos estados de envio
+    setPodeResponder(false);
+    setMotivoBloqueio(null);
+    setEnviando(false);
+    setErroEnvio(null);
   }, []);
 
   // ════════════════════════════════════════════════════════════
@@ -288,6 +399,12 @@ export function useRespostas(options: UseRespostasOptions = {}) {
     erroThread,
     abrirThread,
     voltarParaInbox,
+    // 🆕 v2.1 (30/06/2026 — Pacote P2) — RBAC + envio outbound
+    podeResponder,
+    motivoBloqueio,
+    enviando,
+    erroEnvio,
+    responder,
   };
 }
 

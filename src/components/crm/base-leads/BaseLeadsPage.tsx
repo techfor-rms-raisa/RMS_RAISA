@@ -2,7 +2,24 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.17 (Pacote P1 — CRM E-mail: rebrand + Inbox + Thread — 30/06/2026)
+ * Versão: 1.18 (Pacote P2 — CRM E-mail Outbound — 30/06/2026)
+ *
+ * 🆕 v1.18 (30/06/2026 — Pacote P2 "CRM E-mail" Outbound):
+ *   Liga ao RespostasTab v2.1 e ao useRespostas v2.1 (envio outbound +
+ *   RBAC visual). Mudanças cirúrgicas:
+ *
+ *   • Novas props passadas para <RespostasTab>:
+ *       - podeResponder, motivoBloqueio (server-side, via hook)
+ *       - enviando, erroEnvio (estado do envio)
+ *       - onResponder = leadsH responder
+ *       - currentUserNome = currentUser.nome_usuario
+ *       - currentUserEmail = currentUser.email_usuario
+ *
+ *   • Nenhuma outra mudança — toda a lógica de envio/RBAC fica
+ *     encapsulada no hook + componente.
+ *
+ *   Dependências: useRespostas v2.1, RespostasTab v2.1, crm-leads v1.25
+ *   (action responder_thread + payload estendido de listar_msgs_thread).
  *
  * 🆕 v1.17 (30/06/2026 — Pacote P1 "CRM E-mail"):
  *   Rebrand + ligação do RespostasTab v2.0 (Inbox + Thread em tela cheia).
@@ -1393,6 +1410,20 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             loadingThread={respostasH.loadingThread}
             erroThread={respostasH.erroThread}
             onVoltarParaInbox={respostasH.voltarParaInbox}
+            // 🆕 v1.18 (30/06/2026 — Pacote P2) — Editor + envio outbound
+            podeResponder={respostasH.podeResponder}
+            motivoBloqueio={respostasH.motivoBloqueio}
+            enviando={respostasH.enviando}
+            erroEnvio={respostasH.erroEnvio}
+            onResponder={respostasH.responder}
+            currentUserNome={
+              (currentUser as any).nome_usuario || (currentUser as any).nome || undefined
+            }
+            currentUserEmail={
+              (currentUser as any).email_usuario ||
+              (currentUser as any).email ||
+              undefined
+            }
             // ── Bridge para o LeadDetailDrawer ──
             onAbrirLead={abrirDetalheLead}
           />
