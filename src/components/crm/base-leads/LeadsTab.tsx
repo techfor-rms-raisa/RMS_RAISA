@@ -2,7 +2,35 @@
  * LeadsTab.tsx — Aba "Meus Leads" da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/LeadsTab.tsx
- * Versão: 1.1 (Reorganização Prospect/Lead — 13/06/2026)
+ * Versão: 1.2 (Filtros "CRECI" e "Analista" — 30/06/2026)
+ *
+ * v1.2 (30/06/2026 — Filtros "CRECI" e "Analista"):
+ *   Toolbar ganha 2 controles novos para resolver o "afogamento" causado
+ *   pelos 2.360+ leads CRECI que dominam a base:
+ *
+ *   • Pill toggle "CRECI: Esconder / Exibir" (binário). Apenas Admin e
+ *     SDR enxergam o controle — GC é blindado por RBAC no backend
+ *     (v1.20), o pill seria redundante e o caller (BaseLeadsPage v1.16)
+ *     define `mostrarFiltroCreci=false` para esse perfil.
+ *
+ *   • Dropdown "Analista". Opções são montadas pelo caller (perfil-aware)
+ *     e injetadas como prop `opcoesFiltroAnalista`. Default sugerido por
+ *     perfil (Admin/SDR = "Meus + Sem analista"; GC = "Meus" travado).
+ *
+ *   Quando Admin/SDR seleciona "Sem analista" e clica Editar ✏️ na linha
+ *   do lead, o LeadFormModal existente permite alocar `reservado_por` —
+ *   fechando o ciclo "ver órfão → alocar → vincular a campanha" sem
+ *   navegação extra.
+ *
+ *   Decisão UX: o pill CRECI fica no MESMO LINE do toolbar (flex-wrap
+ *   absorve quebras em viewports menores). Não usamos sub-menu para
+ *   manter affordance imediata — 1 clique e a tela limpa de CRECI.
+ *
+ *   Mudança aditiva — props existentes intocadas. Telas que ainda
+ *   não passem os novos props (cenário improvável em produção, mas
+ *   protege durante o rollout) recebem fallback graceful:
+ *     • mostrarFiltroCreci omitido → pill não renderiza
+ *     • opcoesFiltroAnalista omitido → dropdown não renderiza
  *
  * v1.1 (13/06/2026 — Reorganização Prospect/Lead):
  *   Reorganização visual e funcional da tabela "Meus Leads" para refletir
@@ -58,6 +86,16 @@ const OPCOES_ORDENACAO: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'cargo',    label: 'Cargo' },
 ];
 
+// 🆕 v1.2 (30/06/2026) — Tipo das opções do dropdown "Analista".
+//   O caller (BaseLeadsPage v1.16) monta a lista perfil-aware e injeta.
+//   Mantida exportável para que callers tipem coerentemente.
+export interface OpcaoFiltroAnalista {
+  /** Valor enviado ao backend via `analista_filter`. */
+  value: string;
+  /** Texto exibido no dropdown. */
+  label: string;
+}
+
 // ════════════════════════════════════════════════════════════
 // PROPS
 // ════════════════════════════════════════════════════════════
@@ -71,11 +109,36 @@ export interface LeadsTabProps {
   filtroFunil: string;
   /** 🆕 v1.1 — Ordenação atual (whitelist: recentes/empresa/nome/cargo). */
   ordenarPor: string;
+  /** 🆕 v1.2 (30/06/2026) — Estado do toggle CRECI (true = exibe, false = esconde). */
+  incluirCreci: boolean;
+  /** 🆕 v1.2 (30/06/2026) — Valor atual do dropdown Analista. */
+  filtroAnalista: string;
+  /**
+   * 🆕 v1.2 (30/06/2026) — Quando false (perfil GC), o pill CRECI não
+   * renderiza (GC já tem RBAC bloqueando CRECI no backend).
+   */
+  mostrarFiltroCreci?: boolean;
+  /**
+   * 🆕 v1.2 (30/06/2026) — Opções do dropdown Analista. Quando omitido
+   * ou lista vazia, o dropdown não renderiza (graceful fallback).
+   * O caller monta perfil-aware.
+   */
+  opcoesFiltroAnalista?: ReadonlyArray<OpcaoFiltroAnalista>;
+  /**
+   * 🆕 v1.2 (30/06/2026) — Quando true (perfil GC), o dropdown Analista
+   * renderiza desabilitado com label fixa "Meus Leads" — mantém
+   * affordance visual sem permitir alteração.
+   */
+  filtroAnalistaDisabled?: boolean;
   loading: boolean;
   onBuscaChange: (v: string) => void;
   onFiltroFunilChange: (v: string) => void;
   /** 🆕 v1.1 — Handler de mudança da ordenação. */
   onOrdenarPorChange: (v: string) => void;
+  /** 🆕 v1.2 (30/06/2026) — Toggle do pill CRECI. */
+  onIncluirCreciChange: (v: boolean) => void;
+  /** 🆕 v1.2 (30/06/2026) — Mudança do dropdown Analista. */
+  onFiltroAnalistaChange: (v: string) => void;
   onBuscar: () => void;
   onPaginaChange: (p: number) => void;
   onAbrirDetalhe: (id: number) => void;
@@ -95,10 +158,18 @@ const LeadsTab: React.FC<LeadsTabProps> = ({
   busca,
   filtroFunil,
   ordenarPor,
+  // 🆕 v1.2 (30/06/2026) — Filtros novos
+  incluirCreci,
+  filtroAnalista,
+  mostrarFiltroCreci = false,
+  opcoesFiltroAnalista,
+  filtroAnalistaDisabled = false,
   loading,
   onBuscaChange,
   onFiltroFunilChange,
   onOrdenarPorChange,
+  onIncluirCreciChange,
+  onFiltroAnalistaChange,
   onBuscar,
   onPaginaChange,
   onAbrirDetalhe,
@@ -144,6 +215,61 @@ const LeadsTab: React.FC<LeadsTabProps> = ({
             </option>
           ))}
         </select>
+
+        {/* 🆕 v1.2 (30/06/2026) — Pill toggle CRECI (Exibir/Esconder).
+            Apenas Admin e SDR (GC tem RBAC bloqueando CRECI no backend). */}
+        {mostrarFiltroCreci && (
+          <button
+            type="button"
+            onClick={() => onIncluirCreciChange(!incluirCreci)}
+            className={
+              'px-3 py-2 border rounded-lg text-sm flex items-center gap-1.5 transition-colors ' +
+              (incluirCreci
+                ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                : 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100')
+            }
+            title={
+              incluirCreci
+                ? 'CRECI está sendo exibido. Clique para esconder.'
+                : 'CRECI está oculto. Clique para exibir.'
+            }
+          >
+            <i
+              className={
+                incluirCreci ? 'fa-solid fa-eye' : 'fa-solid fa-eye-slash'
+              }
+            ></i>
+            CRECI: {incluirCreci ? 'Exibir' : 'Esconder'}
+          </button>
+        )}
+
+        {/* 🆕 v1.2 (30/06/2026) — Dropdown "Analista" (perfil-aware).
+            Opções vêm do caller já filtradas por perfil. Para GC, vem
+            desabilitado com label fixa. */}
+        {opcoesFiltroAnalista && opcoesFiltroAnalista.length > 0 && (
+          <select
+            value={filtroAnalista}
+            onChange={(e) => onFiltroAnalistaChange(e.target.value)}
+            disabled={filtroAnalistaDisabled}
+            className={
+              'px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 ' +
+              (filtroAnalistaDisabled
+                ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
+                : 'bg-gray-50')
+            }
+            title={
+              filtroAnalistaDisabled
+                ? 'GC sempre vê apenas seus leads (RBAC).'
+                : 'Filtrar por analista responsável'
+            }
+          >
+            {opcoesFiltroAnalista.map((opc) => (
+              <option key={opc.value} value={opc.value}>
+                Analista: {opc.label}
+              </option>
+            ))}
+          </select>
+        )}
 
         <button
           onClick={onBuscar}
