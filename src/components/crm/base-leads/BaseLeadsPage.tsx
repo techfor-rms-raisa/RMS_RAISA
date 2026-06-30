@@ -2,7 +2,55 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.15 (Recuperação de inválidos para campanha — 23/06/2026)
+ * Versão: 1.16 (Filtros "CRECI" e "Analista" na aba "Meus Leads" — 30/06/2026)
+ *
+ * 🆕 v1.16 (30/06/2026 — Filtros "CRECI" e "Analista" na aba "Meus Leads"):
+ *   Liga 2 novos filtros perfil-aware ao LeadsTab v1.2 e ao useLeads v1.4.
+ *   Motivação: GC/SDR/Admin afogados com 2.360+ leads CRECI dominando a
+ *   aba "Meus Leads". Esta versão dá controle granular sem comprometer
+ *   o RBAC já vigente (v1.20 no backend).
+ *
+ *   Mudanças cirúrgicas:
+ *    - Novo `useMemo` `defaultsLeads`: calcula `defaultIncluirCreci` e
+ *      `defaultFiltroAnalista` por perfil do `currentUser`.
+ *        • Admin/SDR/GC → defaultIncluirCreci=true (Admin esconde com
+ *          o pill quando quiser; SDR mantém CRECI por ser seu core; GC
+ *          nunca vê CRECI por RBAC então o default é cosmético).
+ *        • Admin/SDR → defaultFiltroAnalista='mine_or_unassigned' (vê
+ *          seus + órfãos para alocar sem trocar filtro).
+ *        • GC → defaultFiltroAnalista='mine' (RBAC já força, mas
+ *          mantém o estado canônico).
+ *
+ *    - Novos `useMemo`s para a LeadsTab:
+ *        • `mostrarFiltroCreci`: true para Admin e SDR (GC oculta).
+ *        • `filtroAnalistaDisabled`: true para GC (dropdown inerte).
+ *        • `opcoesFiltroAnalista`: lista construída a partir do
+ *          `responsaveisH.responsaveis`. Para Admin: 4 opções fixas
+ *          + 1 por outro analista. Para SDR: 3 opções fixas (sem
+ *          'all' nem outros analistas — RBAC restringe). Para GC: 1
+ *          opção fixa (dropdown desabilitado).
+ *
+ *    - `useLeads` agora recebe `defaultIncluirCreci` e
+ *      `defaultFiltroAnalista` via options. Sem mais nenhum efeito
+ *      colateral — o hook v1.4 inicializa os states e propaga.
+ *
+ *    - `<LeadsTab>` recebe 5 props novas: `incluirCreci`,
+ *      `filtroAnalista`, `mostrarFiltroCreci`, `opcoesFiltroAnalista`,
+ *      `filtroAnalistaDisabled` + 2 handlers (`onIncluirCreciChange`,
+ *      `onFiltroAnalistaChange`). Ao mudar qualquer filtro, voltamos
+ *      para a página 1 (UX coerente com a mudança de ordenação na v1.8).
+ *
+ *    - `useEffect` da aba 'leads' adiciona `leadsH.incluirCreci` e
+ *      `leadsH.filtroAnalista` na dep array — recarrega ao alternar.
+ *
+ *   Dependência: useLeads v1.4 (estados + setters), LeadsTab v1.2 (UI),
+ *   crm-leads.ts v1.23 (parâmetros backend).
+ *
+ *   Compatibilidade: nenhum dos arquivos a montante quebra. Se algum
+ *   caller (outra página) usar useLeads sem os novos defaults, o
+ *   comportamento legado v1.3 fica preservado (incluirCreci=true,
+ *   filtroAnalista=''). LeadsTab v1.2 idem: sem os novos props, os
+ *   controles simplesmente não renderizam.
  *
  * 🆕 v1.15 (23/06/2026 — Recuperação de inválidos para campanha):
  *   Adiciona o fluxo "Promover" na aba "E-mails Inválidos". Quando o
@@ -300,7 +348,7 @@
  *    - Renderizar header + KPIs + abas Empresas/Leads.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useEmpresas } from '../shared/hooks/useEmpresas';
 import { useLeads } from '../shared/hooks/useLeads';
 import { useImportProspects } from '../shared/hooks/useImportProspects';
@@ -312,7 +360,7 @@ import { useTiposCampanha } from '../shared/hooks/useTiposCampanha';
 import { useResponsaveis } from '../shared/hooks/useResponsaveis';
 
 import EmpresasTab from './EmpresasTab';
-import LeadsTab from './LeadsTab';
+import LeadsTab, { type OpcaoFiltroAnalista } from './LeadsTab';
 // 🆕 v1.2 (Fase 8-Inbox) — componentes das novas abas
 import RespostasTab from './RespostasTab';
 import InvalidosTab from './InvalidosTab';
@@ -385,17 +433,43 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
 
   // ── Hooks ──
   const empresasH = useEmpresas();
+
+  // 🆕 v1.16 (30/06/2026) — Defaults dos filtros novos da aba "Meus Leads"
+  //   calculados por perfil. Calculados ANTES do useLeads para serem
+  //   injetados via options (o hook só inicializa uma vez por mount).
+  //
+  //   Regra de produto (Messias, 30/06/2026):
+  //     • incluirCreci default:
+  //         - Admin → true (esconde via pill quando quiser)
+  //         - SDR   → true (CRECI é o core operacional dela)
+  //         - GC    → true (cosmético; RBAC do backend já bloqueia CRECI)
+  //     • filtroAnalista default:
+  //         - Admin → 'mine_or_unassigned' (vê seus + órfãos para alocar)
+  //         - SDR   → 'mine_or_unassigned' (idem; pode alocar leads CRECI órfãos)
+  //         - GC    → 'mine' (RBAC força; mantém estado canônico)
+  const defaultsLeads = useMemo(() => {
+    const tipo = currentUser.tipo_usuario;
+    return {
+      defaultIncluirCreci: true,
+      defaultFiltroAnalista:
+        tipo === 'Gestão Comercial' ? 'mine' : 'mine_or_unassigned',
+    };
+  }, [currentUser.tipo_usuario]);
+
   // 🆕 v1.11 (22/06/2026) — RBAC de visibilidade na aba "Meus Leads".
   //   Passa o currentUser para useLeads v1.3, que propaga para o backend
   //   crm-leads.ts v1.20 (actions listar_leads e stats).
   //   Decisão de produto: cada GC/SDR vê apenas leads sob sua
   //   responsabilidade (reservado_por); GC nunca vê CRECI; SDR vê todos
   //   CRECI; Admin vê tudo.
+  // 🆕 v1.16 (30/06/2026) — também propaga os defaults dos filtros novos.
   const leadsH = useLeads({
     currentUser: {
       id: currentUser.id,
       tipo_usuario: currentUser.tipo_usuario,
     },
+    defaultIncluirCreci: defaultsLeads.defaultIncluirCreci,
+    defaultFiltroAnalista: defaultsLeads.defaultFiltroAnalista,
   });
   const importH = useImportProspects();
   // 🆕 v1.2 (Fase 8-Inbox)
@@ -485,7 +559,16 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       leadsH.carregar();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abaAtiva, leadsH.pagina, leadsH.busca, leadsH.filtroFunil, leadsH.ordenarPor]);
+  }, [
+    abaAtiva,
+    leadsH.pagina,
+    leadsH.busca,
+    leadsH.filtroFunil,
+    leadsH.ordenarPor,
+    // 🆕 v1.16 (30/06/2026) — recarrega ao trocar filtros novos
+    leadsH.incluirCreci,
+    leadsH.filtroAnalista,
+  ]);
 
   // 🆕 v1.2 (Fase 8-Inbox) — carregamento das novas abas sob demanda
   useEffect(() => {
@@ -923,6 +1006,73 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
 
   const stats = leadsH.stats;
 
+  // 🆕 v1.16 (30/06/2026) — Lógica perfil-aware da toolbar da aba "Meus Leads".
+  //   Memoizada para não recalcular a cada render. Atualiza apenas quando o
+  //   perfil ou a lista de responsáveis muda.
+  //
+  //   • mostrarFiltroCreci: GC tem RBAC backend que esconde CRECI → pill seria
+  //     redundante. Admin/SDR enxergam normalmente.
+  //
+  //   • filtroAnalistaDisabled: GC só vê os dele por design (RBAC). Dropdown
+  //     fica visível para affordance mas inerte.
+  //
+  //   • opcoesFiltroAnalista: composta com 3 opções fixas + (se Admin) lista
+  //     dos outros analistas + opção "Todos". SDR e GC NÃO veem outros
+  //     analistas (não têm direito por RBAC). Para GC, é apenas "Meus".
+  const mostrarFiltroCreci = useMemo(() => {
+    return (
+      currentUser.tipo_usuario === 'Administrador' ||
+      currentUser.tipo_usuario === 'SDR'
+    );
+  }, [currentUser.tipo_usuario]);
+
+  const filtroAnalistaDisabled = useMemo(() => {
+    return currentUser.tipo_usuario === 'Gestão Comercial';
+  }, [currentUser.tipo_usuario]);
+
+  const opcoesFiltroAnalista = useMemo<OpcaoFiltroAnalista[]>(() => {
+    const tipo = currentUser.tipo_usuario;
+
+    // GC: só vê os dele (RBAC). Dropdown inerte com 1 opção visível.
+    if (tipo === 'Gestão Comercial') {
+      return [{ value: 'mine', label: 'Meus Leads' }];
+    }
+
+    // Opções fixas comuns a Admin e SDR
+    const fixas: OpcaoFiltroAnalista[] = [
+      { value: 'mine_or_unassigned', label: 'Meus + Sem analista' },
+      { value: 'mine', label: 'Apenas meus' },
+      { value: 'unassigned', label: 'Apenas sem analista' },
+    ];
+
+    // SDR para por aqui (RBAC bloqueia vê leads de outros, exceto CRECI).
+    if (tipo === 'SDR') {
+      return fixas;
+    }
+
+    // Admin: adiciona outros analistas + opção "Todos".
+    //   Filtra o próprio Admin da lista de "outros" (já coberto por 'mine').
+    //   Filtra também perfis sem nome ou ids inválidos por defesa.
+    const outros: OpcaoFiltroAnalista[] = (responsaveisH.responsaveis || [])
+      .filter(
+        (r: any) =>
+          r &&
+          typeof r.id === 'number' &&
+          r.id !== currentUser.id &&
+          (r.nome_usuario || r.nome)
+      )
+      .map((r: any) => ({
+        value: String(r.id),
+        label: (r.nome_usuario || r.nome) as string,
+      }))
+      // Ordena alfabeticamente para previsibilidade
+      .sort((a: OpcaoFiltroAnalista, b: OpcaoFiltroAnalista) =>
+        a.label.localeCompare(b.label, 'pt-BR')
+      );
+
+    return [...fixas, ...outros, { value: 'all', label: 'Todos os analistas' }];
+  }, [currentUser.tipo_usuario, currentUser.id, responsaveisH.responsaveis]);
+
   return (
     <div className="space-y-4">
       {/* ── Header ── */}
@@ -1146,6 +1296,12 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             filtroFunil={leadsH.filtroFunil}
             // 🆕 v1.8 (13/06/2026) — Ordenação configurável
             ordenarPor={leadsH.ordenarPor}
+            // 🆕 v1.16 (30/06/2026) — Filtros novos
+            incluirCreci={leadsH.incluirCreci}
+            filtroAnalista={leadsH.filtroAnalista}
+            mostrarFiltroCreci={mostrarFiltroCreci}
+            opcoesFiltroAnalista={opcoesFiltroAnalista}
+            filtroAnalistaDisabled={filtroAnalistaDisabled}
             loading={leadsH.loading}
             onBuscaChange={leadsH.setBusca}
             onFiltroFunilChange={(v) => {
@@ -1156,6 +1312,16 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             //   (UX coerente: faz sentido começar do topo após reordenar).
             onOrdenarPorChange={(v) => {
               leadsH.setOrdenarPor(v);
+              leadsH.setPagina(1);
+            }}
+            // 🆕 v1.16 (30/06/2026) — Ao mudar filtros, volta para a 1ª página
+            //   (mesma justificativa UX da ordenação).
+            onIncluirCreciChange={(v) => {
+              leadsH.setIncluirCreci(v);
+              leadsH.setPagina(1);
+            }}
+            onFiltroAnalistaChange={(v) => {
+              leadsH.setFiltroAnalista(v);
               leadsH.setPagina(1);
             }}
             onBuscar={() => {

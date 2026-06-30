@@ -2,6 +2,48 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.23 (30/06/2026 — Filtros "CRECI" e "Analista" na aba "Meus Leads"):
+ *    Melhoria de UX solicitada por Messias. Com 2.360+ leads dominando a
+ *    aba (esmagadora maioria CRECI), GC/SDR/Admin tinham fricção real
+ *    para encontrar ou alocar leads comerciais. Esta versão adiciona 2
+ *    filtros opcionais à action `listar_leads`:
+ *
+ *      (A) `incluir_creci` ('1' default | '0' para esconder)
+ *          Quando '0', adiciona `vertical != 'CRECI'` à query.
+ *          Idempotente com o RBAC v1.20: para SDR, o AND-composto
+ *          colapsa naturalmente para "apenas seus em verticais
+ *          não-CRECI" (o OR `vertical.eq.CRECI` do RBAC vira false).
+ *          Para GC já é no-op (RBAC já bloqueia CRECI).
+ *
+ *      (B) `analista_filter` ('mine_or_unassigned' default Admin/SDR |
+ *          'mine' default GC | 'unassigned' | 'all' só Admin | id num
+ *          só Admin)
+ *          Quando informado, restringe `reservado_por` por:
+ *            - 'mine'              → reservado_por = currentUserId
+ *            - 'unassigned'        → reservado_por IS NULL
+ *            - 'mine_or_unassigned'→ reservado_por = userId OR IS NULL
+ *            - 'all'               → sem filtro (só Admin pode usar)
+ *            - <id_num>            → reservado_por = id (só Admin)
+ *          AND-composto com o RBAC já existente. Para GC, o filtro
+ *          'mine' é redundante (RBAC já força reservado_por = userId)
+ *          mas idempotente.
+ *
+ *    Justificativa para 'mine_or_unassigned' como default Admin/SDR:
+ *      Cenário operacional comum — leads recém-promovidos do CreciPage
+ *      ou importados sem analista definido (reservado_por=NULL) ficam
+ *      visíveis para alocação imediata, SEM exigir troca de filtro.
+ *      Caso contrário, leads órfãos ficariam invisíveis até o operador
+ *      adivinhar que precisa trocar o filtro — anti-UX clássico.
+ *
+ *    Mudança cirúrgica: 1 bloco novo na action listar_leads (entre o
+ *    switch de ordenar_por e os filtros opcionais empresa_id/funil/
+ *    busca/tags). Stats NÃO mudou — KPIs do header refletem o universo
+ *    RBAC global (decisão de produto: filtros frontend não alteram KPIs
+ *    para manter referência visual de tamanho da base).
+ *
+ *    Compatibilidade total: ambos os parâmetros são opcionais. Callers
+ *    legados (sem os params) recebem o comportamento v1.22.2 idêntico.
+ *
  *  - v1.22.2 (24/06/2026 — Bugfix etapas 8 + 9 do helper para Recuperação):
  *    Hotfix descoberto pela falha real do Rafael Baroni em Production
  *    (24/06/2026 ~08:24 BRT). O botão "Promover" abria o modal, listava a
@@ -1158,6 +1200,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           //     somente SDR/Admin podem ver e mover para Campanha CRECI."
           current_user_id,
           current_user_tipo,
+          // 🆕 v1.23 (30/06/2026) — Filtros opcionais do operador. Ver cabeçalho
+          //   do arquivo para a justificativa de produto e UX.
+          incluir_creci,     // '1' (default) | '0' (esconde CRECI)
+          analista_filter,   // 'mine' | 'unassigned' | 'mine_or_unassigned' | 'all' | <id_num>
         } = req.query as Record<string, string>;
         const offset = (parseInt(page) - 1) * parseInt(limit);
 
@@ -1269,6 +1315,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           default:
             query = query.order('criado_em', { ascending: false });
             break;
+        }
+
+        // ════════════════════════════════════════════════════════════
+        // 🆕 v1.23 (30/06/2026) — Filtros opcionais do operador
+        // ════════════════════════════════════════════════════════════
+        // Aplicados AND-composto com o RBAC já vigente. Ver cabeçalho do
+        // arquivo para detalhes de justificativa de produto.
+        //
+        // ATENÇÃO ARQUITETURAL: estes filtros são REFINAMENTOS por cima
+        // do RBAC — nunca AMPLIAM a visibilidade. Por isso:
+        //   - 'all' só faz sentido para Admin (que não tem teto).
+        //   - 'mine_or_unassigned' para SDR ainda respeita "vertical=CRECI
+        //     OR reservado_por=X" do RBAC: SDR jamais verá leads não-CRECI
+        //     de outros mesmo pedindo "sem analista".
+        //   - GC com 'mine' é redundante mas idempotente.
+
+        // (A) Esconder CRECI: AND com vertical != 'CRECI'.
+        //   Para SDR, isso colapsa o OR do RBAC (CRECI vira false), deixando
+        //   apenas "reservado_por = X AND vertical != CRECI" — exatamente
+        //   o intencionado.
+        if (incluir_creci === '0') {
+          query = query.neq('vertical', 'CRECI');
+        }
+
+        // (B) Filtro de analista (reservado_por).
+        if (analista_filter) {
+          if (analista_filter === 'mine') {
+            query = query.eq('reservado_por', currentUserIdNum);
+          } else if (analista_filter === 'unassigned') {
+            query = query.is('reservado_por', null);
+          } else if (analista_filter === 'mine_or_unassigned') {
+            query = query.or(
+              `reservado_por.eq.${currentUserIdNum},reservado_por.is.null`
+            );
+          } else if (analista_filter === 'all') {
+            // Sem filtro adicional — só Admin tem direito ao 'all' (frontend
+            // bloqueia para outros perfis; defesa em profundidade aqui é
+            // implícita pelo RBAC: SDR/GC já não veem leads de outros).
+          } else {
+            // Tentativa de id numérico (Admin escolhe outro analista no dropdown).
+            const idOutroAnalista = parseInt(analista_filter, 10);
+            if (!isNaN(idOutroAnalista) && idOutroAnalista > 0) {
+              query = query.eq('reservado_por', idOutroAnalista);
+            }
+            // Valor não reconhecido → ignora silenciosamente (degrada para
+            // o comportamento RBAC base). NÃO retornamos erro porque o
+            // frontend pode ter passado vazio em transição de estado.
+          }
         }
 
         if (empresa_id) query = query.eq('empresa_id', empresa_id);

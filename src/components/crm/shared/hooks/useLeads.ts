@@ -2,7 +2,29 @@
  * useLeads.ts — Hook de gestão de Leads
  *
  * Caminho: src/components/crm/shared/hooks/useLeads.ts
- * Versão: 1.3 (RBAC de visibilidade — 22/06/2026)
+ * Versão: 1.4 (Filtros "CRECI" e "Analista" na aba "Meus Leads" — 30/06/2026)
+ *
+ * v1.4 (30/06/2026 — Filtros "CRECI" e "Analista" na aba "Meus Leads"):
+ *   Adicionados 2 novos estados controláveis, alinhados ao backend
+ *   crm-leads v1.23:
+ *     • `incluirCreci` (boolean) — quando false, propaga
+ *       `incluir_creci=0` para o backend (que aplica `vertical != 'CRECI'`
+ *       à query). Default informado pelo caller (BaseLeadsPage v1.16)
+ *       por perfil: Admin/GC default true (Admin esconde via toggle do
+ *       LeadsTab; GC nunca vê CRECI por RBAC), SDR também default true.
+ *       Mantemos o default `true` no hook (comportamento legado para
+ *       callers que não passem); o caller decide a UX por perfil.
+ *     • `filtroAnalista` (string) — propaga `analista_filter` para o
+ *       backend. Aceita 'mine' | 'unassigned' | 'mine_or_unassigned' |
+ *       'all' | <id_num>. Default informado pelo caller:
+ *       'mine_or_unassigned' para Admin/SDR (permite ver leads órfãos
+ *       e alocar), 'mine' para GC (RBAC já força mas mantém idempotente).
+ *
+ *   Mudança aditiva — callers existentes que não passem os novos
+ *   `defaultIncluirCreci` / `defaultFiltroAnalista` continuam funcionando
+ *   com o comportamento v1.3 (incluirCreci=true, sem filtroAnalista).
+ *
+ *   Dep array `carregar` atualizada para incluir os novos states.
  *
  * v1.3 (22/06/2026 — RBAC na aba "Meus Leads"):
  *   Adicionado `currentUser` em UseLeadsOptions para propagação ao backend
@@ -125,6 +147,13 @@ interface UseLeadsOptions {
     id: number;
     tipo_usuario: string;
   };
+  // 🆕 v1.4 (30/06/2026) — Defaults dos filtros opcionais por perfil.
+  //   Informados pelo caller (BaseLeadsPage v1.16) — o hook não decide
+  //   regra de produto, apenas aplica.
+  //   • defaultIncluirCreci: omitido → true (mostra CRECI, compat legado)
+  //   • defaultFiltroAnalista: omitido → '' (sem filtro adicional)
+  defaultIncluirCreci?: boolean;
+  defaultFiltroAnalista?: string;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -148,6 +177,14 @@ export function useLeads(options: UseLeadsOptions = {}) {
   // 🆕 v1.2 — Ordenação configurável (whitelist: recentes/empresa/nome/cargo).
   //   Default 'recentes' = criado_em desc (comportamento legado preservado).
   const [ordenarPor, setOrdenarPor] = useState<string>('recentes');
+  // 🆕 v1.4 (30/06/2026) — Filtros opcionais do operador. Defaults via options
+  //   (caller injeta por perfil — ver cabeçalho do arquivo).
+  const [incluirCreci, setIncluirCreci] = useState<boolean>(
+    options.defaultIncluirCreci !== undefined ? options.defaultIncluirCreci : true
+  );
+  const [filtroAnalista, setFiltroAnalista] = useState<string>(
+    options.defaultFiltroAnalista ?? ''
+  );
   const [loading, setLoading] = useState(false);
 
   // Estado de detalhe
@@ -181,6 +218,12 @@ export function useLeads(options: UseLeadsOptions = {}) {
         params.current_user_id = currentUser.id;
         params.current_user_tipo = currentUser.tipo_usuario;
       }
+      // 🆕 v1.4 (30/06/2026) — propagar filtros opcionais (crm-leads v1.23).
+      //   incluir_creci só vai como '0' quando o operador clica "Esconder";
+      //   no caso default ('1'), omitimos o param para manter a URL enxuta
+      //   — o backend trata ausência como '1' (incluir).
+      if (incluirCreci === false) params.incluir_creci = '0';
+      if (filtroAnalista) params.analista_filter = filtroAnalista;
 
       const resp = await api.get<ListarLeadsResponse>('listar_leads', params);
       if (resp.ok && resp.data?.success) {
@@ -192,7 +235,19 @@ export function useLeads(options: UseLeadsOptions = {}) {
     } finally {
       setLoading(false);
     }
-  }, [api, pagina, pageSize, busca, filtroFunil, ordenarPor, currentUser?.id, currentUser?.tipo_usuario]);
+  }, [
+    api,
+    pagina,
+    pageSize,
+    busca,
+    filtroFunil,
+    ordenarPor,
+    currentUser?.id,
+    currentUser?.tipo_usuario,
+    // 🆕 v1.4 — recarregar ao trocar filtros do operador
+    incluirCreci,
+    filtroAnalista,
+  ]);
 
   // ════════════════════════════════════════════════════════════
   // STATS
@@ -385,6 +440,11 @@ export function useLeads(options: UseLeadsOptions = {}) {
     // 🆕 v1.2 — Ordenação configurável
     ordenarPor,
     setOrdenarPor,
+    // 🆕 v1.4 (30/06/2026) — Filtros opcionais do operador
+    incluirCreci,
+    setIncluirCreci,
+    filtroAnalista,
+    setFiltroAnalista,
     loading,
     carregar,
     pageSize,
