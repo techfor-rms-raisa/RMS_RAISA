@@ -2,6 +2,22 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.25.4 (30/06/2026 — HOTFIX P2 — UX da timeline):
+ *    Bug em smoke real (Messias): a timeline do CRM E-mail estava
+ *    mostrando bolhas "(sem assunto registrado)" / "Step ? · Campanha"
+ *    intercaladas entre as respostas. Causa: o próprio `responder_thread`
+ *    cria itens sintéticos em `email_fila` com `step_id=NULL` (para
+ *    reusar o Reply-To dinâmico), e o `listar_msgs_thread` listava
+ *    TODOS os itens enviados de email_fila — incluindo esses sintéticos
+ *    sem step relacionado.
+ *
+ *    Fix: filtro `step_id NOT NULL` no SELECT de email_fila. Assim só
+ *    envios reais de step da campanha aparecem como "Step X". Os
+ *    outbounds do CRM E-mail seguem aparecendo via email_respostas
+ *    (direcao='outbound') — únicos e corretos.
+ *
+ *    Mudança cirúrgica: 1 linha (.not('step_id', 'is', null)).
+ *
  *  - v1.25.3 (30/06/2026 — HOTFIX P2 — Visualização outbound na thread):
  *    Bug em smoke real (Messias respondeu 2x para o mesmo lead via CRM
  *    E-mail; emails chegaram perfeitos no Gmail do destinatário, mas as
@@ -2614,6 +2630,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // ── Mensagens enviadas pela campanha (email_fila + steps) ──
         // Filtra apenas itens que já saíram (não pendentes/cancelados).
+        // 🆕 v1.25.4 (30/06/2026 — HOTFIX): EXCLUI itens sintéticos
+        //   (step_id=NULL) criados pelo próprio responder_thread para
+        //   reusar o Reply-To dinâmico. Esses itens não representam
+        //   "envios da campanha" — eles existem só como contraparte de
+        //   uma resposta outbound do CRM E-mail (que já aparece via
+        //   email_respostas com direcao='outbound'). Sem esse filtro,
+        //   a timeline mostra bolhas duplicadas "(sem assunto registrado)".
         const { data: enviados, error: errEnv } = await supabase
           .from('email_fila')
           .select(
@@ -2623,6 +2646,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           )
           .eq('lead_id', leadIdNum)
           .eq('campanha_id', campIdNum)
+          .not('step_id', 'is', null)
           .in('status', ['enviado', 'entregue', 'aberto', 'clicado', 'respondido']);
         if (errEnv) {
           console.error('[crm-leads] listar_msgs_thread enviados:', errEnv.message);

@@ -2,7 +2,34 @@
  * RespostasTab.tsx — Aba "CRM E-mail" (antes "Respostas Campanhas")
  *
  * Caminho: src/components/crm/base-leads/RespostasTab.tsx
- * Versão: 2.1 (Pacote P2 — Editor + envio outbound — 30/06/2026)
+ * Versão: 2.2 (Pacote P2 — Redesign timeline estilo Outlook — 30/06/2026)
+ *
+ * v2.2 (30/06/2026 — Redesign timeline estilo Outlook clássico):
+ *   Refeitura do componente `Bolha` → `MensagemCaixa`. Solicitação UX
+ *   do Messias (30/06/2026 — sessão final):
+ *
+ *     "Manter o padrão Outlook, {Caixa de Msgs} alinhada à esquerda,
+ *      igual a resposta recebida que atualizei ao final. Incluindo um
+ *      separador entre a msg Recebida e a Respondida."
+ *
+ *   Decisões de design (Claude Design):
+ *     • Todas as mensagens 100% width, sem deslocamento horizontal
+ *     • Header em uma linha: avatar pequeno + identidade + timestamp à dir
+ *     • Borda esquerda colorida (border-l-4) sinaliza origem SEM mover:
+ *         - indigo-300 para envio da campanha (automatic step)
+ *         - indigo-500 para envio do CRM (operador respondeu)
+ *         - gray-300 para resposta do lead
+ *     • Separador horizontal (border-t border-gray-200) entre mensagens
+ *       — fica mais elegante que `mb-4` espaço vazio
+ *     • Fundo branco para todas — limpa e profissional
+ *     • Status badges (entregue/aberto/clicado/respondido) preservados
+ *       no rodapé do envio da campanha
+ *
+ *   Comportamento intencional preservado:
+ *     • Sanitização HTML via DOMPurify continua aplicada
+ *     • Iniciais do avatar inalteradas
+ *     • Editor de resposta (Pacote P2) inalterado — refatoração só
+ *       em como cada mensagem é exibida na timeline
  *
  * v2.1 (30/06/2026 — Pacote P2 "CRM E-mail" Outbound):
  *   Adiciona o EDITOR DE RESPOSTA no footer da Thread (Estado B). UX
@@ -404,8 +431,150 @@ const EditorResposta: React.FC<EditorRespostaProps> = ({
 };
 
 // ════════════════════════════════════════════════════════════
-// SUB-COMPONENTE: BOLHA DE MENSAGEM
+// SUB-COMPONENTE: MENSAGEM CAIXA (estilo Outlook clássico)
 // ════════════════════════════════════════════════════════════
+// v2.2 (30/06/2026) — Substitui o componente Bolha (v2.0/v2.1).
+//   Layout vertical, alinhado à esquerda, separador horizontal entre
+//   mensagens. Identidade da origem indicada por borda esquerda
+//   colorida (border-l-4) — não há deslocamento horizontal.
+
+const MensagemCaixa: React.FC<{ msg: MensagemThread; primeira: boolean }> = ({
+  msg,
+  primeira,
+}) => {
+  const isOutbound = msg.direcao === 'outbound';
+  const isEnvioCampanha = msg.tipo === 'enviado_campanha';
+  const isRecebidoLead = msg.tipo === 'recebido_lead';
+
+  // Identidade visual da origem (border-l-4 + avatar bg)
+  const cfgOrigem = isEnvioCampanha
+    ? {
+        bordaCor: 'border-l-indigo-300',
+        avatarBg: 'bg-indigo-100',
+        avatarText: 'text-indigo-700',
+        avatarIcone: 'fa-solid fa-bullhorn',
+        identidadeLabel: `Step ${msg.step_ordem ?? '?'} · Campanha`,
+        identidadeColor: 'text-indigo-700',
+      }
+    : isOutbound
+      ? {
+          bordaCor: 'border-l-indigo-500',
+          avatarBg: 'bg-indigo-500',
+          avatarText: 'text-white',
+          avatarIcone: 'fa-solid fa-paper-plane',
+          identidadeLabel:
+            msg.de_nome || msg.de_email || 'Operador',
+          identidadeColor: 'text-indigo-700',
+        }
+      : {
+          bordaCor: 'border-l-gray-300',
+          avatarBg: 'bg-gray-200',
+          avatarText: 'text-gray-700',
+          avatarIcone: '',
+          identidadeLabel:
+            msg.de_nome || msg.de_email || 'Lead',
+          identidadeColor: 'text-gray-700',
+        };
+
+  const exibirCorpoHtml = msg.corpo_html && msg.corpo_html.trim().length > 0;
+  const exibirCorpoTexto =
+    !exibirCorpoHtml && msg.corpo_texto && msg.corpo_texto.trim().length > 0;
+
+  return (
+    <div
+      className={[
+        'bg-white px-5 py-4 border-l-4',
+        cfgOrigem.bordaCor,
+        // Separador entre mensagens — top border exceto na primeira
+        primeira ? '' : 'border-t border-gray-200',
+      ].join(' ')}
+    >
+      {/* ── Cabeçalho da mensagem (uma linha) ── */}
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          {/* Avatar/Ícone */}
+          <div
+            className={[
+              'w-7 h-7 rounded-full text-xs font-semibold flex items-center justify-center shrink-0',
+              cfgOrigem.avatarBg,
+              cfgOrigem.avatarText,
+            ].join(' ')}
+          >
+            {isEnvioCampanha || isOutbound ? (
+              <i className={`${cfgOrigem.avatarIcone} text-[11px]`}></i>
+            ) : (
+              iniciais(msg.de_nome || msg.de_email)
+            )}
+          </div>
+          {/* Identidade + email */}
+          <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
+            <span className={`text-sm font-semibold ${cfgOrigem.identidadeColor}`}>
+              {cfgOrigem.identidadeLabel}
+            </span>
+            {(isOutbound || isRecebidoLead) && msg.de_email && (
+              <span className="text-xs text-gray-500 truncate">
+                {`<${msg.de_email}>`}
+              </span>
+            )}
+          </div>
+        </div>
+        {/* Timestamp */}
+        <span className="text-xs text-gray-500 shrink-0 whitespace-nowrap">
+          {msg.data ? formatDateTime(msg.data) : '—'}
+        </span>
+      </div>
+
+      {/* ── Assunto ── */}
+      {msg.assunto && (
+        <div className="text-sm font-semibold text-gray-800 mb-2">
+          {msg.assunto}
+        </div>
+      )}
+
+      {/* ── Corpo ── */}
+      <div className="text-sm text-gray-700">
+        {exibirCorpoHtml ? (
+          <div
+            className="prose prose-sm max-w-none [&_p]:my-1.5 [&_a]:text-indigo-600"
+            dangerouslySetInnerHTML={{
+              __html: sanitizarHtmlRespostas(msg.corpo_html || ''),
+            }}
+          />
+        ) : exibirCorpoTexto ? (
+          <p className="whitespace-pre-line">{msg.corpo_texto}</p>
+        ) : isEnvioCampanha ? (
+          <p className="text-gray-500 italic">
+            (Conteúdo enviado segundo template do Step {msg.step_ordem ?? '?'} da campanha)
+          </p>
+        ) : (
+          <p className="text-gray-400 italic">(sem corpo extraído)</p>
+        )}
+      </div>
+
+      {/* ── Rodapé: badges contextuais ── */}
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+        {isEnvioCampanha && badgeStatusEnvio(msg.status)}
+        {isEnvioCampanha && msg.aberto_em && (
+          <span className="text-gray-500" title={`Aberto em ${formatDateTime(msg.aberto_em)}`}>
+            <i className="fa-regular fa-eye"></i> Aberto
+          </span>
+        )}
+        {isEnvioCampanha && msg.clicado_em && (
+          <span className="text-gray-500" title={`Clicado em ${formatDateTime(msg.clicado_em)}`}>
+            <i className="fa-solid fa-arrow-pointer"></i> Clicado
+          </span>
+        )}
+        {isRecebidoLead && msg.classificacao && badgeClassificacao(msg.classificacao)}
+      </div>
+    </div>
+  );
+};
+
+// ════════════════════════════════════════════════════════════
+// SUB-COMPONENTE: BOLHA DE MENSAGEM (LEGACY — não usado mais em v2.2)
+// ════════════════════════════════════════════════════════════
+// Mantido para compatibilidade durante a transição. Componente principal
+// (RespostasTab) usa `MensagemCaixa`. Remover na próxima major.
 
 const Bolha: React.FC<{ msg: MensagemThread }> = ({ msg }) => {
   const isOutbound = msg.direcao === 'outbound';
@@ -598,9 +767,13 @@ const RespostasTab: React.FC<RespostasTabProps> = ({
             descricao="Esta thread ainda não tem envios da campanha nem respostas registradas."
           />
         ) : (
-          <div className="bg-gray-50 rounded-lg p-4 border border-gray-100">
-            {mensagens.map((msg) => (
-              <Bolha key={msg.id} msg={msg} />
+          /* 🆕 v2.2 (30/06/2026) — Container da timeline estilo Outlook:
+             • Borda externa única englobando todas as mensagens
+             • Separação entre msgs por border-top (dentro de MensagemCaixa)
+             • Sem fundo cinza diferenciado — visual limpo profissional */
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+            {mensagens.map((msg, idx) => (
+              <MensagemCaixa key={msg.id} msg={msg} primeira={idx === 0} />
             ))}
           </div>
         )}
