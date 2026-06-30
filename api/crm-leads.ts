@@ -2,7 +2,34 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
- *  - v1.25.1 (30/06/2026 — HOTFIX P2):
+ *  - v1.25.2 (30/06/2026 — HOTFIX P2 — FROM SMTP):
+ *    Bug em smoke real (campanha "Teste de Vertical Alocação - Infraestrutura"):
+ *    a resposta usava `assinatura.email_assinatura` no campo From do SMTP
+ *    quando esse email aponta para um domínio interno (ex: techcob.com.br)
+ *    que NÃO é sending domain verificado na Resend. Resultado: Resend
+ *    rejeitava com 403 validation_error.
+ *
+ *    Causa raiz: confusão entre 2 conceitos diferentes:
+ *      • SENDER SMTP (campo From do envelope) — DEVE ser de domínio verificado
+ *        na Resend (techfor.com.br ou techforti.inf.br hoje).
+ *      • Assinatura visual no rodapé HTML — pode mostrar QUALQUER email
+ *        (techcob.com.br, marcas internas, branding) porque é apenas
+ *        identidade visual no corpo da mensagem.
+ *
+ *    O cron disparar-fila v1.13 (Production estável) sempre usou
+ *    `campanha.email_remetente` (campo dedicado, validado no Wizard
+ *    contra domínios verificados) no SMTP From, mantendo a assinatura
+ *    rica no corpo HTML. Mesma estratégia agora aplicada aqui.
+ *
+ *    Mudança cirúrgica: 1 linha.
+ *      ANTES:  from = `${responsavel.nome_usuario} <${assinatura.email_assinatura}>`
+ *      DEPOIS: from = `${campanha.nome_remetente || 'TechFor TI'} <${campanha.email_remetente}>`
+ *
+ *    Defesa em camadas: guard antes do envio retorna 412 com mensagem
+ *    clara se `campanha.email_remetente` for null/vazio (cenário não
+ *    esperado em Production por validação do Wizard, mas defensivo).
+ *
+ *  - v1.25.1 (30/06/2026 — HOTFIX P2 — roteamento):
  *    Bug em smoke real Preview: a action `responder_thread` introduzida em
  *    v1.25 caía no bloco `if (req.method === 'GET')` do handler, com guard
  *    interno `&& req.method === 'POST'` que NUNCA matchava (porque o bloco
@@ -3472,6 +3499,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           null;
 
         // ── 4. Criar item sintético em email_fila (step_id=NULL) ──
+        // 🆕 v1.25.2 (30/06/2026 — HOTFIX): guard defensivo antes de criar
+        //   item sintético. Se a campanha não tem email_remetente configurado
+        //   (caso anômalo — Wizard valida isso na criação), retornamos 412
+        //   ANTES de poluir email_fila com item sem chances de ser enviado.
+        if (!campanha.email_remetente || campanha.email_remetente.trim().length === 0) {
+          return res.status(412).json({
+            success: false,
+            error:
+              'Campanha sem email_remetente configurado (sender SMTP). ' +
+              'Não é possível enviar — peça ao admin para corrigir a campanha.',
+          });
+        }
+
         const { data: filaSintetica, error: errFila } = await supabase
           .from('email_fila')
           .insert({
@@ -3496,7 +3536,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // ── 5. Montar payload Resend ──
         const sufixo = sufixoAmbienteOutbound();
         const replyTo = `customer-service${sufixo}+f${filaId}+l${leadIdNum}@${DOMINIO_REPLY_TO_OUTBOUND}`;
-        const from = `${responsavel.nome_usuario || 'TechFor TI'} <${assinatura.email_assinatura}>`;
+
+        // 🆕 v1.25.2 (30/06/2026 — HOTFIX): FROM SMTP usa email_remetente da
+        //   CAMPANHA (sender verificado na Resend), NÃO email_assinatura
+        //   (que pode ser domínio interno tipo techcob.com.br). Idêntico
+        //   ao padrão do cron disparar-fila v1.13 em Production.
+        //   A assinatura visual rica no rodapé HTML continua usando o
+        //   email_assinatura (para identidade comercial interna).
+        const from = `${campanha.nome_remetente || 'TechFor TI'} <${campanha.email_remetente}>`;
 
         // Renderiza HTML final (corpo digitado + assinatura)
         const htmlFinal = `${corpo_html}\n<br><br>\n${renderAssinaturaP2(assinatura)}`;
