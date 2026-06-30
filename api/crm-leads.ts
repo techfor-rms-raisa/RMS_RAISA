@@ -2,6 +2,48 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.25.3 (30/06/2026 — HOTFIX P2 — Visualização outbound na thread):
+ *    Bug em smoke real (Messias respondeu 2x para o mesmo lead via CRM
+ *    E-mail; emails chegaram perfeitos no Gmail do destinatário, mas as
+ *    bolhas outbound NUNCA apareceram na thread do RAISA).
+ *
+ *    Causas raízes (2 paralelas):
+ *
+ *      (1) `listar_msgs_thread` (v1.24) NÃO trazia a coluna `direcao`
+ *          no SELECT de email_respostas, e hardcoded TODOS os registros
+ *          como `tipo='recebido_lead' / direcao='inbound'`. Mesmo que
+ *          o INSERT outbound funcionasse, o frontend recebia o registro
+ *          como se fosse mensagem do lead — bolha cinza à esquerda em
+ *          vez de indigo à direita.
+ *
+ *      (2) `responder_thread` (v1.25.0+) gravava `de_email =
+ *          assinatura.email_assinatura` (ex: moliveira@techcob.com.br),
+ *          que é divergente do FROM SMTP real (`campanha.email_remetente`,
+ *          ex: moliveira@techfor.com.br) após o hotfix v1.25.2.
+ *          Coerência semântica: o registro deve refletir o que o lead
+ *          efetivamente vê no campo From do email recebido.
+ *
+ *    Fix:
+ *
+ *      (A) listar_msgs_thread: SELECT inclui `direcao, message_id,
+ *          in_reply_to_message_id, enviado_por`. Processamento agora
+ *          ramifica por direcao:
+ *            - 'outbound' → tipo='enviado_crm', bolha indigo direita
+ *            - 'inbound' (default null/legacy) → tipo='recebido_lead',
+ *              bolha cinza esquerda
+ *
+ *      (B) responder_thread: `de_email` registrado agora é
+ *          `campanha.email_remetente` (espelhando o FROM SMTP real).
+ *          `de_nome` permanece `assinatura.nome_completo || responsavel.
+ *          nome_usuario` (identidade visual humana — pode ser "Messias
+ *          | Tech Cob" mesmo enviando de moliveira@techfor.com.br).
+ *
+ *    Pré-requisito: migration P1 aplicada (Seção 2 do SQL
+ *    2026-06-30_extender_email_respostas_p1.sql). Sem ela, o SELECT
+ *    do (A) falha por coluna inexistente. Validar com:
+ *      SELECT column_name FROM information_schema.columns
+ *      WHERE table_name='email_respostas' AND column_name='direcao';
+ *
  *  - v1.25.2 (30/06/2026 — HOTFIX P2 — FROM SMTP):
  *    Bug em smoke real (campanha "Teste de Vertical Alocação - Infraestrutura"):
  *    a resposta usava `assinatura.email_assinatura` no campo From do SMTP
@@ -2587,14 +2629,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // ── Respostas do lead (email_respostas) ────────────────────
-        // P1: ainda não filtra por direcao porque a coluna pode não
-        //     existir se a migration não rodou. P2 adicionará o filtro
-        //     direcao='inbound' e branch para outbound.
+        // 🆕 v1.25.3 (30/06/2026 — HOTFIX): SELECT inclui `direcao` e
+        //   demais colunas P1 para distinguir inbound (resposta do lead)
+        //   de outbound (resposta enviada pelo RAISA via CRM E-mail P2).
+        //   Sem essa distinção, o frontend renderiza outbounds como se
+        //   fossem do lead — bolha errada no lado errado.
+        //
+        //   Compatibilidade: registros legados sem `direcao` (pré-migration
+        //   P1) defaultam para 'inbound' (DEFAULT da coluna). Se a coluna
+        //   não existir (migration não aplicada), a query falha — log
+        //   abaixo trata e o operador vê apenas envios da campanha.
         const { data: replies, error: errReps } = await supabase
           .from('email_respostas')
           .select(
             'id, de_email, de_nome, assunto, corpo_texto, corpo_html, ' +
-              'classificacao, lido, recebido_em'
+              'classificacao, lido, recebido_em, ' +
+              'direcao, message_id, in_reply_to_message_id, enviado_por'
           )
           .eq('lead_id', leadIdNum)
           .eq('campanha_id', campIdNum);
@@ -2628,19 +2678,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         for (const rep of replies || []) {
+          // 🆕 v1.25.3 (30/06/2026 — HOTFIX) — ramifica por direção.
+          //   Default 'inbound' para registros legados ou se a coluna
+          //   ainda não existir (compat pré-migration P1).
+          const direcao = (rep as any).direcao || 'inbound';
+          const isOutbound = direcao === 'outbound';
           mensagens.push({
             id: `rep_${rep.id}`,
-            tipo: 'recebido_lead',
-            direcao: 'inbound',
+            tipo: isOutbound ? 'enviado_crm' : 'recebido_lead',
+            direcao: isOutbound ? 'outbound' : 'inbound',
             data: rep.recebido_em,
             assunto: rep.assunto || '',
             corpo_texto: rep.corpo_texto || '',
             corpo_html: rep.corpo_html || null,
             de_email: rep.de_email,
             de_nome: rep.de_nome,
-            classificacao: rep.classificacao || null,
+            // Específicos de 'recebido_lead' (relevantes só para inbound,
+            // mas nulos em outbound — frontend trata graceful):
+            classificacao: isOutbound ? null : rep.classificacao || null,
             lido: rep.lido,
-          });
+            // 🆕 P2/P3 — exposto para threading futuro e debug
+            message_id: (rep as any).message_id || null,
+            in_reply_to_message_id: (rep as any).in_reply_to_message_id || null,
+            enviado_por: (rep as any).enviado_por || null,
+          } as any);
         }
 
         // Ordenação cronológica ascendente (mais antigo no topo).
@@ -3622,6 +3683,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('id', filaId);
 
         // ── 8. Registrar outbound em email_respostas (POPULA 5 COLUNAS P1) ──
+        // 🆕 v1.25.3 (30/06/2026 — HOTFIX): `de_email` agora espelha o
+        //   FROM SMTP real (campanha.email_remetente), não a assinatura
+        //   visual. Coerência com o que o lead efetivamente vê no campo
+        //   "De:" do email recebido. `de_nome` mantém a identidade visual
+        //   humana (nome do operador) para a thread interna.
         const nowIso = new Date().toISOString();
         const { data: novaMsg, error: errInsResp } = await supabase
           .from('email_respostas')
@@ -3629,8 +3695,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             lead_id: leadIdNum,
             campanha_id: campIdNum,
             fila_id: filaId,
-            de_email: assinatura.email_assinatura,
-            de_nome: assinatura.nome_completo || responsavel.nome_usuario,
+            de_email: campanha.email_remetente,             // ✅ espelha FROM SMTP real
+            de_nome:
+              campanha.nome_remetente ||
+              assinatura.nome_completo ||
+              responsavel.nome_usuario ||
+              'TechFor TI',
             assunto: subject,
             corpo_texto: corpo_texto || null,
             corpo_html: corpo_html,
@@ -3649,8 +3719,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (errInsResp) {
           // Não rollback aqui — email JÁ FOI enviado. Apenas logar.
+          // 🆕 v1.25.3 — log com mais detalhe para diagnóstico (ex: coluna
+          //   inexistente quando migration P1 não foi aplicada).
           console.error(
-            '[crm-leads] responder_thread: insert email_respostas falhou após envio:',
+            '[crm-leads] responder_thread: INSERT email_respostas falhou após envio do email. ' +
+            'Frequente: migration P1 nao aplicada (coluna direcao inexistente). ' +
+            'Detalhe:',
             errInsResp.message
           );
         }
