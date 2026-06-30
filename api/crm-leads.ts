@@ -2,6 +2,20 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.25.5 (30/06/2026 — POLISH P2 — Ordem cronológica reversa):
+ *    Ajuste UX solicitado por Messias em smoke real: a timeline do
+ *    CRM E-mail estava em ordem cronológica ASCENDENTE (mais antigo
+ *    no topo), forçando o operador a rolar para baixo para ver a
+ *    resposta mais recente. Padrão Outlook desktop é DESCENDENTE
+ *    (mais recente no topo) — mais natural para acompanhar conversas
+ *    em andamento.
+ *
+ *    Mudança cirúrgica: 1 linha em `mensagens.sort()` — troca
+ *    `a.data.localeCompare(b.data)` por `b.data.localeCompare(a.data)`.
+ *    O frontend (RespostasTab v2.3) também precisa ajustar a lógica
+ *    de "separador adaptativo entre direções" para que funcione
+ *    corretamente na ordem invertida.
+ *
  *  - v1.25.4 (30/06/2026 — HOTFIX P2 — UX da timeline):
  *    Bug em smoke real (Messias): a timeline do CRM E-mail estava
  *    mostrando bolhas "(sem assunto registrado)" / "Step ? · Campanha"
@@ -2728,13 +2742,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           } as any);
         }
 
-        // Ordenação cronológica ascendente (mais antigo no topo).
-        // Mensagens sem `data` vão pro fim (defensivo).
+        // Ordenação cronológica DESCENDENTE (mais recente no topo),
+        //   padrão Outlook desktop moderno. Mudou em v1.25.5 a pedido
+        //   do Messias. Mensagens sem `data` vão para o fim (defensivo).
         mensagens.sort((a, b) => {
           if (!a.data && !b.data) return 0;
           if (!a.data) return 1;
           if (!b.data) return -1;
-          return a.data.localeCompare(b.data);
+          return b.data.localeCompare(a.data);
         });
 
         return res.status(200).json({

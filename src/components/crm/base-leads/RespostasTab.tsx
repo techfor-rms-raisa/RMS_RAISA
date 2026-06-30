@@ -2,7 +2,27 @@
  * RespostasTab.tsx — Aba "CRM E-mail" (antes "Respostas Campanhas")
  *
  * Caminho: src/components/crm/base-leads/RespostasTab.tsx
- * Versão: 2.2 (Pacote P2 — Redesign timeline estilo Outlook — 30/06/2026)
+ * Versão: 2.3 (POLISH P2 — visual respostas + ordem reversa — 30/06/2026)
+ *
+ * v2.3 (30/06/2026 — POLISH P2):
+ *   3 ajustes finos de UX pedidos por Messias em smoke real:
+ *
+ *     1. Identidade visual da MENSAGEM RECEBIDA (resposta do lead):
+ *        - Avatar muda de `gray-200` para `teal-100` + texto teal-700
+ *        - Borda esquerda muda de `gray-300` para `teal-400`
+ *        - Adicionado ícone `fa-reply` ao lado do nome do remetente
+ *          (identifica visualmente "é uma resposta")
+ *
+ *     2. SEPARADOR ADAPTATIVO entre mensagens:
+ *        - Mesma direção: `border-t border-gray-100` (fino, sutil)
+ *        - Mudança de direção: `border-t-2 border-gray-300` (mais
+ *          espesso, transição visual clara entre Enviada e Recebida)
+ *
+ *     3. ORDEM CRONOLÓGICA DESCENDENTE (mais recente no topo):
+ *        - Frontend só precisa renderizar o que o backend (v1.25.5)
+ *          já entrega ordenado descendente. Lógica de
+ *          `mudouDirecao` adaptada para comparar com o item anterior
+ *          no array (que agora é mais novo, não mais antigo).
  *
  * v2.2 (30/06/2026 — Redesign timeline estilo Outlook clássico):
  *   Refeitura do componente `Bolha` → `MensagemCaixa`. Solicitação UX
@@ -437,14 +457,27 @@ const EditorResposta: React.FC<EditorRespostaProps> = ({
 //   Layout vertical, alinhado à esquerda, separador horizontal entre
 //   mensagens. Identidade da origem indicada por borda esquerda
 //   colorida (border-l-4) — não há deslocamento horizontal.
+// v2.3 (30/06/2026) — Visual da resposta recebida em teal + ícone
+//   fa-reply, separador adaptativo (mais espesso quando muda direção).
 
-const MensagemCaixa: React.FC<{ msg: MensagemThread; primeira: boolean }> = ({
-  msg,
-  primeira,
-}) => {
+const MensagemCaixa: React.FC<{
+  msg: MensagemThread;
+  primeira: boolean;
+  /** 🆕 v2.3 — Direção da msg imediatamente anterior no array (ou null
+   * se for a primeira). Permite separador adaptativo: linha mais espessa
+   * quando a direção muda (Enviada ↔ Recebida). */
+  direcaoAnterior?: string | null;
+}> = ({ msg, primeira, direcaoAnterior = null }) => {
   const isOutbound = msg.direcao === 'outbound';
   const isEnvioCampanha = msg.tipo === 'enviado_campanha';
   const isRecebidoLead = msg.tipo === 'recebido_lead';
+
+  // 🆕 v2.3 — Detecta se a direção da msg anterior é diferente para
+  //   destacar a transição visual entre conversação enviada e recebida.
+  //   Para campanha e CRM (ambos outbound), tratamos como "mesma direção"
+  //   apesar do tipo diferente — visualmente são todas saídas do time.
+  const mudouDirecao =
+    direcaoAnterior !== null && direcaoAnterior !== msg.direcao;
 
   // Identidade visual da origem (border-l-4 + avatar bg)
   const cfgOrigem = isEnvioCampanha
@@ -455,6 +488,7 @@ const MensagemCaixa: React.FC<{ msg: MensagemThread; primeira: boolean }> = ({
         avatarIcone: 'fa-solid fa-bullhorn',
         identidadeLabel: `Step ${msg.step_ordem ?? '?'} · Campanha`,
         identidadeColor: 'text-indigo-700',
+        iconePrefixo: '',
       }
     : isOutbound
       ? {
@@ -462,31 +496,40 @@ const MensagemCaixa: React.FC<{ msg: MensagemThread; primeira: boolean }> = ({
           avatarBg: 'bg-indigo-500',
           avatarText: 'text-white',
           avatarIcone: 'fa-solid fa-paper-plane',
-          identidadeLabel:
-            msg.de_nome || msg.de_email || 'Operador',
+          identidadeLabel: msg.de_nome || msg.de_email || 'Operador',
           identidadeColor: 'text-indigo-700',
+          iconePrefixo: '',
         }
       : {
-          bordaCor: 'border-l-gray-300',
-          avatarBg: 'bg-gray-200',
-          avatarText: 'text-gray-700',
+          // 🆕 v2.3 — Recebido_lead em TEAL (em vez de gray) para destacar
+          //   "veio de fora" + ícone fa-reply ao lado do nome.
+          bordaCor: 'border-l-teal-400',
+          avatarBg: 'bg-teal-100',
+          avatarText: 'text-teal-700',
           avatarIcone: '',
-          identidadeLabel:
-            msg.de_nome || msg.de_email || 'Lead',
-          identidadeColor: 'text-gray-700',
+          identidadeLabel: msg.de_nome || msg.de_email || 'Lead',
+          identidadeColor: 'text-teal-700',
+          iconePrefixo: 'fa-solid fa-reply',
         };
 
   const exibirCorpoHtml = msg.corpo_html && msg.corpo_html.trim().length > 0;
   const exibirCorpoTexto =
     !exibirCorpoHtml && msg.corpo_texto && msg.corpo_texto.trim().length > 0;
 
+  // 🆕 v2.3 — Classe do separador: linha mais espessa quando muda de
+  //   direção (Enviada ↔ Recebida), criando uma transição visual nítida.
+  const classeSeparador = primeira
+    ? ''
+    : mudouDirecao
+      ? 'border-t-2 border-gray-300'
+      : 'border-t border-gray-100';
+
   return (
     <div
       className={[
         'bg-white px-5 py-4 border-l-4',
         cfgOrigem.bordaCor,
-        // Separador entre mensagens — top border exceto na primeira
-        primeira ? '' : 'border-t border-gray-200',
+        classeSeparador,
       ].join(' ')}
     >
       {/* ── Cabeçalho da mensagem (uma linha) ── */}
@@ -506,6 +549,13 @@ const MensagemCaixa: React.FC<{ msg: MensagemThread; primeira: boolean }> = ({
               iniciais(msg.de_nome || msg.de_email)
             )}
           </div>
+          {/* 🆕 v2.3 — Ícone fa-reply antes do nome quando é recebido_lead */}
+          {cfgOrigem.iconePrefixo && (
+            <i
+              className={`${cfgOrigem.iconePrefixo} text-teal-500 text-sm shrink-0`}
+              title="Resposta recebida do lead"
+            ></i>
+          )}
           {/* Identidade + email */}
           <div className="min-w-0 flex-1 flex items-center gap-2 flex-wrap">
             <span className={`text-sm font-semibold ${cfgOrigem.identidadeColor}`}>
@@ -770,10 +820,16 @@ const RespostasTab: React.FC<RespostasTabProps> = ({
           /* 🆕 v2.2 (30/06/2026) — Container da timeline estilo Outlook:
              • Borda externa única englobando todas as mensagens
              • Separação entre msgs por border-top (dentro de MensagemCaixa)
-             • Sem fundo cinza diferenciado — visual limpo profissional */
+             • Sem fundo cinza diferenciado — visual limpo profissional
+             🆕 v2.3 — Passa direcaoAnterior para separador adaptativo. */
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
             {mensagens.map((msg, idx) => (
-              <MensagemCaixa key={msg.id} msg={msg} primeira={idx === 0} />
+              <MensagemCaixa
+                key={msg.id}
+                msg={msg}
+                primeira={idx === 0}
+                direcaoAnterior={idx > 0 ? mensagens[idx - 1].direcao : null}
+              />
             ))}
           </div>
         )}
