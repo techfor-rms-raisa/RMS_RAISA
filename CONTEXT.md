@@ -603,13 +603,13 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 78 arquivos | 1.27 MB | 29/06/2026 |
-| `src/components/` | 175 arquivos | 1.10 MB | 29/06/2026 |
+| `api/` | 79 arquivos | 1.28 MB | 30/06/2026 |
+| `src/components/` | 175 arquivos | 1.10 MB | 30/06/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 29/06/2026 |
-| `src/types/` | 6 arquivos | 31.0 KB | 29/06/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 29/06/2026 |
-| `scripts/` | 1 arquivos | 15.3 KB | 29/06/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 30/06/2026 |
+| `src/types/` | 6 arquivos | 31.0 KB | 30/06/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 30/06/2026 |
+| `scripts/` | 1 arquivos | 15.3 KB | 30/06/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -641,6 +641,7 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 - `api/prospect-capture.ts`
 - `api/prospect-cv-extract.ts`
 - `api/prospect-cv-reconcile.ts`
+- `api/prospect-dominios-turnover.ts`
 - `api/prospect-email-finder.ts`
 - `api/prospect-empresa-normalize.ts`
 - `api/prospect-enrich-company.ts`
