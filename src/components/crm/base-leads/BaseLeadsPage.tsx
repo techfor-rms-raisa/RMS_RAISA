@@ -2,7 +2,33 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.16 (Filtros "CRECI" e "Analista" na aba "Meus Leads" — 30/06/2026)
+ * Versão: 1.17 (Pacote P1 — CRM E-mail: rebrand + Inbox + Thread — 30/06/2026)
+ *
+ * 🆕 v1.17 (30/06/2026 — Pacote P1 "CRM E-mail"):
+ *   Rebrand + ligação do RespostasTab v2.0 (Inbox + Thread em tela cheia).
+ *   Mudanças cirúrgicas:
+ *
+ *   • Aba "Respostas Campanhas" → "CRM E-mail"
+ *       label: "Respostas Campanhas" → "CRM E-mail"
+ *       icon:  fa-reply → fa-envelope-open-text
+ *       key:   mantém 'respostas' (estabilidade da URL/state, não-breaking)
+ *
+ *   • Props do <RespostasTab> totalmente reescritas para a v2.0:
+ *       - Antes: itens (RespostaInbox[]), onAbrirLead
+ *       - Agora: threads (ThreadResumo[]) + estado da thread aberta
+ *                (threadAtiva, mensagens, loadingThread, erroThread)
+ *                + handlers (onAbrirThread, onVoltarParaInbox)
+ *       - `onAbrirLead` mantido — header da thread tem botão para
+ *         abrir o LeadDetailDrawer já existente.
+ *
+ *   • useEffect da aba 'respostas' permanece carregando do `respostasH`.
+ *     Internamente o hook v2.0 dispara `listar_threads` (não mais
+ *     `listar_respostas`), mas o contrato externo (carregar()) é estável.
+ *
+ *   Dependências: useRespostas v2.0 (states + setters), RespostasTab v2.0
+ *   (UI), crm-leads.ts v1.24 (actions listar_threads + listar_msgs_thread),
+ *   migration SQL 2026-06-30_extender_email_respostas_p1.sql (preparação
+ *   para P2 — não é exigida pela leitura v1.24).
  *
  * 🆕 v1.16 (30/06/2026 — Filtros "CRECI" e "Analista" na aba "Meus Leads"):
  *   Liga 2 novos filtros perfil-aware ao LeadsTab v1.2 e ao useLeads v1.4.
@@ -1204,11 +1230,15 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
               icon: 'fa-solid fa-link',
               count: null as number | null,
             },
-            // 🆕 v1.2 (Fase 8-Inbox)
+            // 🆕 v1.2 (Fase 8-Inbox) — Aba originalmente "Respostas"
+            // 🔄 v1.17 (30/06/2026 — Pacote P1) — Rebrand para "CRM E-mail".
+            //    A key 'respostas' permanece (estabilidade de state interno),
+            //    apenas label/icon visuais mudam. O componente RespostasTab
+            //    v2.0 operacionaliza o conceito de Inbox + Thread.
             {
               key: 'respostas' as const,
-              label: 'Respostas Campanhas',
-              icon: 'fa-solid fa-reply',
+              label: 'CRM E-mail',
+              icon: 'fa-solid fa-envelope-open-text',
               count: stats?.total_respostas ?? respostasH.total, // 🆕 v1.3
             },
             {
@@ -1335,10 +1365,14 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           />
         )}
 
-        {/* 🆕 v1.2 (Fase 8-Inbox) — Aba Respostas */}
+        {/* 🆕 v1.2 (Fase 8-Inbox) — Aba originalmente "Respostas Campanhas" */}
+        {/* 🔄 v1.17 (30/06/2026 — Pacote P1) — Rebrand "CRM E-mail":
+            agora props da v2.0 (Inbox de threads + Thread em tela cheia).
+            A key 'respostas' segue interna por estabilidade de state. */}
         {abaAtiva === 'respostas' && (
           <RespostasTab
-            itens={respostasH.itens}
+            // ── Estado A — Inbox ──
+            threads={respostasH.threads}
             total={respostasH.total}
             pagina={respostasH.pagina}
             pageSize={respostasH.pageSize}
@@ -1350,6 +1384,16 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
               respostasH.carregar();
             }}
             onPaginaChange={respostasH.setPagina}
+            onAbrirThread={(leadId, campanhaId) =>
+              respostasH.abrirThread(leadId, campanhaId)
+            }
+            // ── Estado B — Thread aberta ──
+            threadAtiva={respostasH.threadAtiva}
+            mensagens={respostasH.mensagens}
+            loadingThread={respostasH.loadingThread}
+            erroThread={respostasH.erroThread}
+            onVoltarParaInbox={respostasH.voltarParaInbox}
+            // ── Bridge para o LeadDetailDrawer ──
             onAbrirLead={abrirDetalheLead}
           />
         )}

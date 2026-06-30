@@ -2,6 +2,53 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.24 (30/06/2026 — Pacote P1 da feature "CRM E-mail"):
+ *    Aprovado em 30/06/2026 o Caminho C (Responder pelo RAISA) para
+ *    centralizar conversas dos leads numa só plataforma. Esta versão
+ *    entrega o LADO LEITURA do Pacote P1 com 2 actions novas:
+ *
+ *      (A) `listar_threads` — substitui o uso de `listar_respostas`
+ *          dentro da aba "CRM E-mail" (antiga "Respostas Campanhas").
+ *          Agrupa as respostas em THREADS (1 thread = 1 lead × 1
+ *          campanha), retornando para cada uma:
+ *            • identidade do lead/empresa/campanha
+ *            • snippet + assunto da última mensagem
+ *            • total de mensagens
+ *            • flag tem_nao_lido
+ *            • timestamp do último evento
+ *          Reusa o padrão de TETO_POR_FONTE=500 + paginação Node já
+ *          consagrado no listar_respostas e listar_invalidos.
+ *          RBAC idêntico ao listar_respostas (v1.21): por dono da
+ *          campanha (`email_campanhas.responsavel_id`).
+ *
+ *      (B) `listar_msgs_thread` — quando o operador clica num card,
+ *          essa action retorna a CONVERSA COMPLETA cronológica de
+ *          uma thread específica, INTERCALANDO:
+ *            • Mensagens enviadas pela campanha (origem: email_fila,
+ *              com JOIN em email_campanha_steps para assunto e ordem)
+ *            • Respostas do lead (origem: email_respostas)
+ *          P1 não inclui ainda outbound do RAISA (entrará em P2).
+ *          O frontend (RespostasTab v2.0) ordena cronologicamente,
+ *          mais antigo primeiro (estilo Outlook/Gmail).
+ *
+ *    Compatibilidade:
+ *      • A action `listar_respostas` (v1.21) NÃO foi alterada — fica
+ *        no código como API legada para callers externos (ex: scripts
+ *        de auditoria, integrações futuras). Apenas o frontend
+ *        useRespostas v2.0 deixa de chamá-la.
+ *      • Nenhuma migration de schema é exigida POR ESTA versão de
+ *        código — `listar_threads` e `listar_msgs_thread` leem apenas
+ *        colunas pré-existentes. As 5 colunas novas de email_respostas
+ *        (direcao, message_id, in_reply_to_message_id, enviado_por,
+ *        bcc_corporativo_em) serão consumidas pelo backend P2/P3.
+ *      • A migration acompanha esta versão APENAS por economia
+ *        operacional (1 SQL em vez de 2) e para preparar P2 sem novo
+ *        downtime.
+ *
+ *    Dependência: nenhuma. Schemas usados são todos pré-existentes:
+ *      email_respostas, email_leads, email_empresas, email_campanhas,
+ *      email_fila, email_campanha_steps.
+ *
  *  - v1.23 (30/06/2026 — Filtros "CRECI" e "Analista" na aba "Meus Leads"):
  *    Melhoria de UX solicitada por Messias. Com 2.360+ leads dominando a
  *    aba (esmagadora maioria CRECI), GC/SDR/Admin tinham fricção real
@@ -1956,6 +2003,483 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           page: pageNum,
           limit: limitNum,
           total_pages: Math.ceil(total / limitNum),
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════
+      // 🆕 v1.24 (30/06/2026 — Pacote P1 da feature "CRM E-mail")
+      //         LISTAR THREADS — agrupa email_respostas por (lead × campanha)
+      // ════════════════════════════════════════════════════════════
+      // Substitui o uso de `listar_respostas` no useRespostas v2.0 da aba
+      // CRM E-mail. Conceito: cada thread representa UMA conversa entre o
+      // operador (GC/SDR/Admin) e o lead, dentro do contexto de UMA campanha
+      // — espelhando como Outlook/Gmail agrupam por "assunto".
+      //
+      // Estratégia de implementação (igual ao padrão consolidado):
+      //   1. TETO_POR_FONTE=500 respostas mais recentes (RBAC aplicado)
+      //   2. Agregar no Node por (lead_id, campanha_id)
+      //   3. Lookup de leads + empresas + campanhas em batch
+      //   4. Ordenar threads pelo evento mais recente
+      //   5. Aplicar busca textual (Node — universo pequeno após RBAC)
+      //   6. Paginar
+      //
+      // Trade-off: se um lead tem 30 respostas em 1 thread e existem outras
+      // threads ativas, o `total_msgs` desta thread pode ficar subestimado
+      // (porque o batch de 500 prioriza recência global, não da thread).
+      // Aceitamos por ora — o universo prático é ~100 respostas/dia (item 5
+      // do alinhamento), então 500 cobre vários dias. Se virar problema,
+      // migramos para RPC com GROUP BY no servidor.
+      //
+      // Parâmetros:
+      //   - busca: string (lead nome/email/empresa/corpo) — opcional
+      //   - page, limit: paginação clássica
+      //   - current_user_id, current_user_tipo: RBAC obrigatório (idêntico
+      //     ao listar_respostas v1.21)
+      //
+      // Resposta:
+      //   {
+      //     success: true,
+      //     threads: ThreadItem[],
+      //     total, page, limit, total_pages
+      //   }
+      //
+      //   ThreadItem = {
+      //     lead_id, lead_nome, lead_email, lead_cargo,
+      //     empresa_id, empresa_nome,
+      //     campanha_id, campanha_nome,
+      //     ultima_msg_em (ISO),
+      //     ultima_msg_assunto,
+      //     ultima_msg_snippet (até 200 chars),
+      //     total_msgs (count dentro do batch de 500 — ver trade-off acima),
+      //     tem_nao_lido (bool),
+      //     classificacao_ultima (string|null),
+      //   }
+      if (action === 'listar_threads') {
+        const {
+          busca = '',
+          page = '1',
+          limit = '30',
+          current_user_id,
+          current_user_tipo,
+        } = req.query as Record<string, string>;
+        const limitNum = Math.max(1, Math.min(parseInt(limit) || 30, 200));
+        const pageNum = Math.max(1, parseInt(page) || 1);
+
+        // Validação defensiva (mesmo padrão do listar_respostas v1.21)
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error:
+              'Parâmetros obrigatórios ausentes: current_user_id e current_user_tipo. ' +
+              'A action listar_threads requer identificação do usuário corrente para aplicar RBAC.',
+          });
+        }
+        const currentUserIdNum = parseInt(current_user_id);
+        if (isNaN(currentUserIdNum) || currentUserIdNum < 1) {
+          return res.status(400).json({
+            success: false,
+            error: `current_user_id inválido: "${current_user_id}"`,
+          });
+        }
+
+        // RBAC: pré-cálculo das campanhas que o usuário pode ver
+        //   (mesmo padrão do listar_respostas v1.21)
+        let campanhaIdsPermitidas: number[] | null = null;
+        if (current_user_tipo !== 'Administrador') {
+          const { data: campsDoUsuario, error: errCamps } = await supabase
+            .from('email_campanhas')
+            .select('id')
+            .eq('responsavel_id', currentUserIdNum);
+          if (errCamps) {
+            console.error('[crm-leads] erro pré-cálculo campanhas RBAC threads:', errCamps.message);
+            return res.status(500).json({ success: false, error: errCamps.message });
+          }
+          campanhaIdsPermitidas = (campsDoUsuario || []).map((c: any) => c.id);
+          if (campanhaIdsPermitidas.length === 0) {
+            return res.status(200).json({
+              success: true,
+              threads: [],
+              total: 0,
+              page: pageNum,
+              limit: limitNum,
+              total_pages: 0,
+            });
+          }
+        }
+
+        const TETO_POR_FONTE = 500;
+        let respostasQuery = supabase
+          .from('email_respostas')
+          .select(
+            'id, lead_id, campanha_id, de_email, de_nome, assunto, ' +
+              'corpo_texto, corpo_html, classificacao, lido, recebido_em'
+          )
+          .order('recebido_em', { ascending: false })
+          .limit(TETO_POR_FONTE);
+        if (campanhaIdsPermitidas !== null) {
+          respostasQuery = respostasQuery.in('campanha_id', campanhaIdsPermitidas);
+        }
+        const { data: respostas, error: errR } = await respostasQuery;
+        if (errR) throw errR;
+
+        // Lookups em batch
+        const leadIds = Array.from(
+          new Set(((respostas || []).map((r: any) => r.lead_id).filter(Boolean) as number[]))
+        );
+        const campIds = Array.from(
+          new Set(((respostas || []).map((r: any) => r.campanha_id).filter(Boolean) as number[]))
+        );
+
+        const leadsPorId: Record<number, any> = {};
+        if (leadIds.length > 0) {
+          const { data: leadsData } = await supabase
+            .from('email_leads')
+            .select('id, nome, email, cargo, empresa_id')
+            .in('id', leadIds);
+          for (const l of leadsData || []) leadsPorId[l.id] = l;
+        }
+
+        const empIds = Array.from(
+          new Set(
+            (Object.values(leadsPorId).map((l: any) => l.empresa_id).filter(Boolean) as number[])
+          )
+        );
+        const empPorId: Record<number, any> = {};
+        if (empIds.length > 0) {
+          const { data: empsData } = await supabase
+            .from('email_empresas')
+            .select('id, nome')
+            .in('id', empIds);
+          for (const e of empsData || []) empPorId[e.id] = e;
+        }
+
+        const campPorId: Record<number, any> = {};
+        if (campIds.length > 0) {
+          const { data: campsData } = await supabase
+            .from('email_campanhas')
+            .select('id, nome')
+            .in('id', campIds);
+          for (const c of campsData || []) campPorId[c.id] = c;
+        }
+
+        // ── Agregar em threads ─────────────────────────────────────
+        type ThreadAcc = {
+          lead_id: number;
+          campanha_id: number;
+          ultima_msg_em: string;
+          ultima_msg_assunto: string;
+          ultima_msg_snippet: string;
+          ultima_msg_corpo_html: string | null;
+          ultima_classificacao: string | null;
+          total_msgs: number;
+          tem_nao_lido: boolean;
+        };
+        const threadsMap = new Map<string, ThreadAcc>();
+        for (const r of respostas || []) {
+          if (!r.lead_id || !r.campanha_id) continue;
+          const key = `${r.lead_id}_${r.campanha_id}`;
+          const existing = threadsMap.get(key);
+          if (!existing) {
+            // Snippet: até 200 chars do corpo texto (alinhado com listar_respostas)
+            const snippet = (r.corpo_texto || '').substring(0, 200);
+            threadsMap.set(key, {
+              lead_id: r.lead_id,
+              campanha_id: r.campanha_id,
+              ultima_msg_em: r.recebido_em,
+              ultima_msg_assunto: r.assunto || '',
+              ultima_msg_snippet: snippet,
+              ultima_msg_corpo_html: r.corpo_html || null,
+              ultima_classificacao: r.classificacao || null,
+              total_msgs: 1,
+              tem_nao_lido: !r.lido,
+            });
+          } else {
+            existing.total_msgs += 1;
+            if (!r.lido) existing.tem_nao_lido = true;
+            // Como já vieram ordenados desc, a primeira é a mais recente.
+            // Não precisa sobrescrever ultima_msg_* aqui.
+          }
+        }
+
+        // ── Hidratar identidades ───────────────────────────────────
+        type ThreadItem = ThreadAcc & {
+          lead_nome: string | null;
+          lead_email: string | null;
+          lead_cargo: string | null;
+          empresa_id: number | null;
+          empresa_nome: string | null;
+          campanha_nome: string | null;
+        };
+        let threadsHidratadas: ThreadItem[] = Array.from(threadsMap.values()).map((t) => {
+          const lead = leadsPorId[t.lead_id];
+          const empresa = lead?.empresa_id ? empPorId[lead.empresa_id] : null;
+          const camp = campPorId[t.campanha_id];
+          return {
+            ...t,
+            lead_nome: lead?.nome || null,
+            lead_email: lead?.email || null,
+            lead_cargo: lead?.cargo || null,
+            empresa_id: lead?.empresa_id || null,
+            empresa_nome: empresa?.nome || null,
+            campanha_nome: camp?.nome || null,
+          };
+        });
+
+        // ── Busca textual (Node — universo pós-RBAC pequeno) ───────
+        if (busca.trim()) {
+          const termo = busca.trim().toLowerCase();
+          threadsHidratadas = threadsHidratadas.filter((t) => {
+            const haystack = [
+              t.lead_nome,
+              t.lead_email,
+              t.empresa_nome,
+              t.campanha_nome,
+              t.ultima_msg_assunto,
+              t.ultima_msg_snippet,
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase();
+            return haystack.includes(termo);
+          });
+        }
+
+        // ── Ordenar por última mensagem (mais recente primeiro) ────
+        threadsHidratadas.sort((a, b) =>
+          (b.ultima_msg_em || '').localeCompare(a.ultima_msg_em || '')
+        );
+
+        // ── Paginar ────────────────────────────────────────────────
+        const total = threadsHidratadas.length;
+        const offset = (pageNum - 1) * limitNum;
+        const pageItems = threadsHidratadas.slice(offset, offset + limitNum);
+
+        return res.status(200).json({
+          success: true,
+          threads: pageItems,
+          total,
+          page: pageNum,
+          limit: limitNum,
+          total_pages: Math.ceil(total / limitNum),
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════
+      // 🆕 v1.24 (30/06/2026 — Pacote P1 da feature "CRM E-mail")
+      //         LISTAR MENSAGENS DA THREAD (lead × campanha específicos)
+      // ════════════════════════════════════════════════════════════
+      // Quando o operador clica num card de thread no Inbox, esta action
+      // retorna a conversa COMPLETA cronológica entre o lead e a campanha,
+      // intercalando:
+      //   • Mensagens da campanha enviadas para o lead (origem: email_fila
+      //     + JOIN com email_campanha_steps)
+      //   • Respostas do lead (origem: email_respostas)
+      //   • (P2+): respostas outbound do RAISA (origem: email_respostas
+      //     com direcao='outbound')
+      //
+      // Ordenação: cronológica ascendente (mais antigo primeiro), espelhando
+      // o padrão Outlook/Gmail de leitura natural.
+      //
+      // RBAC: o operador precisa ser o responsável pela campanha
+      //       (mesmo critério do listar_respostas v1.21 e listar_threads).
+      //       Admin tem bypass.
+      //
+      // Parâmetros:
+      //   - lead_id (required)
+      //   - campanha_id (required)
+      //   - current_user_id, current_user_tipo (required, RBAC)
+      //
+      // Resposta:
+      //   {
+      //     success: true,
+      //     lead: { id, nome, email, cargo, empresa_nome },
+      //     campanha: { id, nome },
+      //     mensagens: MensagemThread[]
+      //   }
+      //
+      //   MensagemThread = {
+      //     id, tipo, direcao,
+      //     data (ISO), assunto, corpo_texto, corpo_html,
+      //     de_email, de_nome,
+      //     // específicos por tipo:
+      //     step_ordem?, step_id?, status?, aberto_em?, clicado_em?,
+      //     classificacao?, lido?,
+      //   }
+      //
+      //   tipo ∈ ('enviado_campanha' | 'recebido_lead' | 'enviado_crm')
+      //   P1 emite apenas 'enviado_campanha' e 'recebido_lead'.
+      if (action === 'listar_msgs_thread') {
+        const {
+          lead_id,
+          campanha_id,
+          current_user_id,
+          current_user_tipo,
+        } = req.query as Record<string, string>;
+
+        if (!lead_id || !campanha_id) {
+          return res.status(400).json({
+            success: false,
+            error: 'Parâmetros obrigatórios: lead_id, campanha_id.',
+          });
+        }
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error:
+              'Parâmetros obrigatórios ausentes: current_user_id e current_user_tipo (RBAC).',
+          });
+        }
+
+        const leadIdNum = parseInt(lead_id);
+        const campIdNum = parseInt(campanha_id);
+        const currentUserIdNum = parseInt(current_user_id);
+        if (isNaN(leadIdNum) || isNaN(campIdNum) || isNaN(currentUserIdNum)) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id, campanha_id e current_user_id precisam ser inteiros válidos.',
+          });
+        }
+
+        // RBAC: verificar que o operador pode ver essa campanha
+        const { data: campanha, error: errCamp } = await supabase
+          .from('email_campanhas')
+          .select('id, nome, responsavel_id')
+          .eq('id', campIdNum)
+          .maybeSingle();
+        if (errCamp) {
+          return res.status(500).json({ success: false, error: errCamp.message });
+        }
+        if (!campanha) {
+          return res.status(404).json({ success: false, error: 'Campanha não encontrada.' });
+        }
+        if (
+          current_user_tipo !== 'Administrador' &&
+          campanha.responsavel_id !== currentUserIdNum
+        ) {
+          return res.status(403).json({
+            success: false,
+            error: 'Sem permissão para visualizar esta thread (RBAC).',
+          });
+        }
+
+        // Identidade do lead (para o header da thread)
+        const { data: lead, error: errLead } = await supabase
+          .from('email_leads')
+          .select('id, nome, email, cargo, empresa_id')
+          .eq('id', leadIdNum)
+          .maybeSingle();
+        if (errLead) {
+          return res.status(500).json({ success: false, error: errLead.message });
+        }
+        if (!lead) {
+          return res.status(404).json({ success: false, error: 'Lead não encontrado.' });
+        }
+        let empresaNome: string | null = null;
+        if (lead.empresa_id) {
+          const { data: emp } = await supabase
+            .from('email_empresas')
+            .select('nome')
+            .eq('id', lead.empresa_id)
+            .maybeSingle();
+          empresaNome = emp?.nome || null;
+        }
+
+        // ── Mensagens enviadas pela campanha (email_fila + steps) ──
+        // Filtra apenas itens que já saíram (não pendentes/cancelados).
+        const { data: enviados, error: errEnv } = await supabase
+          .from('email_fila')
+          .select(
+            'id, step_id, status, agendado_para, enviado_em, entregue_em, ' +
+              'aberto_em, clicado_em, respondido_em, ' +
+              'email_campanha_steps(ordem, assunto)'
+          )
+          .eq('lead_id', leadIdNum)
+          .eq('campanha_id', campIdNum)
+          .in('status', ['enviado', 'entregue', 'aberto', 'clicado', 'respondido']);
+        if (errEnv) {
+          console.error('[crm-leads] listar_msgs_thread enviados:', errEnv.message);
+        }
+
+        // ── Respostas do lead (email_respostas) ────────────────────
+        // P1: ainda não filtra por direcao porque a coluna pode não
+        //     existir se a migration não rodou. P2 adicionará o filtro
+        //     direcao='inbound' e branch para outbound.
+        const { data: replies, error: errReps } = await supabase
+          .from('email_respostas')
+          .select(
+            'id, de_email, de_nome, assunto, corpo_texto, corpo_html, ' +
+              'classificacao, lido, recebido_em'
+          )
+          .eq('lead_id', leadIdNum)
+          .eq('campanha_id', campIdNum);
+        if (errReps) {
+          console.error('[crm-leads] listar_msgs_thread replies:', errReps.message);
+        }
+
+        // ── Montar timeline cronológica ascendente ─────────────────
+        const mensagens: any[] = [];
+
+        for (const env of enviados || []) {
+          const step = (env as any).email_campanha_steps;
+          mensagens.push({
+            id: `env_${env.id}`,
+            tipo: 'enviado_campanha',
+            direcao: 'outbound',
+            data: env.enviado_em || env.agendado_para,
+            assunto: step?.assunto || '(sem assunto registrado)',
+            corpo_texto: null,
+            corpo_html: null,
+            de_email: null,
+            de_nome: null,
+            step_ordem: step?.ordem || null,
+            step_id: env.step_id,
+            status: env.status,
+            aberto_em: env.aberto_em,
+            clicado_em: env.clicado_em,
+            respondido_em: env.respondido_em,
+            entregue_em: env.entregue_em,
+          });
+        }
+
+        for (const rep of replies || []) {
+          mensagens.push({
+            id: `rep_${rep.id}`,
+            tipo: 'recebido_lead',
+            direcao: 'inbound',
+            data: rep.recebido_em,
+            assunto: rep.assunto || '',
+            corpo_texto: rep.corpo_texto || '',
+            corpo_html: rep.corpo_html || null,
+            de_email: rep.de_email,
+            de_nome: rep.de_nome,
+            classificacao: rep.classificacao || null,
+            lido: rep.lido,
+          });
+        }
+
+        // Ordenação cronológica ascendente (mais antigo no topo).
+        // Mensagens sem `data` vão pro fim (defensivo).
+        mensagens.sort((a, b) => {
+          if (!a.data && !b.data) return 0;
+          if (!a.data) return 1;
+          if (!b.data) return -1;
+          return a.data.localeCompare(b.data);
+        });
+
+        return res.status(200).json({
+          success: true,
+          lead: {
+            id: lead.id,
+            nome: lead.nome,
+            email: lead.email,
+            cargo: lead.cargo,
+            empresa_nome: empresaNome,
+          },
+          campanha: {
+            id: campanha.id,
+            nome: campanha.nome,
+          },
+          mensagens,
         });
       }
 
