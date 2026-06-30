@@ -2,6 +2,30 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.25.1 (30/06/2026 — HOTFIX P2):
+ *    Bug em smoke real Preview: a action `responder_thread` introduzida em
+ *    v1.25 caía no bloco `if (req.method === 'GET')` do handler, com guard
+ *    interno `&& req.method === 'POST'` que NUNCA matchava (porque o bloco
+ *    GET só executa quando o método já é GET). Resultado: o handler caía
+ *    no fall-through e retornava 400 "Ação GET desconhecida: responder_thread".
+ *
+ *    Sintoma observado por Messias: smoke do P2 com formulário preenchido
+ *    e clique em Enviar → 400 imediato sem stack trace, mensagem do erro
+ *    pelo console.
+ *
+ *    Fix: a action foi MOVIDA para o bloco `if (req.method === 'POST')`,
+ *    posicionada como primeira action dentro dele (para legibilidade —
+ *    actions de envio costumam ser as mais frequentes em volume operacional).
+ *    Reusa o `body = req.body` já desestruturado pelo bloco POST.
+ *
+ *    Nenhuma mudança no contrato externo — frontend continua chamando
+ *    POST /api/crm-leads?action=responder_thread com o mesmo payload.
+ *
+ *    Lição arquitetural: NUNCA colocar guard duplicado de método dentro
+ *    de bloco já roteado por método. Se a action é POST, ela vai no bloco
+ *    POST. Estrutura limpa = uma action por método, sem condicionais
+ *    aninhadas de método.
+ *
  *  - v1.25 (30/06/2026 — Pacote P2 da feature "CRM E-mail" — Outbound):
  *    Action `responder_thread` — envio de respostas pelo próprio RAISA,
  *    fechando o ciclo do Caminho C aprovado em 30/06/2026 (Messias).
@@ -2634,355 +2658,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ════════════════════════════════════════════════════════════
-      // 🆕 v1.25 (30/06/2026 — Pacote P2 da feature "CRM E-mail")
-      //         RESPONDER THREAD — envio outbound pelo próprio RAISA
-      // ════════════════════════════════════════════════════════════
-      // Ver cabeçalho do arquivo (v1.25) para a especificação completa
-      // do comportamento end-to-end. Resumo do fluxo:
-      //   1. Validação RBAC: somente responsavel_id da campanha
-      //   2. Resolução de assinatura (responsavel.email + campanha.unidade)
-      //   3. Item sintético em email_fila (step_id=NULL)
-      //   4. Envio via fetch direto na Resend API com:
-      //        - From (assinatura corporativa do responsável)
-      //        - BCC (Exchange do próprio responsável)
-      //        - Reply-To dinâmico (plus-alias customer-service+f+l@)
-      //        - In-Reply-To + References (threading SMTP)
-      //   5. Registro em email_respostas com direcao='outbound'
-      //   6. Rollback do item sintético em caso de falha Resend
-      //
-      // Resposta:
-      //   { success, mensagem_id, message_id (Resend), fila_id_sintetico }
-      //
-      // POST body (JSON):
-      //   {
-      //     lead_id, campanha_id,
-      //     corpo_texto, corpo_html,
-      //     in_reply_to_message_id?   // opcional — usado para threading
-      //     current_user_id, current_user_tipo
-      //   }
-      if (action === 'responder_thread' && req.method === 'POST') {
-        const body = (req.body || {}) as Record<string, any>;
-        const {
-          lead_id,
-          campanha_id,
-          corpo_texto,
-          corpo_html,
-          in_reply_to_message_id,
-          current_user_id,
-          current_user_tipo,
-        } = body;
-
-        // ── Validações ──────────────────────────────────────────────
-        if (!lead_id || !campanha_id) {
-          return res.status(400).json({
-            success: false,
-            error: 'Parâmetros obrigatórios: lead_id, campanha_id.',
-          });
-        }
-        if (!current_user_id || !current_user_tipo) {
-          return res.status(400).json({
-            success: false,
-            error: 'RBAC obrigatório: current_user_id e current_user_tipo.',
-          });
-        }
-        if (!corpo_html || typeof corpo_html !== 'string' || corpo_html.trim().length === 0) {
-          return res.status(400).json({
-            success: false,
-            error: 'corpo_html não pode ser vazio.',
-          });
-        }
-
-        const leadIdNum = parseInt(String(lead_id));
-        const campIdNum = parseInt(String(campanha_id));
-        const currentUserIdNum = parseInt(String(current_user_id));
-        if (isNaN(leadIdNum) || isNaN(campIdNum) || isNaN(currentUserIdNum)) {
-          return res.status(400).json({
-            success: false,
-            error: 'lead_id, campanha_id e current_user_id precisam ser inteiros válidos.',
-          });
-        }
-
-        // ── 1. Carregar campanha + responsável + lead + última msg ──
-        const { data: campanha, error: errCamp } = await supabase
-          .from('email_campanhas')
-          .select(
-            'id, nome, responsavel_id, unidade, email_remetente, nome_remetente, status'
-          )
-          .eq('id', campIdNum)
-          .maybeSingle();
-        if (errCamp || !campanha) {
-          return res.status(404).json({
-            success: false,
-            error: errCamp?.message || 'Campanha não encontrada.',
-          });
-        }
-
-        // RBAC ESTRITO: Admin NÃO PODE responder (decisão Messias 30/06/2026).
-        if (campanha.responsavel_id !== currentUserIdNum) {
-          return res.status(403).json({
-            success: false,
-            error:
-              current_user_tipo === 'Administrador'
-                ? 'Apenas o responsável da campanha pode enviar respostas. Administrador acessa em modo leitura.'
-                : 'Sem permissão: você não é o responsável desta campanha.',
-          });
-        }
-
-        // Carregar dados do responsável (para From, BCC, assinatura)
-        const { data: responsavel, error: errResp } = await supabase
-          .from('app_users')
-          .select('id, nome_usuario, email_usuario')
-          .eq('id', campanha.responsavel_id)
-          .maybeSingle();
-        if (errResp || !responsavel) {
-          return res.status(500).json({
-            success: false,
-            error: 'Responsável da campanha não encontrado em app_users.',
-          });
-        }
-        if (!responsavel.email_usuario) {
-          return res.status(500).json({
-            success: false,
-            error: 'Responsável sem email_usuario cadastrado — impossível enviar.',
-          });
-        }
-
-        // Carregar lead
-        const { data: lead, error: errLead } = await supabase
-          .from('email_leads')
-          .select('id, nome, email, opt_out')
-          .eq('id', leadIdNum)
-          .maybeSingle();
-        if (errLead || !lead) {
-          return res.status(404).json({
-            success: false,
-            error: errLead?.message || 'Lead não encontrado.',
-          });
-        }
-        if (lead.opt_out) {
-          return res.status(409).json({
-            success: false,
-            error:
-              'Lead em opt-out — envio bloqueado por LGPD (regra permanente).',
-          });
-        }
-        if (!lead.email) {
-          return res.status(400).json({
-            success: false,
-            error: 'Lead sem email cadastrado.',
-          });
-        }
-
-        // ── 2. Resolver assinatura: (responsavel.email + campanha.unidade) ──
-        const { data: assinatura, error: errAssin } = await supabase
-          .from('email_assinaturas')
-          .select(
-            'id, nome_completo, cargo, email_assinatura, telefone_fixo, telefone_celular, websites, politica_privacidade_url, unidade'
-          )
-          .eq('user_email', responsavel.email_usuario)
-          .eq('unidade', campanha.unidade || 'TechFor TI')
-          .maybeSingle();
-        if (errAssin) {
-          return res.status(500).json({ success: false, error: errAssin.message });
-        }
-        if (!assinatura) {
-          return res.status(412).json({
-            success: false,
-            error:
-              `Assinatura não cadastrada para ${responsavel.email_usuario} ` +
-              `na unidade "${campanha.unidade || 'TechFor TI'}". ` +
-              `Configure em Assinaturas (Admin) antes de responder.`,
-          });
-        }
-
-        // ── 3. Recuperar última mensagem da thread (para threading SMTP) ──
-        const { data: ultimaResposta } = await supabase
-          .from('email_respostas')
-          .select('id, message_id, assunto, recebido_em')
-          .eq('lead_id', leadIdNum)
-          .eq('campanha_id', campIdNum)
-          .order('recebido_em', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        // Última fila enviada nesta combinação (fallback para References)
-        const { data: ultimaFila } = await supabase
-          .from('email_fila')
-          .select('id, resend_message_id, enviado_em')
-          .eq('lead_id', leadIdNum)
-          .eq('campanha_id', campIdNum)
-          .in('status', ['enviado', 'entregue', 'aberto', 'clicado', 'respondido'])
-          .order('enviado_em', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        // Assunto: "Re: <último assunto>". Se não tem assunto anterior,
-        // usa fallback genérico.
-        const assuntoBase =
-          ultimaResposta?.assunto ||
-          'Conversa CRM RAISA';
-        const subject = assuntoBase.toLowerCase().startsWith('re:')
-          ? assuntoBase
-          : `Re: ${assuntoBase}`;
-
-        // Threading SMTP — prioridade ao param explícito do frontend.
-        const inReplyTo =
-          in_reply_to_message_id ||
-          ultimaResposta?.message_id ||
-          ultimaFila?.resend_message_id ||
-          null;
-
-        // ── 4. Criar item sintético em email_fila (step_id=NULL) ──
-        const { data: filaSintetica, error: errFila } = await supabase
-          .from('email_fila')
-          .insert({
-            campanha_id: campIdNum,
-            lead_id: leadIdNum,
-            step_id: null,                                  // sinal "outbound CRM E-mail"
-            destinatario_email: lead.email,
-            status: 'pendente',
-            tentativas: 0,
-            agendado_para: new Date().toISOString(),
-          })
-          .select('id')
-          .single();
-        if (errFila || !filaSintetica) {
-          return res.status(500).json({
-            success: false,
-            error: `Falha ao criar item sintético em email_fila: ${errFila?.message}`,
-          });
-        }
-        const filaId = filaSintetica.id;
-
-        // ── 5. Montar payload Resend ──
-        const sufixo = sufixoAmbienteOutbound();
-        const replyTo = `customer-service${sufixo}+f${filaId}+l${leadIdNum}@${DOMINIO_REPLY_TO_OUTBOUND}`;
-        const from = `${responsavel.nome_usuario || 'TechFor TI'} <${assinatura.email_assinatura}>`;
-
-        // Renderiza HTML final (corpo digitado + assinatura)
-        const htmlFinal = `${corpo_html}\n<br><br>\n${renderAssinaturaP2(assinatura)}`;
-
-        // Headers SMTP de threading (omitidos se não houver msg anterior)
-        const headersExtra: Record<string, string> = {
-          'X-Entity-Ref-ID': `rms-crm-email-${filaId}`,
-        };
-        if (inReplyTo) {
-          headersExtra['In-Reply-To'] = `<${inReplyTo}>`;
-          headersExtra['References'] = `<${inReplyTo}>`;
-        }
-
-        const resendApiKey = process.env.RESEND_API_KEY;
-        if (!resendApiKey) {
-          // Rollback do item sintético
-          await supabase.from('email_fila').delete().eq('id', filaId);
-          return res.status(500).json({
-            success: false,
-            error: 'RESEND_API_KEY não configurada no ambiente.',
-          });
-        }
-
-        // ── 6. Enviar via fetch direto (NÃO usar SDK Resend) ──
-        let respFetch: Response;
-        try {
-          respFetch = await fetch(RESEND_API_URL, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${resendApiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              from,
-              to: [lead.email],
-              // 🆕 v1.25 — BCC para Exchange do próprio operador (item 4 do
-              //   pedido do Messias). Manter Outlook sincronizado sem precisar
-              //   regra Exchange Transport. Resend cobra 1 send mesmo com BCC.
-              bcc: [responsavel.email_usuario],
-              reply_to: [replyTo],
-              subject,
-              html: htmlFinal,
-              text: corpo_texto || '(este email contém formatação HTML)',
-              headers: headersExtra,
-            }),
-          });
-        } catch (netErr: any) {
-          await supabase.from('email_fila').delete().eq('id', filaId);
-          return res.status(502).json({
-            success: false,
-            error: `Falha de rede ao enviar via Resend: ${netErr?.message || 'erro desconhecido'}`,
-          });
-        }
-
-        const respBody: any = await respFetch.json().catch(() => ({}));
-
-        if (!respFetch.ok) {
-          // Rollback do item sintético — não polui o pipeline
-          await supabase.from('email_fila').delete().eq('id', filaId);
-          return res.status(502).json({
-            success: false,
-            error: `Resend rejeitou: [${respFetch.status}] ${respBody?.name || 'erro'}: ${respBody?.message || JSON.stringify(respBody)}`.substring(0, 500),
-          });
-        }
-
-        const messageIdResend: string | null = respBody?.id || null;
-
-        // ── 7. Atualizar item sintético com message_id e status enviado ──
-        await supabase
-          .from('email_fila')
-          .update({
-            status: 'enviado',
-            enviado_em: new Date().toISOString(),
-            resend_message_id: messageIdResend,
-          })
-          .eq('id', filaId);
-
-        // ── 8. Registrar outbound em email_respostas (POPULA 5 COLUNAS P1) ──
-        const nowIso = new Date().toISOString();
-        const { data: novaMsg, error: errInsResp } = await supabase
-          .from('email_respostas')
-          .insert({
-            lead_id: leadIdNum,
-            campanha_id: campIdNum,
-            fila_id: filaId,
-            de_email: assinatura.email_assinatura,
-            de_nome: assinatura.nome_completo || responsavel.nome_usuario,
-            assunto: subject,
-            corpo_texto: corpo_texto || null,
-            corpo_html: corpo_html,
-            classificacao: null,                  // outbound não é classificável
-            lido: true,                           // outbound é "lido" por definição
-            recebido_em: nowIso,                  // mesmo schema — represente data de envio
-            // 🆕 v1.25 — 5 colunas novas (migration P1)
-            direcao: 'outbound',
-            message_id: messageIdResend,
-            in_reply_to_message_id: inReplyTo,
-            enviado_por: currentUserIdNum,
-            bcc_corporativo_em: nowIso,
-          })
-          .select('id')
-          .single();
-
-        if (errInsResp) {
-          // Não rollback aqui — email JÁ FOI enviado. Apenas logar.
-          console.error(
-            '[crm-leads] responder_thread: insert email_respostas falhou após envio:',
-            errInsResp.message
-          );
-        }
-
-        console.log(
-          `[crm-leads] 💬 Outbound enviado: fila=${filaId} lead=${leadIdNum} campanha=${campIdNum} resend_id=${messageIdResend}`
-        );
-
-        return res.status(200).json({
-          success: true,
-          mensagem_id: novaMsg?.id || null,
-          message_id_resend: messageIdResend,
-          fila_id_sintetico: filaId,
-          bcc_corporativo: responsavel.email_usuario,
-        });
-      }
-
-      // ════════════════════════════════════════════════════════════
       // 🆕 v1.3 (04/06/2026 — Fase 8-Inbox) — INVÁLIDOS — schema original
       //         (fila-centric, 1 linha por evento de email_fila)
       // 🔄 v1.15 (16/06/2026 — F8) — REESCRITA lead-centric
@@ -3589,6 +3264,362 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ════════════════════════════════════════════
     if (req.method === 'POST') {
       const body = req.body;
+
+      // ════════════════════════════════════════════════════════════
+      // 🆕 v1.25 (30/06/2026 — Pacote P2 da feature "CRM E-mail")
+      //         RESPONDER THREAD — envio outbound pelo próprio RAISA
+      // ════════════════════════════════════════════════════════════
+      // Ver cabeçalho do arquivo (v1.25) para a especificação completa
+      // do comportamento end-to-end. Resumo do fluxo:
+      //   1. Validação RBAC: somente responsavel_id da campanha
+      //   2. Resolução de assinatura (responsavel.email + campanha.unidade)
+      //   3. Item sintético em email_fila (step_id=NULL)
+      //   4. Envio via fetch direto na Resend API com:
+      //        - From (assinatura corporativa do responsável)
+      //        - BCC (Exchange do próprio responsável)
+      //        - Reply-To dinâmico (plus-alias customer-service+f+l@)
+      //        - In-Reply-To + References (threading SMTP)
+      //   5. Registro em email_respostas com direcao='outbound'
+      //   6. Rollback do item sintético em caso de falha Resend
+      //
+      // Resposta:
+      //   { success, mensagem_id, message_id (Resend), fila_id_sintetico }
+      //
+      // POST body (JSON):
+      //   {
+      //     lead_id, campanha_id,
+      //     corpo_texto, corpo_html,
+      //     in_reply_to_message_id?   // opcional — usado para threading
+      //     current_user_id, current_user_tipo
+      //   }
+      //
+      // 🔧 v1.25.1 (30/06/2026 — HOTFIX): action movida do bloco GET para
+      //   o bloco POST. Bug original: a action estava dentro de `if
+      //   (req.method === 'GET')` com guard `&& req.method === 'POST'`
+      //   nunca matchável → handler caía no fall-through retornando
+      //   400 "Ação GET desconhecida: responder_thread". Aqui dentro do
+      //   bloco POST, `body` já está desestruturado como `req.body` na
+      //   linha imediatamente anterior.
+      if (action === 'responder_thread') {
+        const {
+          lead_id,
+          campanha_id,
+          corpo_texto,
+          corpo_html,
+          in_reply_to_message_id,
+          current_user_id,
+          current_user_tipo,
+        } = body || {};
+
+        // ── Validações ──────────────────────────────────────────────
+        if (!lead_id || !campanha_id) {
+          return res.status(400).json({
+            success: false,
+            error: 'Parâmetros obrigatórios: lead_id, campanha_id.',
+          });
+        }
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error: 'RBAC obrigatório: current_user_id e current_user_tipo.',
+          });
+        }
+        if (!corpo_html || typeof corpo_html !== 'string' || corpo_html.trim().length === 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'corpo_html não pode ser vazio.',
+          });
+        }
+
+        const leadIdNum = parseInt(String(lead_id));
+        const campIdNum = parseInt(String(campanha_id));
+        const currentUserIdNum = parseInt(String(current_user_id));
+        if (isNaN(leadIdNum) || isNaN(campIdNum) || isNaN(currentUserIdNum)) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id, campanha_id e current_user_id precisam ser inteiros válidos.',
+          });
+        }
+
+        // ── 1. Carregar campanha + responsável + lead + última msg ──
+        const { data: campanha, error: errCamp } = await supabase
+          .from('email_campanhas')
+          .select(
+            'id, nome, responsavel_id, unidade, email_remetente, nome_remetente, status'
+          )
+          .eq('id', campIdNum)
+          .maybeSingle();
+        if (errCamp || !campanha) {
+          return res.status(404).json({
+            success: false,
+            error: errCamp?.message || 'Campanha não encontrada.',
+          });
+        }
+
+        // RBAC ESTRITO: Admin NÃO PODE responder (decisão Messias 30/06/2026).
+        if (campanha.responsavel_id !== currentUserIdNum) {
+          return res.status(403).json({
+            success: false,
+            error:
+              current_user_tipo === 'Administrador'
+                ? 'Apenas o responsável da campanha pode enviar respostas. Administrador acessa em modo leitura.'
+                : 'Sem permissão: você não é o responsável desta campanha.',
+          });
+        }
+
+        // Carregar dados do responsável (para From, BCC, assinatura)
+        const { data: responsavel, error: errResp } = await supabase
+          .from('app_users')
+          .select('id, nome_usuario, email_usuario')
+          .eq('id', campanha.responsavel_id)
+          .maybeSingle();
+        if (errResp || !responsavel) {
+          return res.status(500).json({
+            success: false,
+            error: 'Responsável da campanha não encontrado em app_users.',
+          });
+        }
+        if (!responsavel.email_usuario) {
+          return res.status(500).json({
+            success: false,
+            error: 'Responsável sem email_usuario cadastrado — impossível enviar.',
+          });
+        }
+
+        // Carregar lead
+        const { data: lead, error: errLead } = await supabase
+          .from('email_leads')
+          .select('id, nome, email, opt_out')
+          .eq('id', leadIdNum)
+          .maybeSingle();
+        if (errLead || !lead) {
+          return res.status(404).json({
+            success: false,
+            error: errLead?.message || 'Lead não encontrado.',
+          });
+        }
+        if (lead.opt_out) {
+          return res.status(409).json({
+            success: false,
+            error:
+              'Lead em opt-out — envio bloqueado por LGPD (regra permanente).',
+          });
+        }
+        if (!lead.email) {
+          return res.status(400).json({
+            success: false,
+            error: 'Lead sem email cadastrado.',
+          });
+        }
+
+        // ── 2. Resolver assinatura: (responsavel.email + campanha.unidade) ──
+        const { data: assinatura, error: errAssin } = await supabase
+          .from('email_assinaturas')
+          .select(
+            'id, nome_completo, cargo, email_assinatura, telefone_fixo, telefone_celular, websites, politica_privacidade_url, unidade'
+          )
+          .eq('user_email', responsavel.email_usuario)
+          .eq('unidade', campanha.unidade || 'TechFor TI')
+          .maybeSingle();
+        if (errAssin) {
+          return res.status(500).json({ success: false, error: errAssin.message });
+        }
+        if (!assinatura) {
+          return res.status(412).json({
+            success: false,
+            error:
+              `Assinatura não cadastrada para ${responsavel.email_usuario} ` +
+              `na unidade "${campanha.unidade || 'TechFor TI'}". ` +
+              `Configure em Assinaturas (Admin) antes de responder.`,
+          });
+        }
+
+        // ── 3. Recuperar última mensagem da thread (para threading SMTP) ──
+        const { data: ultimaResposta } = await supabase
+          .from('email_respostas')
+          .select('id, message_id, assunto, recebido_em')
+          .eq('lead_id', leadIdNum)
+          .eq('campanha_id', campIdNum)
+          .order('recebido_em', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Última fila enviada nesta combinação (fallback para References)
+        const { data: ultimaFila } = await supabase
+          .from('email_fila')
+          .select('id, resend_message_id, enviado_em')
+          .eq('lead_id', leadIdNum)
+          .eq('campanha_id', campIdNum)
+          .in('status', ['enviado', 'entregue', 'aberto', 'clicado', 'respondido'])
+          .order('enviado_em', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Assunto: "Re: <último assunto>". Se não tem assunto anterior,
+        // usa fallback genérico.
+        const assuntoBase =
+          ultimaResposta?.assunto ||
+          'Conversa CRM RAISA';
+        const subject = assuntoBase.toLowerCase().startsWith('re:')
+          ? assuntoBase
+          : `Re: ${assuntoBase}`;
+
+        // Threading SMTP — prioridade ao param explícito do frontend.
+        const inReplyTo =
+          in_reply_to_message_id ||
+          ultimaResposta?.message_id ||
+          ultimaFila?.resend_message_id ||
+          null;
+
+        // ── 4. Criar item sintético em email_fila (step_id=NULL) ──
+        const { data: filaSintetica, error: errFila } = await supabase
+          .from('email_fila')
+          .insert({
+            campanha_id: campIdNum,
+            lead_id: leadIdNum,
+            step_id: null,                                  // sinal "outbound CRM E-mail"
+            destinatario_email: lead.email,
+            status: 'pendente',
+            tentativas: 0,
+            agendado_para: new Date().toISOString(),
+          })
+          .select('id')
+          .single();
+        if (errFila || !filaSintetica) {
+          return res.status(500).json({
+            success: false,
+            error: `Falha ao criar item sintético em email_fila: ${errFila?.message}`,
+          });
+        }
+        const filaId = filaSintetica.id;
+
+        // ── 5. Montar payload Resend ──
+        const sufixo = sufixoAmbienteOutbound();
+        const replyTo = `customer-service${sufixo}+f${filaId}+l${leadIdNum}@${DOMINIO_REPLY_TO_OUTBOUND}`;
+        const from = `${responsavel.nome_usuario || 'TechFor TI'} <${assinatura.email_assinatura}>`;
+
+        // Renderiza HTML final (corpo digitado + assinatura)
+        const htmlFinal = `${corpo_html}\n<br><br>\n${renderAssinaturaP2(assinatura)}`;
+
+        // Headers SMTP de threading (omitidos se não houver msg anterior)
+        const headersExtra: Record<string, string> = {
+          'X-Entity-Ref-ID': `rms-crm-email-${filaId}`,
+        };
+        if (inReplyTo) {
+          headersExtra['In-Reply-To'] = `<${inReplyTo}>`;
+          headersExtra['References'] = `<${inReplyTo}>`;
+        }
+
+        const resendApiKey = process.env.RESEND_API_KEY;
+        if (!resendApiKey) {
+          // Rollback do item sintético
+          await supabase.from('email_fila').delete().eq('id', filaId);
+          return res.status(500).json({
+            success: false,
+            error: 'RESEND_API_KEY não configurada no ambiente.',
+          });
+        }
+
+        // ── 6. Enviar via fetch direto (NÃO usar SDK Resend) ──
+        let respFetch: Response;
+        try {
+          respFetch = await fetch(RESEND_API_URL, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${resendApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from,
+              to: [lead.email],
+              // 🆕 v1.25 — BCC para Exchange do próprio operador (item 4 do
+              //   pedido do Messias). Manter Outlook sincronizado sem precisar
+              //   regra Exchange Transport. Resend cobra 1 send mesmo com BCC.
+              bcc: [responsavel.email_usuario],
+              reply_to: [replyTo],
+              subject,
+              html: htmlFinal,
+              text: corpo_texto || '(este email contém formatação HTML)',
+              headers: headersExtra,
+            }),
+          });
+        } catch (netErr: any) {
+          await supabase.from('email_fila').delete().eq('id', filaId);
+          return res.status(502).json({
+            success: false,
+            error: `Falha de rede ao enviar via Resend: ${netErr?.message || 'erro desconhecido'}`,
+          });
+        }
+
+        const respBody: any = await respFetch.json().catch(() => ({}));
+
+        if (!respFetch.ok) {
+          // Rollback do item sintético — não polui o pipeline
+          await supabase.from('email_fila').delete().eq('id', filaId);
+          return res.status(502).json({
+            success: false,
+            error: `Resend rejeitou: [${respFetch.status}] ${respBody?.name || 'erro'}: ${respBody?.message || JSON.stringify(respBody)}`.substring(0, 500),
+          });
+        }
+
+        const messageIdResend: string | null = respBody?.id || null;
+
+        // ── 7. Atualizar item sintético com message_id e status enviado ──
+        await supabase
+          .from('email_fila')
+          .update({
+            status: 'enviado',
+            enviado_em: new Date().toISOString(),
+            resend_message_id: messageIdResend,
+          })
+          .eq('id', filaId);
+
+        // ── 8. Registrar outbound em email_respostas (POPULA 5 COLUNAS P1) ──
+        const nowIso = new Date().toISOString();
+        const { data: novaMsg, error: errInsResp } = await supabase
+          .from('email_respostas')
+          .insert({
+            lead_id: leadIdNum,
+            campanha_id: campIdNum,
+            fila_id: filaId,
+            de_email: assinatura.email_assinatura,
+            de_nome: assinatura.nome_completo || responsavel.nome_usuario,
+            assunto: subject,
+            corpo_texto: corpo_texto || null,
+            corpo_html: corpo_html,
+            classificacao: null,                  // outbound não é classificável
+            lido: true,                           // outbound é "lido" por definição
+            recebido_em: nowIso,                  // mesmo schema — represente data de envio
+            // 🆕 v1.25 — 5 colunas novas (migration P1)
+            direcao: 'outbound',
+            message_id: messageIdResend,
+            in_reply_to_message_id: inReplyTo,
+            enviado_por: currentUserIdNum,
+            bcc_corporativo_em: nowIso,
+          })
+          .select('id')
+          .single();
+
+        if (errInsResp) {
+          // Não rollback aqui — email JÁ FOI enviado. Apenas logar.
+          console.error(
+            '[crm-leads] responder_thread: insert email_respostas falhou após envio:',
+            errInsResp.message
+          );
+        }
+
+        console.log(
+          `[crm-leads] 💬 Outbound enviado: fila=${filaId} lead=${leadIdNum} campanha=${campIdNum} resend_id=${messageIdResend}`
+        );
+
+        return res.status(200).json({
+          success: true,
+          mensagem_id: novaMsg?.id || null,
+          message_id_resend: messageIdResend,
+          fila_id_sintetico: filaId,
+          bcc_corporativo: responsavel.email_usuario,
+        });
+      }
 
       // ── CRIAR EMPRESA ────────────────────────────
       if (action === 'criar_empresa') {
