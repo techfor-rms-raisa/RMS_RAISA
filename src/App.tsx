@@ -74,6 +74,10 @@ import BaseLeadsPage from './components/crm/base-leads/BaseLeadsPage';
 import AcompanhamentoPage from './components/crm/acompanhamento/AcompanhamentoPage';
 // 🆕 01/06/2026 — Configurações CRM (Tipos + Opt-out + placeholders Fase 5/6/7)
 import ConfiguracoesPage from './components/crm/configuracoes/ConfiguracoesPage';
+// 🆕 01/07/2026 — CRM E-mail (separação vs Base de Leads)
+//   Container das 3 abas de comunicação por e-mail (CRM E-mail /
+//   E-mails Inválidos / Opt-Out) que antes viviam dentro do BaseLeadsPage.
+import CRMEmailPage from './components/crm/crm-email/CRMEmailPage';
 
 // Atividades Imports
 import AtividadesInserir from './components/atividades/AtividadesInserir';
@@ -149,6 +153,8 @@ const App: React.FC = () => {
         'crm_acompanhamento',
         'crm_config',
         'crm',
+        // 🆕 01/07/2026 — CRM E-mail (separação vs Base de Leads)
+        'crm_email',
       ];
 
       if (viewParam && (VIEWS_VALIDAS_DEEPLINK as string[]).includes(viewParam)) {
@@ -664,6 +670,25 @@ const App: React.FC = () => {
           return (
             <div className="space-y-6">
               <ConfiguracoesPage currentUser={currentUser!} />
+            </div>
+          );
+
+      // ============================================
+      // 🆕 01/07/2026 — CRM E-mail (separação vs Base de Leads)
+      // ============================================
+      // Container das 3 abas de comunicação por e-mail (CRM E-mail,
+      // E-mails Inválidos, Opt-Out). Recebe callback para abrir lead
+      // no BaseLeadsPage via deep link (Opção A — 01/07/2026).
+      case 'crm_email':
+          return (
+            <div className="space-y-6">
+              <CRMEmailPage
+                currentUser={currentUser!}
+                onAbrirLeadEmBase={(leadId: number) => {
+                  setDeepLinkLeadId(leadId);
+                  setCurrentView('crm_base_leads');
+                }}
+              />
             </div>
           );
 
