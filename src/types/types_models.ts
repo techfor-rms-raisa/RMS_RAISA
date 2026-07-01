@@ -39,8 +39,12 @@ export type View =
   | 'prospect_search' | 'prospect_list' | 'prospect_credits' | 'prospect_campaign'
   // CRM & Campanhas — view principal + sub-páginas promovidas ao menu lateral (30/05/2026)
   // Views legadas removidas na Fase 1E
+  // 🆕 01/07/2026 — 'crm_email' adicionada (separação CRM E-mail vs Base de Leads).
+  //   Container das 3 abas de comunicação por e-mail (CRM E-mail, E-mails
+  //   Inválidos e Opt-Out) que antes viviam dentro do BaseLeadsPage.
   | 'crm'                  // CRM & Campanhas (Campanhas + Copys + Assinaturas)
   | 'crm_base_leads'       // Base de Leads (página standalone)
+  | 'crm_email'            // CRM E-mail (respostas, inválidos e opt-out)
   | 'crm_acompanhamento'   // Acompanhamento (página standalone)
   | 'crm_config'           // Configurações CRM (página standalone)
   // CRECI Views

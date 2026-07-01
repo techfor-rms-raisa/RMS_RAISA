@@ -27,7 +27,15 @@
  *   prospects; Leads vivem na Base de Leads do CRM). Sem mudança de view
  *   (continua 'prospect_search') e sem mudança de RBAC.
  *
- * Data: 13/06/2026
+ * 🆕 v63.0 (01/07/2026 — Separação CRM E-mail vs Base de Leads):
+ * - CRM & CAMPANHAS: novo item "CRM E-mail" (view 'crm_email') posicionado
+ *   entre "CRM & Campanhas" e "Acompanhamento". Ele hospeda as 3 abas de
+ *   comunicação por e-mail (CRM E-mail, E-mails Inválidos e Opt-Out) que
+ *   antes viviam dentro do BaseLeadsPage. RBAC idêntico aos demais itens
+ *   do CRM (Admin, Gestão de R&S, Gestão Comercial, Analista de R&S, SDR).
+ * - Sem outras mudanças de estrutura ou permissões nesta versão.
+ *
+ * Data: 01/07/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -392,6 +400,15 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             view: 'crm', 
             label: 'CRM & Campanhas', 
             icon: 'fa-solid fa-paper-plane', 
+            roles: ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Analista de R&S', 'SDR'] 
+        },
+        // 🆕 v63.0 (01/07/2026) — CRM E-mail: hospeda respostas, inválidos e opt-out.
+        // Separado do "Base de Leads" para isolar comunicação por e-mail dos temas
+        // de gestão de funil de leads. Mesmo RBAC dos demais itens operacionais.
+        { 
+            view: 'crm_email', 
+            label: 'CRM E-mail', 
+            icon: 'fa-solid fa-envelope-open-text', 
             roles: ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Analista de R&S', 'SDR'] 
         },
         { 

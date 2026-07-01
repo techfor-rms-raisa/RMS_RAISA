@@ -2,6 +2,244 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.25.5 (30/06/2026 — POLISH P2 — Ordem cronológica reversa):
+ *    Ajuste UX solicitado por Messias em smoke real: a timeline do
+ *    CRM E-mail estava em ordem cronológica ASCENDENTE (mais antigo
+ *    no topo), forçando o operador a rolar para baixo para ver a
+ *    resposta mais recente. Padrão Outlook desktop é DESCENDENTE
+ *    (mais recente no topo) — mais natural para acompanhar conversas
+ *    em andamento.
+ *
+ *    Mudança cirúrgica: 1 linha em `mensagens.sort()` — troca
+ *    `a.data.localeCompare(b.data)` por `b.data.localeCompare(a.data)`.
+ *    O frontend (RespostasTab v2.3) também precisa ajustar a lógica
+ *    de "separador adaptativo entre direções" para que funcione
+ *    corretamente na ordem invertida.
+ *
+ *  - v1.25.4 (30/06/2026 — HOTFIX P2 — UX da timeline):
+ *    Bug em smoke real (Messias): a timeline do CRM E-mail estava
+ *    mostrando bolhas "(sem assunto registrado)" / "Step ? · Campanha"
+ *    intercaladas entre as respostas. Causa: o próprio `responder_thread`
+ *    cria itens sintéticos em `email_fila` com `step_id=NULL` (para
+ *    reusar o Reply-To dinâmico), e o `listar_msgs_thread` listava
+ *    TODOS os itens enviados de email_fila — incluindo esses sintéticos
+ *    sem step relacionado.
+ *
+ *    Fix: filtro `step_id NOT NULL` no SELECT de email_fila. Assim só
+ *    envios reais de step da campanha aparecem como "Step X". Os
+ *    outbounds do CRM E-mail seguem aparecendo via email_respostas
+ *    (direcao='outbound') — únicos e corretos.
+ *
+ *    Mudança cirúrgica: 1 linha (.not('step_id', 'is', null)).
+ *
+ *  - v1.25.3 (30/06/2026 — HOTFIX P2 — Visualização outbound na thread):
+ *    Bug em smoke real (Messias respondeu 2x para o mesmo lead via CRM
+ *    E-mail; emails chegaram perfeitos no Gmail do destinatário, mas as
+ *    bolhas outbound NUNCA apareceram na thread do RAISA).
+ *
+ *    Causas raízes (2 paralelas):
+ *
+ *      (1) `listar_msgs_thread` (v1.24) NÃO trazia a coluna `direcao`
+ *          no SELECT de email_respostas, e hardcoded TODOS os registros
+ *          como `tipo='recebido_lead' / direcao='inbound'`. Mesmo que
+ *          o INSERT outbound funcionasse, o frontend recebia o registro
+ *          como se fosse mensagem do lead — bolha cinza à esquerda em
+ *          vez de indigo à direita.
+ *
+ *      (2) `responder_thread` (v1.25.0+) gravava `de_email =
+ *          assinatura.email_assinatura` (ex: moliveira@techcob.com.br),
+ *          que é divergente do FROM SMTP real (`campanha.email_remetente`,
+ *          ex: moliveira@techfor.com.br) após o hotfix v1.25.2.
+ *          Coerência semântica: o registro deve refletir o que o lead
+ *          efetivamente vê no campo From do email recebido.
+ *
+ *    Fix:
+ *
+ *      (A) listar_msgs_thread: SELECT inclui `direcao, message_id,
+ *          in_reply_to_message_id, enviado_por`. Processamento agora
+ *          ramifica por direcao:
+ *            - 'outbound' → tipo='enviado_crm', bolha indigo direita
+ *            - 'inbound' (default null/legacy) → tipo='recebido_lead',
+ *              bolha cinza esquerda
+ *
+ *      (B) responder_thread: `de_email` registrado agora é
+ *          `campanha.email_remetente` (espelhando o FROM SMTP real).
+ *          `de_nome` permanece `assinatura.nome_completo || responsavel.
+ *          nome_usuario` (identidade visual humana — pode ser "Messias
+ *          | Tech Cob" mesmo enviando de moliveira@techfor.com.br).
+ *
+ *    Pré-requisito: migration P1 aplicada (Seção 2 do SQL
+ *    2026-06-30_extender_email_respostas_p1.sql). Sem ela, o SELECT
+ *    do (A) falha por coluna inexistente. Validar com:
+ *      SELECT column_name FROM information_schema.columns
+ *      WHERE table_name='email_respostas' AND column_name='direcao';
+ *
+ *  - v1.25.2 (30/06/2026 — HOTFIX P2 — FROM SMTP):
+ *    Bug em smoke real (campanha "Teste de Vertical Alocação - Infraestrutura"):
+ *    a resposta usava `assinatura.email_assinatura` no campo From do SMTP
+ *    quando esse email aponta para um domínio interno (ex: techcob.com.br)
+ *    que NÃO é sending domain verificado na Resend. Resultado: Resend
+ *    rejeitava com 403 validation_error.
+ *
+ *    Causa raiz: confusão entre 2 conceitos diferentes:
+ *      • SENDER SMTP (campo From do envelope) — DEVE ser de domínio verificado
+ *        na Resend (techfor.com.br ou techforti.inf.br hoje).
+ *      • Assinatura visual no rodapé HTML — pode mostrar QUALQUER email
+ *        (techcob.com.br, marcas internas, branding) porque é apenas
+ *        identidade visual no corpo da mensagem.
+ *
+ *    O cron disparar-fila v1.13 (Production estável) sempre usou
+ *    `campanha.email_remetente` (campo dedicado, validado no Wizard
+ *    contra domínios verificados) no SMTP From, mantendo a assinatura
+ *    rica no corpo HTML. Mesma estratégia agora aplicada aqui.
+ *
+ *    Mudança cirúrgica: 1 linha.
+ *      ANTES:  from = `${responsavel.nome_usuario} <${assinatura.email_assinatura}>`
+ *      DEPOIS: from = `${campanha.nome_remetente || 'TechFor TI'} <${campanha.email_remetente}>`
+ *
+ *    Defesa em camadas: guard antes do envio retorna 412 com mensagem
+ *    clara se `campanha.email_remetente` for null/vazio (cenário não
+ *    esperado em Production por validação do Wizard, mas defensivo).
+ *
+ *  - v1.25.1 (30/06/2026 — HOTFIX P2 — roteamento):
+ *    Bug em smoke real Preview: a action `responder_thread` introduzida em
+ *    v1.25 caía no bloco `if (req.method === 'GET')` do handler, com guard
+ *    interno `&& req.method === 'POST'` que NUNCA matchava (porque o bloco
+ *    GET só executa quando o método já é GET). Resultado: o handler caía
+ *    no fall-through e retornava 400 "Ação GET desconhecida: responder_thread".
+ *
+ *    Sintoma observado por Messias: smoke do P2 com formulário preenchido
+ *    e clique em Enviar → 400 imediato sem stack trace, mensagem do erro
+ *    pelo console.
+ *
+ *    Fix: a action foi MOVIDA para o bloco `if (req.method === 'POST')`,
+ *    posicionada como primeira action dentro dele (para legibilidade —
+ *    actions de envio costumam ser as mais frequentes em volume operacional).
+ *    Reusa o `body = req.body` já desestruturado pelo bloco POST.
+ *
+ *    Nenhuma mudança no contrato externo — frontend continua chamando
+ *    POST /api/crm-leads?action=responder_thread com o mesmo payload.
+ *
+ *    Lição arquitetural: NUNCA colocar guard duplicado de método dentro
+ *    de bloco já roteado por método. Se a action é POST, ela vai no bloco
+ *    POST. Estrutura limpa = uma action por método, sem condicionais
+ *    aninhadas de método.
+ *
+ *  - v1.25 (30/06/2026 — Pacote P2 da feature "CRM E-mail" — Outbound):
+ *    Action `responder_thread` — envio de respostas pelo próprio RAISA,
+ *    fechando o ciclo do Caminho C aprovado em 30/06/2026 (Messias).
+ *
+ *    Comportamento end-to-end:
+ *      1. Validação RBAC ESTRITA: somente o `responsavel_id` da campanha
+ *         pode responder. Admin NÃO interfere (decisão Messias 30/06/2026:
+ *         "cada Gestor/SDR responde APENAS seus leads, Admin não interfere").
+ *         Esta regra protege a continuidade da thread para o lead (que
+ *         sempre vê o mesmo remetente).
+ *
+ *      2. Resolução de assinatura: combinação `(responsavel.email_usuario,
+ *         email_campanhas.unidade)` → email_assinaturas.html — reusa o
+ *         mesmo modelo do wizard de campanha (Fase E-2) e do cron de
+ *         disparo (renderAssinatura) sem duplicação semântica. A
+ *         função renderAssinatura local é COPIADA do disparar-fila v1.13
+ *         exatamente como já está duplicada em crm-campanhas (decisão
+ *         arquitetural pendente de consolidação em api/_lib/).
+ *
+ *      3. Item sintético em email_fila com `step_id=NULL`:
+ *           - lead_id, campanha_id reais
+ *           - destinatario_email = lead.email
+ *           - status='pendente' → será atualizado para 'enviado'
+ *           - resend_message_id setado após response da Resend
+ *         Justificativa: reusar o esquema de Reply-To dinâmico
+ *         `customer-service+f{fila_id}+l{lead_id}@techfor.com.br`
+ *         já consolidado e parsing-ready no crm-webhook v1.22. Quando o
+ *         lead responder esse outbound, o webhook captura sem nenhuma
+ *         alteração. Métricas de campanha já filtram `step_id IS NOT NULL`
+ *         na maioria dos cálculos (manter atenção em painéis futuros).
+ *
+ *      4. Envio via fetch direto para `https://api.resend.com/emails`
+ *         (NÃO usar SDK — bug histórico descarta reply_to silenciosamente,
+ *         documentado em disparar-fila v1.6/v1.10):
+ *           - from: `${responsavel.nome_usuario} <${assinatura.email_assinatura}>`
+ *           - to: [lead.email]
+ *           - bcc: [responsavel.email_usuario]
+ *             ↑ Item 4 do pedido do Messias — cópia para Exchange do
+ *             próprio operador (mantém Outlook dele sincronizado).
+ *           - reply_to: [customer-service+f{filaId}+l{leadId}@techfor.com.br]
+ *           - in_reply_to (header SMTP): Message-ID da última mensagem
+ *             da thread (busca em email_respostas.message_id ou
+ *             email_fila.resend_message_id)
+ *           - references (header SMTP): cadeia completa de Message-IDs
+ *           - subject: "Re: <assunto da última mensagem>"
+ *           - html: corpo digitado + assinatura renderizada
+ *
+ *      5. Registro outbound em email_respostas (POPULA AS 5 COLUNAS
+ *         NOVAS da migration P1):
+ *           - direcao='outbound'
+ *           - enviado_por = currentUserId
+ *           - message_id = id retornado pela Resend
+ *           - in_reply_to_message_id = message-id da msg respondida
+ *           - bcc_corporativo_em = timestamp do envio
+ *
+ *      6. Em caso de falha da Resend: rollback do item sintético
+ *         (DELETE email_fila row criada) para não poluir o pipeline
+ *         da campanha. Mensagem NÃO entra em email_respostas.
+ *
+ *    Compatibilidade:
+ *      - Não altera nenhuma action existente. Aditivo puro.
+ *      - Reusa schema email_fila/email_respostas/email_assinaturas
+ *        sem necessidade de novas migrations (a P1 SQL já preparou as
+ *        5 colunas e a FK enviado_por).
+ *      - Atenção: depende da migration P1 estar aplicada (a Seção 2
+ *        do SQL `2026-06-30_extender_email_respostas_p1.sql`). Sem ela,
+ *        o INSERT em email_respostas falha por coluna inexistente.
+ *
+ *  - v1.24 (30/06/2026 — Pacote P1 da feature "CRM E-mail"):
+ *    Aprovado em 30/06/2026 o Caminho C (Responder pelo RAISA) para
+ *    centralizar conversas dos leads numa só plataforma. Esta versão
+ *    entrega o LADO LEITURA do Pacote P1 com 2 actions novas:
+ *
+ *      (A) `listar_threads` — substitui o uso de `listar_respostas`
+ *          dentro da aba "CRM E-mail" (antiga "Respostas Campanhas").
+ *          Agrupa as respostas em THREADS (1 thread = 1 lead × 1
+ *          campanha), retornando para cada uma:
+ *            • identidade do lead/empresa/campanha
+ *            • snippet + assunto da última mensagem
+ *            • total de mensagens
+ *            • flag tem_nao_lido
+ *            • timestamp do último evento
+ *          Reusa o padrão de TETO_POR_FONTE=500 + paginação Node já
+ *          consagrado no listar_respostas e listar_invalidos.
+ *          RBAC idêntico ao listar_respostas (v1.21): por dono da
+ *          campanha (`email_campanhas.responsavel_id`).
+ *
+ *      (B) `listar_msgs_thread` — quando o operador clica num card,
+ *          essa action retorna a CONVERSA COMPLETA cronológica de
+ *          uma thread específica, INTERCALANDO:
+ *            • Mensagens enviadas pela campanha (origem: email_fila,
+ *              com JOIN em email_campanha_steps para assunto e ordem)
+ *            • Respostas do lead (origem: email_respostas)
+ *          P1 não inclui ainda outbound do RAISA (entrará em P2).
+ *          O frontend (RespostasTab v2.0) ordena cronologicamente,
+ *          mais antigo primeiro (estilo Outlook/Gmail).
+ *
+ *    Compatibilidade:
+ *      • A action `listar_respostas` (v1.21) NÃO foi alterada — fica
+ *        no código como API legada para callers externos (ex: scripts
+ *        de auditoria, integrações futuras). Apenas o frontend
+ *        useRespostas v2.0 deixa de chamá-la.
+ *      • Nenhuma migration de schema é exigida POR ESTA versão de
+ *        código — `listar_threads` e `listar_msgs_thread` leem apenas
+ *        colunas pré-existentes. As 5 colunas novas de email_respostas
+ *        (direcao, message_id, in_reply_to_message_id, enviado_por,
+ *        bcc_corporativo_em) serão consumidas pelo backend P2/P3.
+ *      • A migration acompanha esta versão APENAS por economia
+ *        operacional (1 SQL em vez de 2) e para preparar P2 sem novo
+ *        downtime.
+ *
+ *    Dependência: nenhuma. Schemas usados são todos pré-existentes:
+ *      email_respostas, email_leads, email_empresas, email_campanhas,
+ *      email_fila, email_campanha_steps.
+ *
  *  - v1.23 (30/06/2026 — Filtros "CRECI" e "Analista" na aba "Meus Leads"):
  *    Melhoria de UX solicitada por Messias. Com 2.360+ leads dominando a
  *    aba (esmagadora maioria CRECI), GC/SDR/Admin tinham fricção real
@@ -969,6 +1207,73 @@ const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
+
+// ════════════════════════════════════════════════════════════════════════
+// 🆕 v1.25 (30/06/2026 — Pacote P2 "CRM E-mail") — CONSTANTES/HELPERS DE ENVIO
+// ════════════════════════════════════════════════════════════════════════
+// Duplicações intencionais de api/cron/disparar-fila.ts (v1.13). Quando
+// consolidar, mover para api/_lib/render-assinatura.ts + api/_lib/resend.ts
+// e importar dos dois lados. Manter sincronia até lá.
+
+/** Endpoint REST da Resend (NÃO usar SDK — descarta reply_to silenciosamente). */
+const RESEND_API_URL = 'https://api.resend.com/emails';
+
+/** Domínio-base do plus-alias de captura de respostas. */
+const DOMINIO_REPLY_TO_OUTBOUND = 'techfor.com.br';
+
+/**
+ * Renderiza a assinatura em HTML — IDÊNTICA à do disparar-fila v1.13.
+ * Mantida local para evitar acoplamento de bundling.
+ * Para Pacote P2, o `unsubscribeUrl` não é passado (a mensagem outbound
+ * de resposta direta não precisa de mecanismo de descadastro RFC 8058 —
+ * o lead já está em conversa ativa, opt-out segue pelo fluxo manual).
+ */
+function renderAssinaturaP2(a: any, unsubscribeUrl?: string): string {
+  const COR_NOME = '#A33022';
+  const COR_LINK = '#1a73e8';
+  const COR_TEXTO = '#333333';
+  const COR_LGPD = '#666666';
+
+  const telefones = [a.telefone_fixo, a.telefone_celular].filter(Boolean).join(' | ');
+  const websitePrincipal = (a.websites || []).find(Boolean) || '';
+  const politicaUrl = a.politica_privacidade_url || '';
+
+  const linhaTel = telefones
+    ? `<p style="margin:0;color:${COR_TEXTO}">Tel. ${telefones}</p>`
+    : '';
+  const linhaSite = websitePrincipal
+    ? `<p style="margin:0"><a href="${websitePrincipal}" style="color:${COR_LINK};text-decoration:underline">${websitePrincipal}</a></p>`
+    : '';
+  const linkPolitica = politicaUrl
+    ? `<a href="${politicaUrl}" style="color:${COR_LINK};text-decoration:underline">Política de Privacidade</a>`
+    : 'Política de Privacidade';
+  const sairTermo = unsubscribeUrl
+    ? `<a href="${unsubscribeUrl}" style="color:${COR_LINK};text-decoration:underline;font-weight:bold">SAIR</a>`
+    : 'SAIR';
+
+  return `
+<div style="font-family:Arial,sans-serif;font-size:13px;color:${COR_TEXTO};line-height:1.5">
+  <p style="margin:0;color:${COR_NOME};font-weight:bold;font-size:14px">${a.nome_completo}</p>
+  ${a.cargo ? `<p style="margin:0;font-style:italic;color:#555">${a.cargo}</p>` : ''}
+  <p style="margin:0"><a href="mailto:${a.email_assinatura}" style="color:${COR_LINK};text-decoration:underline">${a.email_assinatura}</a></p>
+  ${linhaTel}
+  ${linhaSite}
+  <div style="margin-top:14px;font-size:11px;color:${COR_LGPD};line-height:1.5">
+    <p style="margin:0">Estamos entrando em contato contigo para lhe apresentar uma oportunidade, que entendemos ser do seu interesse, nos termos da Lei Geral de Proteção de Dados (LGPD).</p>
+    <p style="margin:0">Isso quer dizer que coletamos, tratamos e armazenamos dados pessoais com todo o cuidado e zelo. Leia atentamente a nossa ${linkPolitica} e, se tiver alguma dúvida, entre em contato com o nosso Encarregado de Dados (Data Protection Officer - DPO) no seguinte e-mail: <a href="mailto:dpo@techforti.com.br" style="color:${COR_LINK};text-decoration:underline">dpo@techforti.com.br</a>.</p>
+    <p style="margin:0">Se não tiver mais interesse em receber nossas mensagens, que foi baseado no legítimo interesse da LGPD, responda este e-mail solicitando o descadastramento (opt out) ou clique em ${sairTermo}.</p>
+  </div>
+</div>`.trim();
+}
+
+/**
+ * Determina o sufixo de ambiente para o plus-alias do Reply-To.
+ * Production: vazio (sem sufixo, mais limpo comercialmente).
+ * Preview:    `+test` (filtra webhook por ambiente — v1.8 do disparar-fila).
+ */
+function sufixoAmbienteOutbound(): string {
+  return process.env.VERCEL_ENV === 'production' ? '' : '+test';
+}
 
 // ════════════════════════════════════════════════════════════════════════
 // 🆕 v1.4 — WHITELIST DE CAMPOS EDITÁVEIS
@@ -1960,6 +2265,526 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ════════════════════════════════════════════════════════════
+      // 🆕 v1.24 (30/06/2026 — Pacote P1 da feature "CRM E-mail")
+      //         LISTAR THREADS — agrupa email_respostas por (lead × campanha)
+      // ════════════════════════════════════════════════════════════
+      // Substitui o uso de `listar_respostas` no useRespostas v2.0 da aba
+      // CRM E-mail. Conceito: cada thread representa UMA conversa entre o
+      // operador (GC/SDR/Admin) e o lead, dentro do contexto de UMA campanha
+      // — espelhando como Outlook/Gmail agrupam por "assunto".
+      //
+      // Estratégia de implementação (igual ao padrão consolidado):
+      //   1. TETO_POR_FONTE=500 respostas mais recentes (RBAC aplicado)
+      //   2. Agregar no Node por (lead_id, campanha_id)
+      //   3. Lookup de leads + empresas + campanhas em batch
+      //   4. Ordenar threads pelo evento mais recente
+      //   5. Aplicar busca textual (Node — universo pequeno após RBAC)
+      //   6. Paginar
+      //
+      // Trade-off: se um lead tem 30 respostas em 1 thread e existem outras
+      // threads ativas, o `total_msgs` desta thread pode ficar subestimado
+      // (porque o batch de 500 prioriza recência global, não da thread).
+      // Aceitamos por ora — o universo prático é ~100 respostas/dia (item 5
+      // do alinhamento), então 500 cobre vários dias. Se virar problema,
+      // migramos para RPC com GROUP BY no servidor.
+      //
+      // Parâmetros:
+      //   - busca: string (lead nome/email/empresa/corpo) — opcional
+      //   - page, limit: paginação clássica
+      //   - current_user_id, current_user_tipo: RBAC obrigatório (idêntico
+      //     ao listar_respostas v1.21)
+      //
+      // Resposta:
+      //   {
+      //     success: true,
+      //     threads: ThreadItem[],
+      //     total, page, limit, total_pages
+      //   }
+      //
+      //   ThreadItem = {
+      //     lead_id, lead_nome, lead_email, lead_cargo,
+      //     empresa_id, empresa_nome,
+      //     campanha_id, campanha_nome,
+      //     ultima_msg_em (ISO),
+      //     ultima_msg_assunto,
+      //     ultima_msg_snippet (até 200 chars),
+      //     total_msgs (count dentro do batch de 500 — ver trade-off acima),
+      //     tem_nao_lido (bool),
+      //     classificacao_ultima (string|null),
+      //   }
+      if (action === 'listar_threads') {
+        const {
+          busca = '',
+          page = '1',
+          limit = '30',
+          current_user_id,
+          current_user_tipo,
+        } = req.query as Record<string, string>;
+        const limitNum = Math.max(1, Math.min(parseInt(limit) || 30, 200));
+        const pageNum = Math.max(1, parseInt(page) || 1);
+
+        // Validação defensiva (mesmo padrão do listar_respostas v1.21)
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error:
+              'Parâmetros obrigatórios ausentes: current_user_id e current_user_tipo. ' +
+              'A action listar_threads requer identificação do usuário corrente para aplicar RBAC.',
+          });
+        }
+        const currentUserIdNum = parseInt(current_user_id);
+        if (isNaN(currentUserIdNum) || currentUserIdNum < 1) {
+          return res.status(400).json({
+            success: false,
+            error: `current_user_id inválido: "${current_user_id}"`,
+          });
+        }
+
+        // RBAC: pré-cálculo das campanhas que o usuário pode ver
+        //   (mesmo padrão do listar_respostas v1.21)
+        let campanhaIdsPermitidas: number[] | null = null;
+        if (current_user_tipo !== 'Administrador') {
+          const { data: campsDoUsuario, error: errCamps } = await supabase
+            .from('email_campanhas')
+            .select('id')
+            .eq('responsavel_id', currentUserIdNum);
+          if (errCamps) {
+            console.error('[crm-leads] erro pré-cálculo campanhas RBAC threads:', errCamps.message);
+            return res.status(500).json({ success: false, error: errCamps.message });
+          }
+          campanhaIdsPermitidas = (campsDoUsuario || []).map((c: any) => c.id);
+          if (campanhaIdsPermitidas.length === 0) {
+            return res.status(200).json({
+              success: true,
+              threads: [],
+              total: 0,
+              page: pageNum,
+              limit: limitNum,
+              total_pages: 0,
+            });
+          }
+        }
+
+        const TETO_POR_FONTE = 500;
+        let respostasQuery = supabase
+          .from('email_respostas')
+          .select(
+            'id, lead_id, campanha_id, de_email, de_nome, assunto, ' +
+              'corpo_texto, corpo_html, classificacao, lido, recebido_em'
+          )
+          .order('recebido_em', { ascending: false })
+          .limit(TETO_POR_FONTE);
+        if (campanhaIdsPermitidas !== null) {
+          respostasQuery = respostasQuery.in('campanha_id', campanhaIdsPermitidas);
+        }
+        const { data: respostas, error: errR } = await respostasQuery;
+        if (errR) throw errR;
+
+        // Lookups em batch
+        const leadIds = Array.from(
+          new Set(((respostas || []).map((r: any) => r.lead_id).filter(Boolean) as number[]))
+        );
+        const campIds = Array.from(
+          new Set(((respostas || []).map((r: any) => r.campanha_id).filter(Boolean) as number[]))
+        );
+
+        const leadsPorId: Record<number, any> = {};
+        if (leadIds.length > 0) {
+          const { data: leadsData } = await supabase
+            .from('email_leads')
+            .select('id, nome, email, cargo, empresa_id')
+            .in('id', leadIds);
+          for (const l of leadsData || []) leadsPorId[l.id] = l;
+        }
+
+        const empIds = Array.from(
+          new Set(
+            (Object.values(leadsPorId).map((l: any) => l.empresa_id).filter(Boolean) as number[])
+          )
+        );
+        const empPorId: Record<number, any> = {};
+        if (empIds.length > 0) {
+          const { data: empsData } = await supabase
+            .from('email_empresas')
+            .select('id, nome')
+            .in('id', empIds);
+          for (const e of empsData || []) empPorId[e.id] = e;
+        }
+
+        const campPorId: Record<number, any> = {};
+        if (campIds.length > 0) {
+          const { data: campsData } = await supabase
+            .from('email_campanhas')
+            .select('id, nome')
+            .in('id', campIds);
+          for (const c of campsData || []) campPorId[c.id] = c;
+        }
+
+        // ── Agregar em threads ─────────────────────────────────────
+        type ThreadAcc = {
+          lead_id: number;
+          campanha_id: number;
+          ultima_msg_em: string;
+          ultima_msg_assunto: string;
+          ultima_msg_snippet: string;
+          ultima_msg_corpo_html: string | null;
+          ultima_classificacao: string | null;
+          total_msgs: number;
+          tem_nao_lido: boolean;
+        };
+        const threadsMap = new Map<string, ThreadAcc>();
+        for (const r of respostas || []) {
+          if (!r.lead_id || !r.campanha_id) continue;
+          const key = `${r.lead_id}_${r.campanha_id}`;
+          const existing = threadsMap.get(key);
+          if (!existing) {
+            // Snippet: até 200 chars do corpo texto (alinhado com listar_respostas)
+            const snippet = (r.corpo_texto || '').substring(0, 200);
+            threadsMap.set(key, {
+              lead_id: r.lead_id,
+              campanha_id: r.campanha_id,
+              ultima_msg_em: r.recebido_em,
+              ultima_msg_assunto: r.assunto || '',
+              ultima_msg_snippet: snippet,
+              ultima_msg_corpo_html: r.corpo_html || null,
+              ultima_classificacao: r.classificacao || null,
+              total_msgs: 1,
+              tem_nao_lido: !r.lido,
+            });
+          } else {
+            existing.total_msgs += 1;
+            if (!r.lido) existing.tem_nao_lido = true;
+            // Como já vieram ordenados desc, a primeira é a mais recente.
+            // Não precisa sobrescrever ultima_msg_* aqui.
+          }
+        }
+
+        // ── Hidratar identidades ───────────────────────────────────
+        type ThreadItem = ThreadAcc & {
+          lead_nome: string | null;
+          lead_email: string | null;
+          lead_cargo: string | null;
+          empresa_id: number | null;
+          empresa_nome: string | null;
+          campanha_nome: string | null;
+        };
+        let threadsHidratadas: ThreadItem[] = Array.from(threadsMap.values()).map((t) => {
+          const lead = leadsPorId[t.lead_id];
+          const empresa = lead?.empresa_id ? empPorId[lead.empresa_id] : null;
+          const camp = campPorId[t.campanha_id];
+          return {
+            ...t,
+            lead_nome: lead?.nome || null,
+            lead_email: lead?.email || null,
+            lead_cargo: lead?.cargo || null,
+            empresa_id: lead?.empresa_id || null,
+            empresa_nome: empresa?.nome || null,
+            campanha_nome: camp?.nome || null,
+          };
+        });
+
+        // ── Busca textual (Node — universo pós-RBAC pequeno) ───────
+        if (busca.trim()) {
+          const termo = busca.trim().toLowerCase();
+          threadsHidratadas = threadsHidratadas.filter((t) => {
+            const haystack = [
+              t.lead_nome,
+              t.lead_email,
+              t.empresa_nome,
+              t.campanha_nome,
+              t.ultima_msg_assunto,
+              t.ultima_msg_snippet,
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase();
+            return haystack.includes(termo);
+          });
+        }
+
+        // ── Ordenar por última mensagem (mais recente primeiro) ────
+        threadsHidratadas.sort((a, b) =>
+          (b.ultima_msg_em || '').localeCompare(a.ultima_msg_em || '')
+        );
+
+        // ── Paginar ────────────────────────────────────────────────
+        const total = threadsHidratadas.length;
+        const offset = (pageNum - 1) * limitNum;
+        const pageItems = threadsHidratadas.slice(offset, offset + limitNum);
+
+        return res.status(200).json({
+          success: true,
+          threads: pageItems,
+          total,
+          page: pageNum,
+          limit: limitNum,
+          total_pages: Math.ceil(total / limitNum),
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════
+      // 🆕 v1.24 (30/06/2026 — Pacote P1 da feature "CRM E-mail")
+      //         LISTAR MENSAGENS DA THREAD (lead × campanha específicos)
+      // ════════════════════════════════════════════════════════════
+      // Quando o operador clica num card de thread no Inbox, esta action
+      // retorna a conversa COMPLETA cronológica entre o lead e a campanha,
+      // intercalando:
+      //   • Mensagens da campanha enviadas para o lead (origem: email_fila
+      //     + JOIN com email_campanha_steps)
+      //   • Respostas do lead (origem: email_respostas)
+      //   • (P2+): respostas outbound do RAISA (origem: email_respostas
+      //     com direcao='outbound')
+      //
+      // Ordenação: cronológica ascendente (mais antigo primeiro), espelhando
+      // o padrão Outlook/Gmail de leitura natural.
+      //
+      // RBAC: o operador precisa ser o responsável pela campanha
+      //       (mesmo critério do listar_respostas v1.21 e listar_threads).
+      //       Admin tem bypass.
+      //
+      // Parâmetros:
+      //   - lead_id (required)
+      //   - campanha_id (required)
+      //   - current_user_id, current_user_tipo (required, RBAC)
+      //
+      // Resposta:
+      //   {
+      //     success: true,
+      //     lead: { id, nome, email, cargo, empresa_nome },
+      //     campanha: { id, nome },
+      //     mensagens: MensagemThread[]
+      //   }
+      //
+      //   MensagemThread = {
+      //     id, tipo, direcao,
+      //     data (ISO), assunto, corpo_texto, corpo_html,
+      //     de_email, de_nome,
+      //     // específicos por tipo:
+      //     step_ordem?, step_id?, status?, aberto_em?, clicado_em?,
+      //     classificacao?, lido?,
+      //   }
+      //
+      //   tipo ∈ ('enviado_campanha' | 'recebido_lead' | 'enviado_crm')
+      //   P1 emite apenas 'enviado_campanha' e 'recebido_lead'.
+      if (action === 'listar_msgs_thread') {
+        const {
+          lead_id,
+          campanha_id,
+          current_user_id,
+          current_user_tipo,
+        } = req.query as Record<string, string>;
+
+        if (!lead_id || !campanha_id) {
+          return res.status(400).json({
+            success: false,
+            error: 'Parâmetros obrigatórios: lead_id, campanha_id.',
+          });
+        }
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error:
+              'Parâmetros obrigatórios ausentes: current_user_id e current_user_tipo (RBAC).',
+          });
+        }
+
+        const leadIdNum = parseInt(lead_id);
+        const campIdNum = parseInt(campanha_id);
+        const currentUserIdNum = parseInt(current_user_id);
+        if (isNaN(leadIdNum) || isNaN(campIdNum) || isNaN(currentUserIdNum)) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id, campanha_id e current_user_id precisam ser inteiros válidos.',
+          });
+        }
+
+        // RBAC: verificar que o operador pode ver essa campanha
+        const { data: campanha, error: errCamp } = await supabase
+          .from('email_campanhas')
+          .select('id, nome, responsavel_id')
+          .eq('id', campIdNum)
+          .maybeSingle();
+        if (errCamp) {
+          return res.status(500).json({ success: false, error: errCamp.message });
+        }
+        if (!campanha) {
+          return res.status(404).json({ success: false, error: 'Campanha não encontrada.' });
+        }
+        if (
+          current_user_tipo !== 'Administrador' &&
+          campanha.responsavel_id !== currentUserIdNum
+        ) {
+          return res.status(403).json({
+            success: false,
+            error: 'Sem permissão para visualizar esta thread (RBAC).',
+          });
+        }
+
+        // Identidade do lead (para o header da thread)
+        const { data: lead, error: errLead } = await supabase
+          .from('email_leads')
+          .select('id, nome, email, cargo, empresa_id')
+          .eq('id', leadIdNum)
+          .maybeSingle();
+        if (errLead) {
+          return res.status(500).json({ success: false, error: errLead.message });
+        }
+        if (!lead) {
+          return res.status(404).json({ success: false, error: 'Lead não encontrado.' });
+        }
+        let empresaNome: string | null = null;
+        if (lead.empresa_id) {
+          const { data: emp } = await supabase
+            .from('email_empresas')
+            .select('nome')
+            .eq('id', lead.empresa_id)
+            .maybeSingle();
+          empresaNome = emp?.nome || null;
+        }
+
+        // ── Mensagens enviadas pela campanha (email_fila + steps) ──
+        // Filtra apenas itens que já saíram (não pendentes/cancelados).
+        // 🆕 v1.25.4 (30/06/2026 — HOTFIX): EXCLUI itens sintéticos
+        //   (step_id=NULL) criados pelo próprio responder_thread para
+        //   reusar o Reply-To dinâmico. Esses itens não representam
+        //   "envios da campanha" — eles existem só como contraparte de
+        //   uma resposta outbound do CRM E-mail (que já aparece via
+        //   email_respostas com direcao='outbound'). Sem esse filtro,
+        //   a timeline mostra bolhas duplicadas "(sem assunto registrado)".
+        const { data: enviados, error: errEnv } = await supabase
+          .from('email_fila')
+          .select(
+            'id, step_id, status, agendado_para, enviado_em, entregue_em, ' +
+              'aberto_em, clicado_em, respondido_em, ' +
+              'email_campanha_steps(ordem, assunto)'
+          )
+          .eq('lead_id', leadIdNum)
+          .eq('campanha_id', campIdNum)
+          .not('step_id', 'is', null)
+          .in('status', ['enviado', 'entregue', 'aberto', 'clicado', 'respondido']);
+        if (errEnv) {
+          console.error('[crm-leads] listar_msgs_thread enviados:', errEnv.message);
+        }
+
+        // ── Respostas do lead (email_respostas) ────────────────────
+        // 🆕 v1.25.3 (30/06/2026 — HOTFIX): SELECT inclui `direcao` e
+        //   demais colunas P1 para distinguir inbound (resposta do lead)
+        //   de outbound (resposta enviada pelo RAISA via CRM E-mail P2).
+        //   Sem essa distinção, o frontend renderiza outbounds como se
+        //   fossem do lead — bolha errada no lado errado.
+        //
+        //   Compatibilidade: registros legados sem `direcao` (pré-migration
+        //   P1) defaultam para 'inbound' (DEFAULT da coluna). Se a coluna
+        //   não existir (migration não aplicada), a query falha — log
+        //   abaixo trata e o operador vê apenas envios da campanha.
+        const { data: replies, error: errReps } = await supabase
+          .from('email_respostas')
+          .select(
+            'id, de_email, de_nome, assunto, corpo_texto, corpo_html, ' +
+              'classificacao, lido, recebido_em, ' +
+              'direcao, message_id, in_reply_to_message_id, enviado_por'
+          )
+          .eq('lead_id', leadIdNum)
+          .eq('campanha_id', campIdNum);
+        if (errReps) {
+          console.error('[crm-leads] listar_msgs_thread replies:', errReps.message);
+        }
+
+        // ── Montar timeline cronológica ascendente ─────────────────
+        const mensagens: any[] = [];
+
+        for (const env of enviados || []) {
+          const step = (env as any).email_campanha_steps;
+          mensagens.push({
+            id: `env_${env.id}`,
+            tipo: 'enviado_campanha',
+            direcao: 'outbound',
+            data: env.enviado_em || env.agendado_para,
+            assunto: step?.assunto || '(sem assunto registrado)',
+            corpo_texto: null,
+            corpo_html: null,
+            de_email: null,
+            de_nome: null,
+            step_ordem: step?.ordem || null,
+            step_id: env.step_id,
+            status: env.status,
+            aberto_em: env.aberto_em,
+            clicado_em: env.clicado_em,
+            respondido_em: env.respondido_em,
+            entregue_em: env.entregue_em,
+          });
+        }
+
+        for (const rep of replies || []) {
+          // 🆕 v1.25.3 (30/06/2026 — HOTFIX) — ramifica por direção.
+          //   Default 'inbound' para registros legados ou se a coluna
+          //   ainda não existir (compat pré-migration P1).
+          const direcao = (rep as any).direcao || 'inbound';
+          const isOutbound = direcao === 'outbound';
+          mensagens.push({
+            id: `rep_${rep.id}`,
+            tipo: isOutbound ? 'enviado_crm' : 'recebido_lead',
+            direcao: isOutbound ? 'outbound' : 'inbound',
+            data: rep.recebido_em,
+            assunto: rep.assunto || '',
+            corpo_texto: rep.corpo_texto || '',
+            corpo_html: rep.corpo_html || null,
+            de_email: rep.de_email,
+            de_nome: rep.de_nome,
+            // Específicos de 'recebido_lead' (relevantes só para inbound,
+            // mas nulos em outbound — frontend trata graceful):
+            classificacao: isOutbound ? null : rep.classificacao || null,
+            lido: rep.lido,
+            // 🆕 P2/P3 — exposto para threading futuro e debug
+            message_id: (rep as any).message_id || null,
+            in_reply_to_message_id: (rep as any).in_reply_to_message_id || null,
+            enviado_por: (rep as any).enviado_por || null,
+          } as any);
+        }
+
+        // Ordenação cronológica DESCENDENTE (mais recente no topo),
+        //   padrão Outlook desktop moderno. Mudou em v1.25.5 a pedido
+        //   do Messias. Mensagens sem `data` vão para o fim (defensivo).
+        mensagens.sort((a, b) => {
+          if (!a.data && !b.data) return 0;
+          if (!a.data) return 1;
+          if (!b.data) return -1;
+          return b.data.localeCompare(a.data);
+        });
+
+        return res.status(200).json({
+          success: true,
+          lead: {
+            id: lead.id,
+            nome: lead.nome,
+            email: lead.email,
+            cargo: lead.cargo,
+            empresa_nome: empresaNome,
+          },
+          campanha: {
+            id: campanha.id,
+            nome: campanha.nome,
+            // 🆕 v1.25 (30/06/2026 — Pacote P2) — Exposto ao frontend para
+            //   calcular `pode_responder` localmente sem round-trip extra.
+            //   ATENÇÃO: Não é dado sensível, é apenas o FK do responsável.
+            responsavel_id: campanha.responsavel_id,
+          },
+          // 🆕 v1.25 (30/06/2026 — Pacote P2) — Calculado server-side
+          //   para evitar discrepância entre cálculo cliente e regra real
+          //   do `responder_thread`. Frontend usa esse flag direto.
+          pode_responder: campanha.responsavel_id === currentUserIdNum,
+          // Motivo do bloqueio (quando pode_responder=false) para UX clara
+          motivo_bloqueio:
+            campanha.responsavel_id === currentUserIdNum
+              ? null
+              : current_user_tipo === 'Administrador'
+                ? 'Apenas o responsável da campanha pode responder. Administrador acessa em modo leitura.'
+                : 'Você não é o responsável por esta campanha.',
+          mensagens,
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════
       // 🆕 v1.3 (04/06/2026 — Fase 8-Inbox) — INVÁLIDOS — schema original
       //         (fila-centric, 1 linha por evento de email_fila)
       // 🔄 v1.15 (16/06/2026 — F8) — REESCRITA lead-centric
@@ -2566,6 +3391,395 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ════════════════════════════════════════════
     if (req.method === 'POST') {
       const body = req.body;
+
+      // ════════════════════════════════════════════════════════════
+      // 🆕 v1.25 (30/06/2026 — Pacote P2 da feature "CRM E-mail")
+      //         RESPONDER THREAD — envio outbound pelo próprio RAISA
+      // ════════════════════════════════════════════════════════════
+      // Ver cabeçalho do arquivo (v1.25) para a especificação completa
+      // do comportamento end-to-end. Resumo do fluxo:
+      //   1. Validação RBAC: somente responsavel_id da campanha
+      //   2. Resolução de assinatura (responsavel.email + campanha.unidade)
+      //   3. Item sintético em email_fila (step_id=NULL)
+      //   4. Envio via fetch direto na Resend API com:
+      //        - From (assinatura corporativa do responsável)
+      //        - BCC (Exchange do próprio responsável)
+      //        - Reply-To dinâmico (plus-alias customer-service+f+l@)
+      //        - In-Reply-To + References (threading SMTP)
+      //   5. Registro em email_respostas com direcao='outbound'
+      //   6. Rollback do item sintético em caso de falha Resend
+      //
+      // Resposta:
+      //   { success, mensagem_id, message_id (Resend), fila_id_sintetico }
+      //
+      // POST body (JSON):
+      //   {
+      //     lead_id, campanha_id,
+      //     corpo_texto, corpo_html,
+      //     in_reply_to_message_id?   // opcional — usado para threading
+      //     current_user_id, current_user_tipo
+      //   }
+      //
+      // 🔧 v1.25.1 (30/06/2026 — HOTFIX): action movida do bloco GET para
+      //   o bloco POST. Bug original: a action estava dentro de `if
+      //   (req.method === 'GET')` com guard `&& req.method === 'POST'`
+      //   nunca matchável → handler caía no fall-through retornando
+      //   400 "Ação GET desconhecida: responder_thread". Aqui dentro do
+      //   bloco POST, `body` já está desestruturado como `req.body` na
+      //   linha imediatamente anterior.
+      if (action === 'responder_thread') {
+        const {
+          lead_id,
+          campanha_id,
+          corpo_texto,
+          corpo_html,
+          in_reply_to_message_id,
+          current_user_id,
+          current_user_tipo,
+        } = body || {};
+
+        // ── Validações ──────────────────────────────────────────────
+        if (!lead_id || !campanha_id) {
+          return res.status(400).json({
+            success: false,
+            error: 'Parâmetros obrigatórios: lead_id, campanha_id.',
+          });
+        }
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error: 'RBAC obrigatório: current_user_id e current_user_tipo.',
+          });
+        }
+        if (!corpo_html || typeof corpo_html !== 'string' || corpo_html.trim().length === 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'corpo_html não pode ser vazio.',
+          });
+        }
+
+        const leadIdNum = parseInt(String(lead_id));
+        const campIdNum = parseInt(String(campanha_id));
+        const currentUserIdNum = parseInt(String(current_user_id));
+        if (isNaN(leadIdNum) || isNaN(campIdNum) || isNaN(currentUserIdNum)) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id, campanha_id e current_user_id precisam ser inteiros válidos.',
+          });
+        }
+
+        // ── 1. Carregar campanha + responsável + lead + última msg ──
+        const { data: campanha, error: errCamp } = await supabase
+          .from('email_campanhas')
+          .select(
+            'id, nome, responsavel_id, unidade, email_remetente, nome_remetente, status'
+          )
+          .eq('id', campIdNum)
+          .maybeSingle();
+        if (errCamp || !campanha) {
+          return res.status(404).json({
+            success: false,
+            error: errCamp?.message || 'Campanha não encontrada.',
+          });
+        }
+
+        // RBAC ESTRITO: Admin NÃO PODE responder (decisão Messias 30/06/2026).
+        if (campanha.responsavel_id !== currentUserIdNum) {
+          return res.status(403).json({
+            success: false,
+            error:
+              current_user_tipo === 'Administrador'
+                ? 'Apenas o responsável da campanha pode enviar respostas. Administrador acessa em modo leitura.'
+                : 'Sem permissão: você não é o responsável desta campanha.',
+          });
+        }
+
+        // Carregar dados do responsável (para From, BCC, assinatura)
+        const { data: responsavel, error: errResp } = await supabase
+          .from('app_users')
+          .select('id, nome_usuario, email_usuario')
+          .eq('id', campanha.responsavel_id)
+          .maybeSingle();
+        if (errResp || !responsavel) {
+          return res.status(500).json({
+            success: false,
+            error: 'Responsável da campanha não encontrado em app_users.',
+          });
+        }
+        if (!responsavel.email_usuario) {
+          return res.status(500).json({
+            success: false,
+            error: 'Responsável sem email_usuario cadastrado — impossível enviar.',
+          });
+        }
+
+        // Carregar lead
+        const { data: lead, error: errLead } = await supabase
+          .from('email_leads')
+          .select('id, nome, email, opt_out')
+          .eq('id', leadIdNum)
+          .maybeSingle();
+        if (errLead || !lead) {
+          return res.status(404).json({
+            success: false,
+            error: errLead?.message || 'Lead não encontrado.',
+          });
+        }
+        if (lead.opt_out) {
+          return res.status(409).json({
+            success: false,
+            error:
+              'Lead em opt-out — envio bloqueado por LGPD (regra permanente).',
+          });
+        }
+        if (!lead.email) {
+          return res.status(400).json({
+            success: false,
+            error: 'Lead sem email cadastrado.',
+          });
+        }
+
+        // ── 2. Resolver assinatura: (responsavel.email + campanha.unidade) ──
+        const { data: assinatura, error: errAssin } = await supabase
+          .from('email_assinaturas')
+          .select(
+            'id, nome_completo, cargo, email_assinatura, telefone_fixo, telefone_celular, websites, politica_privacidade_url, unidade'
+          )
+          .eq('user_email', responsavel.email_usuario)
+          .eq('unidade', campanha.unidade || 'TechFor TI')
+          .maybeSingle();
+        if (errAssin) {
+          return res.status(500).json({ success: false, error: errAssin.message });
+        }
+        if (!assinatura) {
+          return res.status(412).json({
+            success: false,
+            error:
+              `Assinatura não cadastrada para ${responsavel.email_usuario} ` +
+              `na unidade "${campanha.unidade || 'TechFor TI'}". ` +
+              `Configure em Assinaturas (Admin) antes de responder.`,
+          });
+        }
+
+        // ── 3. Recuperar última mensagem da thread (para threading SMTP) ──
+        const { data: ultimaResposta } = await supabase
+          .from('email_respostas')
+          .select('id, message_id, assunto, recebido_em')
+          .eq('lead_id', leadIdNum)
+          .eq('campanha_id', campIdNum)
+          .order('recebido_em', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Última fila enviada nesta combinação (fallback para References)
+        const { data: ultimaFila } = await supabase
+          .from('email_fila')
+          .select('id, resend_message_id, enviado_em')
+          .eq('lead_id', leadIdNum)
+          .eq('campanha_id', campIdNum)
+          .in('status', ['enviado', 'entregue', 'aberto', 'clicado', 'respondido'])
+          .order('enviado_em', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // Assunto: "Re: <último assunto>". Se não tem assunto anterior,
+        // usa fallback genérico.
+        const assuntoBase =
+          ultimaResposta?.assunto ||
+          'Conversa CRM RAISA';
+        const subject = assuntoBase.toLowerCase().startsWith('re:')
+          ? assuntoBase
+          : `Re: ${assuntoBase}`;
+
+        // Threading SMTP — prioridade ao param explícito do frontend.
+        const inReplyTo =
+          in_reply_to_message_id ||
+          ultimaResposta?.message_id ||
+          ultimaFila?.resend_message_id ||
+          null;
+
+        // ── 4. Criar item sintético em email_fila (step_id=NULL) ──
+        // 🆕 v1.25.2 (30/06/2026 — HOTFIX): guard defensivo antes de criar
+        //   item sintético. Se a campanha não tem email_remetente configurado
+        //   (caso anômalo — Wizard valida isso na criação), retornamos 412
+        //   ANTES de poluir email_fila com item sem chances de ser enviado.
+        if (!campanha.email_remetente || campanha.email_remetente.trim().length === 0) {
+          return res.status(412).json({
+            success: false,
+            error:
+              'Campanha sem email_remetente configurado (sender SMTP). ' +
+              'Não é possível enviar — peça ao admin para corrigir a campanha.',
+          });
+        }
+
+        const { data: filaSintetica, error: errFila } = await supabase
+          .from('email_fila')
+          .insert({
+            campanha_id: campIdNum,
+            lead_id: leadIdNum,
+            step_id: null,                                  // sinal "outbound CRM E-mail"
+            destinatario_email: lead.email,
+            status: 'pendente',
+            tentativas: 0,
+            agendado_para: new Date().toISOString(),
+          })
+          .select('id')
+          .single();
+        if (errFila || !filaSintetica) {
+          return res.status(500).json({
+            success: false,
+            error: `Falha ao criar item sintético em email_fila: ${errFila?.message}`,
+          });
+        }
+        const filaId = filaSintetica.id;
+
+        // ── 5. Montar payload Resend ──
+        const sufixo = sufixoAmbienteOutbound();
+        const replyTo = `customer-service${sufixo}+f${filaId}+l${leadIdNum}@${DOMINIO_REPLY_TO_OUTBOUND}`;
+
+        // 🆕 v1.25.2 (30/06/2026 — HOTFIX): FROM SMTP usa email_remetente da
+        //   CAMPANHA (sender verificado na Resend), NÃO email_assinatura
+        //   (que pode ser domínio interno tipo techcob.com.br). Idêntico
+        //   ao padrão do cron disparar-fila v1.13 em Production.
+        //   A assinatura visual rica no rodapé HTML continua usando o
+        //   email_assinatura (para identidade comercial interna).
+        const from = `${campanha.nome_remetente || 'TechFor TI'} <${campanha.email_remetente}>`;
+
+        // Renderiza HTML final (corpo digitado + assinatura)
+        const htmlFinal = `${corpo_html}\n<br><br>\n${renderAssinaturaP2(assinatura)}`;
+
+        // Headers SMTP de threading (omitidos se não houver msg anterior)
+        const headersExtra: Record<string, string> = {
+          'X-Entity-Ref-ID': `rms-crm-email-${filaId}`,
+        };
+        if (inReplyTo) {
+          headersExtra['In-Reply-To'] = `<${inReplyTo}>`;
+          headersExtra['References'] = `<${inReplyTo}>`;
+        }
+
+        const resendApiKey = process.env.RESEND_API_KEY;
+        if (!resendApiKey) {
+          // Rollback do item sintético
+          await supabase.from('email_fila').delete().eq('id', filaId);
+          return res.status(500).json({
+            success: false,
+            error: 'RESEND_API_KEY não configurada no ambiente.',
+          });
+        }
+
+        // ── 6. Enviar via fetch direto (NÃO usar SDK Resend) ──
+        let respFetch: Response;
+        try {
+          respFetch = await fetch(RESEND_API_URL, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${resendApiKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              from,
+              to: [lead.email],
+              // 🆕 v1.25 — BCC para Exchange do próprio operador (item 4 do
+              //   pedido do Messias). Manter Outlook sincronizado sem precisar
+              //   regra Exchange Transport. Resend cobra 1 send mesmo com BCC.
+              bcc: [responsavel.email_usuario],
+              reply_to: [replyTo],
+              subject,
+              html: htmlFinal,
+              text: corpo_texto || '(este email contém formatação HTML)',
+              headers: headersExtra,
+            }),
+          });
+        } catch (netErr: any) {
+          await supabase.from('email_fila').delete().eq('id', filaId);
+          return res.status(502).json({
+            success: false,
+            error: `Falha de rede ao enviar via Resend: ${netErr?.message || 'erro desconhecido'}`,
+          });
+        }
+
+        const respBody: any = await respFetch.json().catch(() => ({}));
+
+        if (!respFetch.ok) {
+          // Rollback do item sintético — não polui o pipeline
+          await supabase.from('email_fila').delete().eq('id', filaId);
+          return res.status(502).json({
+            success: false,
+            error: `Resend rejeitou: [${respFetch.status}] ${respBody?.name || 'erro'}: ${respBody?.message || JSON.stringify(respBody)}`.substring(0, 500),
+          });
+        }
+
+        const messageIdResend: string | null = respBody?.id || null;
+
+        // ── 7. Atualizar item sintético com message_id e status enviado ──
+        await supabase
+          .from('email_fila')
+          .update({
+            status: 'enviado',
+            enviado_em: new Date().toISOString(),
+            resend_message_id: messageIdResend,
+          })
+          .eq('id', filaId);
+
+        // ── 8. Registrar outbound em email_respostas (POPULA 5 COLUNAS P1) ──
+        // 🆕 v1.25.3 (30/06/2026 — HOTFIX): `de_email` agora espelha o
+        //   FROM SMTP real (campanha.email_remetente), não a assinatura
+        //   visual. Coerência com o que o lead efetivamente vê no campo
+        //   "De:" do email recebido. `de_nome` mantém a identidade visual
+        //   humana (nome do operador) para a thread interna.
+        const nowIso = new Date().toISOString();
+        const { data: novaMsg, error: errInsResp } = await supabase
+          .from('email_respostas')
+          .insert({
+            lead_id: leadIdNum,
+            campanha_id: campIdNum,
+            fila_id: filaId,
+            de_email: campanha.email_remetente,             // ✅ espelha FROM SMTP real
+            de_nome:
+              campanha.nome_remetente ||
+              assinatura.nome_completo ||
+              responsavel.nome_usuario ||
+              'TechFor TI',
+            assunto: subject,
+            corpo_texto: corpo_texto || null,
+            corpo_html: corpo_html,
+            classificacao: null,                  // outbound não é classificável
+            lido: true,                           // outbound é "lido" por definição
+            recebido_em: nowIso,                  // mesmo schema — represente data de envio
+            // 🆕 v1.25 — 5 colunas novas (migration P1)
+            direcao: 'outbound',
+            message_id: messageIdResend,
+            in_reply_to_message_id: inReplyTo,
+            enviado_por: currentUserIdNum,
+            bcc_corporativo_em: nowIso,
+          })
+          .select('id')
+          .single();
+
+        if (errInsResp) {
+          // Não rollback aqui — email JÁ FOI enviado. Apenas logar.
+          // 🆕 v1.25.3 — log com mais detalhe para diagnóstico (ex: coluna
+          //   inexistente quando migration P1 não foi aplicada).
+          console.error(
+            '[crm-leads] responder_thread: INSERT email_respostas falhou após envio do email. ' +
+            'Frequente: migration P1 nao aplicada (coluna direcao inexistente). ' +
+            'Detalhe:',
+            errInsResp.message
+          );
+        }
+
+        console.log(
+          `[crm-leads] 💬 Outbound enviado: fila=${filaId} lead=${leadIdNum} campanha=${campIdNum} resend_id=${messageIdResend}`
+        );
+
+        return res.status(200).json({
+          success: true,
+          mensagem_id: novaMsg?.id || null,
+          message_id_resend: messageIdResend,
+          fila_id_sintetico: filaId,
+          bcc_corporativo: responsavel.email_usuario,
+        });
+      }
 
       // ── CRIAR EMPRESA ────────────────────────────
       if (action === 'criar_empresa') {

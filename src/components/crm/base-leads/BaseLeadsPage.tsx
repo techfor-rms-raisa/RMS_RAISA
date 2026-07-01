@@ -2,377 +2,73 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.16 (Filtros "CRECI" e "Analista" na aba "Meus Leads" — 30/06/2026)
+ * Versão: 1.19 (Separação CRM E-mail vs Base de Leads — 01/07/2026)
  *
- * 🆕 v1.16 (30/06/2026 — Filtros "CRECI" e "Analista" na aba "Meus Leads"):
- *   Liga 2 novos filtros perfil-aware ao LeadsTab v1.2 e ao useLeads v1.4.
- *   Motivação: GC/SDR/Admin afogados com 2.360+ leads CRECI dominando a
- *   aba "Meus Leads". Esta versão dá controle granular sem comprometer
- *   o RBAC já vigente (v1.20 no backend).
+ * 🆕 v1.19 (01/07/2026 — Separação CRM E-mail vs Base de Leads):
+ *   As 3 abas de comunicação por e-mail (CRM E-mail / E-mails Inválidos
+ *   / Opt-Out) foram MOVIDAS para o novo container CRMEmailPage.tsx
+ *   (view 'crm_email' no Sidebar). Este componente passa a hospedar
+ *   apenas 4 abas de gestão de funil de leads:
  *
- *   Mudanças cirúrgicas:
- *    - Novo `useMemo` `defaultsLeads`: calcula `defaultIncluirCreci` e
- *      `defaultFiltroAnalista` por perfil do `currentUser`.
- *        • Admin/SDR/GC → defaultIncluirCreci=true (Admin esconde com
- *          o pill quando quiser; SDR mantém CRECI por ser seu core; GC
- *          nunca vê CRECI por RBAC então o default é cosmético).
- *        • Admin/SDR → defaultFiltroAnalista='mine_or_unassigned' (vê
- *          seus + órfãos para alocar sem trocar filtro).
- *        • GC → defaultFiltroAnalista='mine' (RBAC já força, mas
- *          mantém o estado canônico).
+ *     1. Minhas Empresas       (key='empresas')
+ *     2. Meus Leads            (key='leads')
+ *     3. Leads Importados      (key='leads_importados')
+ *     4. Vincular em Lote      (key='vincular_em_lote')
  *
- *    - Novos `useMemo`s para a LeadsTab:
- *        • `mostrarFiltroCreci`: true para Admin e SDR (GC oculta).
- *        • `filtroAnalistaDisabled`: true para GC (dropdown inerte).
- *        • `opcoesFiltroAnalista`: lista construída a partir do
- *          `responsaveisH.responsaveis`. Para Admin: 4 opções fixas
- *          + 1 por outro analista. Para SDR: 3 opções fixas (sem
- *          'all' nem outros analistas — RBAC restringe). Para GC: 1
- *          opção fixa (dropdown desabilitado).
+ *   Removido cirurgicamente (tudo migrado para CRMEmailPage.tsx v1.0):
+ *     - Imports: useRespostas, useInvalidos, RespostasTab, InvalidosTab,
+ *       OptOutTab, RecuperarParaCampanhaModal, InvalidoItem type
+ *     - Hooks instanciados: respostasH, invalidosH
+ *     - States: recoveringLeadIds, recuperandoLeadItem, recuperandoLeadIds
+ *     - useEffects: aba 'respostas' e aba 'invalidos'
+ *     - Handlers: handleTentarRecovery, handleAbrirRecuperar,
+ *                 handleConfirmarRecuperacao
+ *     - Modal: <RecuperarParaCampanhaModal />
+ *     - KPI card: "Opt-Out" (fica apenas no CRMEmailPage)
+ *     - Tab entries e blocos {abaAtiva === X && <XTab />} das 3 abas
  *
- *    - `useLeads` agora recebe `defaultIncluirCreci` e
- *      `defaultFiltroAnalista` via options. Sem mais nenhum efeito
- *      colateral — o hook v1.4 inicializa os states e propaga.
+ *   Preservado sem mudanças:
+ *     - Deep link do App.tsx (v60.4) — continua abrindo o drawer
+ *       de detalhe do lead automaticamente. É esse mecanismo que o
+ *       CRMEmailPage usa (via prop onAbrirLeadEmBase) para o botão
+ *       "Abrir detalhe completo" no header da thread.
+ *     - LeadFormModal + fluxo criar/editar lead — permanece aqui
+ *       (é usado por Meus Leads, Empresas, Leads Importados).
+ *     - salvarLead simplificado (removidas as chamadas de recarregar
+ *       respostas/invalidos — hooks nem existem mais aqui).
  *
- *    - `<LeadsTab>` recebe 5 props novas: `incluirCreci`,
- *      `filtroAnalista`, `mostrarFiltroCreci`, `opcoesFiltroAnalista`,
- *      `filtroAnalistaDisabled` + 2 handlers (`onIncluirCreciChange`,
- *      `onFiltroAnalistaChange`). Ao mudar qualquer filtro, voltamos
- *      para a página 1 (UX coerente com a mudança de ordenação na v1.8).
- *
- *    - `useEffect` da aba 'leads' adiciona `leadsH.incluirCreci` e
- *      `leadsH.filtroAnalista` na dep array — recarrega ao alternar.
- *
- *   Dependência: useLeads v1.4 (estados + setters), LeadsTab v1.2 (UI),
- *   crm-leads.ts v1.23 (parâmetros backend).
- *
- *   Compatibilidade: nenhum dos arquivos a montante quebra. Se algum
- *   caller (outra página) usar useLeads sem os novos defaults, o
- *   comportamento legado v1.3 fica preservado (incluirCreci=true,
- *   filtroAnalista=''). LeadsTab v1.2 idem: sem os novos props, os
- *   controles simplesmente não renderizam.
- *
- * 🆕 v1.15 (23/06/2026 — Recuperação de inválidos para campanha):
- *   Adiciona o fluxo "Promover" na aba "E-mails Inválidos". Quando o
- *   lead foi previamente corrigido (bounced=false), o gestor/SDR pode
- *   recuperá-lo diretamente para uma campanha sem precisar navegar
- *   para o Wizard ou para a aba Vincular em Lote.
- *
- *   Mudanças cirúrgicas:
- *    - Novo import: RecuperarParaCampanhaModal.
- *    - Novo state: `recuperandoLeadItem` (objeto do InvalidoItem
- *      selecionado — guardamos o objeto inteiro para evitar requisição
- *      adicional, já temos nome/email/vertical do listar_invalidos v1.22).
- *    - Novo state: `recuperandoLeadIds` (Set<number>) para mostrar
- *      spinner no botão Promover enquanto a chamada está em andamento.
- *    - Handler `handleAbrirRecuperar(leadId)`: encontra o item na
- *      listagem corrente e abre o modal.
- *    - Handler `handleConfirmarRecuperacao(leadId, campanhaId)`: chama
- *      `invalidosH.recuperarParaCampanha`, mostra feedback, fecha o
- *      modal e recarrega aba+stats em sucesso.
- *    - <InvalidosTab> recebe 2 props novas: `onPromover` e
- *      `promovendoLeadIds`.
- *    - RecuperarParaCampanhaModal instanciado junto dos demais modais.
- *
- *   Dependência runtime:
- *     • Backend crm-leads.ts v1.22 (action recuperar_invalido_para_campanha
- *       + listar_invalidos com bounced/vertical no payload).
- *     • useInvalidos.ts v1.3 (método recuperarParaCampanha).
- *     • InvalidosTab.tsx v1.3 (botão Promover purple).
- *     • RecuperarParaCampanhaModal.tsx v1.0 (componente novo).
- *
- *   Compatibilidade: InvalidosTab v1.3 mantém props opcionais — se
- *   `onPromover` for omitido, o botão Promover não aparece (degradação
- *   graciosa preservada).
- *
- * v1.14 (18/06/2026 — Sub-fase 3.D refino: Anti-duplicidade de importação):
- *   Cirurgia mínima: passa a nova prop `onVerificarDuplicidade` ao
- *   `ImportarListaLeadsModal` v1.1, ligando ao método
- *   `leadsImportadosH.verificarDuplicidade` do hook v1.4. Permite ao
- *   modal classificar cada email da planilha contra `email_leads`,
- *   `email_optout` e `prospect_leads` na pré-visualização e bloquear
- *   submit de duplicatas (LGPD + integridade do CRM).
- *
- *   Dependência: backend revalidacao-leads-importados v1.5 com action
- *   POST `?action=verificar_duplicidade`, e prospect-revalidate v1.4
- *   com defesa em profundidade no INSERT preventivo.
- *
- * v1.13 (18/06/2026 — Sub-fase 3.D refino: Promover Lead manual):
- *   Adiciona o fluxo de promoção manual para leads importados que
- *   caíram em `nao_localizado` (cascade automatizado falhou).
- *
- *   Mudanças cirúrgicas:
- *    - Novo import: PromoverLeadModal.
- *    - Novo state: `promovendoLead: LeadImportado | null`.
- *    - LeadsImportadosTab recebe nova prop `onPromover`.
- *    - PromoverLeadModal instanciado junto dos demais modais, chamando
- *      `leadsImportadosH.promoverManualmente(lead_id)` no onConfirmar.
- *    - Após promoção bem-sucedida: dispara `leadsH.carregarStats()` para
- *      o badge "Leads" refletir o novo total (que ganhou 1 lead promovido).
- *      A aba "Leads Importados" já tem o item removido localmente pelo
- *      hook v1.3.
- *
- *   Dependência: backend revalidacao-leads-importados v1.3 com a action
- *   POST `?action=promover_manualmente`, e helper promover-email-lead v1.1
- *   com origem parametrizada.
- *
- * v1.12 (17/06/2026 — Sub-fase 3.D: Auto-promoção + Edição):
- *   Complementa a Sub-fase 3.C (v1.11) com:
- *    - Modal "Editar Lead Importado" — formulário rico permitindo
- *      ajustar dados do lead antes de revalidar/promover.
- *    - Auto-promoção transparente para o usuário: rodada de validação
- *      que termina com status_atualizacao='atualizado' e sem
- *      review_manual transfere o lead para email_leads (CRM) e remove
- *      de prospect_leads na mesma chamada. A aba "Leads Importados"
- *      naturalmente diminui à medida que leads são promovidos.
- *
- *   Mudanças cirúrgicas:
- *    - Novo import: EditarLeadImportadoModal.
- *    - Novos states: `modalEditarLead` + `editandoLead`.
- *    - Handler `abrirEditarLead(lead)` / `fecharEditarLead()` / `salvarEdicao()`.
- *    - LeadsImportadosTab agora recebe prop `onEditar`.
- *    - EditarLeadImportadoModal instanciado junto dos demais modais.
- *
- *   Dependência: backend prospect-leads-importados v1.1 com suporte a
- *   PATCH, e prospect-revalidate v1.2 com auto-promoção integrada.
- *
- * v1.11 (17/06/2026 — Sub-fase 3.C: Importar Lista de Leads):
- *   Adiciona o fluxo de importação manual de leads via Excel/CSV no topo
- *   do BaseLeadsPage, complementando o "Importar Prospects" existente
- *   (que continua intacto). Cobre o caso de uso de GC/SDR que recebe
- *   uma planilha externa e quer enriquecê-la via cascata de revalidação
- *   (Hunter+Snov.io+Apollo+Gemini) ANTES de virar email_leads do CRM.
- *
- *   Mudanças cirúrgicas:
- *    - Novo import: useLeadsImportados (hook orquestrador da nova aba).
- *    - Novo import: ImportarListaLeadsModal (modal de upload xlsx/csv).
- *    - Novo import: LeadsImportadosTab (aba dedicada com tabela + ações).
- *    - `abaAtiva` agora aceita 'leads_importados' (entre 'leads' e
- *      'vincular_em_lote' — ordem semântica do funil).
- *    - `responsaveisH.carregar()` agora dispara para TODOS os perfis
- *      (não só Administrador), porque o modal de upload precisa da
- *      lista de GC/SDR pra resolver a coluna "Responsável" da planilha.
- *    - Novo state `modalImportarListaAberto` + handlers (abrir/fechar/concluído).
- *    - Novo botão "Importar Lista de Leads" (teal-600) entre os 2 botões
- *      existentes no header (indigo "Importar Prospects" + emerald "Nova Empresa").
- *    - Nova entrada no array de tabs (ícone fa-file-import).
- *    - useEffect para carregar a nova aba quando ativa.
- *    - Renderização condicional + modal.
- *
- *   Dependência runtime:
- *     • Pacote `xlsx` (SheetJS) — instalar com `npm install xlsx`.
- *     • Backend prospect-revalidate v1.1 (suporte a INSERT preventivo).
- *     • Endpoint /api/prospect-leads-importados v1.0.
- *     • Migration 2026-06-17_prospect_leads_motor_importacao.sql aplicada
- *       (CHECK constraint do `motor` aceita 'importacao_lista').
- *
- * v1.10 (16/06/2026 — F8: Botão Recovery na aba Inválidos):
- *   Pluga o motor de Recovery (api/campaign-email-recovery — em
- *   Production desde 13/06/2026, Sub-fase 3.A) diretamente na aba
- *   "E-mails Inválidos". Antes, Recovery só era acionável via SQL
- *   ou drawer Meus Leads. Agora o gestor/SDR vê o lead inválido na
- *   aba dedicada e dispara o Recovery com 1 clique.
- *
- *   Mudanças cirúrgicas:
- *
- *    - Novo state `recoveringLeadIds: Set<number>` rastreia leads em
- *      Recovery em andamento. Backed por React state com Set imutável
- *      (substitui por `new Set(prev)` em cada UPDATE).
- *
- *    - Novo handler `handleTentarRecovery(leadId)`:
- *        1. `window.confirm` com aviso sobre tentativas restantes.
- *        2. Adiciona leadId ao Set de em-andamento.
- *        3. POST /api/campaign-email-recovery
- *             body: { action: 'recover_lead', lead_id, criado_por }
- *        4. Decisão por `response.status`:
- *             'recovered' → alert sucesso com email novo
- *             'no_match'  → alert info com tentativas restantes
- *             'limite_atingido' → alert ÂMBAR (3/3 esgotado)
- *             'dominio_invalido' → alert ÂMBAR (MX falhou)
- *             erro (network/500) → alert vermelho
- *        5. Remove leadId do Set.
- *        6. Recarrega `invalidosH` + `leadsH.carregarStats()` para que
- *           o badge da aba e a listagem reflitam o estado novo.
- *
- *    - `<InvalidosTab>` recebe 2 props novas:
- *        `onTentarRecovery` (handler)
- *        `recoveringLeadIds` (array de leads em andamento — usado pelo
- *                              componente para mostrar spinner no botão)
- *
- *   Dependência runtime: o motor Recovery (api/campaign-email-recovery
- *   v2.0) JÁ ESTÁ EM PRODUCTION desde 13/06/2026. Esta v1.10 apenas
- *   conecta a UI ao endpoint existente — zero risco de regressão fora
- *   do escopo da aba Inválidos.
- *
- *   Compatibilidade: o InvalidosTab v1.1 já aceita `onTentarRecovery`
- *   como prop opcional (degradação graciosa — sem prop, sem botão).
- *   A v1.2 do InvalidosTab (entregue junto) adiciona o spinner via
- *   `recoveringLeadIds`.
- *
- * v1.9 (14/06/2026 — Bug 1: Empresas no Modal Lead):
- *   Em Production o dropdown "Empresa" do LeadFormModal aparecia sem
- *   opções (só "Sem empresa") mesmo quando havia empresas cadastradas
- *   (cenário pós-deploy do INSERT de TECHFORTI). Causa-raiz: o
- *   `empresasH.carregar()` SÓ era disparado quando a aba ativa era
- *   "empresas" (useEffect dependente de `abaAtiva`). Se o usuário
- *   entrasse direto na aba "leads" (deep link, refresh, navegação
- *   por outro fluxo) e abrisse o modal, o array `empresas` chegava
- *   vazio. Fix: passar `empresasH.carregar()` para o useEffect de
- *   mount global, no mesmo lugar onde `tiposCampanhaH.carregar()`
- *   já era chamado. O useEffect específico da aba 'empresas'
- *   permanece para tratar mudanças de paginação/busca/setor dentro
- *   da aba. Bug 2 (verticais divergentes) foi tratado em paralelo
- *   no CampanhaWizard.tsx v2.2 e crm-campanhas.ts v1.15.
- *
- * v1.8 (13/06/2026 — Coluna ANALISTA + ordenação configurável):
- *   Continuação da reorganização Prospect/Lead (v1.7). Plugado o novo
- *   estado de ordenação do hook `useLeads` v1.2 na tabela "Meus Leads":
- *
- *    - `useEffect` da aba 'leads' ganha `leadsH.ordenarPor` na dep array
- *      → recarrega a lista quando o usuário troca a ordem no dropdown.
- *    - Novo handler `onOrdenarPorChange` faz duas coisas em sequência:
- *        1. Reseta paginação para a página 1 (UX coerente — ao mudar
- *           ordem, faz sentido começar do topo).
- *        2. Atualiza o estado `ordenarPor` no hook.
- *    - `<LeadsTab>` recebe 2 props novas: `ordenarPor` e
- *      `onOrdenarPorChange` (consumidos pelo dropdown da v1.1).
- *
- *   Sem mudança em outros pontos do container. Cirurgia mínima.
- *
- * v1.7 (13/06/2026 — Fase 1 da reorganização Prospect/Lead):
- *   Reorganização visual e funcional das sub-abas para alinhar o
- *   funil com o vocabulário real (Prospect → Lead → Campanha → saídas):
- *
- *   ORDEM NOVA (6 abas):
- *     1. 🏢 Minhas Empresas    (rename de "Empresas")
- *     2. 👥 Meus Leads          (rename de "Leads")
- *     3. 🔗 Vincular em Lote    (sem mudança)
- *     4. 💬 Respostas Campanhas (rename de "Respostas")
- *     5. ⚠️ E-mails Inválidos   (rename de "Inválidos")
- *     6. 🚫 Opt-Out              (NOVA — movida das Configurações)
- *
- *   Mudanças aditivas:
- *    - `abaAtiva` agora aceita 'opt_out' (chave interna; literal exibida
- *      é "Opt-Out").
- *    - Import do novo OptOutTab local (src/components/crm/base-leads/),
- *      com RBAC contextual: Admin/GR&S vê todos; GC/SDR vê apenas
- *      opt-outs cujos leads são deles (filtro por reservado_por feito
- *      no backend crm-config v1.1).
- *    - Header da página renomeado de "Empresas & Leads" para
- *      "Base de Leads" — consistência com o item do menu lateral
- *      e neutralidade em relação ao crescimento de abas (Respostas,
- *      Inválidos, Opt-Out são saídas, não entidades).
- *    - Labels visuais das abas existentes renomeados conforme a tabela
- *      acima. NENHUMA mudança nas chaves internas (`empresas`, `leads`,
- *      `respostas`, `invalidos`, `vincular_em_lote`) para preservar
- *      compat com deep-links, telemetria e código a jusante.
- *
- *   Sem impacto em:
- *    - KPI cards (continuam com label compacto: Empresas, Leads,
- *      Prospects, Clientes, Opt-Out — mantém leitura rápida).
- *    - Hooks (useEmpresas, useLeads, useRespostas, useInvalidos —
- *      inalterados).
- *    - Endpoints existentes (apenas crm-config.ts ganhou filtro
- *      reservado_por; ver v1.1).
- *
- * v1.6 (11/06/2026 — Opt-out manual / Bloco 4 do plano OPT-OUT 100%):
- *   Plugado o callback `onDesabilitar` no LeadFormModal. Handler
- *   `handleDesabilitarLead` chama o novo método `useLeads.desabilitar`
- *   (v1.1), exibe feedback ao usuário (toast/alert com total cancelado),
- *   fecha o modal e recarrega listagem + stats para refletir o badge
- *   "Opt-out" e a saída do lead das contagens.
- *   - Não-bloqueante: se o callback ficasse desinstalado (ex.: futura
- *     mudança), o LeadFormModal v1.2 simplesmente não renderiza o botão.
- *
- * v1.5 (10/06/2026 — Vinculação em Lote): nova aba "🎯 Vincular em Lote"
- *   adicionada ao lado de Empresas/Leads/Respostas/Inválidos. Permite ao
- *   Gestor Comercial/SDR vincular múltiplos leads a uma campanha existente
- *   (status ativa/pausada/agendada) em uma única operação, com possibilidade
- *   de alteração de vertical em lote. Substitui o fluxo arriscado de "Editar
- *   Campanha → adicionar leads".
- *   🛡️ REGRA CRECI BIDIRECIONAL aplicada: leads CRECI não aparecem nesta aba
- *   e a vertical CRECI não pode ser destino (defesa em profundidade backend).
- *   Mudanças aditivas neste arquivo:
- *    - `abaAtiva` agora aceita 'vincular_em_lote'
- *    - Import de VincularEmLoteTab
- *    - Nova entrada no array de tabs (sem badge — não tem listagem persistente)
- *    - Renderização condicional
- *
- * v1.4 (05/06/2026 — Lead RBAC fix): leads criados via "Novo Lead"
- *   estavam ficando com vertical=NULL, apto_campanha=false,
- *   reservado_por=NULL — e por isso invisíveis para a action
- *   `leads_disponiveis` da campanha. Correção em 3 frentes:
- *    - Instancia hook `useTiposCampanha` no mount, passa lista para
- *      o LeadFormModal alimentar o seletor de vertical.
- *    - Instancia hook `useResponsaveis` no mount (apenas se o usuário
- *      logado for Administrador). Passa lista de GC/SDR para o
- *      LeadFormModal alimentar o seletor de "Reservado para".
- *    - Para não-admin, o LeadFormModal trava automaticamente
- *      `reservado_por = currentUser.id` (lógica interna do modal).
- *
- * v1.3 (04/06/2026 — Fase 8-fix2): badges das 4 abas (Empresas / Leads /
- *   Respostas / Inválidos) agora usam `stats.total_*` como fonte primária
- *   e caem em `*H.total` apenas como fallback. Antes os badges ficavam
- *   zerados até o usuário clicar em cada aba (porque os hooks só carregam
- *   sob demanda). Com a v1.5 do `crm-leads.ts` devolvendo `total_respostas`
- *   e `total_invalidos` no payload de `stats` (já chamado no mount), o
- *   número correto aparece desde o primeiro render — sem custo extra de
- *   requisições.
- *
- * v1.2 (04/06/2026 — Fase 8-Inbox): novas abas "Respostas" e "Inválidos".
- *   Mudanças aditivas:
- *    - `abaAtiva` agora aceita 'respostas' e 'invalidos'.
- *    - Imports dos novos hooks (useRespostas, useInvalidos) e componentes
- *      (RespostasTab, InvalidosTab).
- *    - useEffects para carregar cada tab sob demanda (mesmo padrão das
- *      abas existentes).
- *    - Handler `abrirEditarLeadPorId(leadId)`: usado pela aba Inválidos
- *      para corrigir cadastro do lead. Faz fetch em /api/crm-leads
- *      ?action=detalhe_lead, popula o formLead e abre o LeadFormModal
- *      em modo 'editar'.
- *    - Após edição bem-sucedida, todas as 4 listagens são recarregadas
- *      (empresas, leads, respostas, invalidos) para refletir mudanças.
- *
- * v1.1 (03/06/2026 — Fase 7-MVP): suporte a deep link.
- *   Recebe prop opcional `deepLinkLeadId`. Quando presente, força a aba
- *   'leads' e dispara `abrirDetalhe(N)` automaticamente. Após consumir,
- *   chama `onDeepLinkConsumed` para limpar o state no App.tsx — evita
- *   reabertura ao re-render.
- *
- * v1.0 (Fase 1C — 29/05/2026): primeira versão.
- *   Substitui o componente monolítico EmpresasLeadsCRM.tsx.
- *   Responsabilidades:
- *    - Orquestrar os hooks useEmpresas, useLeads, useImportProspects.
- *    - Gerenciar os modais (Empresa/Lead form, Importação) e
- *      drawers (Empresa/Lead detalhe).
- *    - Renderizar header + KPIs + abas Empresas/Leads.
+ * Histórico anterior:
+ *  - v1.18 (30/06/2026) — Pacote P2 "CRM E-mail" Outbound (ligação do
+ *    editor de resposta ao RespostasTab v2.3). MIGRADO ao CRMEmailPage.
+ *  - v1.17 (30/06/2026) — Pacote P1 "CRM E-mail" (Inbox + Thread
+ *    read-only). MIGRADO ao CRMEmailPage.
+ *  - v1.16 (30/06/2026) — Filtros CRECI + Analista na aba Meus Leads.
+ *  - v1.15 (23/06/2026) — Fluxo "Promover" na aba Inválidos. MIGRADO.
+ *  - v1.14 (18/06/2026) — Anti-duplicidade em Importar Lista de Leads.
+ *  - v1.13 (18/06/2026) — Promover Lead manual (Leads Importados).
+ *  - v1.12 (17/06/2026) — Editar Lead Importado + auto-promoção.
+ *  - v1.11 (17/06/2026) — Aba "Leads Importados".
+ *  - v1.10 (16/06/2026) — Recovery de e-mail. MIGRADO.
+ *  - Versões < 1.10 documentadas no histórico Git.
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useEmpresas } from '../shared/hooks/useEmpresas';
 import { useLeads } from '../shared/hooks/useLeads';
 import { useImportProspects } from '../shared/hooks/useImportProspects';
-// 🆕 v1.2 (Fase 8-Inbox) — hooks das novas abas
-import { useRespostas } from '../shared/hooks/useRespostas';
-import { useInvalidos } from '../shared/hooks/useInvalidos';
 // 🆕 v1.4 (Lead RBAC fix) — hooks para o LeadFormModal
 import { useTiposCampanha } from '../shared/hooks/useTiposCampanha';
 import { useResponsaveis } from '../shared/hooks/useResponsaveis';
 
 import EmpresasTab from './EmpresasTab';
 import LeadsTab, { type OpcaoFiltroAnalista } from './LeadsTab';
-// 🆕 v1.2 (Fase 8-Inbox) — componentes das novas abas
-import RespostasTab from './RespostasTab';
-import InvalidosTab from './InvalidosTab';
 // 🆕 v1.5 (Vinculação em Lote — 10/06/2026)
 import VincularEmLoteTab from './VincularEmLoteTab';
-// 🆕 v1.7 (Reorganização Prospect/Lead — 13/06/2026)
-//   OptOutTab movido das Configurações para a Base de Leads.
-//   Esta é a versão local com RBAC contextual (filtra por
-//   reservado_por para GC/SDR). O OptOutTab antigo de
-//   src/components/crm/configuracoes/ continua no repo apenas
-//   para preservar histórico Git — não é mais importado.
-import OptOutTab from './OptOutTab';
+// 🆕 v1.19 (01/07/2026 — Separação CRM E-mail vs Base de Leads):
+//   Imports removidos (todos migrados para CRMEmailPage.tsx v1.0):
+//     - useRespostas, useInvalidos (hooks)
+//     - RespostasTab, InvalidosTab, OptOutTab (componentes)
+//     - RecuperarParaCampanhaModal + InvalidoItem (Recuperação)
 import EmpresaFormModal from './EmpresaFormModal';
 import LeadFormModal from './LeadFormModal';
 import EmpresaDetailDrawer from './EmpresaDetailDrawer';
@@ -387,10 +83,6 @@ import EditarLeadImportadoModal from './EditarLeadImportadoModal';
 import type { LeadImportado } from '../shared/hooks/useLeadsImportados';
 // 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026)
 import PromoverLeadModal from './PromoverLeadModal';
-// 🆕 v1.15 (Recuperação de inválidos para campanha — 23/06/2026)
-import RecuperarParaCampanhaModal from '../campanhas/RecuperarParaCampanhaModal';
-// 🆕 v1.15 — InvalidoItem estendido (com bounced + vertical do backend v1.22)
-import type { InvalidoItem } from '../shared/hooks/useInvalidos';
 
 import KpiCard from '../shared/components/KpiCard';
 import type { CurrentUserLite, Empresa, Lead } from '../types/crm.types';
@@ -423,12 +115,10 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   onDeepLinkConsumed,
 }) => {
   // ── Aba ativa ──
-  // 🆕 v1.2 (Fase 8-Inbox) — agora aceita 'respostas' e 'invalidos'.
-  // 🆕 v1.5 (Vinculação em Lote — 10/06/2026) — agora aceita 'vincular_em_lote'.
-  // 🆕 v1.7 (Reorganização Prospect/Lead — 13/06/2026) — agora aceita 'opt_out'.
-  // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — agora aceita 'leads_importados'.
+  // 🆕 v1.19 (01/07/2026) — Reduzido para 4 abas. Removidas:
+  //   'respostas', 'invalidos', 'opt_out' (migradas ao CRMEmailPage).
   const [abaAtiva, setAbaAtiva] = useState<
-    'empresas' | 'leads' | 'leads_importados' | 'respostas' | 'invalidos' | 'vincular_em_lote' | 'opt_out'
+    'empresas' | 'leads' | 'leads_importados' | 'vincular_em_lote'
   >('empresas');
 
   // ── Hooks ──
@@ -472,22 +162,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     defaultFiltroAnalista: defaultsLeads.defaultFiltroAnalista,
   });
   const importH = useImportProspects();
-  // 🆕 v1.2 (Fase 8-Inbox)
-  // 🆕 v1.11 (22/06/2026) — RBAC propagado também para useRespostas v1.1
-  //   (filtro por dono da CAMPANHA) e useInvalidos v1.2 (filtro por dono
-  //   do LEAD, mesma regra do useLeads v1.3).
-  const respostasH = useRespostas({
-    currentUser: {
-      id: currentUser.id,
-      tipo_usuario: currentUser.tipo_usuario,
-    },
-  });
-  const invalidosH = useInvalidos({
-    currentUser: {
-      id: currentUser.id,
-      tipo_usuario: currentUser.tipo_usuario,
-    },
-  });
+  // 🆕 v1.19 (01/07/2026) — useRespostas e useInvalidos migrados ao CRMEmailPage.
   // 🆕 v1.4 (Lead RBAC fix) — fontes p/ o LeadFormModal
   const tiposCampanhaH = useTiposCampanha();
   const responsaveisH = useResponsaveis();
@@ -509,21 +184,9 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   // 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026) — Modal "Promover Lead manualmente"
   const [promovendoLead, setPromovendoLead] = useState<LeadImportado | null>(null);
 
-  // 🆕 v1.10 (F8 — 16/06/2026) — Recovery em andamento por lead.
-  // Set imutável para garantir re-render do InvalidosTab quando o
-  // estado muda. O componente filho usa este Set para mostrar spinner
-  // no botão "Recovery" dos leads que estão sendo processados.
-  const [recoveringLeadIds, setRecoveringLeadIds] = useState<Set<number>>(new Set());
-
-  // 🆕 v1.15 (23/06/2026 — Recuperação de inválidos para campanha):
-  //   Item completo do InvalidoItem selecionado pelo botão "Promover" do
-  //   InvalidosTab v1.3. Guardamos o objeto inteiro (não só o ID) porque
-  //   o backend listar_invalidos v1.22 já devolve nome/email/vertical no
-  //   payload — evitamos uma requisição extra ao detalhe_lead.
-  const [recuperandoLeadItem, setRecuperandoLeadItem] = useState<InvalidoItem | null>(null);
-  // Set imutável de leads em chamada ativa de recuperação (POST). O
-  // InvalidosTab usa para mostrar spinner no botão Promover.
-  const [recuperandoLeadIds, setRecuperandoLeadIds] = useState<Set<number>>(new Set());
+  // 🆕 v1.19 (01/07/2026) — States removidos (migrados ao CRMEmailPage):
+  //   - recoveringLeadIds (motor Recovery da aba Inválidos)
+  //   - recuperandoLeadItem / recuperandoLeadIds (fluxo Promover)
 
   // ── Efeitos: carregar dados ──
   useEffect(() => {
@@ -570,20 +233,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     leadsH.filtroAnalista,
   ]);
 
-  // 🆕 v1.2 (Fase 8-Inbox) — carregamento das novas abas sob demanda
-  useEffect(() => {
-    if (abaAtiva === 'respostas') {
-      respostasH.carregar();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abaAtiva, respostasH.pagina, respostasH.busca]);
-
-  useEffect(() => {
-    if (abaAtiva === 'invalidos') {
-      invalidosH.carregar();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abaAtiva, invalidosH.pagina, invalidosH.busca]);
+  // 🆕 v1.19 (01/07/2026) — useEffects das abas 'respostas' e 'invalidos'
+  //   REMOVIDOS (migrados ao CRMEmailPage).
 
   // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — carregar Leads Importados sob demanda
   useEffect(() => {
@@ -679,211 +330,6 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     }
   };
 
-  // ════════════════════════════════════════════════════════════
-  // 🆕 v1.10 (16/06/2026 — F8) — RECOVERY DE EMAIL
-  // ════════════════════════════════════════════════════════════
-  //
-  // Aciona o motor Recovery v2.0 (api/campaign-email-recovery, em
-  // Production desde 13/06/2026 — Sub-fase 3.A) para tentar encontrar
-  // o email correto de um lead bouncedo. Fluxo:
-  //
-  //   1. Confirma com o usuário (window.confirm) — Recovery consome
-  //      tokens Snov.io + chamadas Gemini, por isso a ação não deve
-  //      ser disparada sem confirmação consciente.
-  //   2. Marca o leadId no Set `recoveringLeadIds` (spinner aparece).
-  //   3. POST /api/campaign-email-recovery com action='recover_lead'.
-  //   4. Decide a UX por `data.status`:
-  //        'recovered'        → ✅ alert com novo email + recarrega aba
-  //        'no_match'         → ⚠️ alert com tentativas restantes
-  //        'limite_atingido'  → ⚠️ alert âmbar (3/3 esgotado)
-  //        'dominio_invalido' → ⚠️ alert âmbar (MX falhou)
-  //        outros (network/500) → ❌ alert vermelho
-  //   5. Remove leadId do Set (spinner some).
-  //   6. Recarrega listagem da aba + stats (badges).
-  //
-  // Em caso de SUCESSO, o lead some da aba Inválidos (porque o
-  // backend reseta `bounced=false` e limpa `motivo_invalidacao` —
-  // crm-leads.ts v1.11 PATCH atualizar_lead faz isso automaticamente
-  // quando o email muda).
-  //
-  // RBAC: ação disponível para qualquer perfil que veja a aba
-  //   Inválidos. Bloqueio fino (RBAC por reservado_por) deve ser
-  //   adicionado no backend Recovery se necessário no futuro.
-  const handleTentarRecovery = async (leadId: number) => {
-    // Acha tentativas atuais para mensagem informativa
-    const itemAtual = invalidosH.itens.find((i: any) => i.lead_id === leadId);
-    const tentativas = itemAtual?.tentativas_recovery ?? 0;
-    const restantes = Math.max(0, 3 - tentativas);
-
-    const confirmou = window.confirm(
-      `Tentar recuperar o email correto deste lead via motor de Recovery?\n\n` +
-      `Tentativas restantes: ${restantes}/3\n\n` +
-      `Esta operação consome créditos Snov.io e chamadas Gemini API. ` +
-      `Pode levar até ~60 segundos.`,
-    );
-    if (!confirmou) return;
-
-    // Marca o lead como em-Recovery (spinner aparece no botão)
-    setRecoveringLeadIds((prev) => {
-      const next = new Set(prev);
-      next.add(leadId);
-      return next;
-    });
-
-    try {
-      const resp = await fetch('/api/campaign-email-recovery', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'recover_lead',
-          lead_id: leadId,
-          criado_por: currentUser.nome_usuario || 'sistema',
-        }),
-      });
-      const data = await resp.json().catch(() => ({}));
-
-      if (!resp.ok) {
-        alert(
-          `❌ Falha no Recovery (HTTP ${resp.status}):\n` +
-          (data?.error || 'Erro desconhecido. Verifique os logs do Vercel.'),
-        );
-      } else {
-        switch (data?.status) {
-          case 'recovered':
-            alert(
-              `✅ Email recuperado com sucesso!\n\n` +
-              `Novo email: ${data?.email || '—'}\n` +
-              `Método: ${data?.metodo_validacao || 'snov.io'}\n` +
-              `Posição na cascata: ${data?.posicao ?? '—'}\n\n` +
-              `O lead foi reenfileirado nas campanhas em que estava ativo.`,
-            );
-            break;
-          case 'no_match':
-            alert(
-              `⚠️ Recovery não encontrou um email válido nesta tentativa.\n\n` +
-              `Tentativas restantes: ${Math.max(0, 3 - (data?.tentativas_recovery ?? tentativas + 1))}/3\n\n` +
-              `Você pode tentar novamente ou corrigir o email manualmente.`,
-            );
-            break;
-          case 'limite_atingido':
-            alert(
-              `⚠️ Tentativas de Recovery esgotadas (3/3).\n\n` +
-              `Corrija o email manualmente clicando em "Editar".`,
-            );
-            break;
-          case 'dominio_invalido':
-            alert(
-              `⚠️ Domínio do email é inválido (MX inexistente).\n\n` +
-              `Recovery não pode operar. Corrija o email manualmente.`,
-            );
-            break;
-          default:
-            alert(
-              `Recovery concluído com status: "${data?.status || 'desconhecido'}".\n\n` +
-              (data?.mensagem || 'Veja os logs para detalhes.'),
-            );
-        }
-      }
-    } catch (err: any) {
-      alert('❌ Erro de rede ao chamar Recovery: ' + (err?.message || 'desconhecido'));
-    } finally {
-      // Remove o lead do Set (spinner some)
-      setRecoveringLeadIds((prev) => {
-        const next = new Set(prev);
-        next.delete(leadId);
-        return next;
-      });
-      // Recarrega aba + stats — independente do resultado
-      invalidosH.carregar();
-      leadsH.carregarStats();
-    }
-  };
-
-  // ════════════════════════════════════════════════════════════
-  // 🆕 v1.15 (23/06/2026) — RECUPERAR INVÁLIDO PARA CAMPANHA
-  // ════════════════════════════════════════════════════════════
-  //
-  // Fluxo do botão "Promover" da aba E-mails Inválidos (InvalidosTab v1.3):
-  //
-  //   1. handleAbrirRecuperar(leadId): encontra o item na listagem corrente
-  //      e abre o modal RecuperarParaCampanhaModal. Não faz requisição
-  //      extra — o item já tem nome/email/vertical do listar_invalidos v1.22.
-  //
-  //   2. RecuperarParaCampanhaModal carrega campanhas via
-  //      GET /api/crm-campanhas?action=listar_campanhas_disponiveis_para_lead
-  //      &lead_id={leadId} (action existente desde 09/06/2026, aceita lead_id).
-  //
-  //   3. Usuário escolhe campanha → modal invoca onConfirmar(leadId, campanhaId).
-  //
-  //   4. handleConfirmarRecuperacao(leadId, campanhaId):
-  //      - Marca leadId em recuperandoLeadIds (spinner aparece no botão).
-  //      - Chama invalidosH.recuperarParaCampanha → backend v1.22.
-  //      - Sucesso: alert verde, fecha modal, recarrega aba + stats.
-  //      - Erro:    alert vermelho, modal continua aberto (usuário pode
-  //                 tentar outra campanha sem ter que reabrir tudo).
-  //      - Sempre: remove leadId de recuperandoLeadIds (spinner some).
-  //
-  // RBAC: o botão Promover só aparece para leads com bounced=false (regra
-  //   do InvalidosTab v1.3). O backend v1.22 valida de novo em defesa em
-  //   profundidade (proteção contra race conditions).
-
-  const handleAbrirRecuperar = (leadId: number) => {
-    const item = invalidosH.itens.find((i: InvalidoItem) => i.lead_id === leadId);
-    if (!item) {
-      alert('Lead não encontrado na listagem atual — recarregue a página.');
-      return;
-    }
-    setRecuperandoLeadItem(item);
-  };
-
-  const handleConfirmarRecuperacao = async (leadId: number, campanhaId: number) => {
-    // Marca como em-andamento (spinner no botão Promover do InvalidosTab)
-    setRecuperandoLeadIds((prev) => {
-      const next = new Set(prev);
-      next.add(leadId);
-      return next;
-    });
-
-    try {
-      const resultado = await invalidosH.recuperarParaCampanha(
-        leadId,
-        campanhaId,
-        currentUser.nome_usuario,
-      );
-
-      if (resultado.success) {
-        const nomeCamp = resultado.vinculo?.campanha_nome || 'campanha';
-        const enfileirados = resultado.vinculo?.enfileirados ?? 0;
-        alert(
-          `✅ Lead recuperado com sucesso!\n\n` +
-          `Vinculado à campanha: "${nomeCamp}"\n` +
-          (enfileirados > 0
-            ? `Emails enfileirados imediatamente: ${enfileirados}\n\n`
-            : `O lead receberá os emails quando a campanha iniciar.\n\n`) +
-          `O lead saiu da aba "E-mails Inválidos".`,
-        );
-        setRecuperandoLeadItem(null); // fecha o modal
-        invalidosH.carregar();
-        leadsH.carregarStats();
-      } else {
-        // Modal CONTINUA aberto — usuário pode tentar outra campanha sem
-        // reabrir tudo. Mostramos o erro estruturado do backend.
-        alert(
-          `❌ Não foi possível recuperar o lead:\n\n${resultado.error || 'Erro desconhecido.'}`,
-        );
-      }
-    } catch (err: any) {
-      alert(
-        `❌ Erro de rede ao recuperar lead:\n\n${err?.message || 'desconhecido'}`,
-      );
-    } finally {
-      setRecuperandoLeadIds((prev) => {
-        const next = new Set(prev);
-        next.delete(leadId);
-        return next;
-      });
-    }
-  };
 
   const salvarLead = async () => {
     const ok = await leadsH.salvar(formLead as any, currentUser.nome_usuario);
@@ -892,13 +338,10 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       setFormLead({});
       leadsH.carregar();
       leadsH.carregarStats();
-      // 🆕 v1.2 — recarrega as listagens das outras abas para refletir
-      // qualquer mudança no e-mail (relevante para resolver itens da aba
-      // Inválidos: ao corrigir o e-mail, o item correspondente em
-      // email_fila ainda fica com status='bounce'/'erro', mas o usuário
-      // pode reenfileirar via campanha — fluxo manual atual).
-      if (abaAtiva === 'respostas') respostasH.carregar();
-      if (abaAtiva === 'invalidos') invalidosH.carregar();
+      // 🆕 v1.19 (01/07/2026) — Recarregamentos de respostasH/invalidosH
+      //   removidos (hooks migrados ao CRMEmailPage). Se o operador corrigir
+      //   um e-mail nesta página, o novo estado será visto na próxima visita
+      //   à página CRM E-mail (que recarrega no mount).
     }
   };
 
@@ -1083,7 +526,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             Base de Leads
           </h2>
           <p className="text-sm text-gray-500 mt-0.5">
-            Gestão do funil de prospecção, respostas e saídas LGPD
+            Gestão do funil de prospecção — empresas, leads e importações
           </p>
         </div>
         <div className="flex gap-2">
@@ -1110,8 +553,10 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
       </div>
 
       {/* ── KPI Cards ── */}
+      {/* 🆕 v1.19 (01/07/2026) — KPI "Opt-Out" REMOVIDO (migrado ao
+          CRMEmailPage). Grid ajustado de md:5 para md:4. */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <KpiCard
             label="Empresas"
             valor={stats.total_empresas}
@@ -1135,12 +580,6 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             valor={stats.total_clientes}
             icon="fa-solid fa-handshake"
             cor="green"
-          />
-          <KpiCard
-            label="Opt-Out"
-            valor={stats.total_optout}
-            icon="fa-solid fa-ban"
-            cor="red"
           />
         </div>
       )}
@@ -1204,31 +643,9 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
               icon: 'fa-solid fa-link',
               count: null as number | null,
             },
-            // 🆕 v1.2 (Fase 8-Inbox)
-            {
-              key: 'respostas' as const,
-              label: 'Respostas Campanhas',
-              icon: 'fa-solid fa-reply',
-              count: stats?.total_respostas ?? respostasH.total, // 🆕 v1.3
-            },
-            {
-              key: 'invalidos' as const,
-              label: 'E-mails Inválidos',
-              icon: 'fa-solid fa-circle-exclamation',
-              count: stats?.total_invalidos ?? invalidosH.total, // 🆕 v1.3
-            },
-            // 🆕 v1.7 (13/06/2026) — Opt-Out movido das Configurações.
-            //   Badge usa stats.total_optout (já vinha do crm-leads stats).
-            //   Para GC/SDR, o backend (crm-config v1.1) filtra a listagem
-            //   por leads do ator; o contador global no card KPI continua
-            //   refletindo o universo do RBAC do usuário pelo mesmo
-            //   mecanismo do stats.
-            {
-              key: 'opt_out' as const,
-              label: 'Opt-Out',
-              icon: 'fa-solid fa-ban',
-              count: stats?.total_optout ?? null,
-            },
+            // 🆕 v1.19 (01/07/2026) — Tab entries REMOVIDAS:
+            //   'respostas' (CRM E-mail), 'invalidos' (E-mails Inválidos),
+            //   'opt_out' (Opt-Out). Todas migradas ao CRMEmailPage.
           ].map((tab) => (
             <button
               key={tab.key}
@@ -1237,12 +654,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
                 // Reseta paginação ao trocar de aba
                 if (tab.key === 'empresas') empresasH.setPagina(1);
                 else if (tab.key === 'leads') leadsH.setPagina(1);
-                else if (tab.key === 'respostas') respostasH.setPagina(1);
-                else if (tab.key === 'invalidos') invalidosH.setPagina(1);
                 // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026)
                 else if (tab.key === 'leads_importados') leadsImportadosH.setPage(1);
-                // 🆕 v1.7 — 'opt_out' gerencia paginação internamente
-                //          (o OptOutTab não usa hook compartilhado).
               }}
               className={`flex-1 md:flex-none px-6 py-3 text-sm font-medium flex items-center justify-center gap-2 border-b-2 transition-colors whitespace-nowrap ${
                 abaAtiva === tab.key
@@ -1335,49 +748,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           />
         )}
 
-        {/* 🆕 v1.2 (Fase 8-Inbox) — Aba Respostas */}
-        {abaAtiva === 'respostas' && (
-          <RespostasTab
-            itens={respostasH.itens}
-            total={respostasH.total}
-            pagina={respostasH.pagina}
-            pageSize={respostasH.pageSize}
-            busca={respostasH.busca}
-            loading={respostasH.loading}
-            onBuscaChange={respostasH.setBusca}
-            onBuscar={() => {
-              respostasH.setPagina(1);
-              respostasH.carregar();
-            }}
-            onPaginaChange={respostasH.setPagina}
-            onAbrirLead={abrirDetalheLead}
-          />
-        )}
-
-        {/* 🆕 v1.2 (Fase 8-Inbox) — Aba Inválidos */}
-        {/* 🆕 v1.10 (16/06/2026 — F8) — props onTentarRecovery + recoveringLeadIds */}
-        {/* 🆕 v1.15 (23/06/2026 — Recuperação) — props onPromover + promovendoLeadIds */}
-        {abaAtiva === 'invalidos' && (
-          <InvalidosTab
-            itens={invalidosH.itens}
-            total={invalidosH.total}
-            pagina={invalidosH.pagina}
-            pageSize={invalidosH.pageSize}
-            busca={invalidosH.busca}
-            loading={invalidosH.loading}
-            onBuscaChange={invalidosH.setBusca}
-            onBuscar={() => {
-              invalidosH.setPagina(1);
-              invalidosH.carregar();
-            }}
-            onPaginaChange={invalidosH.setPagina}
-            onEditarLead={abrirEditarLeadPorId}
-            onTentarRecovery={handleTentarRecovery}
-            recoveringLeadIds={Array.from(recoveringLeadIds)}
-            onPromover={handleAbrirRecuperar}
-            promovendoLeadIds={Array.from(recuperandoLeadIds)}
-          />
-        )}
+        {/* 🆕 v1.19 (01/07/2026) — Blocos das abas 'respostas' e 'invalidos'
+            REMOVIDOS. Migrados ao CRMEmailPage.tsx. */}
 
         {/* 🆕 v1.5 (Vinculação em Lote — 10/06/2026) — Aba Vincular em Lote */}
         {abaAtiva === 'vincular_em_lote' && (
@@ -1393,11 +765,6 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             // 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026)
             onPromover={(lead) => setPromovendoLead(lead)}
           />
-        )}
-
-        {/* 🆕 v1.7 (Reorganização Prospect/Lead — 13/06/2026) — Aba Opt-Out */}
-        {abaAtiva === 'opt_out' && (
-          <OptOutTab currentUser={currentUser} />
         )}
       </div>
 
@@ -1487,24 +854,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
         onFechar={() => setPromovendoLead(null)}
       />
 
-      {/* 🆕 v1.15 (23/06/2026 — Recuperação de inválidos para campanha)
-          Disparado pelo botão "Promover" (purple) da aba E-mails Inválidos
-          quando o lead tem bounced=false (email já foi corrigido). */}
-      <RecuperarParaCampanhaModal
-        aberto={recuperandoLeadItem !== null}
-        leadId={recuperandoLeadItem?.lead_id ?? null}
-        leadNome={recuperandoLeadItem?.lead_nome ?? ''}
-        leadEmail={recuperandoLeadItem?.lead_email ?? ''}
-        leadVertical={recuperandoLeadItem?.vertical ?? null}
-        criadoPorEmail={currentUser.nome_usuario}
-        isLoading={
-          recuperandoLeadItem
-            ? recuperandoLeadIds.has(recuperandoLeadItem.lead_id)
-            : false
-        }
-        onFechar={() => setRecuperandoLeadItem(null)}
-        onConfirmar={handleConfirmarRecuperacao}
-      />
+      {/* 🆕 v1.19 (01/07/2026) — RecuperarParaCampanhaModal REMOVIDO
+          (migrado ao CRMEmailPage — a aba Inválidos vive lá agora). */}
 
       {/* ════════════════════════════════════════════════════════════ */}
       {/* DRAWERS                                                      */}
