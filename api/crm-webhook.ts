@@ -3,6 +3,81 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.17 — 03/07/2026 — SOFT BOUNCE tratado como hard (Opção A — B2B outbound)
+ *   (descoberto via investigação forense da Campanha_06_Ousourcing_Ecossistema_SAP
+ *    — sessão de Messias, 03/07/2026).
+ *
+ *   Bug raiz descoberto:
+ *     Bounces classificados como `Transient` (soft) pelo Resend passavam
+ *     por email_fila.status='bounce' + email_eventos.tipo_evento='bounced',
+ *     mas NÃO disparavam o bloco (A) — que marca email_leads.bounced=true
+ *     + email_lead_campanhas.status='bounced' — NEM o bloco (C-bounce) —
+ *     que cancela a fila pendente global. Resultado: leads com soft bounce
+ *     no step 1 continuavam recebendo steps 2/3/4 (que bounceavam de novo,
+ *     queimando reputação do domínio de envio).
+ *
+ *   Validação forense (queries SQL em Production 03/07/2026):
+ *     - Campanha_06_SAP: 20 bounces no step 1 (40 Permanent + 20 Transient).
+ *     - Dos 20 Transient, 10 escaparam para step 2 e bounceram de novo
+ *       (100% dos bounces do step 2 são Transient — nenhum Permanent).
+ *     - 82 leads afetados em 9 campanhas ativas em Production.
+ *     - 179 linhas em email_fila.status='pendente' aguardando envio para
+ *       destinatários já bouncados (49 step2 + 65 step3 + 65 step4).
+ *
+ *   Decisão de produto (Messias 03/07/2026 — Opção A):
+ *     Qualquer bounce (Permanent, Transient, Undetermined) é tratado como
+ *     terminal. Justificativa:
+ *       1. RMS-RAISA é 100% outbound B2B — não há caso transacional onde
+ *          retentar mailbox_full faz sentido.
+ *       2. AWS SES (motor do Resend) já executa retries internos antes de
+ *          entregar o evento email.bounced — se chega como Transient, o
+ *          servidor destino já falhou em múltiplas tentativas espaçadas.
+ *       3. Reputação de domínio B2B é ativo estratégico — cada envio para
+ *          email bouncado degrada deliverability agregada (Google Postmaster,
+ *          MS SNDS). Relevantíssimo no contexto do warming do
+ *          techcobbpo.com.br em Snov.io.
+ *       4. Se um lead soft-bouncou, chance de recuperação real 3 dias
+ *          depois é próxima de zero para B2B. Empresas maduras de outbound
+ *          (Reply.io, Lemlist, Outreach) tratam qualquer bounce como
+ *          terminal por padrão.
+ *
+ *   Mudança nesta versão (cirúrgica, no cálculo de `isHardBounce` ~linha 1445):
+ *     ANTES (v1.16):
+ *       const isHardBounce =
+ *         tipoInterno === 'bounced' &&
+ *         ['hard', 'permanent'].includes((bounceType || '').toLowerCase());
+ *     DEPOIS (v1.17):
+ *       const isHardBounce = tipoInterno === 'bounced';
+ *
+ *   O nome `isHardBounce` é preservado por conservadorismo cirúrgico
+ *   (é referenciado nos blocos A, C-bounce e demais consumidores).
+ *   Semanticamente, agora significa "bounce terminal" (qualquer tipo).
+ *
+ *   Granularidade preservada em 3 pontos (NÃO regride auditoria):
+ *     • email_leads.bounced_motivo — raw do Resend (Permanent/Transient/etc).
+ *     • email_leads.motivo_invalidacao — código snake_case via
+ *       classificarMotivoBounce (mailbox_inexistente, caixa_lotada,
+ *       bloqueado, servidor_indisponivel, bounce). As regex atuais já
+ *       capturam mensagens típicas de Transient (MailboxFull → caixa_lotada;
+ *       ContentRejected/policy → bloqueado; timeout → servidor_indisponivel).
+ *     • email_lead_historico.tipo — linha 1401 usa `bounceType` diretamente:
+ *       Permanent → 'bounce_permanente'; Transient → 'bounce'. Distinção
+ *       histórica preservada no timeline do lead.
+ *
+ *   Pareado com (mesma entrega):
+ *     - sql/2026-07-03_backfill_soft_bounce.sql — backfill retroativo para
+ *       corrigir os 82 leads em 9 campanhas ativas (aplicado APÓS deploy
+ *       deste código em Production, para evitar re-corrupção por eventos
+ *       ainda processáveis pelo v1.16).
+ *
+ *   Ordem de release obrigatória:
+ *     1. Deploy Preview do v1.17 → smoke test com bounce simulado.
+ *     2. Promoção Preview → Production do v1.17.
+ *     3. Backfill SQL em Production (transacional, BEGIN...COMMIT).
+ *
+ *   Sem migration SQL (whitelist da CHECK constraint em motivo_invalidacao
+ *   já cobre todos os códigos que classificarMotivoBounce retorna).
+ *
  * v1.16 — 23/06/2026 — Atualização do VÍNCULO lead↔campanha após hard bounce
  *   (descoberto via caso forense do Rafael Baroni — sessão de Messias).
  *
@@ -1442,9 +1517,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     //   Whitelist defensiva aceita ambas as strings conhecidas: a atual do
     //   Resend ('permanent') e a histórica de outras documentações ('hard').
     // ─────────────────────────────────────────────────────────────
-    const isHardBounce =
-      tipoInterno === 'bounced' &&
-      ['hard', 'permanent'].includes((bounceType || '').toLowerCase());
+    // 🆕 v1.17 (03/07/2026) — Opção A: qualquer bounce (Permanent, Transient,
+    //   Undetermined) é tratado como terminal para B2B outbound. Ver histórico
+    //   v1.17 no JSDoc do topo do arquivo. Nome `isHardBounce` preservado por
+    //   conservadorismo cirúrgico — semanticamente agora é "bounce terminal".
+    //   Granularidade Permanent vs Transient preservada em bounced_motivo (raw)
+    //   e em email_lead_historico.tipo (linha ~1401 continua distinguindo).
+    const isHardBounce = tipoInterno === 'bounced';
     const isComplained = tipoInterno === 'complained';
     // 🔧 v1.13 — variável `isTerminalDestrutivo` removida: blocos B (complained)
     //   e C-bounce (hard bounce) agora são tratados em ramos separados,
