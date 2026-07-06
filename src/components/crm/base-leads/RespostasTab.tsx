@@ -2,7 +2,38 @@
  * RespostasTab.tsx — Aba "CRM E-mail" (antes "Respostas Campanhas")
  *
  * Caminho: src/components/crm/base-leads/RespostasTab.tsx
- * Versão: 2.3 (POLISH P2 — visual respostas + ordem reversa — 30/06/2026)
+ * Versão: 2.4 (Semantic badge "Respondido" + comportamento "Nova" restrito ao dono — 06/07/2026)
+ *
+ * v2.4 (06/07/2026 — Semantic badge + lido por dono):
+ *   Dois ajustes finos de UX pedidos por Messias no smoke real de
+ *   06/07/2026 (após validação do lead 2805 — Luis Torres / Claranet):
+ *
+ *     1. BADGE "PENDENTE" → "RESPONDIDO":
+ *        Semanticamente, uma mensagem na inbox de respostas já E'
+ *        uma resposta — "Pendente" (classificação de triagem interna)
+ *        confundia o operador. Substituído pelo badge "Respondido"
+ *        (teal + ícone reply — mesmo padrão do badgeStatusEnvio
+ *        para consistência visual). Os outros valores de `classificacao`
+ *        (interessado, nao_interessado, agendou_reuniao, etc.)
+ *        continuam sendo exibidos como antes quando o operador classifica.
+ *        Mudança cirúrgica: apenas o bloco `if (!classificacao ||
+ *        classificacao === 'pendente')` da função `badgeClassificacao`.
+ *
+ *     2. BADGE "NOVA" AGORA REFLETE LEITURA PELO DONO:
+ *        O componente em si não muda — continua usando `t.tem_nao_lido`.
+ *        A mudança é no backend (crm-leads v1.26) + hook (useRespostas
+ *        v2.2): agora existe a action `marcar_thread_lida` que só grava
+ *        `lido=true, lido_por, lido_em` quando o LEITOR É O RESPONSÁVEL
+ *        da campanha. Admin acessa em modo leitura (sem alterar `lido`).
+ *        Isso corrige um bug conceitual anterior: antes, `lido` nunca
+ *        era gravado por ninguém — badge "Nova" ficava permanente para
+ *        toda mensagem.
+ *
+ *   Comportamento intencional preservado (v2.3):
+ *     • Sanitização HTML via DOMPurify
+ *     • Timeline em ordem descendente (Outlook-style)
+ *     • Editor de resposta (P2) intacto
+ *     • RBAC via podeResponder (banner amber para admin)
  *
  * v2.3 (30/06/2026 — POLISH P2):
  *   3 ajustes finos de UX pedidos por Messias em smoke real:
@@ -194,11 +225,17 @@ export interface RespostasTabProps {
 // ════════════════════════════════════════════════════════════
 
 function badgeClassificacao(classificacao: string | null | undefined) {
+  // 🆕 v2.4 (06/07/2026) — Semantic fix: mensagens na inbox são respostas
+  //   por natureza (é a caixa de respostas). "Pendente" (classificação de
+  //   triagem interna) confundia o operador. Substituído por "Respondido"
+  //   (teal + reply icon — mesmo padrão de badgeStatusEnvio para
+  //   consistência visual). Os outros valores de `classificacao`
+  //   (interessado, nao_interessado, etc.) continuam intactos.
   if (!classificacao || classificacao === 'pendente') {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs">
-        <i className="fa-regular fa-circle-dot"></i>
-        Pendente
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-teal-50 text-teal-700 rounded text-xs">
+        <i className="fa-solid fa-reply"></i>
+        Respondido
       </span>
     );
   }

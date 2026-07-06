@@ -2,7 +2,44 @@
  * useRespostas.ts — Hook de gestão da aba "CRM E-mail"
  *
  * Caminho: src/components/crm/shared/hooks/useRespostas.ts
- * Versão: 2.1 (Pacote P2 — Outbound + assinatura + BCC — 30/06/2026)
+ * Versão: 2.2 (Marcar como lido — restrito ao dono da campanha — 06/07/2026)
+ *
+ * v2.2 (06/07/2026 — Marcar como lido restrito ao dono):
+ *   Motivação: até a v2.1, nenhum endpoint gravava `email_respostas.lido=
+ *   true`. Consequência: badge "Nova" na inbox permanecia para toda
+ *   mensagem indefinidamente (bug conceitual). Fix arquitetural com
+ *   Opção B (Messias — 06/07/2026):
+ *
+ *     • Novo método `marcarLida(leadId, campanhaId)` — POST na nova
+ *       action `marcar_thread_lida` do backend (crm-leads v1.26).
+ *
+ *     • Backend valida server-side:
+ *         - Admin → retorna sucesso silencioso (NÃO altera `lido`).
+ *         - Não-responsável → 403.
+ *         - Responsável → UPDATE lido=true, lido_por=<email>, lido_em=NOW()
+ *           (idempotente via filtro `lido=false`).
+ *
+ *     • Integração automática no `abrirThread`: após o backend retornar
+ *       `pode_responder=true` (que já significa server-side "é o dono
+ *       e não é admin"), disparamos `marcarLida` em background —
+ *       operador não precisa fazer nada explícito.
+ *
+ *     • Após marcar, chamamos `carregar()` em background para atualizar
+ *       `tem_nao_lido` na lista do Inbox — quando o operador voltar,
+ *       o badge "Nova" já sumiu do card que ele acabou de ler.
+ *
+ *     • `marcarLida` também exposto no retorno para uso futuro (ex.:
+ *       botão "Marcar como lida" explícito na v2.3+).
+ *
+ *   Fluxo end-to-end (dono lê):
+ *     Inbox → clica card → abrirThread → backend confirma pode_responder=true
+ *     → marcarLida (background, silencioso) → recarrega inbox (background)
+ *     → dono navega de volta → card sem badge "Nova" ✅
+ *
+ *   Fluxo end-to-end (admin lê):
+ *     Inbox → clica card → abrirThread → backend confirma pode_responder=false
+ *     → marcarLida NÃO é chamado → `lido` continua false
+ *     → dono abre depois → badge "Nova" ainda visível para ele ✅
  *
  * v2.1 (30/06/2026 — Pacote P2 "CRM E-mail" Outbound):
  *   Adiciona o método `responder(corpoTexto, corpoHtml)` que dispara
@@ -247,6 +284,83 @@ export function useRespostas(options: UseRespostasOptions = {}) {
   }, [api, pagina, pageSize, busca, currentUser?.id, currentUser?.tipo_usuario]);
 
   // ════════════════════════════════════════════════════════════
+  // 🆕 v2.2 (06/07/2026) — MARCAR THREAD COMO LIDA
+  //   POST marcar_thread_lida (crm-leads v1.26). Idempotente.
+  //
+  //   Declarados ANTES de abrirThread para evitar TS2448
+  //   (used before declaration) — abrirThread referencia
+  //   marcarLidaBackground no bloco de sucesso.
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Marca todas as mensagens inbound de uma thread como lidas —
+   * server-side aplica RBAC estrito:
+   *   • Admin → no-op silencioso (retorna success sem alterar).
+   *   • Não-responsável → 403.
+   *   • Responsável → UPDATE lido=true, lido_por=<email>, lido_em=NOW()
+   *                   apenas em registros com lido=false.
+   *
+   * Retorna quantas mensagens foram efetivamente marcadas (0 se admin
+   * ou se já estavam todas lidas). Não expõe erro no state — chamada
+   * é considerada complementar ao fluxo principal de leitura.
+   */
+  const marcarLida = useCallback(
+    async (leadId: number, campanhaId: number): Promise<number> => {
+      if (!currentUser) return 0;
+      try {
+        const body: Record<string, any> = {
+          lead_id: leadId,
+          campanha_id: campanhaId,
+          current_user_id: currentUser.id,
+          current_user_tipo: currentUser.tipo_usuario,
+        };
+        const resp = await api.post<{
+          success: boolean;
+          total_marcadas: number;
+          error?: string;
+        }>('marcar_thread_lida', body);
+        if (resp.ok && resp.data?.success) {
+          return resp.data.total_marcadas || 0;
+        }
+        // Silent-fail: log e retorna 0. Não interrompe leitura.
+        console.warn(
+          '[useRespostas] marcarLida falhou (silent):',
+          resp.data?.error || resp.error
+        );
+        return 0;
+      } catch (e: any) {
+        console.warn('[useRespostas] marcarLida exception (silent):', e?.message);
+        return 0;
+      }
+    },
+    [api, currentUser?.id, currentUser?.tipo_usuario]
+  );
+
+  /**
+   * Wrapper interno chamado pelo `abrirThread`. Executa marcarLida em
+   * background e, se houver mudança (total_marcadas > 0), recarrega a
+   * inbox para atualizar `tem_nao_lido` — quando o operador voltar,
+   * o badge "Nova" já sumiu do card que ele acabou de ler.
+   */
+  const marcarLidaBackground = useCallback(
+    (leadId: number, campanhaId: number): void => {
+      // Dispara sem await — não bloqueia a UI. Fire-and-forget.
+      (async () => {
+        const totalMarcadas = await marcarLida(leadId, campanhaId);
+        if (totalMarcadas > 0) {
+          // Refresh silencioso da inbox para tirar o badge "Nova"
+          try {
+            await carregar();
+          } catch {
+            /* silent */
+          }
+        }
+      })();
+    },
+    [marcarLida, carregar]
+  );
+
+  // ════════════════════════════════════════════════════════════
   // ABRIR THREAD (listar_msgs_thread) — Estado A → B
   // ════════════════════════════════════════════════════════════
 
@@ -286,6 +400,18 @@ export function useRespostas(options: UseRespostasOptions = {}) {
           // 🆕 v2.1 — Aplica RBAC server-side ao state
           setPodeResponder(!!resp.data.pode_responder);
           setMotivoBloqueio(resp.data.motivo_bloqueio || null);
+
+          // 🆕 v2.2 (06/07/2026) — Marca thread como lida em background
+          //   SOMENTE se o operador atual é o RESPONSÁVEL da campanha
+          //   (server já validou isso ao setar pode_responder=true).
+          //   Admin acessa em modo leitura e NÃO altera `lido`, então
+          //   o dono verá o badge "Nova" quando abrir depois.
+          //   Silent-fail intencional — falha no marcar não bloqueia a
+          //   experiência de leitura, apenas deixa o badge "Nova" ativo
+          //   até a próxima tentativa (ex.: reabrir a thread).
+          if (resp.data.pode_responder === true) {
+            marcarLidaBackground(leadId, campanhaId);
+          }
         } else {
           setErroThread(resp.data?.error || resp.error || 'Falha ao abrir thread');
         }
@@ -295,7 +421,7 @@ export function useRespostas(options: UseRespostasOptions = {}) {
         setLoadingThread(false);
       }
     },
-    [api, currentUser?.id, currentUser?.tipo_usuario]
+    [api, currentUser?.id, currentUser?.tipo_usuario, marcarLidaBackground]
   );
 
   // ════════════════════════════════════════════════════════════
@@ -405,6 +531,11 @@ export function useRespostas(options: UseRespostasOptions = {}) {
     enviando,
     erroEnvio,
     responder,
+    // 🆕 v2.2 (06/07/2026) — Marcar como lida (dono only)
+    // Exposto para uso explícito futuro (ex.: botão "Marcar como lida").
+    // Chamado automaticamente em background pelo `abrirThread` quando
+    // pode_responder=true.
+    marcarLida,
   };
 }
 
