@@ -2,6 +2,38 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.26 (06/07/2026 — Nova action `marcar_thread_lida` — RBAC restrito ao dono):
+ *    Motivação: até v1.25.5, NENHUM endpoint gravava `email_respostas.
+ *    lido = true`. Consequência prática: badge "Nova" na inbox permanecia
+ *    para toda mensagem indefinidamente (bug conceitual, descoberto em
+ *    smoke real de 06/07/2026 com o lead 2805 — Luis Torres / Claranet).
+ *
+ *    Fix arquitetural (Opção B — Messias 06/07/2026):
+ *
+ *      • Nova action POST `marcar_thread_lida` (esta versão) — sob
+ *        `if (method === 'POST')`, após `responder_thread` do fluxo P2.
+ *
+ *      • RBAC estrito server-side (defesa em camadas — não confia no
+ *        frontend):
+ *          - Admin → responde `success=true, total_marcadas=0` SEM
+ *            alterar `lido`. Motivo: admin acessa em modo leitura;
+ *            o "não lido" precisa ficar visível para o dono real.
+ *          - Não-responsável (nem admin nem dono) → 403.
+ *          - Responsável da campanha → UPDATE lido=true, lido_por=
+ *            <email_usuario>, lido_em=NOW() apenas em registros com
+ *            `lido=false` (idempotência — segunda chamada é no-op).
+ *
+ *      • Schema-ready — as colunas `lido, lido_por (text), lido_em
+ *        (timestamptz)` JÁ EXISTIAM na tabela `email_respostas` (adicionadas
+ *        em migrations anteriores). NENHUMA migration SQL requerida.
+ *
+ *    Compatibilidade:
+ *      • Frontend legacy (useRespostas v2.1 e anterior) NÃO chama esta
+ *        action — sem impacto. Só o hook v2.2+ dispara marcar_thread_lida
+ *        automaticamente após abrir a thread (quando pode_responder=true).
+ *      • `listar_threads` (v1.24) continua calculando `tem_nao_lido` como
+ *        `!r.lido` — agora passa a refletir estado real após leituras.
+ *
  *  - v1.25.5 (30/06/2026 — POLISH P2 — Ordem cronológica reversa):
  *    Ajuste UX solicitado por Messias em smoke real: a timeline do
  *    CRM E-mail estava em ordem cronológica ASCENDENTE (mais antigo
@@ -2789,6 +2821,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       //         (fila-centric, 1 linha por evento de email_fila)
       // 🔄 v1.15 (16/06/2026 — F8) — REESCRITA lead-centric
       // ════════════════════════════════════════════════════════════
+      // Nota: `marcar_thread_lida` (v1.26) é POST, definida mais abaixo
+      //   sob `if (method === 'POST')`. Fica agrupada com as outras
+      //   actions POST do módulo (responder_thread, atualizar_lead, etc).
+      // ════════════════════════════════════════════════════════════
       // LEADS em estado terminal de invalidação. Critério D2 (decidido
       // com PO em 16/06/2026):
       //
@@ -3778,6 +3814,175 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           message_id_resend: messageIdResend,
           fila_id_sintetico: filaId,
           bcc_corporativo: responsavel.email_usuario,
+        });
+      }
+
+      // ════════════════════════════════════════════════════════════
+      // 🆕 v1.26 (06/07/2026) — MARCAR THREAD COMO LIDA
+      //
+      // Contexto:
+      //   Descoberto em smoke de 06/07/2026 que nenhum endpoint gravava
+      //   `email_respostas.lido=true` — badge "Nova" na inbox permanecia
+      //   para toda mensagem indefinidamente. Colunas `lido, lido_por,
+      //   lido_em` JÁ EXISTIAM no schema (adicionadas em migrations
+      //   anteriores) mas ficavam órfãs.
+      //
+      // Contrato:
+      //   POST /api/crm-leads?action=marcar_thread_lida
+      //   Body: {
+      //     lead_id: number (required),
+      //     campanha_id: number (required),
+      //     current_user_id: number (required, RBAC),
+      //     current_user_tipo: string (required, RBAC)
+      //   }
+      //
+      // Regras RBAC (defesa em camadas — server não confia no frontend):
+      //   • Admin → NO-OP silencioso. Retorna success=true, total_marcadas=0.
+      //     Motivo: admin acessa em modo leitura; o "não lido" precisa
+      //     ficar visível para o dono real da campanha vir a ler.
+      //   • Não-responsável (nem admin nem dono) → 403.
+      //   • Responsável da campanha → UPDATE lido=true, lido_por=<email>,
+      //     lido_em=NOW() em todos os email_respostas com lead_id +
+      //     campanha_id + lido=false + direcao='inbound' (só respostas
+      //     RECEBIDAS — outbounds do CRM não fazem sentido "marcar lido").
+      //
+      // Idempotência:
+      //   Filtro `.eq('lido', false)` garante que segunda chamada é NO-OP
+      //   (zero linhas afetadas, retorna total_marcadas=0). Safe re-tentar.
+      //
+      // Resposta:
+      //   { success: true, total_marcadas: number }
+      //   { success: false, error: string } — em 400/403/500
+      // ════════════════════════════════════════════════════════════
+      if (action === 'marcar_thread_lida') {
+        const {
+          lead_id,
+          campanha_id,
+          current_user_id,
+          current_user_tipo,
+        } = body;
+
+        // Validação de parâmetros
+        if (!lead_id || !campanha_id) {
+          return res.status(400).json({
+            success: false,
+            error: 'Parâmetros obrigatórios: lead_id, campanha_id.',
+          });
+        }
+        if (!current_user_id || !current_user_tipo) {
+          return res.status(400).json({
+            success: false,
+            error:
+              'Parâmetros obrigatórios ausentes: current_user_id e current_user_tipo (RBAC).',
+          });
+        }
+        const leadIdNum = parseInt(String(lead_id));
+        const campIdNum = parseInt(String(campanha_id));
+        const currentUserIdNum = parseInt(String(current_user_id));
+        if (isNaN(leadIdNum) || isNaN(campIdNum) || isNaN(currentUserIdNum)) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id, campanha_id e current_user_id precisam ser inteiros válidos.',
+          });
+        }
+
+        // RBAC — bypass silencioso para Administrador
+        //   Admin acessa em modo leitura; não altera o estado `lido`
+        //   para preservar a percepção "não lido" pelo dono real.
+        if (current_user_tipo === 'Administrador') {
+          return res.status(200).json({
+            success: true,
+            total_marcadas: 0,
+            motivo_no_op: 'admin_readonly',
+          });
+        }
+
+        // Validar que a campanha existe e obter responsavel_id
+        const { data: campanha, error: errCamp } = await supabase
+          .from('email_campanhas')
+          .select('id, responsavel_id')
+          .eq('id', campIdNum)
+          .maybeSingle();
+        if (errCamp) {
+          console.error(
+            '[crm-leads] marcar_thread_lida: erro ao buscar campanha:',
+            errCamp.message
+          );
+          return res.status(500).json({ success: false, error: errCamp.message });
+        }
+        if (!campanha) {
+          return res.status(404).json({
+            success: false,
+            error: 'Campanha não encontrada.',
+          });
+        }
+
+        // RBAC estrito — apenas o responsável da campanha pode marcar como lido
+        if (campanha.responsavel_id !== currentUserIdNum) {
+          return res.status(403).json({
+            success: false,
+            error:
+              'Apenas o responsável da campanha pode marcar mensagens como lidas.',
+          });
+        }
+
+        // Buscar email do usuário atual para gravar em lido_por
+        //   (padrão do backend — mesmo lookup usado em responder_thread)
+        const { data: userAtual, error: errUser } = await supabase
+          .from('app_users')
+          .select('id, email_usuario')
+          .eq('id', currentUserIdNum)
+          .maybeSingle();
+        if (errUser) {
+          console.error(
+            '[crm-leads] marcar_thread_lida: erro ao buscar usuário:',
+            errUser.message
+          );
+          return res.status(500).json({ success: false, error: errUser.message });
+        }
+        if (!userAtual) {
+          return res.status(404).json({
+            success: false,
+            error: 'Usuário atual não encontrado em app_users.',
+          });
+        }
+        const emailUsuario = userAtual.email_usuario || `user_${currentUserIdNum}`;
+
+        // UPDATE idempotente — só afeta linhas com lido=false E inbound
+        //   (outbounds do CRM não fazem sentido "marcar lido"; foram
+        //   escritas pelo próprio operador).
+        const agoraIso = new Date().toISOString();
+        const { data: atualizadas, error: errUpd } = await supabase
+          .from('email_respostas')
+          .update({
+            lido: true,
+            lido_por: emailUsuario,
+            lido_em: agoraIso,
+          })
+          .eq('lead_id', leadIdNum)
+          .eq('campanha_id', campIdNum)
+          .eq('direcao', 'inbound')
+          .eq('lido', false)
+          .select('id');
+        if (errUpd) {
+          console.error(
+            '[crm-leads] marcar_thread_lida: UPDATE falhou:',
+            errUpd.message
+          );
+          return res.status(500).json({ success: false, error: errUpd.message });
+        }
+
+        const totalMarcadas = (atualizadas || []).length;
+        console.log(
+          `📖 [crm-leads] marcar_thread_lida: lead=${leadIdNum} campanha=${campIdNum} ` +
+            `user=${emailUsuario} → ${totalMarcadas} marcada(s)`
+        );
+
+        return res.status(200).json({
+          success: true,
+          total_marcadas: totalMarcadas,
+          lido_por: emailUsuario,
+          lido_em: agoraIso,
         });
       }
 
