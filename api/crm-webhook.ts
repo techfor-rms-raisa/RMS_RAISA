@@ -3,6 +3,99 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.18 — 08/07/2026 — Idempotência + rastreabilidade de thread em `email_respostas`
+ *   (descoberto via forensic da Campanha_06_Ousourcing_Ecossistema_SAP no caso
+ *    do lead Rodrigo Olivas/Benteler — sessão de Messias, 08/07/2026).
+ *
+ *   Contexto do achado:
+ *     Investigando por que uma resposta esperada de campanha não aparecia no CRM,
+ *     mapeamos que a causa raiz era Outlook Exchange corporativo do lead
+ *     resolvendo o From via GAL/cache e descartando o Reply-To — problema
+ *     fora do escopo deste arquivo (será tratado em fase futura com migração
+ *     dos remetentes para o próprio domínio do Reply-To). Porém, ao auditar
+ *     o pipeline inbound existente, foram identificadas 3 fragilidades neste
+ *     arquivo que precisavam ser sanadas mesmo sem relação com o caso Rodrigo:
+ *
+ *     1) INSERT em email_respostas NÃO passava `direcao` explicitamente.
+ *        Funcionava por sorte: a coluna tem DEFAULT 'inbound'::text no
+ *        Postgres. Se o DEFAULT for removido ou alterado numa migration
+ *        futura, todos os INSERTs quebrariam silenciosamente (coluna é
+ *        NOT NULL). Fix: passar `direcao: 'inbound'` explícito.
+ *
+ *     2) INSERT em email_respostas NÃO populava `message_id` nem
+ *        `in_reply_to_message_id`. Consequências:
+ *        (a) Impossível correlacionar respostas com sua thread original
+ *            (o feature outbound do CRM já popula ambos, gerando
+ *            inconsistência entre os dois lados da conversa);
+ *        (b) Sem `message_id`, não é possível criar UNIQUE parcial para
+ *            garantir idempotência contra retentativas do Resend (que
+ *            já causaram 1 duplicata histórica na fila 11 em 05/06/2026 —
+ *            2 linhas em email_respostas separadas por 46 segundos).
+ *
+ *     3) UPDATE em email_fila (status='respondido' + respondido_em) NÃO
+ *        capturava erro. Se o Supabase respondesse com falha (RLS, timeout,
+ *        concorrência), o webhook seguia normalmente e retornava 200,
+ *        mascarando o descolamento sem log. Fix defensivo: capturar
+ *        `{ error }` e logar `console.error` — o webhook segue,
+ *        pois o INSERT em email_respostas já foi feito, mas passamos
+ *        a enxergar a falha para investigação futura.
+ *
+ *   Mudanças cirúrgicas nesta versão:
+ *     A) Novos helpers no topo do arquivo (antes de processarEmailRecebido):
+ *        - extractMessageIdRecebido(dataEvento) — lê `dataEvento.message_id`
+ *          com fallback para `extractHeaderValue(dataEvento, 'Message-ID')`.
+ *          Retorna o Message-ID RFC 5322 do email recebido (formato
+ *          `<...@dominio>`) ou null.
+ *        - extractInReplyToRecebido(dataEvento) — lê o header 'In-Reply-To'
+ *          via `extractHeaderValue`. Retorna o Message-ID do email pai
+ *          (aquele ao qual o lead está respondendo) ou null.
+ *        - extractHeaderValue(dataEvento, name) — tolerante a duas formas
+ *          de payload observadas na base histórica: array de {name,value}
+ *          (formato outbound sent/delivered) e objeto plano (formato inbound
+ *          received). Case-insensitive no nome do header.
+ *
+ *     B) Bloco de idempotência ANTES do INSERT em email_respostas: se o
+ *        message_id extraído já existir na tabela, retorna 200 imediatamente
+ *        sem inserir e sem re-executar o UPDATE. Log específico para
+ *        auditoria. Sem message_id → segue fluxo normal (comportamento legado).
+ *
+ *     C) INSERT em email_respostas ganha 3 campos novos:
+ *        - `direcao: 'inbound'` (explícito, elimina dependência de DEFAULT)
+ *        - `message_id: msgId` (habilita rastreabilidade + UNIQUE parcial)
+ *        - `in_reply_to_message_id: inReplyToId` (thread correlation)
+ *
+ *     D) UPDATE em email_fila passa a desestruturar `{ error: errUpdate }`.
+ *        Se `errUpdate` estiver presente, `console.error` com contexto
+ *        (fila_id, mensagem). O webhook NÃO retorna erro nem reverte —
+ *        o INSERT em email_respostas já foi persistido; a falha do UPDATE
+ *        é anômala e digna de log, mas não bloqueante.
+ *
+ *   Pareado com (mesma entrega):
+ *     - sql/2026-07-08_email_respostas_message_id_uniq.sql — cria UNIQUE
+ *       INDEX parcial em (message_id) WHERE message_id IS NOT NULL.
+ *       Permite múltiplos NULLs (compat com histórico) mas bloqueia
+ *       duplicatas de retentativa Resend. Aplicar SQL APÓS deploy do
+ *       código (o código v1.18 já checa message_id ANTES do INSERT,
+ *       evitando erro de constraint em caso de retentativa; sem essa
+ *       ordem, o INSERT bruto quebraria com o constraint em vigor
+ *       antes da idempotência entrar em ação).
+ *
+ *   Ordem de release obrigatória:
+ *     1. Deploy Preview do v1.18 → smoke test com email inbound simulado
+ *        (verificar logs: `message_id extraído`, `direcao=inbound explícito`,
+ *        idempotência ativa em replay do mesmo message_id).
+ *     2. Promoção Preview → Production do v1.18.
+ *     3. Apply SQL em Production (Supabase Studio).
+ *
+ *   Compatibilidade com histórico:
+ *     - Registros anteriores em email_respostas com `message_id=NULL` NÃO
+ *       são afetados pela UNIQUE parcial (WHERE message_id IS NOT NULL).
+ *     - Não há backfill de message_id para registros antigos (Resend não
+ *       preserva o message_id RFC 5322 dos inbounds indefinidamente e o
+ *       histórico já é confiável — as 26 respostas inbound estão pareadas
+ *       com as 25 filas com respondido_em, sendo a única discrepância
+ *       um outbound legítimo da Débora Souza em 06/07/2026, id=34).
+ *
  * v1.17 — 03/07/2026 — SOFT BOUNCE tratado como hard (Opção A — B2B outbound)
  *   (descoberto via investigação forense da Campanha_06_Ousourcing_Ecossistema_SAP
  *    — sessão de Messias, 03/07/2026).
@@ -1798,6 +1891,92 @@ async function buscarEmailCompletoResend(
 }
 
 // ────────────────────────────────────────────────────────────────────────
+// 🆕 v1.18 — HELPERS: extração de Message-ID e In-Reply-To do payload
+// ────────────────────────────────────────────────────────────────────────
+/**
+ * Lê o valor de um header do payload do email.received de forma tolerante
+ * a DUAS formas observadas na base histórica de eventos Resend:
+ *
+ *   Forma 1 — array de objetos {name, value} — usada em outbound events
+ *             (email.sent, email.delivered):
+ *     dataEvento.headers = [
+ *       { name: "X-Entity-Ref-ID", value: "rms-fila-4207" },
+ *       { name: "Reply-To", value: "customer-service+f4207+l1779@techfor.com.br" }
+ *     ]
+ *
+ *   Forma 2 — objeto plano chave→valor — usada em inbound events
+ *             (email.received):
+ *     dataEvento.headers = {
+ *       "In-Reply-To": "<abc123@example.com>",
+ *       "References": "<xyz789@example.com>"
+ *     }
+ *
+ * Comparação de nomes é case-insensitive (RFC 5322 §3.6.4).
+ * Retorna null se `headers` ausente, mal formado, ou header não encontrado.
+ * Nunca lança exceção.
+ */
+function extractHeaderValue(dataEvento: any, headerName: string): string | null {
+  const headers = dataEvento?.headers;
+  if (!headers) return null;
+  const nameLower = headerName.toLowerCase();
+
+  // Forma 1: array de {name, value}
+  if (Array.isArray(headers)) {
+    const found = headers.find(
+      (h: any) => typeof h?.name === 'string' && h.name.toLowerCase() === nameLower,
+    );
+    const v = found?.value;
+    return typeof v === 'string' && v.length > 0 ? v : null;
+  }
+
+  // Forma 2: objeto plano
+  if (typeof headers === 'object') {
+    for (const key of Object.keys(headers)) {
+      if (key.toLowerCase() === nameLower) {
+        const v = (headers as any)[key];
+        return typeof v === 'string' && v.length > 0 ? v : null;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Extrai o Message-ID RFC 5322 do email recebido (formato `<...@dominio>`).
+ * Prioriza `dataEvento.message_id` (fornecido diretamente pelo Resend em
+ * inbound payloads, validado em amostras de 07/07/2026 em Production),
+ * com fallback para o header 'Message-ID' via extractHeaderValue.
+ *
+ * Este é o identificador GLOBAL do email na rede SMTP — único por
+ * emissor e nunca reusado. Usar como chave de idempotência e como
+ * `email_respostas.message_id`.
+ *
+ * Retorna null se não encontrado (email malformado ou provedor incomum).
+ */
+function extractMessageIdRecebido(dataEvento: any): string | null {
+  const direct = dataEvento?.message_id;
+  if (typeof direct === 'string' && direct.length > 0) return direct;
+  return extractHeaderValue(dataEvento, 'Message-ID');
+}
+
+/**
+ * Extrai o valor do header 'In-Reply-To' (RFC 5322 §3.6.4) do email
+ * recebido — que aponta para o Message-ID do email pai na thread
+ * (aquele ao qual o lead está respondendo).
+ *
+ * Útil para reconstituir a árvore da conversa e correlacionar a resposta
+ * recebida com o disparo original armazenado em email_fila.resend_message_id
+ * (via consulta cruzada quando aplicável).
+ *
+ * Retorna null se o email não é uma resposta a outro (novo tópico) ou se
+ * o cliente do lead não incluiu o header.
+ */
+function extractInReplyToRecebido(dataEvento: any): string | null {
+  return extractHeaderValue(dataEvento, 'In-Reply-To');
+}
+
+// ────────────────────────────────────────────────────────────────────────
 // 🆕 PROCESSADOR DEDICADO: email.received (Fase 7-MVP)
 // ────────────────────────────────────────────────────────────────────────
 /**
@@ -2005,7 +2184,65 @@ async function processarEmailRecebido(opts: {
     return res.status(200).json({ ok: true, orphan: true, reason: 'from inválido' });
   }
 
+  // 🆕 v1.18 — Extração de Message-ID e In-Reply-To do payload.
+  //   Executada ANTES do INSERT para (a) permitir gate de idempotência
+  //   contra retentativas do Resend, e (b) enriquecer o INSERT com os
+  //   campos de rastreabilidade de thread (message_id e in_reply_to_message_id
+  //   passam a ser populados; até v1.17 ficavam sempre NULL).
+  const msgId = extractMessageIdRecebido(dataEvento);
+  const inReplyToId = extractInReplyToRecebido(dataEvento);
+  console.log(
+    `[crm-webhook] 📎 message_id="${msgId ?? '<null>'}" in_reply_to="${inReplyToId ?? '<null>'}"`,
+  );
+
+  // 🆕 v1.18 — Gate de idempotência contra retentativa do Resend.
+  //   O Resend Inbound reenvia webhook até 3× se o endpoint não retornar
+  //   200 rápido o suficiente. Sem gate, o INSERT em email_respostas
+  //   duplicava (histórico: fila 11 em 05/06/2026, 2 linhas em 46s de
+  //   diferença — ids 9 e 10). Com o gate, retentativas viram no-op:
+  //   log específico e retorna 200 sem reinserir.
+  //
+  //   Observações:
+  //     • Requer que `email_respostas.message_id` esteja povoado — só
+  //       ocorre a partir desta versão (INSERT abaixo passa a incluir
+  //       o campo). Retentativas de eventos PRÉ-v1.18 continuam podendo
+  //       duplicar até que o próximo received traga message_id preenchido.
+  //     • Se msgId for null (email malformado ou provedor sem Message-ID),
+  //       o gate é ignorado — cai no fluxo normal (comportamento legado).
+  //     • Pareado com sql/2026-07-08_email_respostas_message_id_uniq.sql
+  //       — a UNIQUE parcial é a rede de segurança final; o gate no
+  //       código evita chegar ao erro de constraint em condições normais.
+  if (msgId) {
+    const { data: existente, error: errCheck } = await supabase
+      .from('email_respostas')
+      .select('id')
+      .eq('message_id', msgId)
+      .eq('direcao', 'inbound')
+      .maybeSingle();
+    if (errCheck) {
+      console.warn(
+        `[crm-webhook] ⚠️ Falha ao checar idempotência (message_id=${msgId}):`,
+        errCheck.message,
+      );
+      // segue fluxo — melhor tentar inserir do que abortar processamento
+    } else if (existente?.id) {
+      console.log(
+        `[crm-webhook] ⏭️ Retentativa detectada (message_id=${msgId} já em email_respostas id=${existente.id}). Retornando 200 sem reprocessar.`,
+      );
+      return res.status(200).json({
+        ok: true,
+        idempotent: true,
+        message_id: msgId,
+        existing_id: existente.id,
+      });
+    }
+  }
+
   // 6. INSERT em email_respostas
+  //   🔧 v1.18 — Passa `direcao: 'inbound'` explícito (elimina dependência
+  //     do DEFAULT do banco, cf. cabeçalho JSDoc §1) e popula os campos
+  //     `message_id` e `in_reply_to_message_id` extraídos acima
+  //     (rastreabilidade de thread, cf. §2).
   const { data: novaResposta, error: errResp } = await supabase
     .from('email_respostas')
     .insert({
@@ -2020,6 +2257,10 @@ async function processarEmailRecebido(opts: {
       classificacao: 'pendente',
       lido: false,
       recebido_em: createdAtResend || new Date().toISOString(),
+      // 🆕 v1.18 — campos novos:
+      direcao: 'inbound',
+      message_id: msgId,
+      in_reply_to_message_id: inReplyToId,
     })
     .select('id')
     .single();
@@ -2040,13 +2281,25 @@ async function processarEmailRecebido(opts: {
   //     Padrão idêntico aos outros casos do switch (entregue_em, aberto_em,
   //     clicado_em, bounce_em): usa `createdAtResend` (timestamp do evento
   //     fornecido pelo Resend) com fallback para NOW() local.
-  await supabase
+  //   🔧 v1.18 (08/07/2026): desestruturar `{ error: errUpdateFila }` e
+  //     logar `console.error` em caso de falha (observabilidade preventiva).
+  //     Sem retornar erro nem reverter — o INSERT em email_respostas já foi
+  //     persistido e o INSERT em email_lead_historico ainda é útil para
+  //     auditoria. A falha aqui é anômala mas não bloqueante — precisa
+  //     apenas ser vista nos logs Vercel se ocorrer, para investigação.
+  const { error: errUpdateFila } = await supabase
     .from('email_fila')
     .update({
       status: 'respondido',
       respondido_em: createdAtResend || new Date().toISOString(),
     })
     .eq('id', fila.id);
+  if (errUpdateFila) {
+    console.error(
+      `[crm-webhook] ❌ Falha silenciosa antes coberta: UPDATE email_fila fila_id=${fila.id} não aplicou (${errUpdateFila.message}). INSERT em email_respostas id=${novaResposta?.id} PERMANECE VÁLIDO.`,
+    );
+    // NÃO retorna — segue fluxo (cancelamento de steps futuros, histórico, forward).
+  }
 
   // 🆕 v1.10 (Fase C) — Cancela steps FUTUROS do lead NESTA campanha.
   //   Após o UPDATE acima (que muda só o item atual para 'respondido'),
