@@ -15,7 +15,8 @@
  * Visão COMPLETA para qualquer perfil RAISA (todos os candidatos da
  * vaga, independe do analista que inseriu) — decisão de 21/07/2026.
  *
- * Reaproveita o componente visual ScoreCompatibilidadeCircle.
+ * Reaproveita o componente visual ScoreCompatibilidadeCircle
+ * (src/components/raisa/ScoreCompatibilidadeCircle.tsx).
  *
  * Versão: 1.0
  * Data: 21/07/2026
@@ -29,7 +30,6 @@ import {
 } from 'lucide-react';
 import { Vaga, Candidatura } from '@/types';
 import { useRanqueamento, CandidatoRanqueado } from '@/hooks/supabase/useRanqueamento';
-// ⚠️ Verifique este caminho: ScoreCompatibilidadeCircle deve estar na pasta raisa.
 import ScoreCompatibilidadeCircle from './ScoreCompatibilidadeCircle';
 
 // ============================================
