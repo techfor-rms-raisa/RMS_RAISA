@@ -26,7 +26,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   Trophy, Search, Briefcase, User, Award, AlertTriangle,
   Loader2, ChevronRight, CheckCircle, XCircle, HelpCircle,
-  ClipboardList, Mic
+  ClipboardList, Mic, RefreshCw
 } from 'lucide-react';
 import { Vaga, Candidatura } from '@/types';
 import { useRanqueamento, CandidatoRanqueado } from '@/hooks/supabase/useRanqueamento';
@@ -212,6 +212,13 @@ const RanqueamentoPage: React.FC<RanqueamentoPageProps> = ({
     [carregarRanking]
   );
 
+  // Reprocessa o ranking da vaga já selecionada (pega entrevistas recém-concluídas)
+  const atualizarRanking = useCallback(() => {
+    if (!vagaSelecionadaId) return;
+    const idNum = parseInt(String(vagaSelecionadaId), 10);
+    if (!Number.isNaN(idNum)) carregarRanking(idNum);
+  }, [vagaSelecionadaId, carregarRanking]);
+
   useEffect(() => {
     return () => limpar();
   }, [limpar]);
@@ -308,11 +315,23 @@ const RanqueamentoPage: React.FC<RanqueamentoPageProps> = ({
           ) : (
             <div className="space-y-6">
               {/* Cabeçalho da vaga */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="font-semibold text-gray-900">{vagaSelecionada?.titulo}</h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  {ranking.length} candidato(s) • {ranqueados.length} entrevistado(s) • {preRanking.length} só CV
-                </p>
+              <div className="bg-gray-50 rounded-lg p-4 flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-semibold text-gray-900">{vagaSelecionada?.titulo}</h3>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {ranking.length} candidato(s) • {ranqueados.length} entrevistado(s) • {preRanking.length} só CV
+                  </p>
+                </div>
+                <button
+                  onClick={atualizarRanking}
+                  disabled={loading}
+                  className="flex-shrink-0 inline-flex items-center gap-2 px-3 py-1.5 text-sm bg-white border border-gray-300 
+                             rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  title="Recalcular o ranking com as entrevistas mais recentes"
+                >
+                  <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+                  {loading ? 'Atualizando...' : 'Atualizar ranking'}
+                </button>
               </div>
 
               {/* BLOCO 1: RANQUEADOS */}
