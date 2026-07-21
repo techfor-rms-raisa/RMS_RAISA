@@ -128,6 +128,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         result = await generateInterviewQuestions(payload);
         break;
 
+      // ✅ NOVA ACTION (Fase C - Ranqueamento): perguntas PADRONIZADAS por vaga (iguais para todos os candidatos)
+      case 'generateVagaStandardQuestions':
+        result = await generateVagaStandardQuestions(payload);
+        break;
+
       case 'analisar_respostas_escritas':
         result = await analisarRespostasEscritas(payload);
         break;
@@ -1314,6 +1319,132 @@ Responda APENAS com o JSON, sem texto adicional.`;
             requisito_validado: stackTecnologica,
             o_que_avaliar: ['Profundidade técnica', 'Decisões de arquitetura', 'Resultados mensuráveis'],
             resposta_esperada_nivel_senior: 'Detalhes específicos sobre implementação, trade-offs considerados, métricas de sucesso',
+            red_flags: ['Respostas vagas', 'Não cita tecnologias específicas', 'Não menciona desafios superados']
+          }
+        ]
+      }]
+    };
+  }
+}
+
+// ========================================
+// 🆕 FASE C: PERGUNTAS PADRONIZADAS POR VAGA (RANQUEAMENTO)
+// Gera perguntas técnicas baseadas SOMENTE na vaga (requisitos + stack),
+// idênticas para todos os candidatos -> score comparável no ranqueamento.
+// ========================================
+
+async function generateVagaStandardQuestions(payload: {
+  vaga: {
+    titulo: string;
+    requisitos_obrigatorios?: string | string[];
+    requisitos_desejaveis?: string | string[];
+    stack_tecnologica?: string | string[];
+    descricao?: string;
+    nivel_senioridade?: string;
+  };
+}) {
+  console.log('🎯 [generateVagaStandardQuestions] Gerando perguntas PADRONIZADAS da vaga...');
+
+  const { vaga } = payload;
+
+  const formatarLista = (valor: string | string[] | undefined | null, fallback: string = ''): string => {
+    if (!valor) return fallback;
+    if (Array.isArray(valor)) return valor.join(', ');
+    return String(valor);
+  };
+
+  const requisitosObrigatorios = formatarLista(vaga.requisitos_obrigatorios, 'Não especificados');
+  const requisitosDesejaveis = formatarLista(vaga.requisitos_desejaveis, '');
+  const stackTecnologica = formatarLista(vaga.stack_tecnologica, 'Não especificada');
+
+  const prompt = `Você é um **Recrutador Técnico Sênior** responsável por padronizar a avaliação técnica de uma vaga.
+
+## CONTEXTO DA VAGA
+
+**Título:** ${vaga.titulo}
+**Nível:** ${vaga.nivel_senioridade || 'Não especificado'}
+**Requisitos Obrigatórios:** ${requisitosObrigatorios}
+**Requisitos Desejáveis:** ${requisitosDesejaveis}
+**Stack Tecnológica:** ${stackTecnologica}
+**Descrição:** ${vaga.descricao || 'Não disponível'}
+
+---
+
+## SUA TAREFA
+
+Gere um conjunto de perguntas técnicas PADRONIZADAS que serão usadas para avaliar TODOS os candidatos desta vaga de forma comparável. As perguntas serão as MESMAS para cada candidato, então baseie-se exclusivamente nos requisitos e na stack da vaga (não em nenhum currículo específico).
+
+### DIRETRIZES:
+1. Cada pergunta valida um requisito OBRIGATÓRIO ou uma tecnologia central da stack.
+2. Perguntas técnicas e específicas, que exigem experiência prática real para uma boa resposta.
+3. Ajuste a profundidade ao nível de senioridade da vaga.
+4. Para cada pergunta, defina critérios claros de avaliação, a resposta esperada de um profissional do nível da vaga, e red flags.
+5. Evite perguntas genéricas do tipo "fale sobre você".
+
+Retorne um JSON com esta estrutura EXATA:
+
+{
+  "perguntas": [
+    {
+      "categoria": "Requisito Obrigatório - [Nome da tecnologia/skill]",
+      "icone": "💻",
+      "perguntas": [
+        {
+          "pergunta": "Pergunta técnica específica aqui",
+          "objetivo": "O que essa pergunta valida",
+          "requisito_validado": "Qual requisito/stack está sendo validado",
+          "o_que_avaliar": ["Critério 1", "Critério 2", "Critério 3"],
+          "resposta_esperada_nivel_senior": "O que um profissional do nível da vaga responderia",
+          "red_flags": ["Sinal de alerta 1", "Sinal de alerta 2"]
+        }
+      ]
+    }
+  ],
+  "recomendacao_foco": "Resumo do que o entrevistador deve focar na entrevista"
+}
+
+### QUANTIDADE DE PERGUNTAS:
+- Mínimo 5, máximo 10 perguntas no total
+- Pelo menos 1 pergunta por requisito obrigatório principal e por tecnologia central da stack
+
+Responda APENAS com o JSON, sem texto adicional.`;
+
+  try {
+    const result = await getAI().models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt
+    });
+
+    const text = result.text || '';
+    const jsonClean = text.replace(/```json\n?/gi, '').replace(/```\n?/gi, '').trim();
+
+    try {
+      const parsed = JSON.parse(jsonClean);
+      console.log(`✅ Perguntas padrão geradas: ${parsed.perguntas?.length || 0} categorias`);
+      return { sucesso: true, ...parsed };
+    } catch {
+      const jsonMatch = jsonClean.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return { sucesso: true, ...parsed };
+      }
+      throw new Error('Falha ao parsear perguntas padrão');
+    }
+  } catch (error: any) {
+    console.error('❌ Erro ao gerar perguntas padrão:', error);
+    return {
+      sucesso: false,
+      erro: error.message,
+      perguntas: [{
+        categoria: `Validação Técnica - ${vaga.titulo}`,
+        icone: '💻',
+        perguntas: [
+          {
+            pergunta: `Descreva em detalhes um projeto onde você utilizou ${stackTecnologica}. Qual foi seu papel e quais decisões técnicas você tomou?`,
+            objetivo: 'Validar experiência prática com a stack',
+            requisito_validado: stackTecnologica,
+            o_que_avaliar: ['Profundidade técnica', 'Decisões de arquitetura', 'Resultados mensuráveis'],
+            resposta_esperada_nivel_senior: 'Detalhes específicos de implementação, trade-offs considerados e métricas de sucesso',
             red_flags: ['Respostas vagas', 'Não cita tecnologias específicas', 'Não menciona desafios superados']
           }
         ]
