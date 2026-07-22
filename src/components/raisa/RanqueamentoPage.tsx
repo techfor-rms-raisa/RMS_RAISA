@@ -18,8 +18,16 @@
  * Reaproveita o componente visual ScoreCompatibilidadeCircle
  * (src/components/raisa/ScoreCompatibilidadeCircle.tsx).
  *
- * Versão: 1.0
- * Data: 21/07/2026
+ * Versão: 1.1
+ * Data: 22/07/2026
+ *
+ * Histórico:
+ *   v1.1 (22/07/2026) — Estado "Pendente de Análise de CV": quando o RPC v4
+ *     retorna score_ranking = NULL (candidato entrevistado SEM Análise de CV
+ *     real; Análise de Adequação é mandatória — Leitura B), o card passa a
+ *     exibir um selo neutro em vez de um círculo 0% enganoso, e neutraliza a
+ *     posição/medalha desse candidato. Nenhuma outra mudança visual.
+ *   v1.0 (21/07/2026) — Versão inicial.
  */
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
@@ -101,6 +109,12 @@ const LinhaRanking: React.FC<{
   posicao: number;
   modo: 'ranqueado' | 'pre';
 }> = ({ candidato, posicao, modo }) => {
+  // 🔧 v1.1: sob a regra de Análise de CV mandatória (Leitura B), um candidato
+  // entrevistado SEM Análise de CV real retorna score_ranking = NULL (RPC v4) —
+  // não é ranqueável. Nesses casos exibimos "Pendente de Análise de CV" em vez
+  // de um círculo 0% enganoso.
+  const pendenteCV = modo === 'ranqueado' && candidato.score_ranking == null;
+
   const scoreExibido =
     modo === 'ranqueado'
       ? Math.round(candidato.score_ranking ?? 0)
@@ -110,17 +124,26 @@ const LinhaRanking: React.FC<{
     <div className="flex items-center gap-4 p-4 border-b last:border-b-0 hover:bg-gray-50 transition-colors">
       {/* Posição */}
       <div className="w-10 text-center text-lg font-bold text-gray-700 flex-shrink-0">
-        {modo === 'ranqueado' ? medalha(posicao) : `${posicao}º`}
+        {pendenteCV ? '—' : (modo === 'ranqueado' ? medalha(posicao) : `${posicao}º`)}
       </div>
 
-      {/* Score circular */}
+      {/* Score circular (ou selo "Pendente de Análise de CV" quando não ranqueável) */}
       <div className="flex-shrink-0">
-        <ScoreCompatibilidadeCircle
-          score={scoreExibido}
-          tamanho="sm"
-          mostrarLabel={false}
-          animado={false}
-        />
+        {pendenteCV ? (
+          <span
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap"
+            title="Análise de Adequação (CV × Vaga) é obrigatória e não foi realizada. Candidato não ranqueável até a análise ser concluída."
+          >
+            <AlertTriangle className="w-3.5 h-3.5" /> Pendente de Análise de CV
+          </span>
+        ) : (
+          <ScoreCompatibilidadeCircle
+            score={scoreExibido}
+            tamanho="sm"
+            mostrarLabel={false}
+            animado={false}
+          />
+        )}
       </div>
 
       {/* Nome + status */}
