@@ -24,6 +24,12 @@
  *
  * Histórico:
  *  - v1.0 (23/07/2026): versão inicial.
+ *  - v1.1 (23/07/2026): correção de fuso na linha do tempo. Os marcos vindos
+ *      de colunas `date` (data_contato, data_envio_adv, negocio_fechado,
+ *      data_aceite) eram exibidos por formatDataHora e apareciam um dia
+ *      atrás, às 21:00 — o construtor Date lê 'YYYY-MM-DD' como meia-noite
+ *      UTC. Passam a usar formatDataOuHora, que detecta a granularidade da
+ *      origem. Uma linha alterada; nenhuma outra lógica tocada.
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
@@ -34,6 +40,7 @@ import {
   LABEL_TIPO_ATIVIDADE,
   formatData,
   formatDataHora,
+  formatDataOuHora,
 } from './creciAcompanhamento.types';
 import ContratoForm from './ContratoForm';
 import AtividadesTimeline from './AtividadesTimeline';
@@ -392,7 +399,7 @@ const CorretorFicha: React.FC<Props> = ({
                     <span
                       className={`absolute -left-[9px] w-4 h-4 rounded-full border-2 border-white ${ev.cor}`}
                     />
-                    <p className="text-xs text-gray-400">{formatDataHora(ev.data)}</p>
+                    <p className="text-xs text-gray-400">{formatDataOuHora(ev.data)}</p>
                     <p className="text-sm text-gray-800 font-medium">{ev.titulo}</p>
                     {ev.detalhe && (
                       <p className="text-xs text-gray-600 mt-0.5 break-words">{ev.detalhe}</p>

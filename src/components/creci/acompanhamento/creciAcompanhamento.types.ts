@@ -13,6 +13,12 @@
  *
  * Histórico:
  *  - v1.0 (23/07/2026): versão inicial.
+ *  - v1.1 (23/07/2026): novo formatador `formatDataOuHora`. Colunas `date`
+ *      ('YYYY-MM-DD') passadas por formatDataHora exibiam o dia anterior às
+ *      21:00 — o construtor Date lê a string como meia-noite UTC e o
+ *      navegador converte para BRT. Detectado na linha do tempo, onde
+ *      "Aceite do contrato" de 22/07 aparecia como 21/07 21:00. Alteração
+ *      aditiva: nenhuma função existente foi modificada.
  */
 
 // ─── PERFIS (valores reais de app_users.tipo_usuario) ────────────────────────
@@ -258,6 +264,22 @@ export function formatDataHora(valor: string | null | undefined): string {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+/**
+ * Formata respeitando a granularidade da origem.
+ *
+ * Colunas `date` do Postgres chegam como 'YYYY-MM-DD' e NÃO têm hora. Passá-las
+ * por formatDataHora produz o dia anterior às 21:00, porque o construtor Date
+ * interpreta a string como meia-noite UTC e o navegador converte para BRT.
+ * Use esta função sempre que a origem puder ser `date` OU `timestamptz` —
+ * caso da linha do tempo, que mistura marcos do funil (date) com atividades
+ * e e-mails (timestamptz).
+ */
+export function formatDataOuHora(valor: string | null | undefined): string {
+  if (!valor) return '—';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(valor)) return formatData(valor);
+  return formatDataHora(valor);
 }
 
 /** Converte ISO para o formato aceito por <input type="datetime-local">. */
