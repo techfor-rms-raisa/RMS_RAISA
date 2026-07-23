@@ -155,6 +155,10 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // Perguntas
   const [perguntas, setPerguntas] = useState<PerguntaEntrevista[]>([]);
   const [loadingPerguntas, setLoadingPerguntas] = useState(false);
+
+  // 🆕 Fase C: perguntas padronizadas por vaga (iguais para todos os candidatos)
+  const [temPerguntasPadrao, setTemPerguntasPadrao] = useState(false);
+  const [gerandoPadrao, setGerandoPadrao] = useState(false);
   
   // Áudio
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -328,6 +332,32 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     setError(null);
     
     try {
+      // 🆕 Fase C: PRIORIDADE — perguntas PADRONIZADAS da vaga (iguais para todos)
+      const vagaIdPadrao = vagaAtual
+        ? parseInt(String(vagaAtual.id), 10)
+        : (candidaturaAtual.vaga_id ? parseInt(String(candidaturaAtual.vaga_id), 10) : null);
+
+      if (vagaIdPadrao && !Number.isNaN(vagaIdPadrao)) {
+        const { data: vagaP } = await supabase
+          .from('vagas')
+          .select('perguntas_padrao')
+          .eq('id', vagaIdPadrao)
+          .single();
+
+        if (vagaP?.perguntas_padrao && Array.isArray(vagaP.perguntas_padrao) && vagaP.perguntas_padrao.length > 0) {
+          setPerguntas(vagaP.perguntas_padrao);
+          setTemPerguntasPadrao(true);
+          console.log('✅ [Fase C] Perguntas padronizadas da vaga carregadas');
+          return;
+        }
+
+        // Sem perguntas padrão: NÃO gerar por candidato; UI mostra botão de geração
+        setPerguntas([]);
+        setTemPerguntasPadrao(false);
+        console.log('ℹ️ [Fase C] Vaga sem perguntas padrão — aguardando geração pelo analista');
+        return;
+      }
+
       // Buscar análise de adequação existente
       const { data: analise, error: analiseError } = await supabase
         .from('analise_adequacao')
@@ -372,7 +402,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     } finally {
       setLoadingPerguntas(false);
     }
-  }, [candidaturaAtual]);
+  }, [candidaturaAtual, vagaAtual]);
 
   // Gerar perguntas PERSONALIZADAS quando não há análise prévia
   // Busca dados do candidato e da vaga para criar perguntas específicas
@@ -619,6 +649,66 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       setPerguntas(perguntasFallback);
     }
   };
+
+  // 🆕 Fase C: gerar perguntas PADRONIZADAS da vaga (mesmas para todos os candidatos)
+  // Após gerar, salva em vagas.perguntas_padrao e esconde o botão de geração.
+  const gerarPerguntasPadraoVaga = useCallback(async () => {
+    if (!vagaAtual) return;
+
+    setGerandoPadrao(true);
+    setError(null);
+
+    try {
+      const dadosVaga = {
+        titulo: vagaAtual.titulo,
+        requisitos_obrigatorios: vagaAtual.requisitos_obrigatorios,
+        requisitos_desejaveis: vagaAtual.requisitos_desejaveis,
+        stack_tecnologica: vagaAtual.stack_tecnologica,
+        descricao: vagaAtual.descricao,
+        nivel_senioridade: vagaAtual.senioridade
+      };
+
+      const response = await fetch('/api/gemini-analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'generateVagaStandardQuestions',
+          payload: { vaga: dadosVaga }
+        })
+      });
+
+      const result = await response.json();
+      const perguntasGeradas = result?.data?.perguntas;
+
+      if (!perguntasGeradas || !Array.isArray(perguntasGeradas) || perguntasGeradas.length === 0) {
+        throw new Error(result?.error || 'A IA não retornou perguntas.');
+      }
+
+      // Persistir na vaga (perguntas padronizadas)
+      const vagaIdNum = parseInt(String(vagaAtual.id), 10);
+      const { error: saveErr } = await supabase
+        .from('vagas')
+        .update({
+          perguntas_padrao: perguntasGeradas,
+          perguntas_padrao_geradas_em: new Date().toISOString()
+        })
+        .eq('id', vagaIdNum);
+
+      if (saveErr) {
+        console.warn('⚠️ [Fase C] Erro ao salvar perguntas padrão na vaga:', saveErr);
+        throw new Error('Perguntas geradas, mas houve falha ao salvá-las na vaga.');
+      }
+
+      setPerguntas(perguntasGeradas);
+      setTemPerguntasPadrao(true); // esconde o botão de geração
+      console.log(`✅ [Fase C] ${perguntasGeradas.length} categoria(s) de perguntas padrão geradas e salvas na vaga`);
+    } catch (err: any) {
+      console.error('❌ [Fase C] Erro ao gerar perguntas padrão:', err);
+      setError(err?.message || 'Erro ao gerar perguntas padrão da vaga.');
+    } finally {
+      setGerandoPadrao(false);
+    }
+  }, [vagaAtual]);
 
   // Carregar perguntas quando seleciona candidatura
   useEffect(() => {
@@ -1350,9 +1440,29 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         </div>
 
         {perguntas.length === 0 && !loadingPerguntas ? (
-          <p className="text-gray-500 text-center py-8">
-            Nenhuma pergunta carregada. Clique em "Atualizar Perguntas" abaixo.
-          </p>
+          <div className="text-center py-8">
+            {!temPerguntasPadrao ? (
+              <div className="max-w-md mx-auto bg-purple-50 border border-purple-200 rounded-lg p-6">
+                <MessageSquare size={32} className="text-purple-500 mx-auto mb-3" />
+                <p className="text-sm text-gray-700 mb-1 font-medium">
+                  Esta vaga ainda não tem perguntas padronizadas.
+                </p>
+                <p className="text-xs text-gray-500 mb-4">
+                  Gere uma vez as perguntas técnicas da vaga — todos os candidatos responderão às mesmas, garantindo ranqueamento comparável.
+                </p>
+                <button
+                  onClick={gerarPerguntasPadraoVaga}
+                  disabled={gerandoPadrao}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:bg-gray-300 text-sm font-medium"
+                >
+                  {gerandoPadrao ? <Loader2 size={18} className="animate-spin" /> : <Brain size={18} />}
+                  {gerandoPadrao ? 'Gerando perguntas...' : 'Gerar perguntas padrão desta vaga'}
+                </button>
+              </div>
+            ) : (
+              <p className="text-gray-500">Nenhuma pergunta carregada.</p>
+            )}
+          </div>
         ) : (
           <div className="space-y-4 max-h-[500px] overflow-y-auto">
             {perguntas.map((categoria, catIdx) => (

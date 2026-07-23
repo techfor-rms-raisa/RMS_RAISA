@@ -32,6 +32,7 @@ import BancoTalentos from './components/raisa/BancoTalentos_v3';
 import ControleEnvios from './components/raisa/ControleEnvios'; 
 import EntrevistaTecnica from './components/raisa/EntrevistaTecnica';
 import EntrevistaTecnicaInteligente from './components/raisa/EntrevistaTecnicaInteligente';
+import RanqueamentoPage from './components/raisa/RanqueamentoPage';
 // ✅ NOVO: Componente de Sugestões IA para Vagas
 import VagaSugestoesIA from './components/raisa/VagaSugestoesIA';
 
@@ -567,6 +568,13 @@ const App: React.FC = () => {
             onReload={loadAllData}
             currentUserId={currentUser?.id || 1}
             currentUserName={currentUser?.nome_usuario}
+          />;
+      // 🆕 Ranqueamento de Candidatos (visão completa, independe de analista)
+      case 'ranqueamento':
+          return <RanqueamentoPage 
+            vagas={vagas} 
+            candidaturas={candidaturas} 
+            currentUserId={currentUser?.id || 1}
           />;
       case 'analise_risco':
           return <AnaliseRisco />;

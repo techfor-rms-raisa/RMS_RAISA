@@ -242,6 +242,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             icon: 'fa-solid fa-id-card', 
             roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
         },
+        // 3.1) Ranqueamento - RAISA Total + Gestão Comercial (visão completa, independe de analista)
+        { 
+            view: 'ranqueamento', 
+            label: 'Ranqueamento', 
+            icon: 'fa-solid fa-ranking-star', 
+            roles: ['Administrador', 'Gestão de R&S', 'Analista de R&S', 'Gestão Comercial'] 
+        },
         // 4) Entrevista Técnica - RAISA Total + Gestão Comercial (read-only)
         { 
             view: 'entrevista_tecnica', 
