@@ -2,7 +2,39 @@
  * useVincularEmLote.ts — Hook orquestrador da aba "Vincular em Lote"
  *
  * Caminho: src/components/crm/shared/hooks/useVincularEmLote.ts
- * Versão: 1.1 (B1 — SDR distribuidor CRECI — 22/06/2026)
+ * Versão: 1.2 (Incidente HTTP 414 — erro deixa de virar lista vazia — 23/07/2026)
+ *
+ * v1.2 (23/07/2026 — Incidente "0 leads disponíveis"):
+ *   Até a v1.1, o ramo `else` de `carregarLeads` tratava QUALQUER falha do
+ *   backend (500, 414, timeout, payload malformado) como lista vazia:
+ *
+ *       } else {
+ *         setLeads([]);
+ *         setTotalGeral(0);   // ← 500 vira "0 leads disponíveis"
+ *       }
+ *
+ *   Consequência real: em 23/07/2026 um HTTP 414 (URL de 17.194 bytes com
+ *   3.660 ids serializados no filtro `not.in`) foi renderizado ao operador
+ *   como "Não há leads CRECI elegíveis" — enquanto 257 leads elegíveis
+ *   estavam íntegros no banco. O empty state MENTIU, e o diagnóstico exigiu
+ *   duas sessões de investigação forense em SQL.
+ *
+ *   Mudança cirúrgica (3 pontos, nenhuma linha removida):
+ *     (1) novo state `erroLeads: string | null`
+ *     (2) ramo `else` preserva `data.error` + status HTTP e loga no console
+ *     (3) `catch` preserva a mensagem de rede
+ *   `erroLeads` é exposto no retorno do hook e limpo em toda listagem
+ *   bem-sucedida e no guard de saída antecipada.
+ *
+ *   ⚠️ ITEM 6 PENDENTE (aguarda aprovação de layout — regra 9):
+ *      o VincularEmLoteTab ainda NÃO consome `erroLeads`. Até que o estado
+ *      de erro seja renderizado (banner distinto do empty state), a falha
+ *      fica visível apenas no console do navegador.
+ *
+ *   Pareada com api/crm-leads.ts v1.27 + migration
+ *   sql/2026-07-23_rpc_listar_leads_vinculo_em_lote.sql
+ *
+ * v1.1 (B1 — SDR distribuidor CRECI — 22/06/2026)
  *
  * v1.1 (22/06/2026 — B1: SDR pode operar Leads CRECI de outros responsáveis):
  *   Estende a regra de visibilidade do fetch para que SDR não seja
@@ -221,6 +253,14 @@ export interface UseVincularEmLoteAPI {
   // ── Leads + paginação (PASSO 4)
   leads: LeadDisponivel[];
   loadingLeads: boolean;
+  /**
+   * 🆕 v1.2 (23/07/2026) — Mensagem de erro do backend na listagem de leads.
+   *   `null` = sem erro. Quando preenchido, a lista está vazia POR FALHA,
+   *   não por ausência de leads elegíveis — e a UI precisa dizer isso.
+   *   Consumido pelo VincularEmLoteTab a partir da v2.2 (item 6, pendente
+   *   de aprovação de layout). Até lá fica exposto e logado no console.
+   */
+  erroLeads: string | null;
   perPage: PerPage;
   setPerPage: (n: PerPage) => void;
   offset: number;
@@ -336,6 +376,8 @@ export function useVincularEmLote(
   // ── Leads ───────────────────────────────────────────────────
   const [leads, setLeads] = useState<LeadDisponivel[]>([]);
   const [loadingLeads, setLoadingLeads] = useState(false);
+  // 🆕 v1.2 (23/07/2026) — vide JSDoc do cabeçalho (incidente HTTP 414).
+  const [erroLeads, setErroLeads] = useState<string | null>(null);
   const [totalGeral, setTotalGeral] = useState(0);
   const [perPage, setPerPageState] = useState<PerPage>(PER_PAGE_DEFAULT);
   const [offset, setOffset] = useState(0);
@@ -514,6 +556,7 @@ export function useVincularEmLote(
     if (!verticalDestino || !campanhaDestino) {
       setLeads([]);
       setTotalGeral(0);
+      setErroLeads(null); // 🆕 v1.2 — estado neutro, não é falha
       return;
     }
     const seq = ++fetchLeadsSeqRef.current;
@@ -571,16 +614,38 @@ export function useVincularEmLote(
             ? data.total_geral
             : data.leads?.length || 0
         );
+        setErroLeads(null);
       } else {
+        // 🐛 v1.2 (23/07/2026) — CORREÇÃO DO MASCARAMENTO DE ERRO.
+        //   Até a v1.1, QUALQUER falha do backend (500, 414, timeout,
+        //   payload inválido) caía neste ramo e era renderizada como
+        //   "0 leads disponíveis" — indistinguível de "não há leads
+        //   elegíveis". Foi exatamente isso que transformou um HTTP 414
+        //   em duas sessões de investigação forense (incidente 23/07/2026).
+        //   Agora a causa é preservada em `erroLeads` e logada.
+        const msg =
+          (typeof data?.error === 'string' && data.error) ||
+          `Falha ao listar leads elegíveis (HTTP ${resp.status}).`;
+        // eslint-disable-next-line no-console
+        console.error('[useVincularEmLote] carregarLeads — backend recusou:', {
+          status: resp.status,
+          error: msg,
+        });
         setLeads([]);
         setTotalGeral(0);
+        setErroLeads(msg);
       }
-    } catch (err) {
+    } catch (err: any) {
       if (seq !== fetchLeadsSeqRef.current) return;
       // eslint-disable-next-line no-console
       console.error('[useVincularEmLote] carregarLeads falhou:', err);
       setLeads([]);
       setTotalGeral(0);
+      // 🆕 v1.2 — falha de rede/parse também precisa ser visível.
+      setErroLeads(
+        'Erro de rede ao consultar leads elegíveis: ' +
+          (err?.message || 'desconhecido')
+      );
     } finally {
       if (seq === fetchLeadsSeqRef.current) {
         setLoadingLeads(false);
@@ -842,6 +907,7 @@ export function useVincularEmLote(
     // Leads
     leads,
     loadingLeads,
+    erroLeads, // 🆕 v1.2
     perPage,
     setPerPage,
     offset,

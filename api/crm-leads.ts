@@ -2,6 +2,84 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.27 (23/07/2026 — INCIDENTE "0 leads disponíveis" — HTTP 414 por URL de 17 KB):
+ *
+ *    SINTOMA: aba "Vincular em Lote" com destino CRECI exibindo
+ *    "0 leads disponíveis" para a SDR Débora, enquanto a Base de Leads
+ *    listava 2.838 leads CRECI normalmente.
+ *
+ *    CAUSA RAIZ (medida em Produção, 23/07/2026):
+ *      A action materializava os ids bloqueados em memória e os injetava
+ *      na querystring do PostgREST:
+ *
+ *          query.not('id', 'in', `(${idsBloqueadosAtivas.join(',')})`)
+ *
+ *          SELECT cardinality(ids), length(array_to_string(ids, ','))
+ *            FROM (SELECT public.crm_leads_em_campanhas_ativas() AS ids) t;
+ *          →  3.660 ids  |  17.194 bytes
+ *
+ *      17,1 KB de URL contra um teto de ~16 KB de URI do gateway:
+ *          414 Request-URI Too Large → supabase-js error → 500
+ *          → hook converte falha em lista vazia → "0 leads disponíveis"
+ *      …com 257 leads elegíveis íntegros no banco.
+ *
+ *      ⚠️ Degradação GRADUAL: nenhum deploy quebrou nada. A URL cresceu
+ *         junto com a Campanha CRECI até cruzar o limiar (~3.200 ids).
+ *         Mesma família do limite de 1000 do supabase-js — quebra por
+ *         VOLUME, invisível em Preview, só aparece em Produção.
+ *
+ *    HIPÓTESES INVESTIGADAS E REFUTADAS (registro forense):
+ *      • Limite de 1000 do supabase-js — refutada: a RPC v2 já usa
+ *        array_agg e retorna BIGINT[].
+ *      • Migration da RPC não aplicada — refutada: pg_get_functiondef
+ *        confirmou RETURNS bigint[] em Produção.
+ *      • `apto_campanha=false` nos leads CRECI — refutada como bug:
+ *        é o PORTÃO DE CURADORIA do processo. GCs importam o corretor
+ *        cru; a SDR aloca para si (reservado_por) e marca "Apto para
+ *        campanhas" antes de vincular. Os 48 leads com apto=false são
+ *        fila de trabalho legítima, NÃO dado corrompido.
+ *        Confirmado por Messias em 23/07/2026 — nenhum backfill aplicado
+ *        e o INSERT de `promover_corretor_para_campanha` foi mantido
+ *        INTACTO de propósito.
+ *
+ *    CORREÇÃO (definitiva, não paliativa):
+ *      • Nova RPC `crm_listar_leads_vinculo_em_lote` resolve TODA a
+ *        elegibilidade dentro do PostgreSQL. Nenhum id trafega por URL.
+ *        Migration: sql/2026-07-23_rpc_listar_leads_vinculo_em_lote.sql
+ *      • Esta action virou tradutor fino querystring → RPC → HTTP.
+ *      • RETURNS jsonb (UMA linha) — retorno escalar é imune ao limite
+ *        default de 1000 linhas do cliente supabase-js. Lição da v1.19
+ *        aplicada já no desenho, não como hotfix.
+ *
+ *    DEFEITOS COLATERAIS CORRIGIDOS NA MESMA PASSAGEM:
+ *      • `email_optout.select('email')` SEM range — truncava silenciosamente
+ *        em 1000 linhas. Acima de 1.000 opt-outs, leads em opt-out vazariam
+ *        para a listagem (bug adormecido). Virou anti-join em SQL.
+ *      • Aritmética de `total_geral`: a v1.26 subtraía `removidosPorOptout`
+ *        (escopo de PÁGINA) de um total GLOBAL, corrompendo total_paginas
+ *        e has_proxima. O total agora vem correto da RPC.
+ *      • CONTRATO com o frontend: a UI (LeadDisponivel) lê `total_abertos`,
+ *        `total_clicados`, `dias_desde_cadastro` e `responsavel_nome`, mas o
+ *        backend enviava `total_emails_abertos`/`total_emails_clicados` e
+ *        omitia os dois últimos. Consequência: detalheEngajamento() retornava
+ *        "virgem" para TODO lead e as colunas CADASTRO/RESP. exibiam "—".
+ *        Mesma classe do bug handleTentarRecovery. A RPC agora entrega os
+ *        nomes exatos do contrato.
+ *
+ *    NÃO ALTERADO (de propósito):
+ *      • Critérios hard-coded de elegibilidade — semântica idêntica à v1.26,
+ *        inclusive no tratamento de NULL (`funil_status <> 'perdido'`
+ *        continua descartando NULL, como o PostgREST `.not(...)` fazia).
+ *      • Regra CRECI bidirecional — replicada literalmente na RPC.
+ *      • Ordenação score DESC NULLS LAST → nome ASC → id DESC (tiebreaker
+ *        determinístico da v1.16.2).
+ *      • RPCs crm_leads_em_campanhas_ativas/encerradas — preservadas,
+ *        continuam servindo outros consumidores.
+ *
+ *    Pareada com:
+ *      • sql/2026-07-23_rpc_listar_leads_vinculo_em_lote.sql
+ *      • useVincularEmLote v1.2 (para de mascarar erro como lista vazia)
+ *
  *  - v1.26 (06/07/2026 — Nova action `marcar_thread_lida` — RBAC restrito ao dono):
  *    Motivação: até v1.25.5, NENHUM endpoint gravava `email_respostas.
  *    lido = true`. Consequência prática: badge "Nova" na inbox permanecia
@@ -3136,7 +3214,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // user.id (vê apenas leads sob sua responsabilidade).
       // ─────────────────────────────────────────────────────────
       if (action === 'listar_leads_para_vinculo_em_lote') {
+        // ═════════════════════════════════════════════════════════
+        // 🆕 v1.27 (23/07/2026) — REESCRITA SOBRE RPC.
+        //
+        // Toda a elegibilidade (filtros de coluna, opt-out global, exclusão
+        // por campanha ativa/encerrada, ordenação, paginação e contagem)
+        // passou para `public.crm_listar_leads_vinculo_em_lote`.
+        //
+        // Este bloco virou um tradutor fino: querystring → parâmetros da RPC
+        // → resposta HTTP. Nenhum id trafega mais por URL.
+        //
+        // Ver sql/2026-07-23_rpc_listar_leads_vinculo_em_lote.sql para o
+        // laudo completo do incidente. Resumo:
+        //   3.660 ids × ~4,7 bytes = 17.194 bytes de querystring → HTTP 414
+        //   → 500 → hook renderizava "0 leads disponíveis" com 257 elegíveis
+        //   intactos no banco.
+        // ═════════════════════════════════════════════════════════
+
         // ── 1) Coleta e normalização dos parâmetros ─────────
+        //   A normalização pesada (trim/lower/upper/defaults) é redundante
+        //   com a CTE `par` da RPC — mantida aqui de propósito, como defesa
+        //   em profundidade e para que `filtros_aplicados` no retorno reflita
+        //   exatamente o que foi interpretado.
         const responsavelIdQ = req.query.responsavel_id as string | undefined;
         const verticalDestinoQ = (req.query.vertical_destino as string) || '';
         const busca = (req.query.busca as string) || '';
@@ -3149,254 +3248,98 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const cadastroRange = ((req.query.cadastro_range as string) || 'qualquer').toLowerCase();
         const outrasCampanhas = ((req.query.outras_campanhas as string) || 'excluir').toLowerCase();
 
-        // Paginação — clamp defensivo
+        // Paginação — clamp defensivo (espelhado na RPC)
         let perPage = parseInt((req.query.per_page as string) || '30');
         if (isNaN(perPage) || perPage < 1) perPage = 30;
         if (perPage > 100) perPage = 100;
         let offset = parseInt((req.query.offset as string) || '0');
         if (isNaN(offset) || offset < 0) offset = 0;
 
-        // ── 2) Pré-cálculo: IDs bloqueados / IDs em encerradas ─
-        //   (depende do parâmetro outras_campanhas; defaults para 'excluir').
-        // 🆕 v1.19 (22/06/2026 — HOTFIX da v1.18): as 2 RPCs agora retornam
-        //   BIGINT[] (array escalar) em vez de TABLE (lead_id BIGINT). Functions
-        //   com RETURNS TABLE também sofriam do limite default de 1000 do
-        //   cliente Supabase JS — apenas movemos o bug do `.from().select()`
-        //   para o `.rpc()`. O retorno array escalar é tratado como UMA linha,
-        //   sem limite. Pareada com migration
-        //   sql/2026-06-22_crm_leads_em_campanhas_rpc_v2_fix_bigint_array.sql
-        //   que precisa ser aplicada ANTES desta versão do backend.
-        let idsBloqueadosAtivas: number[] = [];
-        let idsEmEncerradas: number[] = [];
-
-        if (outrasCampanhas === 'excluir' || outrasCampanhas === 'so_encerradas') {
-          const { data: vinculosAtivos, error: errVA } = await supabase
-            .rpc('crm_leads_em_campanhas_ativas');
-          if (errVA) {
-            console.error('[crm-leads] erro rpc crm_leads_em_campanhas_ativas:', errVA.message);
-            // Defesa em profundidade: se a RPC não existe (migration não aplicada),
-            // retorna 500 com mensagem clara em vez de devolver listagem corrompida.
-            return res.status(500).json({
-              success: false,
-              error:
-                `Erro ao consultar vínculos ativos: ${errVA.message}. ` +
-                `Verifique se a migration sql/2026-06-22_crm_leads_em_campanhas_rpc_v2_fix_bigint_array.sql ` +
-                `foi aplicada no banco.`,
-            });
-          }
-          // 🆕 v1.19 — RPC agora retorna BIGINT[] (não TABLE). data é o array
-          //   DIRETO de bigints. Cada bigint vira string em JSON, daí o Number().
-          idsBloqueadosAtivas = Array.isArray(vinculosAtivos)
-            ? vinculosAtivos.map((id: any) => Number(id))
-            : [];
+        // Responsável: só envia se for inteiro válido. Qualquer lixo vira
+        // null (= "sem filtro"), nunca NaN — o NaN foi a causa de um
+        // incidente anterior (v1.19).
+        let responsavelIdNum: number | null = null;
+        if (responsavelIdQ !== undefined && responsavelIdQ !== null && responsavelIdQ !== '') {
+          const parsed = parseInt(responsavelIdQ);
+          if (!isNaN(parsed) && parsed > 0) responsavelIdNum = parsed;
         }
 
-        if (outrasCampanhas === 'so_encerradas') {
-          const { data: vinculosEncerrados, error: errVE } = await supabase
-            .rpc('crm_leads_em_campanhas_encerradas');
-          if (errVE) {
-            console.error('[crm-leads] erro rpc crm_leads_em_campanhas_encerradas:', errVE.message);
-            return res.status(500).json({
-              success: false,
-              error:
-                `Erro ao consultar vínculos encerrados: ${errVE.message}. ` +
-                `Verifique se a migration sql/2026-06-22_crm_leads_em_campanhas_rpc_v2_fix_bigint_array.sql ` +
-                `foi aplicada no banco.`,
-            });
+        // ── 2) Chamada única à RPC ──────────────────────────
+        //   RETURNS jsonb (UMA linha). Retorno escalar é imune ao limite
+        //   default de 1000 linhas do cliente supabase-js — mesma lição
+        //   arquitetural da v1.19, aplicada desde o desenho desta vez.
+        const { data: rpcData, error: errRpc } = await supabase.rpc(
+          'crm_listar_leads_vinculo_em_lote',
+          {
+            p_vertical_destino: verticalDestinoQ || null,
+            p_tipo_busca: tipoBusca,
+            p_busca: busca || null,
+            p_engajamento: engajamento,
+            p_setor: setor || null,
+            p_uf: uf || null,
+            p_cidade: cidade || null,
+            p_cadastro_range: cadastroRange,
+            p_outras_campanhas: outrasCampanhas,
+            p_responsavel_id: responsavelIdNum,
+            p_per_page: perPage,
+            p_offset: offset,
           }
-          // 🆕 v1.19 — array DIRETO de bigints (vide acima)
-          idsEmEncerradas = Array.isArray(vinculosEncerrados)
-            ? vinculosEncerrados.map((id: any) => Number(id))
-            : [];
-          // Se não houver nenhum lead em campanha encerrada, retorno cedo —
-          // saved-cycles e evita .in('id', [vazio]) que o PostgREST não aceita.
-          if (idsEmEncerradas.length === 0) {
-            return res.status(200).json({
-              success: true,
-              leads: [],
-              total_geral: 0,
-              total_paginas: 0,
-              pagina_atual: 1,
-              per_page: perPage,
-              offset,
-              has_proxima: false,
-              has_anterior: false,
-              vertical_destino_aplicado: verticalDestinoQ || null,
-              tipo_busca_aplicado: tipoBusca,
-              filtros_aplicados: {
-                engajamento, setor, uf, cidade, cadastro_range: cadastroRange,
-                outras_campanhas: outrasCampanhas, responsavel_id: responsavelIdQ || null,
-                busca: busca || null,
-              },
-              ids_vinculados_bloqueados: idsBloqueadosAtivas.length,
-            });
-          }
-        }
+        );
 
-        // ── 3) JOIN strategy ────────────────────────────────
-        // Se houver filtro em setor/uf/cidade → INNER (exige empresa associada).
-        // Caso contrário → LEFT (leads sem empresa aparecem normalmente).
-        const usaInnerEmpresa = !!(setor || uf || cidade);
-        const empresaSelect = usaInnerEmpresa
-          ? 'email_empresas!inner(id, nome, setor, cidade, uf)'
-          : 'email_empresas(id, nome, setor, cidade, uf)';
-
-        // ── 4) Query principal ──────────────────────────────
-        // count: 'exact' devolve total_geral em uma query só (PostgREST
-        // executa SELECT count(*) em paralelo — ~10ms em 1.6k leads hoje).
-        let query = supabase
-          .from('email_leads')
-          .select(
-            `
-            id, nome, email, cargo, vertical, reservado_por, funil_status,
-            apto_campanha, opt_out, telefone, linkedin_url, criado_em,
-            total_emails_recebidos, total_emails_abertos, total_emails_clicados,
-            total_respostas, score_engajamento,
-            ${empresaSelect}
-            `,
-            { count: 'exact' }
-          )
-          .eq('apto_campanha', true)
-          .or('opt_out.is.null,opt_out.eq.false')
-          .or('bounced.is.null,bounced.eq.false')
-          .not('funil_status', 'eq', 'perdido');
-
-        // ── 4.1) Filtro tipo_busca + regra CRECI bidirecional ─
-        // 🛡️ v1.16.1 (17/06/2026) — FIX defesa em profundidade:
-        // Quando verticalDestinoQ é vazio (chamada API direta sem destino),
-        // a v1.16 inicial deixava CRECI vazar nos resultados. A v1.15.1 tinha
-        // fallback defensivo que EXCLUÍA CRECI nesse caso. Restaurado abaixo
-        // em ambos os ramos (aderentes E conversíveis). O frontend novo
-        // SEMPRE envia vertical_destino, então essa proteção só ativa em
-        // chamadas API externas indevidas — mas é a postura correta.
-        if (tipoBusca === 'aderentes') {
-          // ADERENTES: vertical exata = destino.
-          // - Se destino CRECI → só CRECI (zero alteração).
-          // - Se destino X → só X.
-          // - Se SEM destino → exclui CRECI (defesa em profundidade).
-          if (verticalDestinoQ) {
-            query = query.eq('vertical', verticalDestinoQ);
-          } else {
-            query = query.not('vertical', 'eq', 'CRECI');
-          }
-        } else {
-          // CONVERSÍVEIS: qualquer vertical, com regra CRECI bidirecional:
-          // - Se destino CRECI → ainda só leads CRECI (entrada blindada).
-          // - Se destino ≠ CRECI (ou ausente) → exclui CRECI (saída blindada).
-          if (verticalDestinoQ === 'CRECI') {
-            query = query.eq('vertical', 'CRECI');
-          } else {
-            query = query.not('vertical', 'eq', 'CRECI');
-          }
-        }
-
-        // ── 4.2) Filtros de empresa (setor / UF / cidade) ────
-        if (setor) query = query.eq('email_empresas.setor', setor);
-        if (uf) query = query.eq('email_empresas.uf', uf);
-        if (cidade) query = query.ilike('email_empresas.cidade', `%${cidade}%`);
-
-        // ── 4.3) Filtro de responsável ──────────────────────
-        if (responsavelIdQ) {
-          query = query.eq('reservado_por', parseInt(responsavelIdQ));
-        }
-
-        // ── 4.4) Busca textual ──────────────────────────────
-        if (busca) {
-          query = query.or(
-            `nome.ilike.%${busca}%,email.ilike.%${busca}%,cargo.ilike.%${busca}%`
+        if (errRpc) {
+          console.error(
+            '[crm-leads] listar_leads_para_vinculo_em_lote erro rpc:',
+            errRpc.message
           );
+          // Defesa em profundidade: se a RPC não existe (migration não
+          // aplicada), devolve mensagem acionável em vez de listagem vazia
+          // — que foi exatamente o que mascarou o incidente de 23/07.
+          return res.status(500).json({
+            success: false,
+            error:
+              `Erro ao listar leads elegíveis: ${errRpc.message}. ` +
+              `Verifique se a migration sql/2026-07-23_rpc_listar_leads_vinculo_em_lote.sql ` +
+              `foi aplicada no banco.`,
+          });
         }
 
-        // ── 4.5) Filtro de engajamento ──────────────────────
-        // Operados sobre colunas materializadas em email_leads. Quase grátis
-        // (sem join com email_eventos). O score_engajamento já foi atualizado
-        // pelo webhook v1.15.1 + RPC v1.16 (vide migration).
-        if (engajamento === 'abriu') {
-          query = query.gte('total_emails_abertos', 1);
-        } else if (engajamento === 'clicou') {
-          query = query.gte('total_emails_clicados', 1);
-        } else if (engajamento === 'respondeu') {
-          query = query.gte('total_respostas', 1);
-        } else if (engajamento === 'virgem') {
-          query = query.or('total_emails_recebidos.is.null,total_emails_recebidos.eq.0');
-        }
-        // 'qualquer' (default) → sem filtro
-
-        // ── 4.6) Filtro de data de cadastro ─────────────────
-        // Faixas calculadas no servidor para evitar drift de timezone do cliente.
-        if (cadastroRange !== 'qualquer') {
-          const agora = Date.now();
-          const dia = 24 * 60 * 60 * 1000;
-          if (cadastroRange === '7d') {
-            query = query.gte('criado_em', new Date(agora - 7 * dia).toISOString());
-          } else if (cadastroRange === '30d') {
-            query = query.gte('criado_em', new Date(agora - 30 * dia).toISOString());
-          } else if (cadastroRange === '90d') {
-            query = query.gte('criado_em', new Date(agora - 90 * dia).toISOString());
-          } else if (cadastroRange === 'mais_90d') {
-            query = query.lt('criado_em', new Date(agora - 90 * dia).toISOString());
-          }
+        // ── 3) Desempacotamento defensivo ───────────────────
+        //   Contrato: { leads: [...], total_geral: number }.
+        //   Um retorno fora desse formato é falha de contrato, não lista
+        //   vazia — e precisa gritar, não silenciar.
+        const payload: any = rpcData ?? null;
+        if (!payload || !Array.isArray(payload.leads)) {
+          console.error(
+            '[crm-leads] listar_leads_para_vinculo_em_lote — retorno inesperado da RPC:',
+            JSON.stringify(payload)?.slice(0, 500)
+          );
+          return res.status(500).json({
+            success: false,
+            error:
+              'Retorno inesperado da RPC crm_listar_leads_vinculo_em_lote ' +
+              '(esperado { leads: [], total_geral: number }). ' +
+              'Verifique se a versão aplicada no banco corresponde à migration de 23/07/2026.',
+          });
         }
 
-        // ── 4.7) Filtros "outras campanhas" ─────────────────
-        if (idsBloqueadosAtivas.length > 0) {
-          query = query.not('id', 'in', `(${idsBloqueadosAtivas.join(',')})`);
-        }
-        if (outrasCampanhas === 'so_encerradas') {
-          // idsEmEncerradas garantido não-vazio (early-return acima cobre o caso vazio)
-          query = query.in('id', idsEmEncerradas);
-        }
+        const leadsPagina = payload.leads as any[];
+        const totalGeral: number =
+          typeof payload.total_geral === 'number' ? payload.total_geral : 0;
 
-        // ── 5) Ordenação + paginação ────────────────────────
-        // Mais engajados primeiro (score DESC), depois alfabético por nome.
-        // 🆕 v1.16.2: adicionado tiebreaker FINAL .order('id') para garantir
-        //   determinismo em empates. Sem isso, o PostgREST/PostgreSQL pode
-        //   retornar linhas com mesmo (score, nome) em ordem indefinida
-        //   (depende do physical row order, que muda com VACUUM/UPDATE).
-        //   Em paginação por range(), isso causava o sintoma 50→10→10→11→10
-        //   reportado na Sessão 1 — empates "atravessando" páginas.
-        //   Custo: zero (id tem índice PK). Benefício: ordem 100% estável.
-        // Range é zero-indexed e INCLUSIVO em ambas as pontas.
-        query = query
-          .order('score_engajamento', { ascending: false, nullsFirst: false })
-          .order('nome', { ascending: true })
-          .order('id', { ascending: false })
-          .range(offset, offset + perPage - 1);
-
-        const { data: leads, error: errLeads, count: totalGeral } = await query;
-        if (errLeads) {
-          console.error('[crm-leads] listar_leads_para_vinculo_em_lote erro:', errLeads.message);
-          return res.status(500).json({ success: false, error: errLeads.message });
-        }
-
-        // ── 6) Defesa em profundidade: opt-out global ───────
-        // A tabela email_optout é desacoplada de email_leads, então o filtro
-        // vai pós-query. Em casos reais (poucos opt-outs vs total de leads),
-        // o impacto na contagem é desprezível; documentamos como aproximação.
-        const { data: optouts } = await supabase
-          .from('email_optout')
-          .select('email');
-        const emailsOptout = new Set(
-          (optouts || []).map((o: any) => (o.email || '').toLowerCase().trim())
-        );
-
-        const leadsFiltrados = (leads || []).filter(
-          (l: any) => !emailsOptout.has((l.email || '').toLowerCase().trim())
-        );
-
-        const removidosPorOptout = (leads || []).length - leadsFiltrados.length;
-        const totalAjustado = Math.max(0, (totalGeral || 0) - removidosPorOptout);
-
-        // ── 7) Metadados de paginação ───────────────────────
-        const totalPaginas = Math.max(1, Math.ceil(totalAjustado / perPage));
+        // ── 4) Metadados de paginação ───────────────────────
+        //   🐛 v1.27 — CORRIGIDO: a v1.26 subtraía `removidosPorOptout`
+        //   (escopo de PÁGINA) de `totalGeral` (escopo GLOBAL), corrompendo
+        //   total_paginas e has_proxima. O opt-out global agora é filtrado
+        //   dentro da RPC, então totalGeral já é o número final e correto.
+        const totalPaginas = Math.max(1, Math.ceil(totalGeral / perPage));
         const paginaAtual = Math.floor(offset / perPage) + 1;
-        const hasProxima = offset + perPage < totalAjustado;
+        const hasProxima = offset + perPage < totalGeral;
         const hasAnterior = offset > 0;
 
         return res.status(200).json({
           success: true,
-          leads: leadsFiltrados,
-          total_geral: totalAjustado,
+          leads: leadsPagina,
+          total_geral: totalGeral,
           total_paginas: totalPaginas,
           pagina_atual: paginaAtual,
           per_page: perPage,
@@ -3415,7 +3358,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             responsavel_id: responsavelIdQ || null,
             busca: busca || null,
           },
-          ids_vinculados_bloqueados: idsBloqueadosAtivas.length,
+          // 🔄 v1.27 — o campo perdeu sentido: não existe mais lista de ids
+          //   materializada em memória. Mantido no contrato de resposta para
+          //   não quebrar consumidores, sempre em 0. Candidato a remoção
+          //   quando o frontend confirmar que não o lê.
+          ids_vinculados_bloqueados: 0,
         });
       }
 
