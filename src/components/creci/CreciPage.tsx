@@ -2,7 +2,7 @@
  * CreciPage.tsx — Módulo CRECI
  *
  * Gerenciamento de corretores CRECI extraídos via Chrome Extension.
- * 3 abas: Lista CRECI | Meus Leads Salvos | Dashboard
+ * 4 abas: Lista CRECI | Meus Leads Salvos | Acompanhamento | Dashboard
  *
  * Caminho: src/components/creci/CreciPage.tsx
  *
@@ -45,11 +45,29 @@
  *        corretores cadastrados no CRECI. Alteração 100% cirúrgica:
  *        apenas a constante WHATSAPP_TEXTO_PADRAO mudou, nenhuma outra
  *        linha de código foi tocada.
+ *  - v1.3.0 (23/07/2026): nova aba "Acompanhamento" (carteira de corretores).
+ *      • Corretores com INTERESSE = Sim ou NEGÓCIO = Fechado passam a ter
+ *        ficha de contrato, registro de conversas/acordos, follow-ups e
+ *        histórico de e-mails num layout mestre-detalhe.
+ *      • Toda a funcionalidade vive em src/components/creci/acompanhamento/.
+ *        Este arquivo sofreu apenas 5 alterações cirúrgicas: cabeçalho,
+ *        import, TabType, botão da aba e ramo do ternário de conteúdo.
+ *        Nenhuma linha existente foi removida.
+ *      • RBAC próprio, diferente do resto do módulo (decisão de produto,
+ *        Messias 23/07/2026): leitura liberada a Administrador, SDR e
+ *        Gestão Comercial sobre a carteira INTEIRA — sem o filtro por
+ *        `analista` usado na aba "Meus Leads Salvos"; escrita restrita a
+ *        Administrador e SDR, em qualquer corretor da carteira.
+ *      • Depende das migrações sql/2026-07-23_creci_acompanhamento.sql e
+ *        sql/2026-07-23_creci_acompanhamento_rpcs.sql, e do endpoint
+ *        api/creci-acompanhamento.ts.
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
+// 🆕 v1.3.0 — aba de acompanhamento (carteira pós-venda de corretores)
+import AcompanhamentoCorretoresTab from './acompanhamento/AcompanhamentoCorretoresTab';
 
 // ─── SUPABASE CLIENT ──────────────────────────────────────────────────────────
 const supabase = createClient(
@@ -183,7 +201,7 @@ function montarLinkWhatsApp(
   return `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`;
 }
 
-type TabType = 'lista' | 'leads' | 'dashboard';
+type TabType = 'lista' | 'leads' | 'acompanhamento' | 'dashboard';
 type StatusFilter = 'todos' | 'novos' | 'extraidos';
 type ContatoFilter = 'todos' | 'com_email' | 'sem_email' | 'com_telefone' | 'sem_telefone';
 type NegocioFilter = 'todos' | 'sim' | 'nao';
@@ -763,6 +781,12 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
           label="Meus Leads Salvos"
         />
         <TabButton
+          active={activeTab === 'acompanhamento'}
+          onClick={() => setActiveTab('acompanhamento')}
+          icon="🤝"
+          label="Acompanhamento"
+        />
+        <TabButton
           active={activeTab === 'dashboard'}
           onClick={() => setActiveTab('dashboard')}
           icon="📊"
@@ -771,7 +795,10 @@ const CreciPage: React.FC<CreciPageProps> = ({ currentUser }) => {
       </div>
 
       {/* CONTEÚDO DAS TABS */}
-      {activeTab === 'dashboard' ? (
+      {activeTab === 'acompanhamento' ? (
+        /* 🆕 v1.3.0 — carteira de acompanhamento (componente próprio, RBAC próprio) */
+        <AcompanhamentoCorretoresTab currentUser={currentUser} />
+      ) : activeTab === 'dashboard' ? (
         <DashboardTab
           stats={dashStats}
           loading={dashLoading}
