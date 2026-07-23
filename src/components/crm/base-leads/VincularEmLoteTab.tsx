@@ -2,7 +2,34 @@
  * VincularEmLoteTab.tsx — Aba "Vincular em Lote" do CRM
  *
  * Caminho: src/components/crm/base-leads/VincularEmLoteTab.tsx
- * Versão: 2.1 (B1 — SDR distribuidor CRECI — 22/06/2026)
+ * Versão: 2.2 (Estado de erro distinto do estado vazio — 23/07/2026)
+ *
+ * v2.2 (23/07/2026 — Incidente "0 leads disponíveis" / HTTP 414):
+ *   Fecha o ciclo do incidente de 23/07/2026. Até a v2.1, uma falha do
+ *   backend era indistinguível de "não há leads elegíveis": o hook zerava
+ *   a lista e esta tela renderizava o empty state normal. Um HTTP 414
+ *   (URL de 17.194 bytes com 3.660 ids no filtro not.in) foi apresentado à
+ *   SDR como "Não há leads CRECI elegíveis" — com 257 leads íntegros no
+ *   banco. O empty state MENTIU.
+ *
+ *   Mudança cirúrgica em 2 pontos (nenhuma linha removida, nenhuma
+ *   estrutura nova de layout):
+ *     (1) Contador do PASSO 4 — exibe "falha ao carregar" em vermelho no
+ *         lugar de "0 leads disponíveis" quando `h.erroLeads` está setado.
+ *     (2) Corpo da tabela — novo ramo de ERRO ANTES do ramo de lista vazia.
+ *         Ocupa a MESMA célula colSpan que loading/vazio já usavam.
+ *         Padrão visual reaproveitado do modal de "falha total" (v2.0
+ *         item g): vermelho + fa-circle-xmark. Exibe a mensagem crua do
+ *         backend em monoespaçado para diagnóstico.
+ *
+ *   Precedência dos estados da tabela: loading → erro → vazio → dados.
+ *
+ *   Pareada com:
+ *     - useVincularEmLote v1.2 (expõe `erroLeads`)
+ *     - api/crm-leads v1.27 (500 com mensagem acionável)
+ *     - sql/2026-07-23_rpc_listar_leads_vinculo_em_lote.sql
+ *
+ * v2.1 (B1 — SDR distribuidor CRECI — 22/06/2026)
  *
  * v2.1 (22/06/2026 — B1: SDR pode distribuir Leads CRECI de outros):
  *   Estende a regra do v2.0 que permitia apenas Admin filtrar por
@@ -685,9 +712,18 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
             <h3 className="font-semibold text-gray-800 text-sm">
               Selecione os leads
             </h3>
-            <span className="ml-2 text-sm text-gray-500">
+            {/* 🆕 v2.2 (23/07/2026) — o contador não pode mais anunciar
+                "0 leads disponíveis" quando a listagem falhou. Era essa frase
+                que mascarava o HTTP 414 do incidente de 23/07. */}
+            <span
+              className={`ml-2 text-sm ${
+                h.erroLeads ? 'text-red-600 font-medium' : 'text-gray-500'
+              }`}
+            >
               {h.loadingLeads
                 ? '...'
+                : h.erroLeads
+                ? 'falha ao carregar'
                 : `${h.totalGeral} lead${h.totalGeral !== 1 ? 's' : ''} disponíve${
                     h.totalGeral !== 1 ? 'is' : 'l'
                   }`}
@@ -754,6 +790,37 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                     >
                       <i className="fa-solid fa-spinner fa-spin mr-2"></i>
                       Carregando leads...
+                    </td>
+                  </tr>
+                ) : h.erroLeads ? (
+                  /* 🆕 v2.2 (23/07/2026) — ESTADO DE ERRO, distinto do estado
+                     vazio. Reutiliza o padrão visual de "falha total" já existente
+                     no modal de resultado (v2.0 item g): vermelho + fa-circle-xmark.
+                     Nenhuma estrutura nova de layout — ocupa a mesma célula
+                     colSpan que as linhas de loading/vazio já usavam. */
+                  <tr>
+                    <td
+                      colSpan={podeVerLeadsDeOutros ? 9 : 8}
+                      className="p-8 text-center"
+                    >
+                      <div className="mx-auto max-w-2xl rounded-lg border border-red-300 bg-red-50 p-4 text-left">
+                        <p className="flex items-center gap-2 font-semibold text-red-700">
+                          <i className="fa-solid fa-circle-xmark"></i>
+                          Não foi possível carregar os leads
+                        </p>
+                        <p className="mt-2 text-sm text-red-700">
+                          A lista está vazia por <strong>falha na consulta</strong>, não
+                          por ausência de leads elegíveis. Nenhum lead foi perdido — os
+                          dados permanecem íntegros no banco.
+                        </p>
+                        <p className="mt-2 text-sm text-red-700">
+                          Ajuste os filtros para reduzir o resultado ou avise o
+                          administrador do sistema com a mensagem abaixo.
+                        </p>
+                        <p className="mt-3 break-words rounded border border-red-200 bg-white p-2 font-mono text-xs text-red-600">
+                          {h.erroLeads}
+                        </p>
+                      </div>
                     </td>
                   </tr>
                 ) : h.leads.length === 0 ? (
