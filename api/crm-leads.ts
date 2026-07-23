@@ -2,6 +2,59 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.28 (23/07/2026 — CORREÇÃO PREVENTIVA: defeito adormecido de 1000 linhas
+ *    em `listar_metadados_filtros_vinculo_em_lote`):
+ *
+ *    NÃO é correção de falha em curso. É correção de falha que AINDA NÃO
+ *    disparou, encontrada durante a auditoria do incidente HTTP 414 do
+ *    mesmo dia (vide v1.27).
+ *
+ *    DEFEITO:
+ *      A action montava os dropdowns de Setor/UF/Cidade com
+ *          .from('email_empresas').select('setor, cidade, uf')   // sem range
+ *      e deduplicava em Node. O cliente supabase-js trunca em 1.000 linhas
+ *      SEM erro, SEM warning e SEM status HTTP diferente.
+ *
+ *    ESTADO EM 23/07/2026:
+ *      294 empresas → 294 < 1.000 → nada truncado. Folga: ~706 empresas.
+ *
+ *    A PARTIR DA 1.001ª EMPRESA:
+ *      Dropdowns refletiriam apenas as primeiras 1.000 empresas. Setores e
+ *      cidades das seguintes desapareceriam das opções de filtro.
+ *      ⚠️ Dimensionamento correto: NÃO corrompe resultado e NÃO perde lead.
+ *         Quem filtrasse por opção visível receberia a lista certa. O
+ *         prejuízo é o operador não conseguir filtrar por um valor que
+ *         existe na base mas sumiu do dropdown — em silêncio absoluto.
+ *
+ *    ASSINATURA DA FAMÍLIA (idêntica à do 414 da v1.27):
+ *      quebra por VOLUME · invisível em Preview · silenciosa em Produção ·
+ *      detectabilidade baixa · aparece meses depois, sem relação com deploy.
+ *
+ *    CORREÇÃO:
+ *      DISTINCT movido para o PostgreSQL via nova RPC
+ *      `crm_metadados_filtros_vinculo_em_lote`. Migration:
+ *        sql/2026-07-23_rpc_metadados_filtros_vinculo_em_lote.sql
+ *      Ganho secundário: para de trafegar N linhas de empresa para o Node
+ *      só para produzir algumas dezenas de valores distintos.
+ *      `app_users` recebeu o mesmo tratamento — tabela pequena hoje, mas o
+ *      padrão fica uniforme e não precisa ser revisitado.
+ *
+ *    NÃO ALTERADO (fidelidade de comportamento):
+ *      • Ordenação de setores/cidades PERMANECE em Node com
+ *        `localeCompare(a, b, 'pt-BR')` — a collation do banco não é
+ *        garantidamente idêntica para acentuados. Como a lista chega
+ *        deduplicada (dezenas de itens), ordenar em JS custa nada e garante
+ *        ZERO mudança na ordem exibida.
+ *      • `ufs` continua com sort() simples (siglas ASCII de 2 letras).
+ *      • `responsaveis` mantém ordem (tipo_usuario, nome_usuario) vinda do
+ *        banco, exatamente como o PostgREST entregava.
+ *      • Filtro de tipos preservado: Gestão Comercial, SDR, Administrador.
+ *
+ *    Decisão de produto (Messias, 23/07/2026): corrigir com folga em vez de
+ *    esperar o sintoma. Auditoria ampla dos demais endpoints (grep por
+ *    `.select()` sem range e por arrays não-limitados em `.in()`/`.not(in)`)
+ *    agendada para a semana seguinte.
+ *
  *  - v1.27 (23/07/2026 — INCIDENTE "0 leads disponíveis" — HTTP 414 por URL de 17 KB):
  *
  *    SINTOMA: aba "Vincular em Lote" com destino CRECI exibindo
@@ -3106,50 +3159,95 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       //     responsaveis: { id, nome_usuario, tipo_usuario, email_usuario }[] }
       // ─────────────────────────────────────────────────────────
       if (action === 'listar_metadados_filtros_vinculo_em_lote') {
-        // 1) Setores/UFs/cidades distintos da base de empresas (sem null)
-        const { data: empresas, error: errEmp } = await supabase
-          .from('email_empresas')
-          .select('setor, cidade, uf');
+        // ═══════════════════════════════════════════════════════
+        // 🆕 v1.28 (23/07/2026) — DEFEITO ADORMECIDO ELIMINADO.
+        //
+        // A v1.27 e anteriores faziam:
+        //     .from('email_empresas').select('setor, cidade, uf')   // sem range
+        // e deduplicavam em Node. O cliente supabase-js trunca em 1.000 linhas
+        // SEM erro e SEM warning.
+        //
+        // Estado em 23/07/2026: 294 empresas → nada truncado (folga ~706).
+        // A partir da 1.001ª empresa, os dropdowns de Setor/UF/Cidade passariam
+        // a refletir apenas as primeiras 1.000 — valores reais da base sumiriam
+        // das opções de filtro, em silêncio. Não corrompe resultado nem perde
+        // lead; impede o operador de filtrar por algo que existe.
+        //
+        // Mesma assinatura do HTTP 414 corrigido na v1.27: quebra por VOLUME,
+        // invisível em Preview, silenciosa em Produção. Corrigido de forma
+        // preventiva por decisão de Messias (23/07/2026), com folga de 706
+        // empresas, para não ressurgir sem contexto meses depois.
+        //
+        // O DISTINCT passou para o PostgreSQL. Migration:
+        //   sql/2026-07-23_rpc_metadados_filtros_vinculo_em_lote.sql
+        // ═══════════════════════════════════════════════════════
 
-        if (errEmp) {
-          console.error('[crm-leads] listar_metadados_filtros erro empresas:', errEmp.message);
-          return res.status(500).json({ success: false, error: errEmp.message });
+        // 1) Chamada única à RPC.
+        //    RETURNS jsonb (UMA linha) — retorno escalar é imune ao limite
+        //    default de 1.000 linhas do supabase-js. Mesma lição da v1.19 e
+        //    da RPC de listagem (v1.27), aplicada já no desenho.
+        const { data: metaData, error: errMeta } = await supabase.rpc(
+          'crm_metadados_filtros_vinculo_em_lote'
+        );
+
+        if (errMeta) {
+          console.error('[crm-leads] listar_metadados_filtros erro rpc:', errMeta.message);
+          return res.status(500).json({
+            success: false,
+            error:
+              `Erro ao carregar metadados de filtros: ${errMeta.message}. ` +
+              `Verifique se a migration sql/2026-07-23_rpc_metadados_filtros_vinculo_em_lote.sql ` +
+              `foi aplicada no banco.`,
+          });
         }
 
-        const setores: string[] = Array.from(new Set(
-          (empresas || []).map((e: any) => (e.setor || '').trim()).filter(Boolean) as string[]
-        )).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-
-        const ufs: string[] = Array.from(new Set(
-          (empresas || []).map((e: any) => (e.uf || '').trim().toUpperCase()).filter(Boolean) as string[]
-        )).sort();
-
-        const cidades: string[] = Array.from(new Set(
-          (empresas || []).map((e: any) => (e.cidade || '').trim()).filter(Boolean) as string[]
-        )).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-
-        // 2) Responsáveis ativos (GC + SDR + Administrador — Admin pode aparecer
-        //    como responsável em casos excepcionais; vide criar_lead v1.7).
-        //    Não filtramos por flag 'ativo' aqui porque a tabela app_users no
-        //    schema atual não a expõe consistentemente; basta filtrar pelo tipo.
-        const { data: responsaveis, error: errResp } = await supabase
-          .from('app_users')
-          .select('id, nome_usuario, tipo_usuario, email_usuario')
-          .in('tipo_usuario', ['Gestão Comercial', 'SDR', 'Administrador'])
-          .order('tipo_usuario', { ascending: true })
-          .order('nome_usuario', { ascending: true });
-
-        if (errResp) {
-          console.error('[crm-leads] listar_metadados_filtros erro responsaveis:', errResp.message);
-          return res.status(500).json({ success: false, error: errResp.message });
+        // 2) Desempacotamento defensivo do contrato
+        //    { setores: [], ufs: [], cidades: [], responsaveis: [] }
+        const meta: any = metaData ?? null;
+        if (
+          !meta ||
+          !Array.isArray(meta.setores) ||
+          !Array.isArray(meta.ufs) ||
+          !Array.isArray(meta.cidades) ||
+          !Array.isArray(meta.responsaveis)
+        ) {
+          console.error(
+            '[crm-leads] listar_metadados_filtros — retorno inesperado da RPC:',
+            JSON.stringify(meta)?.slice(0, 500)
+          );
+          return res.status(500).json({
+            success: false,
+            error:
+              'Retorno inesperado da RPC crm_metadados_filtros_vinculo_em_lote ' +
+              '(esperado { setores, ufs, cidades, responsaveis }). ' +
+              'Verifique se a versão aplicada no banco corresponde à migration de 23/07/2026.',
+          });
         }
+
+        // 3) Ordenação de setores/cidades PERMANECE em Node — de propósito.
+        //    `localeCompare(a, b, 'pt-BR')` não é garantidamente idêntico à
+        //    collation do banco para acentuados. A lista já chega deduplicada
+        //    (dezenas de itens), então ordenar aqui custa nada e garante ZERO
+        //    mudança na ordem exibida ao operador.
+        //    `ufs` usa sort() simples, como na v1.27 (siglas ASCII de 2 letras).
+        //    `responsaveis` já vem ordenado pela RPC (tipo_usuario, nome_usuario),
+        //    exatamente como o PostgREST entregava.
+        const setores: string[] = (meta.setores as string[])
+          .slice()
+          .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+        const ufs: string[] = (meta.ufs as string[]).slice().sort();
+
+        const cidades: string[] = (meta.cidades as string[])
+          .slice()
+          .sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
         return res.status(200).json({
           success: true,
           setores,
           ufs,
           cidades,
-          responsaveis: responsaveis || [],
+          responsaveis: meta.responsaveis,
         });
       }
 
