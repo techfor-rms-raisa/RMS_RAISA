@@ -330,16 +330,22 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         }
         
         // Filtro por busca
+        // 🔧 v57.2 (30/07/2026): CORREÇÃO - busca agora usa fallback da tabela pessoas
+        // (mesmo comportamento de getCandidatoName), pois candidato_nome/candidato_email
+        // frequentemente vêm vazios na candidatura e o nome exibido vem de pessoas via pessoa_id
         if (searchTerm.trim()) {
             const term = searchTerm.toLowerCase();
-            filtered = filtered.filter(c => 
-                (c.candidato_nome || '').toLowerCase().includes(term) ||
-                (c.candidato_email || '').toLowerCase().includes(term)
-            );
+            const pessoasById = new Map(safePessoas.map(p => [String(p.id), p]));
+            filtered = filtered.filter(c => {
+                const pessoa = c.pessoa_id ? pessoasById.get(String(c.pessoa_id)) : undefined;
+                const nome = (c.candidato_nome || pessoa?.nome || '').toLowerCase();
+                const email = (c.candidato_email || pessoa?.email || '').toLowerCase();
+                return nome.includes(term) || email.includes(term);
+            });
         }
         
         return filtered;
-    }, [filterVaga, filterStatus, filterCliente, searchTerm, safeCandidaturas, safeVagas, filtroVagaEscopo, filtroCandidatoEscopo, currentUserId]);
+    }, [filterVaga, filterStatus, filterCliente, searchTerm, safeCandidaturas, safeVagas, safePessoas, filtroVagaEscopo, filtroCandidatoEscopo, currentUserId]);
 
     // ============================================
     // 🆕 VAGAS FILTRADAS POR CLIENTE E ANALISTA (v57.1)
@@ -696,10 +702,18 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                 </div>
 
                 {/* Linha 2 - Filtros existentes */}
-                <div className="flex flex-col md:flex-row gap-4">
+                {/* 🔧 v57.3 (30/07/2026): CORREÇÃO DE LAYOUT
+                    Os <select> tinham apenas min-w e nenhuma largura definida. Em flexbox,
+                    min-width:auto impede o item de encolher abaixo do seu min-content — e o
+                    min-content de um <select> é o texto da MAIOR option (ex.: "7707 - VTI-0426-002
+                    Desenvolvedor COBOL Mainframe Pleno"). Resultado: o select de Vagas ocupava
+                    quase toda a linha e esmagava a busca (flex-1) para poucos pixels.
+                    Solução: largura explícita nos selects (limita o mínimo automático) + truncate,
+                    e basis/min-width garantidos para a busca. flex-wrap evita quebra em telas menores. */}
+                <div className="flex flex-col md:flex-row md:flex-wrap md:items-center gap-4">
                     {/* Busca */}
-                    <div className="flex-1 relative">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <div className="relative flex-1 basis-[320px] min-w-[280px]">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
                         <input
                             type="text"
                             placeholder="Buscar por nome ou email..."
@@ -710,10 +724,10 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                     </div>
                     
                     {/* 🆕 Filtro por Cliente */}
-                    <div className="relative">
-                        <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <div className="relative shrink-0">
+                        <Building2 className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
                         <select 
-                            className="border border-gray-200 p-2 pl-9 rounded-lg focus:ring-2 focus:ring-orange-500 min-w-[180px] appearance-none bg-white" 
+                            className="w-[190px] truncate border border-gray-200 p-2 pl-9 rounded-lg focus:ring-2 focus:ring-orange-500 appearance-none bg-white" 
                             value={filterCliente} 
                             onChange={e => {
                                 setFilterCliente(e.target.value);
@@ -732,9 +746,10 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                     
                     {/* Filtro por Vaga (mostra vagas do cliente selecionado) */}
                     <select 
-                        className="border border-gray-200 p-2 rounded-lg focus:ring-2 focus:ring-orange-500 min-w-[200px]" 
+                        className="w-[220px] shrink-0 truncate border border-gray-200 p-2 rounded-lg focus:ring-2 focus:ring-orange-500" 
                         value={filterVaga} 
                         onChange={e => setFilterVaga(e.target.value)}
+                        title={filterVaga !== 'all' ? (safeVagas.find(v => String(v.id) === filterVaga)?.titulo || '') : 'Todas as Vagas'}
                     >
                         <option value="all">
                             {filterCliente !== 'all' ? 'Todas as Vagas do Cliente' : 'Todas as Vagas'}
@@ -760,7 +775,7 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
                     
                     {/* Filtro por Status - FLUXO ATUALIZADO */}
                     <select 
-                        className="border border-gray-200 p-2 rounded-lg focus:ring-2 focus:ring-orange-500 min-w-[180px]" 
+                        className="w-[180px] shrink-0 truncate border border-gray-200 p-2 rounded-lg focus:ring-2 focus:ring-orange-500" 
                         value={filterStatus} 
                         onChange={e => setFilterStatus(e.target.value)}
                     >

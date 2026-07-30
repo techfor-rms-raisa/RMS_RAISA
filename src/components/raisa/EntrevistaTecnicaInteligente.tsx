@@ -46,7 +46,7 @@
  * Data: 28/01/2026
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '@/config/supabase';
 import {
   Mic, Upload, FileAudio, Play, Pause, CheckCircle, XCircle,
@@ -54,7 +54,7 @@ import {
   ChevronRight, ChevronDown, User, Briefcase, Clock,
   ThumbsUp, ThumbsDown, HelpCircle, FileText, Trash2,
   RefreshCw, Download, BarChart3, Award, TrendingUp,
-  Volume2, Headphones, Send, Save, Eye, FileDown
+  Volume2, Headphones, Send, Save, Eye, FileDown, Search
 } from 'lucide-react';
 import { Candidatura, Vaga } from '@/types';
 // jsPDF removido - agora usa API backend para gerar DOCX com papel timbrado TechFor
@@ -120,6 +120,187 @@ interface CandidaturaComVaga extends Candidatura {
     nome: string;
   };
 }
+
+// ============================================
+// 🆕 v3.1 (30/07/2026): SELETOR DE CANDIDATURA COM BUSCA (COMBOBOX)
+// --------------------------------------------
+// Substitui o par [input de busca + <select> nativo] por um combobox único:
+// o resultado aparece automaticamente enquanto o analista digita, sem precisar
+// abrir um seletor separado para descobrir se o candidato existe.
+// Definido em nível de módulo (fora do componente pai) para não ser recriado a
+// cada render — o que provocaria perda de foco no input a cada tecla digitada.
+// ============================================
+
+interface SeletorCandidaturaBuscaProps {
+  candidaturas: CandidaturaComVaga[];
+  onSelecionar: (id: number) => void;
+  placeholder?: string;
+}
+
+const SeletorCandidaturaBusca: React.FC<SeletorCandidaturaBuscaProps> = ({
+  candidaturas,
+  onSelecionar,
+  placeholder = 'Digite o nome do candidato, a vaga ou o status...'
+}) => {
+  const [termo, setTermo] = useState<string>('');
+  const [aberto, setAberto] = useState<boolean>(false);
+  const [indiceAtivo, setIndiceAtivo] = useState<number>(-1);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const listaRef = useRef<HTMLUListElement>(null);
+
+  // Resultados filtrados: sem termo, mostra todas as elegíveis (permite navegar sem digitar)
+  const resultados = useMemo(() => {
+    const t = termo.trim().toLowerCase();
+    if (!t) return candidaturas;
+    return candidaturas.filter(c =>
+      (c.candidato_nome || '').toLowerCase().includes(t) ||
+      (c.vaga?.titulo || '').toLowerCase().includes(t) ||
+      (c.status || '').toLowerCase().includes(t)
+    );
+  }, [candidaturas, termo]);
+
+  // Fechar ao clicar fora
+  useEffect(() => {
+    const handleClickFora = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setAberto(false);
+        setIndiceAtivo(-1);
+      }
+    };
+    document.addEventListener('mousedown', handleClickFora);
+    return () => document.removeEventListener('mousedown', handleClickFora);
+  }, []);
+
+  // Manter o item ativo visível durante a navegação por teclado
+  useEffect(() => {
+    if (indiceAtivo < 0 || !listaRef.current) return;
+    const item = listaRef.current.children[indiceAtivo] as HTMLElement | undefined;
+    item?.scrollIntoView({ block: 'nearest' });
+  }, [indiceAtivo]);
+
+  const handleEscolher = (candidatura: CandidaturaComVaga) => {
+    setAberto(false);
+    setIndiceAtivo(-1);
+    setTermo('');
+    onSelecionar(Number(candidatura.id));
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setAberto(true);
+      setIndiceAtivo(prev => (resultados.length === 0 ? -1 : (prev + 1) % resultados.length));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setAberto(true);
+      setIndiceAtivo(prev => (resultados.length === 0 ? -1 : (prev <= 0 ? resultados.length - 1 : prev - 1)));
+    } else if (e.key === 'Enter') {
+      if (aberto && indiceAtivo >= 0 && resultados[indiceAtivo]) {
+        e.preventDefault();
+        handleEscolher(resultados[indiceAtivo]);
+      }
+    } else if (e.key === 'Escape') {
+      setAberto(false);
+      setIndiceAtivo(-1);
+    }
+  };
+
+  // Destaca o trecho digitado dentro do texto do resultado
+  const destacar = (texto: string) => {
+    const t = termo.trim();
+    if (!t) return texto;
+    const idx = texto.toLowerCase().indexOf(t.toLowerCase());
+    if (idx === -1) return texto;
+    return (
+      <>
+        {texto.slice(0, idx)}
+        <mark className="bg-yellow-200 text-gray-900 rounded px-0.5">{texto.slice(idx, idx + t.length)}</mark>
+        {texto.slice(idx + t.length)}
+      </>
+    );
+  };
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400 pointer-events-none" />
+      <input
+        type="text"
+        value={termo}
+        placeholder={placeholder}
+        onChange={(e) => {
+          setTermo(e.target.value);
+          setAberto(true);
+          setIndiceAtivo(-1);
+        }}
+        onFocus={() => setAberto(true)}
+        onKeyDown={handleKeyDown}
+        className="w-full pl-10 pr-10 py-3 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+        role="combobox"
+        aria-expanded={aberto}
+        aria-autocomplete="list"
+      />
+      {termo && (
+        <button
+          type="button"
+          onClick={() => { setTermo(''); setIndiceAtivo(-1); }}
+          className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          aria-label="Limpar busca"
+        >
+          <XCircle size={18} />
+        </button>
+      )}
+
+      {aberto && (
+        <ul
+          ref={listaRef}
+          className="absolute z-30 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg"
+          role="listbox"
+        >
+          {resultados.length === 0 ? (
+            <li className="px-4 py-3 text-sm text-gray-500 flex items-center gap-2">
+              <AlertTriangle size={16} className="text-amber-500" />
+              Nenhuma candidatura encontrada para "{termo}"
+            </li>
+          ) : (
+            resultados.map((c, idx) => (
+              <li
+                key={c.id}
+                role="option"
+                aria-selected={idx === indiceAtivo}
+                onMouseEnter={() => setIndiceAtivo(idx)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => handleEscolher(c)}
+                className={`px-4 py-2.5 cursor-pointer border-b border-gray-100 last:border-b-0 ${
+                  idx === indiceAtivo ? 'bg-blue-50' : 'hover:bg-gray-50'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {destacar(c.candidato_nome || 'Candidato não identificado')}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {destacar(c.vaga?.titulo || 'Vaga não identificada')}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                    {c.status}
+                  </span>
+                </div>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+
+      <p className="text-xs text-gray-500 mt-1">
+        {termo.trim()
+          ? `${resultados.length} de ${candidaturas.length} candidatura(s) elegível(is)`
+          : `${candidaturas.length} candidatura(s) elegível(is) para entrevista`}
+      </p>
+    </div>
+  );
+};
 
 // ============================================
 // COMPONENTE PRINCIPAL
@@ -1367,21 +1548,11 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Selecione a Candidatura para Entrevista:
         </label>
-        <select
-          value={selectedCandidaturaId || ''}
-          onChange={(e) => setSelectedCandidaturaId(e.target.value ? parseInt(e.target.value) : null)}
-          className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
-        >
-          <option value="">-- Selecione uma candidatura --</option>
-          {candidaturasElegiveis.map(c => (
-            <option key={c.id} value={c.id}>
-              {c.candidato_nome} - {c.vaga?.titulo || 'Vaga não identificada'} ({c.status})
-            </option>
-          ))}
-        </select>
-        <p className="text-xs text-gray-500 mt-1">
-          {candidaturasElegiveis.length} candidatura(s) elegível(is) para entrevista
-        </p>
+        {/* 🆕 v3.1: Combobox com resultado automático enquanto digita */}
+        <SeletorCandidaturaBusca
+          candidaturas={candidaturasElegiveis}
+          onSelecionar={(id) => setSelectedCandidaturaId(id)}
+        />
       </div>
 
       <button
@@ -2178,25 +2349,14 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Candidatura:
             </label>
-            <select
-              value=""
-              onChange={(e) => {
-                const val = e.target.value ? parseInt(e.target.value) : null;
-                setSelectedCandidaturaId(val);
-                if (val) setCurrentStep(2);
+            {/* 🆕 v3.1: Combobox com resultado automático enquanto digita */}
+            <SeletorCandidaturaBusca
+              candidaturas={candidaturasElegiveis}
+              onSelecionar={(id) => {
+                setSelectedCandidaturaId(id);
+                setCurrentStep(2);
               }}
-              className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">-- Selecione uma candidatura --</option>
-              {candidaturasElegiveis.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.candidato_nome} - {c.vaga?.titulo || 'Vaga não identificada'} ({c.status})
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-500 mt-1">
-              {candidaturasElegiveis.length} candidatura(s) elegível(is) para entrevista
-            </p>
+            />
           </div>
         </div>
       ) : (
