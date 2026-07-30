@@ -54,7 +54,7 @@ import {
   ChevronRight, ChevronDown, User, Briefcase, Clock,
   ThumbsUp, ThumbsDown, HelpCircle, FileText, Trash2,
   RefreshCw, Download, BarChart3, Award, TrendingUp,
-  Volume2, Headphones, Send, Save, Eye, FileDown
+  Volume2, Headphones, Send, Save, Eye, FileDown, Search
 } from 'lucide-react';
 import { Candidatura, Vaga } from '@/types';
 // jsPDF removido - agora usa API backend para gerar DOCX com papel timbrado TechFor
@@ -148,6 +148,8 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   // Seleção
   const [selectedCandidaturaId, setSelectedCandidaturaId] = useState<number | null>(null);
   const [candidaturasComVaga, setCandidaturasComVaga] = useState<CandidaturaComVaga[]>([]);
+  // 🆕 v3.0 (30/07/2026): Busca de candidatura no seletor (lupa)
+  const [buscaCandidatura, setBuscaCandidatura] = useState<string>('');
   
   // Etapas
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3 | 4 | 5>(1);
@@ -240,6 +242,17 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
   },
     [candidaturasComVaga, currentUserId]
   );
+
+  // 🆕 v3.0 (30/07/2026): Aplicar busca digitada (nome, vaga ou status) sobre as elegíveis
+  const candidaturasBuscadas = useMemo(() => {
+    if (!buscaCandidatura.trim()) return candidaturasElegiveis;
+    const term = buscaCandidatura.toLowerCase();
+    return candidaturasElegiveis.filter(c =>
+      (c.candidato_nome || '').toLowerCase().includes(term) ||
+      (c.vaga?.titulo || '').toLowerCase().includes(term) ||
+      (c.status || '').toLowerCase().includes(term)
+    );
+  }, [candidaturasElegiveis, buscaCandidatura]);
 
   // ============================================
   // CARREGAR DADOS INICIAIS
@@ -1367,20 +1380,31 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
         <label className="block text-sm font-medium text-gray-700 mb-2">
           Selecione a Candidatura para Entrevista:
         </label>
+        {/* 🆕 v3.0: Busca de candidatura (lupa) */}
+        <div className="relative mb-2">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Buscar por nome do candidato, vaga ou status..."
+            value={buscaCandidatura}
+            onChange={(e) => setBuscaCandidatura(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+        </div>
         <select
           value={selectedCandidaturaId || ''}
           onChange={(e) => setSelectedCandidaturaId(e.target.value ? parseInt(e.target.value) : null)}
           className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
         >
           <option value="">-- Selecione uma candidatura --</option>
-          {candidaturasElegiveis.map(c => (
+          {candidaturasBuscadas.map(c => (
             <option key={c.id} value={c.id}>
               {c.candidato_nome} - {c.vaga?.titulo || 'Vaga não identificada'} ({c.status})
             </option>
           ))}
         </select>
         <p className="text-xs text-gray-500 mt-1">
-          {candidaturasElegiveis.length} candidatura(s) elegível(is) para entrevista
+          {candidaturasBuscadas.length} de {candidaturasElegiveis.length} candidatura(s) elegível(is) para entrevista
         </p>
       </div>
 
@@ -2178,6 +2202,17 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Candidatura:
             </label>
+            {/* 🆕 v3.0: Busca de candidatura (lupa) */}
+            <div className="relative mb-2">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Buscar por nome do candidato, vaga ou status..."
+                value={buscaCandidatura}
+                onChange={(e) => setBuscaCandidatura(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
             <select
               value=""
               onChange={(e) => {
@@ -2188,14 +2223,14 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
               className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-blue-500"
             >
               <option value="">-- Selecione uma candidatura --</option>
-              {candidaturasElegiveis.map(c => (
+              {candidaturasBuscadas.map(c => (
                 <option key={c.id} value={c.id}>
                   {c.candidato_nome} - {c.vaga?.titulo || 'Vaga não identificada'} ({c.status})
                 </option>
               ))}
             </select>
             <p className="text-xs text-gray-500 mt-1">
-              {candidaturasElegiveis.length} candidatura(s) elegível(is) para entrevista
+              {candidaturasBuscadas.length} de {candidaturasElegiveis.length} candidatura(s) elegível(is) para entrevista
             </p>
           </div>
         </div>

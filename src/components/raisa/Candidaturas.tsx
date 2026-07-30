@@ -330,16 +330,22 @@ const Candidaturas: React.FC<CandidaturasProps> = ({
         }
         
         // Filtro por busca
+        // 🔧 v57.2 (30/07/2026): CORREÇÃO - busca agora usa fallback da tabela pessoas
+        // (mesmo comportamento de getCandidatoName), pois candidato_nome/candidato_email
+        // frequentemente vêm vazios na candidatura e o nome exibido vem de pessoas via pessoa_id
         if (searchTerm.trim()) {
             const term = searchTerm.toLowerCase();
-            filtered = filtered.filter(c => 
-                (c.candidato_nome || '').toLowerCase().includes(term) ||
-                (c.candidato_email || '').toLowerCase().includes(term)
-            );
+            const pessoasById = new Map(safePessoas.map(p => [String(p.id), p]));
+            filtered = filtered.filter(c => {
+                const pessoa = c.pessoa_id ? pessoasById.get(String(c.pessoa_id)) : undefined;
+                const nome = (c.candidato_nome || pessoa?.nome || '').toLowerCase();
+                const email = (c.candidato_email || pessoa?.email || '').toLowerCase();
+                return nome.includes(term) || email.includes(term);
+            });
         }
         
         return filtered;
-    }, [filterVaga, filterStatus, filterCliente, searchTerm, safeCandidaturas, safeVagas, filtroVagaEscopo, filtroCandidatoEscopo, currentUserId]);
+    }, [filterVaga, filterStatus, filterCliente, searchTerm, safeCandidaturas, safeVagas, safePessoas, filtroVagaEscopo, filtroCandidatoEscopo, currentUserId]);
 
     // ============================================
     // 🆕 VAGAS FILTRADAS POR CLIENTE E ANALISTA (v57.1)
