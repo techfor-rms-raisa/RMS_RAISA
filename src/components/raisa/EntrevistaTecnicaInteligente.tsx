@@ -910,9 +910,9 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
     if (!file) return;
 
     // Validar formato
-    const validFormats = ['audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/m4a', 'audio/webm', 'audio/ogg', 'audio/x-m4a'];
-    if (!validFormats.includes(file.type) && !file.name.match(/\.(mp3|wav|m4a|webm|ogg)$/i)) {
-      setError('Formato não suportado. Use MP3, WAV, M4A, WebM ou OGG.');
+    const validFormats = ['audio/mp3', 'audio/mpeg', 'audio/wav', 'audio/m4a', 'audio/webm', 'audio/ogg', 'audio/x-m4a', 'audio/mp4', 'video/mp4'];
+    if (!validFormats.includes(file.type) && !file.name.match(/\.(mp3|wav|m4a|mp4|webm|ogg)$/i)) {
+      setError('Formato não suportado. Use MP3, WAV, M4A, MP4 (somente áudio), WebM ou OGG.');
       return;
     }
 
@@ -1032,6 +1032,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
       'mp3': 'audio/mpeg',
       'wav': 'audio/wav',
       'm4a': 'audio/mp4',
+      'mp4': 'audio/mp4', // MP4 somente áudio (gravações Teams) — mesmo container do M4A
       'webm': 'audio/webm',
       'ogg': 'audio/ogg'
     };
@@ -1754,7 +1755,7 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
             <h4 className="font-medium text-yellow-800 mb-2">📋 Antes de enviar:</h4>
             <ul className="text-sm text-yellow-700 space-y-1 list-disc ml-4">
               <li>Conduza a entrevista usando as perguntas do passo anterior</li>
-              <li>Grave toda a conversa em áudio (MP3, WAV, M4A, WebM ou OGG)</li>
+              <li>Grave toda a conversa em áudio (MP3, WAV, M4A, MP4 — gravação Teams, WebM ou OGG)</li>
               <li>O áudio deve ter boa qualidade para transcrição</li>
               <li><strong>Tamanho máximo: 100MB</strong> (entrevistas de até ~1 hora)</li>
             </ul>
@@ -1772,12 +1773,12 @@ const EntrevistaTecnicaInteligente: React.FC<EntrevistaTecnicaInteligenteProps> 
                 <p className="mb-2 text-sm text-gray-500">
                   <span className="font-semibold">Clique para enviar</span> ou arraste o arquivo
                 </p>
-                <p className="text-xs text-gray-500">MP3, WAV, M4A, WebM, OGG (máx. 100MB)</p>
+                <p className="text-xs text-gray-500">MP3, WAV, M4A, MP4 (Teams), WebM, OGG (máx. 100MB)</p>
               </div>
               <input 
                 type="file" 
                 className="hidden" 
-                accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg"
+                accept="audio/*,.mp3,.wav,.m4a,.mp4,.webm,.ogg"
                 onChange={handleAudioSelect}
               />
             </label>
