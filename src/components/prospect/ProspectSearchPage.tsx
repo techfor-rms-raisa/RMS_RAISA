@@ -115,6 +115,27 @@
  *   domínio pré-preenchido), 📋 Copiar, 🔖 Marcar/Desmarcar.
  * - Refresh manual via botão "Atualizar agora" (chama
  *   refresh_dominios_turnover RPC com CONCURRENTLY).
+ *
+ * v4.9 (03/08/2026 — CRUD do prospect na aba "Meus Prospects Salvos"):
+ * - Nova coluna GERENCIAR, à direita de AÇÕES, com dois controles por
+ *   linha: ✏️ Editar (nome, cargo, empresa, email) e 🗑️ Descartar.
+ * - Motivação de negócio: prospects capturados pela Extension/Gemini
+ *   chegam com lacunas (sem email, empresa com texto do LinkedIn no
+ *   lugar do nome, cargo colado no nome). O analista precisa corrigir
+ *   ANTES de promover para Campanhas/Base de Leads — senão o erro se
+ *   propaga para email_leads e para o disparo de email.
+ * - Exclusão é LÓGICA (status='descartado'), decisão de produto de
+ *   03/08/2026: o registro continua auditável, some da listagem padrão
+ *   e reaparece no filtro "Ver descartados", de onde pode ser
+ *   restaurado pelo botão ↩️ (volta para status 'novo').
+ * - Trava de integridade: prospect com status 'no_crm' (já promovido)
+ *   não pode ser descartado por aqui — o backend recusa com 409 e o
+ *   botão aparece desabilitado com tooltip explicando o motivo.
+ * - Alteração de email invalida a verificação anterior no backend
+ *   (email_status/validado_em/proxima_validacao zerados), devolvendo o
+ *   lead à cascata de revalidação em vez de manter um 'valido' falso.
+ * - Backend pareado: api/prospect-leads.ts v1.2 (PATCH editar_prospect,
+ *   excluir_logico, restaurar).
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -284,6 +305,17 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [salvandoVertical, setSalvandoVertical]       = useState<number | null>(null);
     const [marcandoExclusao, setMarcandoExclusao]       = useState<number | null>(null); // NOVO
     const [resolvendoDominio, setResolvendoDominio]     = useState<number | null>(null); // id do lead sendo resolvido
+
+    // 🆕 v4.9 (03/08/2026) — CRUD do prospect salvo (editar / descartar)
+    const [modalEditarProspect, setModalEditarProspect] = useState<ProspectLead | null>(null);
+    const [formEditar, setFormEditar]                   = useState<{
+        nome_completo: string; cargo: string; empresa_nome: string; email: string;
+    }>({ nome_completo: '', cargo: '', empresa_nome: '', email: '' });
+    const [salvandoEdicao, setSalvandoEdicao]           = useState(false);
+    const [erroEdicao, setErroEdicao]                   = useState<string | null>(null);
+    const [confirmarExclusao, setConfirmarExclusao]     = useState<ProspectLead | null>(null);
+    const [descartandoProspect, setDescartandoProspect] = useState(false);
+    const [restaurandoId, setRestaurandoId]             = useState<number | null>(null);
 
     // Seleção de leads salvos (para reserva e exportação)
     const [leadsSelecionados, setLeadsSelecionados]     = useState<Set<number>>(new Set());
@@ -1161,6 +1193,145 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             setSalvandoVertical(null);
         }
     }, []);
+
+    // ============================================
+    // 🆕 v4.9 (03/08/2026) — CRUD DO PROSPECT SALVO
+    // ============================================
+    // Objetivo: permitir que o analista corrija o cadastro (nome, cargo,
+    // empresa, email) ANTES de o prospect virar lead no CRM. Toda a regra
+    // pesada (duplicidade de email, invalidação da verificação anterior,
+    // trava de lead já promovido) fica no backend — o front só coleta,
+    // pré-valida e reflete o resultado na linha.
+
+    const abrirEdicaoProspect = useCallback((lead: ProspectLead) => {
+        setErroEdicao(null);
+        setFormEditar({
+            nome_completo: lead.nome_completo || '',
+            cargo:         lead.cargo         || '',
+            empresa_nome:  lead.empresa_nome  || '',
+            email:         lead.email         || '',
+        });
+        setModalEditarProspect(lead);
+    }, []);
+
+    const salvarEdicaoProspect = useCallback(async () => {
+        if (!modalEditarProspect) return;
+        const leadId = modalEditarProspect.id;
+
+        // Pré-validação de UX (o backend revalida — nunca confiar só no front)
+        const nome = formEditar.nome_completo.trim();
+        if (!nome) { setErroEdicao('Informe o nome completo do prospect.'); return; }
+        const email = formEditar.email.trim().toLowerCase();
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+            setErroEdicao('O email informado não tem um formato válido.'); return;
+        }
+
+        setSalvandoEdicao(true);
+        setErroEdicao(null);
+        try {
+            const resp = await fetch('/api/prospect-leads', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids: [leadId],
+                    editar_prospect: true,
+                    nome_completo:  nome,
+                    cargo:          formEditar.cargo.trim(),
+                    empresa_nome:   formEditar.empresa_nome.trim(),
+                    email,
+                    atualizado_por: currentUser?.id ?? null,
+                }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                setErroEdicao(data.error || 'Não foi possível salvar as alterações.');
+                return;
+            }
+            // Reflete a linha sem recarregar a lista inteira (preserva filtro/página)
+            setMeusLeads(prev => prev.map(l => l.id === leadId ? { ...l, ...data.lead } : l));
+            setModalEditarProspect(null);
+            setToastMsg({
+                tipo: 'ok',
+                msg: data.email_revalidar
+                    ? 'Prospect atualizado. O email voltou para "não verificado" e será revalidado.'
+                    : 'Prospect atualizado!',
+            });
+            setTimeout(() => setToastMsg(null), 4000);
+        } catch (e: any) {
+            setErroEdicao(`Erro de rede: ${e.message}`);
+        } finally {
+            setSalvandoEdicao(false);
+        }
+    }, [modalEditarProspect, formEditar, currentUser]);
+
+    // Exclusão LÓGICA — status='descartado'. Nada é apagado do banco.
+    const descartarProspect = useCallback(async () => {
+        if (!confirmarExclusao) return;
+        const leadId = confirmarExclusao.id;
+        setDescartandoProspect(true);
+        try {
+            const resp = await fetch('/api/prospect-leads', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids: [leadId],
+                    excluir_logico: true,
+                    atualizado_por: currentUser?.id ?? null,
+                }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Não foi possível descartar o prospect.' });
+                setTimeout(() => setToastMsg(null), 4000);
+                return;
+            }
+            // Se o filtro atual é "Ver descartados", a linha permanece (agora
+            // com o botão Restaurar); caso contrário ela sai da listagem.
+            if (filtroLeadsStatus === 'descartado') {
+                setMeusLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'descartado' } : l));
+            } else {
+                setMeusLeads(prev => prev.filter(l => l.id !== leadId));
+            }
+            setConfirmarExclusao(null);
+            setToastMsg({ tipo: 'ok', msg: 'Prospect descartado. Use o filtro "Ver descartados" para restaurar.' });
+            setTimeout(() => setToastMsg(null), 4500);
+        } catch (e: any) {
+            setToastMsg({ tipo: 'erro', msg: `Erro de rede: ${e.message}` });
+            setTimeout(() => setToastMsg(null), 4000);
+        } finally {
+            setDescartandoProspect(false);
+        }
+    }, [confirmarExclusao, currentUser, filtroLeadsStatus]);
+
+    // Restaurar um prospect descartado — volta para status 'novo'.
+    const restaurarProspect = useCallback(async (lead: ProspectLead) => {
+        setRestaurandoId(lead.id);
+        try {
+            const resp = await fetch('/api/prospect-leads', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids: [lead.id],
+                    restaurar: true,
+                    atualizado_por: currentUser?.id ?? null,
+                }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Não foi possível restaurar o prospect.' });
+                setTimeout(() => setToastMsg(null), 4000);
+                return;
+            }
+            setMeusLeads(prev => prev.map(l => l.id === lead.id ? { ...l, status: 'novo' } : l));
+            setToastMsg({ tipo: 'ok', msg: 'Prospect restaurado para "novo".' });
+            setTimeout(() => setToastMsg(null), 3000);
+        } catch (e: any) {
+            setToastMsg({ tipo: 'erro', msg: `Erro de rede: ${e.message}` });
+            setTimeout(() => setToastMsg(null), 4000);
+        } finally {
+            setRestaurandoId(null);
+        }
+    }, [currentUser]);
 
     // 🆕 Atualizar refs espelho — permite que o useEffect da extensão (acima no arquivo)
     // chame estas funções sem TDZ e sem dependências circulares.
@@ -3454,6 +3625,8 @@ A empresa ficará disponível para a equipe.`)) return;
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÕES</th>
+                                {/* 🆕 v4.9 — CRUD do prospect */}
+                                <th className="px-3 py-2 text-xs font-semibold text-indigo-600 text-center bg-indigo-50 border-l border-indigo-100">GERENCIAR</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -3584,6 +3757,48 @@ A empresa ficará disponível para a equipe.`)) return;
                                                 </button>
                                             );
                                         })()}
+                                    </td>
+                                    {/* 🆕 v4.9 — GERENCIAR: editar cadastro / descartar (exclusão lógica) */}
+                                    <td className="px-3 py-2 text-center bg-indigo-50/30 border-l border-indigo-100">
+                                        {podeGerenciarProspects() ? (
+                                            <div className="inline-flex items-center gap-1">
+                                                <button
+                                                    onClick={() => abrirEdicaoProspect(lead)}
+                                                    className="w-7 h-7 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-600 hover:text-white transition-colors"
+                                                    title="Editar nome, cargo, empresa e email"
+                                                >
+                                                    <i className="fa-solid fa-pen-to-square text-[11px]"></i>
+                                                </button>
+                                                {lead.status === 'descartado' ? (
+                                                    <button
+                                                        onClick={() => restaurarProspect(lead)}
+                                                        disabled={restaurandoId === lead.id}
+                                                        className="w-7 h-7 rounded-md border border-green-200 text-green-600 hover:bg-green-600 hover:text-white transition-colors disabled:opacity-40"
+                                                        title="Restaurar prospect (volta para 'novo')"
+                                                    >
+                                                        <i className={`fa-solid ${restaurandoId === lead.id ? 'fa-spinner fa-spin' : 'fa-rotate-left'} text-[11px]`}></i>
+                                                    </button>
+                                                ) : lead.status === 'no_crm' ? (
+                                                    <button
+                                                        disabled
+                                                        className="w-7 h-7 rounded-md border border-gray-200 text-gray-300 cursor-not-allowed"
+                                                        title="Prospect já promovido ao CRM — trate o registro pela Base de Leads"
+                                                    >
+                                                        <i className="fa-solid fa-trash text-[11px]"></i>
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setConfirmarExclusao(lead)}
+                                                        className="w-7 h-7 rounded-md border border-red-200 text-red-500 hover:bg-red-600 hover:text-white transition-colors"
+                                                        title="Descartar prospect (exclusão lógica — reversível)"
+                                                    >
+                                                        <i className="fa-solid fa-trash text-[11px]"></i>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="text-gray-300 text-xs">—</span>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -4590,6 +4805,169 @@ A empresa ficará disponível para a equipe.`)) return;
                         </button>
                     </>
                 )}
+            </div>
+        </div>
+    )}
+
+    {/* ════════════════════════════════════════════════════════ */}
+    {/* 🆕 v4.9 — MODAL: EDITAR PROSPECT                          */}
+    {/* ════════════════════════════════════════════════════════ */}
+    {modalEditarProspect && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                    <h3 className="font-semibold text-gray-800 text-sm flex items-center gap-2">
+                        <i className="fa-solid fa-pen-to-square text-blue-600"></i>
+                        Editar Prospect
+                    </h3>
+                    <button
+                        onClick={() => setModalEditarProspect(null)}
+                        className="text-gray-400 hover:text-gray-600"
+                        title="Fechar"
+                    >
+                        <i className="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+
+                <div className="px-5 py-4 space-y-3 max-h-[70vh] overflow-y-auto">
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                            Nome completo <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            autoFocus
+                            value={formEditar.nome_completo}
+                            onChange={e => setFormEditar(f => ({ ...f, nome_completo: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Cargo</label>
+                        <input
+                            type="text"
+                            value={formEditar.cargo}
+                            onChange={e => setFormEditar(f => ({ ...f, cargo: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Empresa</label>
+                        <input
+                            type="text"
+                            value={formEditar.empresa_nome}
+                            onChange={e => setFormEditar(f => ({ ...f, empresa_nome: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        <p className="text-[11px] text-gray-400 mt-1">
+                            Domínio atual:{' '}
+                            <span className="font-mono text-gray-500">
+                                {modalEditarProspect.empresa_dominio || 'não definido'}
+                            </span>
+                            {' '}— o domínio não muda ao renomear a empresa.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                        <input
+                            type="email"
+                            value={formEditar.email}
+                            onChange={e => setFormEditar(f => ({ ...f, email: e.target.value }))}
+                            placeholder="nome@empresa.com.br"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        {formEditar.email.trim().toLowerCase() !== (modalEditarProspect.email || '').toLowerCase() && (
+                            <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+                                <i className="fa-solid fa-triangle-exclamation mt-0.5"></i>
+                                <span>
+                                    O email foi alterado. A verificação anterior será descartada e o
+                                    registro volta para <strong>não verificado</strong>, entrando na fila de revalidação.
+                                </span>
+                            </div>
+                        )}
+                    </div>
+
+                    {erroEdicao && (
+                        <div className="flex items-start gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-2">
+                            <i className="fa-solid fa-circle-exclamation mt-0.5"></i>
+                            <span>{erroEdicao}</span>
+                        </div>
+                    )}
+
+                    <div className="text-[11px] text-gray-400 border-t border-gray-100 pt-2">
+                        Origem: {modalEditarProspect.motor} · Criado em{' '}
+                        {new Date(modalEditarProspect.criado_em).toLocaleDateString('pt-BR')}
+                        {modalEditarProspect.reservado_por_nome ? ` · Analista: ${modalEditarProspect.reservado_por_nome}` : ''}
+                    </div>
+                </div>
+
+                <div className="flex justify-end gap-2 px-5 py-3 bg-gray-50 border-t border-gray-100">
+                    <button
+                        onClick={() => setModalEditarProspect(null)}
+                        disabled={salvandoEdicao}
+                        className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={salvarEdicaoProspect}
+                        disabled={salvandoEdicao}
+                        className="px-4 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium disabled:opacity-50 flex items-center gap-2"
+                    >
+                        {salvandoEdicao
+                            ? <><i className="fa-solid fa-spinner fa-spin"></i> Salvando</>
+                            : <>Salvar alterações</>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    )}
+
+    {/* ════════════════════════════════════════════════════════ */}
+    {/* 🆕 v4.9 — MODAL: CONFIRMAR DESCARTE (exclusão lógica)     */}
+    {/* ════════════════════════════════════════════════════════ */}
+    {confirmarExclusao && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+                <div className="px-5 py-4 text-center">
+                    <div className="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-3">
+                        <i className="fa-solid fa-trash text-lg"></i>
+                    </div>
+                    <h3 className="font-semibold text-gray-800 text-sm">Descartar este prospect?</h3>
+                    <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+                        <strong className="text-gray-700">{confirmarExclusao.nome_completo || '—'}</strong><br />
+                        {confirmarExclusao.empresa_nome || 'sem empresa'}
+                        {confirmarExclusao.email ? ` · ${confirmarExclusao.email}` : ''}
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-3">
+                        O registro sai da listagem, mas continua no banco com status
+                        {' '}<strong>descartado</strong>. Você pode restaurá-lo pelo filtro
+                        {' '}"Ver descartados".
+                    </p>
+                </div>
+                <div className="flex gap-2 px-5 py-3 bg-gray-50 border-t border-gray-100">
+                    <button
+                        onClick={() => setConfirmarExclusao(null)}
+                        disabled={descartandoProspect}
+                        className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={descartarProspect}
+                        disabled={descartandoProspect}
+                        className="flex-1 px-3 py-1.5 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                        {descartandoProspect
+                            ? <><i className="fa-solid fa-spinner fa-spin"></i> Descartando</>
+                            : <>Descartar prospect</>
+                        }
+                    </button>
+                </div>
             </div>
         </div>
     )}
