@@ -4,6 +4,50 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.14 (06/08/2026 — CORREÇÃO DE HEAD-OF-LINE BLOCKING).
+ *
+ *      INCIDENTE: de 23/07 a 06/08/2026 a plataforma passou 14 DIAS sem
+ *      enviar um único e-mail. 2.046 itens represados em 8 campanhas
+ *      ativas. O cron executou pontualmente a cada 15 minutos, reportando
+ *      `status='sucesso'` em TODAS as execuções.
+ *
+ *      CAUSA RAIZ: o bloco 3 selecionava o lote ANTES de avaliar
+ *      elegibilidade:
+ *
+ *          SELECT id FROM email_fila
+ *           WHERE status='pendente' AND agendado_para <= now()
+ *           ORDER BY agendado_para ASC, id ASC
+ *           LIMIT 10                          ← LOTE FECHADO AQUI
+ *
+ *      Só depois, no loop, as validações 5b (janela) e 5c (campanha ativa)
+ *      descobriam o problema e devolviam o item para 'pendente'. Os 10
+ *      itens mais antigos pertenciam à campanha CRECI #3 — PAUSADA, com
+ *      1.436 itens vencidos desde 23/07. A cada execução o cron elegia os
+ *      MESMOS 10, pulava todos, devolvia à fila, e repetia 15 min depois.
+ *      A cabeça da fila nunca andava; tudo atrás ficou refém.
+ *
+ *      Assinatura nos logs de cron_execucoes, invariável por 14 dias:
+ *        "0 enviados, 0 erros, 0 fora de janela, 10 pausadas (lote 10)"
+ *        "0 enviados, 0 erros, 10 fora de janela, 0 pausadas (lote 10)"
+ *
+ *      CORREÇÃO (1 ponto, cirúrgica): o SELECT direto é substituído pela
+ *      RPC `crm_selecionar_lote_fila`, que resolve `c.status='ativa'` e a
+ *      janela horária (fuso SP) DENTRO do SQL, ANTES do LIMIT. Item
+ *      inelegível não entra no lote — logo não ocupa vaga nem trava a
+ *      fila. Ordenação `agendado_para ASC, id ASC` preservada.
+ *      Ver sql/2026-08-06_rpc_crm_selecionar_lote_fila.sql.
+ *
+ *      🛡️  AS VALIDAÇÕES 5b E 5c PERMANECEM NO LOOP, de propósito. Deixam
+ *      de ser o mecanismo primário e passam a ser DEFESA EM PROFUNDIDADE
+ *      contra corrida (campanha pausada entre o SELECT e o envio).
+ *      Removê-las trocaria um bug por outro.
+ *
+ *      ⚠️  ORDEM DE DEPLOY: a RPC precisa existir em Produção ANTES deste
+ *      código subir. Sem ela, PostgREST devolve 404 e a fila para de novo.
+ *
+ *      SINAL DE SUCESSO: skipPausadaCount e skipJanelaCount caem para ~0 e
+ *      `enviados` passa a ser > 0. A mensagem deixa de citar "10 pausadas".
+ *
  *  - v1.13 (12/06/2026 — P5: avançar email_lead_campanhas.step_atual
  *      no momento do envio).
  *
@@ -678,19 +722,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // e o cron pode disparar Step 4 antes do Step 1 do mesmo lead. Como
     // o enfileiramento popula a fila iterando (lead × step), `id ASC`
     // dá a sequência natural Lead1[Step1→2→3→4] → Lead2[Step1→2→3→4]...
-    const agora = new Date();
-    const { data: candidatos, error: errSelect } = await supabase
-      .from('email_fila')
-      .select('id')
-      .eq('status', 'pendente')
-      .lte('agendado_para', agora.toISOString())
-      .order('agendado_para', { ascending: true })
-      .order('id', { ascending: true })
-      .limit(LOTE_TAMANHO);
+    //
+    // 🆕 v1.14 (06/08/2026) — CORREÇÃO DO HEAD-OF-LINE BLOCKING.
+    //   O SELECT direto em `email_fila` que existia aqui fechava o lote
+    //   ANTES de avaliar `c.status='ativa'` (5c) e a janela horária (5b).
+    //   Itens de campanha PAUSADA ocupavam as 10 vagas, eram devolvidos
+    //   para 'pendente' e reeleitos na execução seguinte — indefinidamente.
+    //   A fila inteira ficou parada 14 dias (23/07→06/08/2026).
+    //   A RPC resolve elegibilidade ANTES do LIMIT: item inelegível não
+    //   entra no lote e portanto não trava a cabeça da fila.
+    //   Ordenação (agendado_para ASC, id ASC) e semântica de janela
+    //   preservadas — ver sql/2026-08-06_rpc_crm_selecionar_lote_fila.sql.
+    //   ⚠️  A RPC precisa existir no banco ANTES deste código subir.
+    //
+    const { data: loteRpc, error: errSelect } = await supabase
+      .rpc('crm_selecionar_lote_fila', { p_limite: LOTE_TAMANHO });
 
     if (errSelect) {
       throw new Error(`Falha ao selecionar fila: ${errSelect.message}`);
     }
+
+    // Normaliza o retorno jsonb {ids, total} para o formato [{id}] que o
+    // restante do fluxo já consome. Mantém intactas todas as etapas abaixo.
+    const candidatos: Array<{ id: number }> =
+      (((loteRpc as any)?.ids ?? []) as any[]).map((id: any) => ({ id }));
+
+    detalhes.lote_elegivel = (loteRpc as any)?.total ?? candidatos.length;
 
     if (!candidatos || candidatos.length === 0) {
       // Fila vazia — heartbeat e sair
