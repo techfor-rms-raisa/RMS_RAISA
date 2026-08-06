@@ -1363,6 +1363,13 @@ import { createClient } from '@supabase/supabase-js';
 // 🆕 v1.12 — Helper compartilhado de opt-out (Bloco 1 OPT-OUT 100%)
 // 🔧 v1.12.1 — Extensão .js obrigatória no path (Node.js ESM strict — Vercel runtime)
 import { aplicarOptOut } from './_helpers/aplicar-opt-out.js';
+// 🆕 v1.23 (06/08/2026) — Portão de validação de e-mail. Ver
+//   lib/validacao-lead.ts e sql/2026-08-06_validacao_email_portao.sql.
+import {
+  garantirValidacaoLead,
+  validarLeadsEmLote,
+  resumirValidacoes,
+} from '../lib/validacao-lead.js';
 
 export const config = { maxDuration: 30 };
 
@@ -4766,6 +4773,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return res.status(404).json({ success: false, error: 'Nenhum lead encontrado para os IDs informados' });
         }
 
+        // ══════════════════════════════════════════════════════
+        // 🆕 v1.23 (06/08/2026) — PRÉ-PASSE DE VALIDAÇÃO
+        // ══════════════════════════════════════════════════════
+        //
+        // O portão 7-bis de vincularLeadACampanha valida cada lead. Sem
+        // este pré-passe, o loop rodaria a cascade EM SÉRIE: ~1–2s por
+        // e-mail não cacheado × 100 leads = ~150s, estourando o
+        // maxDuration da função serverless. A falha apareceria como
+        // timeout genérico, sem pista da causa.
+        //
+        // validarLeadsEmLote usa janela de concorrência 5: ~20s para 100
+        // leads, dentro do rate limit de Hunter e Snov.io. Popula o
+        // cache; o portão dentro do helper resolve por leitura de banco.
+        //
+        // 🛡️  NÃO decide nada aqui — apenas AQUECE O CACHE. A decisão
+        //     continua no ponto único (helper), evitando duas regras de
+        //     bloqueio divergentes. O resumo vai na resposta só para
+        //     dar visibilidade ao analista.
+        const validacoes = await validarLeadsEmLote(
+          supabase,
+          leads.map((l: any) => ({ id: l.id, nome: l.nome, email: l.email })),
+        );
+        const resumoValidacao = resumirValidacoes(validacoes);
+        console.log(
+          `🚪 [vincular_em_lote] validação: ${resumoValidacao.verified} verified, ` +
+          `${resumoValidacao.em_risco} em risco, ${resumoValidacao.bloqueados} bloqueados ` +
+          `(${resumoValidacao.do_cache} de cache)`,
+        );
+
         // ── Loop de processamento ──────────────────────────────
         const resultados = {
           total: leads.length,
@@ -4922,7 +4958,138 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           campanha_id: campanha.id,
           campanha_nome: campanha.nome,
           campanha_status: campanha.status,
+          // 🆕 v1.23 — visibilidade do portão de validação. A UI pode
+          //   exibir "X vinculados, Y em risco" sem consulta extra.
+          validacao: resumoValidacao,
           ...resultados,
+        });
+      }
+
+      // ═════════════════════════════════════════════════════════
+      // 🆕 v1.23 (06/08/2026) — POST `validar_email_lead`
+      // ═════════════════════════════════════════════════════════
+      //
+      // Valida o e-mail de UM lead sob demanda e persiste o veredito.
+      // Consumido pelo botão "Validar" da aba Inválidos (InvalidosTab
+      // v1.4), entre "Editar" e "Promover".
+      //
+      // Fluxo do analista:
+      //   [Editar] corrige o e-mail → [Validar] verifica → [Promover]
+      //
+      // 🛡️  `forcar: true` é o DEFAULT desta action, de propósito. O
+      //     analista clica em Validar justamente porque ACABOU de mudar
+      //     o endereço; reaproveitar cache aqui devolveria o veredito do
+      //     e-mail ANTIGO. Era exatamente esse o buraco do botão
+      //     Promover, que destravava por `bounced === false` após uma
+      //     simples edição.
+      //
+      // Opcionalmente aceita `email` — quando informado, atualiza o
+      // cadastro do lead ANTES de validar (permite corrigir e validar
+      // num clique só).
+      if (action === 'validar_email_lead') {
+        const { lead_id, email, forcar } = body;
+
+        if (!lead_id) {
+          return res.status(400).json({ success: false, error: 'lead_id é obrigatório' });
+        }
+
+        const { data: lead, error: errLead } = await supabase
+          .from('email_leads')
+          .select('id, nome, email')
+          .eq('id', lead_id)
+          .maybeSingle();
+
+        if (errLead) throw errLead;
+        if (!lead) {
+          return res.status(404).json({ success: false, error: 'Lead não encontrado' });
+        }
+
+        // Correção de e-mail embutida (opcional).
+        let emailAlvo = lead.email;
+        if (email && String(email).trim()) {
+          const novo = String(email).toLowerCase().trim();
+          if (novo !== String(lead.email || '').toLowerCase().trim()) {
+            const { error: errUpd } = await supabase
+              .from('email_leads')
+              .update({ email: novo, atualizado_em: new Date().toISOString() })
+              .eq('id', lead_id);
+            if (errUpd) throw errUpd;
+            emailAlvo = novo;
+          }
+        }
+
+        const resultado = await garantirValidacaoLead(
+          supabase,
+          { id: lead.id, nome: lead.nome, email: emailAlvo },
+          { forcar: forcar === undefined ? true : !!forcar },
+        );
+
+        return res.status(200).json({
+          success: true,
+          validacao: resultado,
+          // Atalho para a UI decidir se habilita "Promover" sem
+          // reimplementar a regra de bloqueio no frontend.
+          pode_promover: !resultado.bloqueado,
+        });
+      }
+
+      // ═════════════════════════════════════════════════════════
+      // 🆕 v1.23 (06/08/2026) — POST `validar_emails_lote`
+      // ═════════════════════════════════════════════════════════
+      //
+      // Valida vários leads de uma vez. Serve a dois cenários:
+      //   (a) saneamento da base legada (~1.200 leads nunca validados)
+      //   (b) pré-validação de importações grandes ANTES de vincular
+      //
+      // Concorrência limitada a 5 (ver lib/validacao-lead.ts) — respeita
+      // rate limit de Hunter/Snov.io e cabe no maxDuration.
+      //
+      // ⚠️  TETO DE 200 IDS por chamada. Acima disso o risco de timeout
+      //     é real (200 × ~1,5s ÷ 5 = ~60s). O frontend deve paginar.
+      //     Preferir lotes de 50 para margem confortável.
+      if (action === 'validar_emails_lote') {
+        const { lead_ids, forcar } = body;
+
+        if (!Array.isArray(lead_ids) || lead_ids.length === 0) {
+          return res.status(400).json({ success: false, error: 'lead_ids[] obrigatório (≥ 1 lead)' });
+        }
+        if (lead_ids.length > 200) {
+          return res.status(400).json({
+            success: false,
+            error: `Máximo de 200 leads por chamada (recebidos: ${lead_ids.length}). Divida em lotes — recomendado 50.`,
+          });
+        }
+
+        const { data: leads, error: errLeads } = await supabase
+          .from('email_leads')
+          .select('id, nome, email')
+          .in('id', lead_ids);
+
+        if (errLeads) throw errLeads;
+        if (!leads || leads.length === 0) {
+          return res.status(404).json({ success: false, error: 'Nenhum lead encontrado para os IDs informados' });
+        }
+
+        const resultados = await validarLeadsEmLote(
+          supabase,
+          leads.map((l: any) => ({ id: l.id, nome: l.nome, email: l.email })),
+          { forcar: !!forcar },
+        );
+
+        const resumo = resumirValidacoes(resultados);
+        console.log(
+          `🚪 [validar_emails_lote] ${resumo.total} leads: ${resumo.verified} verified, ` +
+          `${resumo.probable} probable, ${resumo.risky} risky, ${resumo.invalid} invalid ` +
+          `(${resumo.do_cache} de cache)`,
+        );
+
+        return res.status(200).json({
+          success: true,
+          resumo,
+          // Só os bloqueados vêm detalhados — são os que exigem ação do
+          // analista. Devolver os 200 resultados incharia a resposta sem
+          // utilidade prática.
+          bloqueados: resultados.filter((r) => r.bloqueado),
         });
       }
 
@@ -5772,6 +5939,61 @@ async function vincularLeadACampanha(
       success: false,
       error: 'Email está em opt-out global — não pode entrar em campanha.',
     };
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // 7-bis. 🆕 v1.23 (06/08/2026) — PORTÃO DE VALIDAÇÃO DE E-MAIL
+  // ══════════════════════════════════════════════════════════════════
+  //
+  // MOTIVAÇÃO: 13,5% de bounce histórico (395 em 2.932 envios), quase 3×
+  // o teto de 5% dos provedores. Concentração TOTAL nas origens de
+  // importação (13,3% e 14,3%); prospect_engine, que passa pela cascade,
+  // marcou 0,0%. Leads de importação entravam em campanha sem NENHUMA
+  // verificação de entregabilidade.
+  //
+  // O `apto_campanha` (etapa do caller) valida INTENÇÃO COMERCIAL —
+  // curadoria da SDR. Este portão valida ENTREGABILIDADE. São dimensões
+  // ortogonais; faltava a segunda.
+  //
+  // DECISÃO DE PRODUTO (Messias 06/08/2026): "Liberar com aviso, e ficar
+  // registrado o Risco — pois exigir score 100% vai parar o processo de
+  // prospecção." Só `invalid` bloqueia; `probable`/`risky` passam com
+  // email_validacao_risco=true. Ver lib/validacao-lead.ts.
+  //
+  // 🛡️  POSICIONADO ANTES DO DRY-RUN de propósito: o preview do vínculo
+  //     em lote precisa refletir a rejeição, senão a UI prometeria um
+  //     vínculo que a execução real recusaria.
+  //
+  // 🛡️  CUSTO: resolve por cache quando há validação vigente (TTL 90d) do
+  //     MESMO e-mail. A action `vincular_em_lote_a_campanha` faz um
+  //     PRÉ-PASSE que popula o cache antes do loop — aqui o custo é ~0.
+  //
+  // 🛡️  NÃO LANÇA: falha de Hunter/Snov.io degrada para 'risky', que
+  //     LIBERA com risco. Indisponibilidade de fornecedor não paralisa
+  //     a operação comercial.
+  const portao = await garantirValidacaoLead(supabase, {
+    id: lead.id,
+    nome: lead.nome,
+    email: lead.email,
+  });
+
+  if (portao.bloqueado) {
+    return {
+      success: false,
+      error:
+        portao.motivo ||
+        `E-mail reprovado na validação (score: ${portao.score}) — corrija o endereço antes de vincular.`,
+    };
+  }
+
+  if (portao.risco) {
+    // Passa, mas fica no log. `email_validacao_risco=true` já foi
+    // persistido pela lib — base do badge âmbar na UI e do relatório
+    // de risco por campanha.
+    console.warn(
+      `⚠️ [vincularLeadACampanha] lead ${lead.id} (${lead.email}) vinculado COM RISCO ` +
+      `— score=${portao.score} fonte=${portao.fonte}`,
+    );
   }
 
   // 🆕 v1.16.2 — DRY-RUN early-return.
