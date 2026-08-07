@@ -2,7 +2,25 @@
  * LeadFormModal.tsx — Modal de criar/editar lead
  *
  * Caminho: src/components/crm/base-leads/LeadFormModal.tsx
- * Versão: 1.4 (B1 — SDR distribuidor de Leads CRECI — 22/06/2026)
+ * Versão: 1.5 (Combobox de Empresa — 07/08/2026)
+ *
+ * v1.5 (07/08/2026 — Correção urgente do campo Empresa):
+ *   O <select> de empresa era alimentado pela prop `empresas`, oriunda do
+ *   hook useEmpresas — PAGINADO (limit=20). Consequência: o dropdown exibia
+ *   apenas a página atualmente carregada na aba Empresas ("lista parcial"),
+ *   e não havia como cadastrar uma empresa nova sem abandonar o formulário.
+ *   Leads com e-mail corporativo válido acabavam salvos como "Sem empresa"
+ *   (empresa_id = null), quebrando cruzamentos por empresa.
+ *
+ *   Correção: o <select> foi substituído pelo componente EmpresaCombobox
+ *   (novo — ./EmpresaCombobox.tsx), com busca server-side (debounce 300ms,
+ *   pesquisa por nome OU domínio em TODA a base) e criação inline de empresa
+ *   com o domínio pré-preenchido a partir do e-mail do lead.
+ *
+ *   Mudança cirúrgica: apenas o bloco JSX do campo Empresa + 1 import.
+ *   A prop `empresas` continua sendo recebida (agora como cache de rótulo),
+ *   preservando o contrato com BaseLeadsPage. Nenhum outro campo, effect,
+ *   validação ou o modal de Opt-Out foi tocado.
  *
  * v1.4 (22/06/2026 — B1: SDR pode editar "Reservado para" em Leads CRECI):
  *   Estende a regra do v1.1 que permitia apenas Admin alternar o campo
@@ -87,6 +105,8 @@
  */
 
 import React, { useEffect, useState } from 'react';
+// 🆕 v1.5 (07/08/2026) — Combobox de empresa com busca server-side + criação inline
+import EmpresaCombobox from './EmpresaCombobox';
 import type {
   Empresa,
   Lead,
@@ -302,20 +322,24 @@ const LeadFormModal: React.FC<LeadFormModalProps> = ({
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Empresa</label>
-            <select
-              value={form.empresa_id ?? ''}
-              onChange={(e) =>
-                setField('empresa_id', e.target.value ? Number(e.target.value) : null)
-              }
-              className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none"
-            >
-              <option value="">Sem empresa</option>
-              {empresas.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.nome}
-                </option>
-              ))}
-            </select>
+            {/*
+              🔧 v1.5 (07/08/2026) — O <select> anterior era alimentado pela prop
+              `empresas`, que vem do useEmpresas PAGINADO (limit=20): listava
+              apenas a página carregada na aba Empresas e não permitia cadastrar
+              uma empresa nova sem sair do formulário. Substituído pelo
+              EmpresaCombobox (busca server-side + criação inline com domínio
+              pré-preenchido pelo e-mail). A prop `empresas` continua sendo
+              recebida e é repassada como CACHE de rótulo — contrato do
+              componente pai (BaseLeadsPage) inalterado.
+            */}
+            <EmpresaCombobox
+              value={form.empresa_id ?? null}
+              onChange={(empresaId) => setField('empresa_id', empresaId)}
+              empresasCache={empresas}
+              emailLead={form.email || ''}
+              criadoPor={currentUser.nome_usuario}
+              disabled={loading}
+            />
           </div>
 
           <div>
