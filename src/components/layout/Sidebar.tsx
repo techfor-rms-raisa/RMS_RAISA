@@ -388,6 +388,20 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
     ] as any;
 
     // ============================================
+    // ITENS DO MENU ESPIONAGEM — 🆕 v64.0 (07/08/2026)
+    // Módulo próprio (decisão Q1-A). RBAC Q2-C: Admin + GC + SDR.
+    // ============================================
+
+    const espionagemItems = [
+        { 
+            view: 'espionagem', 
+            label: 'Espionagem', 
+            icon: 'fa-solid fa-user-secret', 
+            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
+        },
+    ] as any;
+
+    // ============================================
     // ITENS DO MENU CRM & CAMPANHAS
     // ============================================
     // v60.0 (Fase 1A): Grupo CRM & CAMPANHAS criado com item único
@@ -447,6 +461,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
         .includes(currentUser.tipo_usuario);
 
     const temAcessoPROSPECT = ['Administrador', 'Gestão Comercial', 'Gestão de R&S', 'SDR']
+        .includes(currentUser.tipo_usuario);
+
+    const temAcessoESPIONAGEM = ['Administrador', 'Gestão Comercial', 'SDR']
         .includes(currentUser.tipo_usuario);
 
     const temAcessoCRM = ['Administrador', 'Gestão de R&S', 'Gestão Comercial', 'Analista de R&S', 'SDR']
@@ -523,6 +540,23 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
                             title="PROSPECT"
                             subtitle="B2B Lead Intelligence"
                             items={prospectItems}
+                            currentUserRole={currentUser.tipo_usuario}
+                            currentView={currentView}
+                            isCollapsed={isCollapsed}
+                            onNavigate={onNavigate}
+                        />
+                    </>
+                )}
+
+                {/* ESPIONAGEM - 🆕 v64.0 (07/08/2026) — Inteligência Competitiva */}
+                {temAcessoESPIONAGEM && (
+                    <>
+                        <div className="my-2 border-t border-gray-700 mx-4 opacity-50"></div>
+
+                        <SidebarSection 
+                            title="ESPIONAGEM"
+                            subtitle="Inteligência Competitiva"
+                            items={espionagemItems}
                             currentUserRole={currentUser.tipo_usuario}
                             currentView={currentView}
                             isCollapsed={isCollapsed}

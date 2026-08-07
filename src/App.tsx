@@ -63,6 +63,9 @@ import CampanhaPrep from './components/prospect/CampanhaPrep';
 // ============================================
 import CreciPage from './components/creci/CreciPage';
 
+// 🆕 v64.0 (07/08/2026) — Módulo Espionagem Estratégica (Sidebar próprio)
+import EspionagemPage from './components/espionagem/EspionagemPage';
+
 // ============================================
 // CRM & CAMPANHAS (v60.0 — Fase 1A, 29/05/2026)
 // Layout container com sub-navegação interna.
@@ -639,6 +642,17 @@ const App: React.FC = () => {
           return <CampanhaPrep currentUser={currentUser!} />;
       case 'prospect_credits':
           return <CreditosTab />;
+
+      // ============================================
+      // ESPIONAGEM — 🆕 v64.0 (07/08/2026)
+      // Inteligência competitiva (módulo próprio no Sidebar)
+      // ============================================
+      case 'espionagem':
+          return (
+            <div className="space-y-6">
+              <EspionagemPage currentUser={currentUser!} />
+            </div>
+          );
 
       // ============================================
       // CRM & CAMPANHAS — v60.0 (Fase 1A)
