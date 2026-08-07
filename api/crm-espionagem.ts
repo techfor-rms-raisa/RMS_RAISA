@@ -2,9 +2,21 @@
  * api/crm-espionagem.ts — Endpoint do módulo Espionagem Estratégica
  *
  * Caminho: api/crm-espionagem.ts
- * Versão: 1.0 (Sessão 2 — 07/08/2026)
+ * Versão: 1.1 (Sessão 3 — 07/08/2026)
  *
- * Responsabilidade:
+ * v1.1 (07/08/2026 — Sessão 3):
+ *  - 🆕 POST action `descobrir_clientes`: descoberta automática da carteira
+ *    de clientes do concorrente via Gemini Search Grounding (site institucional,
+ *    páginas de cases/clientes/parceiros e notícias públicas).
+ *    NÃO grava nada — retorna sugestões com flag `ja_cadastrado` para
+ *    confirmação humana no frontend (human-in-the-loop). A gravação segue
+ *    pela action `adicionar_clientes` com origem_descoberta='gemini'.
+ *  - Padrões herdados de prospect-gemini-search.ts v2.3: extração robusta
+ *    via candidates[0].content.parts (BUG 4), parser de JSON balanceado,
+ *    fallback de queries manuais quando sem dados públicos, prompt estilo
+ *    v1.6 (sem proibições excessivas — evita regressão num_parts:0).
+ *
+ * v1.0 (07/08/2026 — Sessão 2):
  *  - CRUD de concorrentes e suas carteiras de clientes (modo manual).
  *  - Execução do motor de cruzamento via RPC `espionagem_analisar_concorrente`
  *    (RETURNS jsonb — bypassa limite de 1.000 linhas do PostgREST).
@@ -14,9 +26,6 @@
  * RBAC (decisão Q2 — 07/08/2026): Administrador + Gestão Comercial + SDR.
  *  Verificado no backend em TODAS as actions (não apenas na UI).
  *
- * Descoberta automática via Gemini: Sessão 3 (action `descobrir_clientes`
- * será adicionada aqui na v1.1 — NÃO implementada nesta versão).
- *
  * Endpoints:
  *  GET   ?action=listar_concorrentes&ator_email=X
  *  GET   ?action=detalhe_concorrente&id=X&ator_email=X
@@ -24,6 +33,7 @@
  *  POST  action=criar_concorrente        { nome, website?, dominio?, ator_email }
  *  POST  action=adicionar_clientes       { concorrente_id, clientes: [{nome, dominios[], chave_busca?, origem_descoberta?}], ator_email }
  *  POST  action=executar_analise         { concorrente_id, ator_email }
+ *  POST  action=descobrir_clientes       { concorrente_id, ator_email }            (🆕 v1.1)
  *  PATCH action=atualizar_concorrente    { id, campos..., ator_email }
  *  PATCH action=atualizar_cliente        { id, campos..., ator_email }
  *
@@ -33,6 +43,18 @@
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import { GoogleGenAI } from '@google/genai';
+
+// ─── Lazy init Gemini (padrão prospect-gemini-search.ts) ────────────────
+let aiInstance: GoogleGenAI | null = null;
+function getAI(): GoogleGenAI {
+  if (!aiInstance) {
+    const apiKey = process.env.API_KEY || '';
+    if (!apiKey) throw new Error('API_KEY não configurada.');
+    aiInstance = new GoogleGenAI({ apiKey });
+  }
+  return aiInstance;
+}
 
 export const config = { maxDuration: 60 };
 
@@ -87,7 +109,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .order('nome', { ascending: true });
         if (error) throw error;
 
-        const ids = (concorrentes || []).map(c => c.id);
+        const ids = (concorrentes || []).map((c: any) => c.id);
         let clientesPorConc: Record<number, number> = {};
         let ultimaPorConc: Record<number, any> = {};
 
@@ -113,7 +135,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
 
-        const enriquecidos = (concorrentes || []).map(c => ({
+        const enriquecidos = (concorrentes || []).map((c: any) => ({
           ...c,
           total_clientes: clientesPorConc[c.id] || 0,
           ultima_analise: ultimaPorConc[c.id] || null,
@@ -336,6 +358,80 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      // ── DESCOBRIR CLIENTES VIA GEMINI (🆕 v1.1 — Sessão 3) ───
+      // Varre fontes públicas (site do concorrente, cases, notícias)
+      // e retorna a carteira SUGERIDA. Nada é gravado aqui — o frontend
+      // exibe checkboxes e grava via `adicionar_clientes`.
+      if (action === 'descobrir_clientes') {
+        const { concorrente_id } = body;
+        if (!concorrente_id) {
+          return res.status(400).json({ success: false, error: 'concorrente_id é obrigatório' });
+        }
+
+        const { data: concorrente, error: errConc } = await supabase
+          .from('espionagem_concorrentes')
+          .select('id, nome, website, dominio')
+          .eq('id', concorrente_id)
+          .maybeSingle();
+        if (errConc) throw errConc;
+        if (!concorrente) {
+          return res.status(404).json({ success: false, error: 'Concorrente não encontrado' });
+        }
+
+        // Carteira já cadastrada — para marcar duplicados na sugestão
+        const { data: existentes, error: errEx } = await supabase
+          .from('espionagem_concorrente_clientes')
+          .select('nome, dominios, ativo')
+          .eq('concorrente_id', concorrente_id);
+        if (errEx) throw errEx;
+
+        const nomesExistentes = new Set(
+          (existentes || []).map((e: any) => e.nome.toLowerCase().trim())
+        );
+        const dominiosExistentes = new Set(
+          (existentes || []).flatMap((e: any) => (e.dominios || []).map((d: string) => d.toLowerCase()))
+        );
+
+        const descoberta = await descobrirClientesGemini(
+          concorrente.nome,
+          concorrente.website || concorrente.dominio || ''
+        );
+
+        if (descoberta.sem_resultados) {
+          return res.status(200).json({
+            success: true,
+            sem_resultados: true,
+            clientes_sugeridos: [],
+            queries_manuais: descoberta.queries_manuais,
+            mensagem:
+              'O Gemini não encontrou dados públicos sobre a carteira deste concorrente. ' +
+              'Use as queries manuais sugeridas ou cadastre os clientes na aba Manual.',
+          });
+        }
+
+        // Marca duplicados (por nome OU por interseção de domínio)
+        const sugeridos = descoberta.clientes.map(c => {
+          const dominiosNorm = normalizarDominios(c.dominios);
+          const jaCadastrado =
+            nomesExistentes.has(c.nome.toLowerCase().trim()) ||
+            dominiosNorm.some(d => dominiosExistentes.has(d));
+          return {
+            nome: c.nome,
+            dominios: dominiosNorm,
+            fonte: c.fonte || 'gemini',
+            ja_cadastrado: jaCadastrado,
+          };
+        });
+
+        return res.status(200).json({
+          success: true,
+          sem_resultados: false,
+          clientes_sugeridos: sugeridos,
+          total_descobertos: sugeridos.length,
+          total_novos: sugeridos.filter(s => !s.ja_cadastrado).length,
+        });
+      }
+
       return res.status(400).json({ success: false, error: `POST action desconhecida: ${action}` });
     }
 
@@ -436,4 +532,153 @@ function normalizarDominios(arr: unknown): string[] {
     .map(normalizarDominio)
     .filter((d): d is string => !!d);
   return Array.from(new Set(limpos));
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// DESCOBERTA GEMINI (🆕 v1.1 — Sessão 3)
+// Padrões de prospect-gemini-search.ts v2.3: gemini-2.5-flash + Search
+// Grounding, thinkingBudget 4096, extração via candidates[0].content.parts,
+// parser de JSON balanceado, prompt estilo v1.6 (sem proibições excessivas).
+// ════════════════════════════════════════════════════════════════════════
+
+interface ClienteDescoberto {
+  nome: string;
+  dominios: string[];
+  fonte: string;
+}
+
+async function descobrirClientesGemini(
+  nomeConcorrente: string,
+  websiteConcorrente: string
+): Promise<{
+  clientes: ClienteDescoberto[];
+  sem_resultados: boolean;
+  queries_manuais: string[];
+}> {
+  const ai = getAI();
+
+  const siteLimpo = (websiteConcorrente || '')
+    .replace(/^https?:\/\//, '')
+    .replace(/^www\./, '')
+    .split('/')[0];
+
+  const prompt = `
+Você é um analista de inteligência competitiva B2B no Brasil. Use o Google Search para descobrir as EMPRESAS-CLIENTE da consultoria "${nomeConcorrente}"${siteLimpo ? ` (site: ${siteLimpo})` : ''}.
+
+EXECUTE ATÉ 5 BUSCAS DISTINTAS (pare ao esgotar as fontes):
+
+1. site:${siteLimpo || nomeConcorrente.toLowerCase().replace(/\s+/g, '')} clientes OR cases OR parceiros
+2. "${nomeConcorrente}" clientes cases sucesso
+3. "${nomeConcorrente}" projeto cliente case tecnologia
+4. "${nomeConcorrente}" parceria contrato empresa
+5. "${nomeConcorrente}" atende empresas alocação consultoria
+
+REGRAS:
+- Liste apenas EMPRESAS que são CLIENTES da consultoria (quem contrata os serviços dela)
+- Não liste fornecedores, parceiros de tecnologia (ex.: Microsoft, AWS como vendors) nem a própria consultoria
+- Para cada cliente, tente identificar o domínio corporativo brasileiro (ex.: empresa.com.br); se não souber, deixe null
+- Informe a fonte onde encontrou (ex.: "site/cases", "site/clientes", "notícia")
+- Retorne o que encontrar, mesmo que sejam poucas empresas
+- Não invente empresas nem domínios
+
+Responda SOMENTE JSON sem markdown:
+{"clientes":[{"nome":"string","dominio":"string ou null","fonte":"string"}]}
+`.trim();
+
+  console.log(`🕵️ [Espionagem/Gemini] Descobrindo carteira de: ${nomeConcorrente} (${siteLimpo || 'sem site'})`);
+
+  const result = await ai.models.generateContent({
+    model: 'gemini-2.5-flash',
+    contents: prompt,
+    config: {
+      tools: [{ googleSearch: {} }],
+      temperature: 0.3,
+      maxOutputTokens: 16000,
+      thinkingConfig: { thinkingBudget: 4096 },
+    } as any,
+  });
+
+  // Extração robusta (BUG 4 fix herdado): candidates → fallback result.text
+  let rawText = '';
+  try {
+    const candidates = (result as any).candidates;
+    if (candidates?.[0]?.content?.parts) {
+      rawText = candidates[0].content.parts
+        .filter((p: any) => p.text && typeof p.text === 'string')
+        .map((p: any) => p.text)
+        .join('');
+    }
+    if (!rawText && result.text) rawText = result.text;
+  } catch {
+    rawText = result.text || '';
+  }
+
+  console.log(`📦 [Espionagem/Gemini] Resposta raw (${rawText.length} chars)`);
+
+  const queriesManuais = [
+    `site:${siteLimpo || '<site-do-concorrente>'} clientes OR cases`,
+    `"${nomeConcorrente}" clientes cases sucesso`,
+    `"${nomeConcorrente}" projeto cliente empresa`,
+  ];
+
+  if (rawText.length === 0) {
+    console.warn('⚠️ [Espionagem/Gemini] Resposta vazia — sem dados públicos');
+    return { clientes: [], sem_resultados: true, queries_manuais: queriesManuais };
+  }
+
+  const cleanText = rawText
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/gi, '')
+    .trim();
+
+  const jsonStr = extrairPrimeiroJSON(cleanText);
+  if (!jsonStr) {
+    console.warn('⚠️ [Espionagem/Gemini] Nenhum JSON na resposta');
+    return { clientes: [], sem_resultados: true, queries_manuais: queriesManuais };
+  }
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch (e) {
+    console.error('❌ [Espionagem/Gemini] Falha no parse:', e);
+    return { clientes: [], sem_resultados: true, queries_manuais: queriesManuais };
+  }
+
+  const clientes: ClienteDescoberto[] = (Array.isArray(parsed?.clientes) ? parsed.clientes : [])
+    .map((c: any) => ({
+      nome: (c?.nome || '').toString().trim(),
+      dominios: c?.dominio ? [String(c.dominio)] : [],
+      fonte: (c?.fonte || 'gemini').toString().trim(),
+    }))
+    .filter((c: ClienteDescoberto) => c.nome.length >= 2);
+
+  console.log(`✅ [Espionagem/Gemini] ${clientes.length} clientes descobertos`);
+  return { clientes, sem_resultados: clientes.length === 0, queries_manuais: queriesManuais };
+}
+
+/**
+ * Extrai o PRIMEIRO objeto JSON balanceado do texto (herdado do fix v2.3
+ * do prospect-gemini-search.ts — evita "Unexpected non-whitespace character"
+ * quando o Gemini retorna múltiplos blocos concatenados).
+ */
+function extrairPrimeiroJSON(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return null;
 }
