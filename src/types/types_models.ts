@@ -49,6 +49,8 @@ export type View =
   | 'crm_config'           // Configurações CRM (página standalone)
   // CRECI Views
   | 'creci_page'
+  // ESPIONAGEM View — 🆕 v64.0 (07/08/2026) — módulo Espionagem Estratégica
+  | 'espionagem'
   // Movimentações e Posição
   | 'movimentacoes' | 'posicao_comercial' | 'profiles';
 
