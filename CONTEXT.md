@@ -603,13 +603,13 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 81 arquivos | 1.46 MB | 08/08/2026 |
-| `src/components/` | 189 arquivos | 1.10 MB | 08/08/2026 |
+| `api/` | 81 arquivos | 1.46 MB | 09/08/2026 |
+| `src/components/` | 189 arquivos | 1.10 MB | 09/08/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 08/08/2026 |
-| `src/types/` | 6 arquivos | 31.4 KB | 08/08/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 08/08/2026 |
-| `scripts/` | 1 arquivos | 15.3 KB | 08/08/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 09/08/2026 |
+| `src/types/` | 6 arquivos | 31.4 KB | 09/08/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 09/08/2026 |
+| `scripts/` | 1 arquivos | 15.3 KB | 09/08/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
