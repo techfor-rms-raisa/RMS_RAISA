@@ -2,7 +2,24 @@
  * api/crm-espionagem.ts — Endpoint do módulo Espionagem Estratégica
  *
  * Caminho: api/crm-espionagem.ts
- * Versão: 1.1 (Sessão 3 — 07/08/2026)
+ * Versão: 2.0 (Sessão 5 — 09/08/2026)
+ *
+ * v2.0 (09/08/2026 — Sessão 5): EMPRESA CANÔNICA (caso CVC)
+ *  - 🏛️ Causa raiz corrigida: a mesma empresa-cliente cadastrada em 2+
+ *    concorrentes tinha dominios/chave_busca divergentes → números
+ *    incongruentes entre concorrentes. Agora `espionagem_empresas` é a
+ *    fonte única de verdade; o vínculo (espionagem_concorrente_clientes)
+ *    referencia empresa_id.
+ *  - `adicionar_clientes`: faz upsert na empresa canônica (merge/UNION de
+ *    domínios) e cria/reativa apenas o VÍNCULO com o concorrente. Adota
+ *    vínculos legados sem empresa_id quando encontrados.
+ *  - `detalhe_concorrente` / `descobrir_clientes`: leem nome/dominios/
+ *    chave_busca da empresa canônica (embed) e devolvem ACHATADO no mesmo
+ *    shape de sempre — frontend intacto.
+ *  - `atualizar_cliente`: `ativo` atualiza o vínculo; nome/dominios/
+ *    chave_busca atualizam a EMPRESA CANÔNICA (propaga a todos os
+ *    concorrentes que a compartilham).
+ *  - Requer migração 2026-08-09_espionagem_empresa_canonica.sql (RPC v3).
  *
  * v1.1 (07/08/2026 — Sessão 3):
  *  - 🆕 POST action `descobrir_clientes`: descoberta automática da carteira
@@ -33,12 +50,12 @@
  *  POST  action=criar_concorrente        { nome, website?, dominio?, ator_email }
  *  POST  action=adicionar_clientes       { concorrente_id, clientes: [{nome, dominios[], chave_busca?, origem_descoberta?}], ator_email }
  *  POST  action=executar_analise         { concorrente_id, ator_email }
- *  POST  action=descobrir_clientes       { concorrente_id, ator_email }            (🆕 v1.1)
+ *  POST  action=descobrir_clientes       { concorrente_id, ator_email }
  *  PATCH action=atualizar_concorrente    { id, campos..., ator_email }
  *  PATCH action=atualizar_cliente        { id, campos..., ator_email }
  *
  * Tabelas: espionagem_concorrentes, espionagem_concorrente_clientes,
- *          espionagem_analises (todas criadas em 2026-08-07_espionagem_schema.sql)
+ *          espionagem_empresas (🆕 v2.0), espionagem_analises
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
@@ -71,7 +88,9 @@ const PERFIS_AUTORIZADOS = ['Administrador', 'Gestão Comercial', 'SDR'];
 // Whitelists de campos editáveis (padrão v1.4 do crm-leads — nunca aceitar
 // objetos inteiros do frontend, que podem trazer JOINs embed)
 const CAMPOS_CONCORRENTE = ['nome', 'website', 'dominio', 'status'];
-const CAMPOS_CLIENTE = ['nome', 'dominios', 'chave_busca', 'ativo'];
+// v2.0: campos do VÍNCULO vs campos da EMPRESA CANÔNICA
+const CAMPOS_VINCULO_CLIENTE = ['ativo'];
+const CAMPOS_EMPRESA_CLIENTE = ['nome', 'dominios', 'chave_busca'];
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -145,6 +164,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       // ── DETALHE CONCORRENTE ──────────────────────────────────
+      // v2.0: nome/dominios/chave_busca vêm da EMPRESA CANÔNICA (embed),
+      // achatados no mesmo shape que o frontend já consome.
       if (action === 'detalhe_concorrente') {
         const { id } = req.query as Record<string, string>;
         if (!id) return res.status(400).json({ success: false, error: 'id é obrigatório' });
@@ -159,11 +180,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const { data: clientes, error: errCli } = await supabase
           .from('espionagem_concorrente_clientes')
-          .select('*')
+          .select('id, concorrente_id, empresa_id, nome, dominios, chave_busca, origem_descoberta, descoberto_em, ativo, criado_por, espionagem_empresas(nome, dominios, chave_busca)')
           .eq('concorrente_id', id)
-          .eq('ativo', true)
-          .order('nome', { ascending: true });
+          .eq('ativo', true);
         if (errCli) throw errCli;
+
+        const clientesFlat = (clientes || [])
+          .map((c: any) => achatarCliente(c))
+          .sort((a: any, b: any) => a.nome.localeCompare(b.nome, 'pt-BR'));
 
         const { data: ultimaAnalise, error: errAn } = await supabase
           .from('espionagem_analises')
@@ -177,7 +201,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({
           success: true,
           concorrente,
-          clientes: clientes || [],
+          clientes: clientesFlat,
           ultima_analise: ultimaAnalise || null,
         });
       }
@@ -235,23 +259,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(201).json({ success: true, concorrente: data });
       }
 
-      // ── ADICIONAR CLIENTES (lote, com merge de domínios) ─────
-      // Se o cliente já existe (mesmo nome, case-insensitive) no
-      // concorrente: faz UNION dos domínios e reativa (ativo=true).
+      // ── ADICIONAR CLIENTES (lote) — v2.0 Empresa Canônica ────
+      // 1. Upsert na empresa canônica (merge/UNION de domínios entre
+      //    TODOS os concorrentes que a compartilham).
+      // 2. Cria/reativa apenas o VÍNCULO concorrente ↔ empresa.
+      // 3. Adota vínculos legados (sem empresa_id) quando existirem.
       if (action === 'adicionar_clientes') {
         const { concorrente_id, clientes } = body;
         if (!concorrente_id || !Array.isArray(clientes) || clientes.length === 0) {
           return res.status(400).json({ success: false, error: 'concorrente_id e clientes[] são obrigatórios' });
         }
-
-        const { data: existentes, error: errEx } = await supabase
-          .from('espionagem_concorrente_clientes')
-          .select('id, nome, dominios, ativo')
-          .eq('concorrente_id', concorrente_id);
-        if (errEx) throw errEx;
-
-        const porNome: Record<string, any> = {};
-        for (const e of existentes || []) porNome[e.nome.toLowerCase().trim()] = e;
 
         const resultado = { inseridos: 0, mesclados: 0, ignorados: 0 };
 
@@ -260,24 +277,56 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (!nome) { resultado.ignorados++; continue; }
 
           const dominios = normalizarDominios(c.dominios);
-          const existente = porNome[nome.toLowerCase()];
+          const chaveBusca = (c.chave_busca || '').toString().trim() || null;
 
-          if (existente) {
-            const uniao = Array.from(new Set([...(existente.dominios || []), ...dominios]));
-            const { error: errUp } = await supabase
+          // 1. Empresa canônica (fonte única de verdade)
+          const empresa = await upsertEmpresaCanonica(nome, dominios, chaveBusca, ator.email_usuario);
+
+          // 2. Vínculo por (concorrente_id, empresa_id)
+          const { data: vinculo, error: errV } = await supabase
+            .from('espionagem_concorrente_clientes')
+            .select('id, ativo')
+            .eq('concorrente_id', concorrente_id)
+            .eq('empresa_id', empresa.id)
+            .maybeSingle();
+          if (errV) throw errV;
+
+          if (vinculo) {
+            if (!vinculo.ativo) {
+              const { error: errUp } = await supabase
+                .from('espionagem_concorrente_clientes')
+                .update({ ativo: true })
+                .eq('id', vinculo.id);
+              if (errUp) throw errUp;
+            }
+            resultado.mesclados++;
+            continue;
+          }
+
+          // 3. Vínculo legado por nome (sem empresa_id) → adota
+          const { data: legado, error: errL } = await supabase
+            .from('espionagem_concorrente_clientes')
+            .select('id')
+            .eq('concorrente_id', concorrente_id)
+            .is('empresa_id', null)
+            .ilike('nome', escapeIlike(nome))
+            .maybeSingle();
+          if (errL) throw errL;
+
+          if (legado) {
+            const { error: errAd } = await supabase
               .from('espionagem_concorrente_clientes')
-              .update({ dominios: uniao, ativo: true })
-              .eq('id', existente.id);
-            if (errUp) throw errUp;
+              .update({ empresa_id: empresa.id, ativo: true })
+              .eq('id', legado.id);
+            if (errAd) throw errAd;
             resultado.mesclados++;
           } else {
             const { error: errIn } = await supabase
               .from('espionagem_concorrente_clientes')
               .insert({
                 concorrente_id,
-                nome,
-                dominios,
-                chave_busca: (c.chave_busca || '').toString().trim() || null,
+                empresa_id: empresa.id,
+                nome, // legado mantido preenchido (índice ux por nome + fallback RPC)
                 origem_descoberta: c.origem_descoberta === 'gemini' ? 'gemini' : 'manual',
                 criado_por: ator.email_usuario,
               });
@@ -358,10 +407,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      // ── DESCOBRIR CLIENTES VIA GEMINI (🆕 v1.1 — Sessão 3) ───
+      // ── DESCOBRIR CLIENTES VIA GEMINI (v1.1 — Sessão 3) ──────
       // Varre fontes públicas (site do concorrente, cases, notícias)
       // e retorna a carteira SUGERIDA. Nada é gravado aqui — o frontend
       // exibe checkboxes e grava via `adicionar_clientes`.
+      // v2.0: nomes/domínios da carteira existente lidos da empresa canônica.
       if (action === 'descobrir_clientes') {
         const { concorrente_id } = body;
         if (!concorrente_id) {
@@ -381,15 +431,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Carteira já cadastrada — para marcar duplicados na sugestão
         const { data: existentes, error: errEx } = await supabase
           .from('espionagem_concorrente_clientes')
-          .select('nome, dominios, ativo')
+          .select('nome, dominios, ativo, espionagem_empresas(nome, dominios)')
           .eq('concorrente_id', concorrente_id);
         if (errEx) throw errEx;
 
+        const existentesFlat = (existentes || []).map((e: any) => {
+          const emp = Array.isArray(e.espionagem_empresas)
+            ? e.espionagem_empresas[0]
+            : e.espionagem_empresas;
+          return {
+            nome: (emp?.nome ?? e.nome ?? '') as string,
+            dominios: (emp?.dominios ?? e.dominios ?? []) as string[],
+          };
+        });
+
         const nomesExistentes = new Set(
-          (existentes || []).map((e: any) => e.nome.toLowerCase().trim())
+          existentesFlat.map(e => e.nome.toLowerCase().trim())
         );
         const dominiosExistentes = new Set(
-          (existentes || []).flatMap((e: any) => (e.dominios || []).map((d: string) => d.toLowerCase()))
+          existentesFlat.flatMap(e => (e.dominios || []).map((d: string) => d.toLowerCase()))
         );
 
         const descoberta = await descobrirClientesGemini(
@@ -467,29 +527,81 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json({ success: true, concorrente: data });
       }
 
-      // ── ATUALIZAR CLIENTE (whitelist; ativo=false = remoção lógica) ──
+      // ── ATUALIZAR CLIENTE — v2.0 Empresa Canônica ────────────
+      // `ativo` → VÍNCULO (remoção lógica só neste concorrente).
+      // `nome`/`dominios`/`chave_busca` → EMPRESA CANÔNICA (propaga a
+      // TODOS os concorrentes que compartilham a empresa).
       if (action === 'atualizar_cliente') {
         const { id } = body;
         if (!id) return res.status(400).json({ success: false, error: 'id é obrigatório' });
 
-        const campos: Record<string, any> = {};
-        for (const k of CAMPOS_CLIENTE) {
-          if (body[k] !== undefined) campos[k] = body[k];
+        const camposVinculo: Record<string, any> = {};
+        for (const k of CAMPOS_VINCULO_CLIENTE) {
+          if (body[k] !== undefined) camposVinculo[k] = body[k];
         }
-        if (campos.dominios !== undefined) campos.dominios = normalizarDominios(campos.dominios);
-        if (Object.keys(campos).length === 0) {
+        const camposEmpresa: Record<string, any> = {};
+        for (const k of CAMPOS_EMPRESA_CLIENTE) {
+          if (body[k] !== undefined) camposEmpresa[k] = body[k];
+        }
+        if (camposEmpresa.dominios !== undefined) {
+          camposEmpresa.dominios = normalizarDominios(camposEmpresa.dominios);
+        }
+        if (Object.keys(camposVinculo).length === 0 && Object.keys(camposEmpresa).length === 0) {
           return res.status(400).json({ success: false, error: 'Nenhum campo editável informado' });
         }
 
-        const { data, error } = await supabase
+        // Resolve o vínculo
+        const { data: vinculo, error: errV } = await supabase
           .from('espionagem_concorrente_clientes')
-          .update(campos)
+          .select('id, empresa_id, nome, dominios, chave_busca')
           .eq('id', id)
-          .select()
-          .single();
-        if (error) throw error;
+          .maybeSingle();
+        if (errV) throw errV;
+        if (!vinculo) return res.status(404).json({ success: false, error: 'Cliente não encontrado' });
 
-        return res.status(200).json({ success: true, cliente: data });
+        // Campos da empresa: garante empresa canônica (adota legado se preciso)
+        if (Object.keys(camposEmpresa).length > 0) {
+          let empresaId = vinculo.empresa_id;
+          if (!empresaId) {
+            const empresa = await upsertEmpresaCanonica(
+              vinculo.nome,
+              normalizarDominios(vinculo.dominios),
+              (vinculo.chave_busca || '').toString().trim() || null,
+              ator.email_usuario
+            );
+            empresaId = empresa.id;
+            const { error: errAd } = await supabase
+              .from('espionagem_concorrente_clientes')
+              .update({ empresa_id: empresaId })
+              .eq('id', vinculo.id);
+            if (errAd) throw errAd;
+          }
+          camposEmpresa.atualizado_em = new Date().toISOString();
+          const { error: errE } = await supabase
+            .from('espionagem_empresas')
+            .update(camposEmpresa)
+            .eq('id', empresaId);
+          if (errE) throw errE;
+        }
+
+        // Campos do vínculo
+        if (Object.keys(camposVinculo).length > 0) {
+          const { error: errU } = await supabase
+            .from('espionagem_concorrente_clientes')
+            .update(camposVinculo)
+            .eq('id', vinculo.id);
+          if (errU) throw errU;
+        }
+
+        // Retorna o cliente achatado (mesmo shape do detalhe)
+        const { data: atualizado, error: errF } = await supabase
+          .from('espionagem_concorrente_clientes')
+          .select('id, concorrente_id, empresa_id, nome, dominios, chave_busca, origem_descoberta, descoberto_em, ativo, criado_por, espionagem_empresas(nome, dominios, chave_busca)')
+          .eq('id', vinculo.id)
+          .single();
+        if (errF) throw errF;
+
+        return res.status(200).json({ success: true, cliente: achatarCliente(atualizado) });
       }
 
       return res.status(400).json({ success: false, error: `PATCH action desconhecida: ${action}` });
@@ -534,8 +646,103 @@ function normalizarDominios(arr: unknown): string[] {
   return Array.from(new Set(limpos));
 }
 
+/** Escapa curingas do ILIKE (% e _) para igualdade case-insensitive. */
+function escapeIlike(s: string): string {
+  return s.replace(/[\\%_]/g, ch => '\\' + ch);
+}
+
+/**
+ * Achata o vínculo + embed da empresa canônica no shape que o frontend
+ * já consome (ClienteCarteira): nome/dominios/chave_busca priorizam a
+ * empresa canônica; fallback para os campos legados do vínculo.
+ */
+function achatarCliente(c: any) {
+  const emp = Array.isArray(c.espionagem_empresas)
+    ? c.espionagem_empresas[0]
+    : c.espionagem_empresas;
+  return {
+    id: c.id,
+    concorrente_id: c.concorrente_id,
+    empresa_id: c.empresa_id ?? null,
+    nome: emp?.nome ?? c.nome,
+    dominios: emp?.dominios ?? c.dominios ?? [],
+    chave_busca: emp?.chave_busca ?? c.chave_busca ?? null,
+    origem_descoberta: c.origem_descoberta,
+    descoberto_em: c.descoberto_em,
+    ativo: c.ativo,
+    criado_por: c.criado_por,
+  };
+}
+
+/**
+ * 🏛️ v2.0 — Upsert da EMPRESA CANÔNICA (fonte única de verdade).
+ * - Busca por nome (case-insensitive, curingas escapados).
+ * - Se existe: UNION dos domínios; preenche chave_busca apenas se vazia.
+ * - Se não existe: insere. Corrida 23505 (índice único lower(nome))
+ *   resolvida com re-fetch.
+ */
+async function upsertEmpresaCanonica(
+  nome: string,
+  dominios: string[],
+  chaveBusca: string | null,
+  atorEmail: string
+): Promise<{ id: number; nome: string; dominios: string[]; chave_busca: string | null }> {
+  const buscar = async () => {
+    const { data, error } = await supabase
+      .from('espionagem_empresas')
+      .select('id, nome, dominios, chave_busca')
+      .ilike('nome', escapeIlike(nome))
+      .maybeSingle();
+    if (error) throw error;
+    return data;
+  };
+
+  const existente = await buscar();
+
+  if (existente) {
+    const atuais: string[] = existente.dominios || [];
+    const uniao = Array.from(new Set([...atuais, ...dominios]));
+    const campos: Record<string, any> = {};
+    if (uniao.length !== atuais.length) campos.dominios = uniao;
+    if (chaveBusca && !existente.chave_busca) campos.chave_busca = chaveBusca;
+
+    if (Object.keys(campos).length > 0) {
+      campos.atualizado_em = new Date().toISOString();
+      const { error: errUp } = await supabase
+        .from('espionagem_empresas')
+        .update(campos)
+        .eq('id', existente.id);
+      if (errUp) throw errUp;
+    }
+    return {
+      id: existente.id,
+      nome: existente.nome,
+      dominios: campos.dominios ?? atuais,
+      chave_busca: campos.chave_busca ?? existente.chave_busca ?? null,
+    };
+  }
+
+  const { data: nova, error: errIn } = await supabase
+    .from('espionagem_empresas')
+    .insert({ nome, dominios, chave_busca: chaveBusca, criado_por: atorEmail })
+    .select('id, nome, dominios, chave_busca')
+    .single();
+
+  if (errIn) {
+    if (errIn.code === '23505') {
+      // Corrida: outro request criou a empresa entre o SELECT e o INSERT
+      const criada = await buscar();
+      if (criada) {
+        return upsertEmpresaCanonica(nome, dominios, chaveBusca, atorEmail);
+      }
+    }
+    throw errIn;
+  }
+  return nova!;
+}
+
 // ════════════════════════════════════════════════════════════════════════
-// DESCOBERTA GEMINI (🆕 v1.1 — Sessão 3)
+// DESCOBERTA GEMINI (v1.1 — Sessão 3)
 // Padrões de prospect-gemini-search.ts v2.3: gemini-2.5-flash + Search
 // Grounding, thinkingBudget 4096, extração via candidates[0].content.parts,
 // parser de JSON balanceado, prompt estilo v1.6 (sem proibições excessivas).
