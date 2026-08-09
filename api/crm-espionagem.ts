@@ -2,7 +2,19 @@
  * api/crm-espionagem.ts — Endpoint do módulo Espionagem Estratégica
  *
  * Caminho: api/crm-espionagem.ts
- * Versão: 2.0 (Sessão 5 — 09/08/2026)
+ * Versão: 2.1 (Sessão 6 — 09/08/2026)
+ *
+ * v2.1 (09/08/2026 — Sessão 6): VISÃO CLIENTE × CONCORRENTES (operação inversa)
+ *  - 🔄 GET action `listar_empresas`: empresas canônicas com nº de
+ *    concorrentes ativos (seletor da aba Visão Cliente). RPC
+ *    `espionagem_listar_empresas` (RETURNS jsonb).
+ *  - 🔄 GET action `analisar_empresa`: métricas canônicas de UMA empresa
+ *    (mesmo motor v4: dominio_map + equi-joins + siglas \y) + mapa dos
+ *    concorrentes que a possuem na carteira. RPC
+ *    `espionagem_analisar_empresa`. 100% interno — sem Gemini.
+ *  - Requer migração 2026-08-09_espionagem_visao_cliente.sql.
+ *  - (UI) Edição/arquivamento de concorrente usa a action já existente
+ *    `atualizar_concorrente` — nenhuma mudança de backend necessária.
  *
  * v2.0 (09/08/2026 — Sessão 5): EMPRESA CANÔNICA (caso CVC)
  *  - 🏛️ Causa raiz corrigida: a mesma empresa-cliente cadastrada em 2+
@@ -47,6 +59,8 @@
  *  GET   ?action=listar_concorrentes&ator_email=X
  *  GET   ?action=detalhe_concorrente&id=X&ator_email=X
  *  GET   ?action=listar_analises&concorrente_id=X&ator_email=X
+ *  GET   ?action=listar_empresas&ator_email=X                              (🆕 v2.1)
+ *  GET   ?action=analisar_empresa&empresa_id=X&ator_email=X                (🆕 v2.1)
  *  POST  action=criar_concorrente        { nome, website?, dominio?, ator_email }
  *  POST  action=adicionar_clientes       { concorrente_id, clientes: [{nome, dominios[], chave_busca?, origem_descoberta?}], ator_email }
  *  POST  action=executar_analise         { concorrente_id, ator_email }
@@ -222,6 +236,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (error) throw error;
 
         return res.status(200).json({ success: true, analises: data || [] });
+      }
+
+      // ── LISTAR EMPRESAS CANÔNICAS (🆕 v2.1 — seletor Visão Cliente) ──
+      if (action === 'listar_empresas') {
+        const { data, error } = await supabase.rpc('espionagem_listar_empresas');
+        if (error) throw error;
+        return res.status(200).json({ success: true, empresas: data || [] });
+      }
+
+      // ── ANALISAR EMPRESA (🆕 v2.1 — motor inverso Cliente × Concorrentes) ──
+      if (action === 'analisar_empresa') {
+        const { empresa_id } = req.query as Record<string, string>;
+        if (!empresa_id) {
+          return res.status(400).json({ success: false, error: 'empresa_id é obrigatório' });
+        }
+
+        const { data: resultado, error: errRpc } = await supabase
+          .rpc('espionagem_analisar_empresa', { p_empresa_id: Number(empresa_id) });
+        if (errRpc) throw errRpc;
+        if (!resultado || !resultado.empresa) {
+          return res.status(404).json({ success: false, error: 'Empresa não encontrada' });
+        }
+
+        return res.status(200).json({ success: true, resultado });
       }
 
       return res.status(400).json({ success: false, error: `GET action desconhecida: ${action}` });
