@@ -2,7 +2,18 @@
  * EspionagemPage.tsx — Módulo Espionagem Estratégica
  *
  * Caminho: src/components/espionagem/EspionagemPage.tsx
- * Versão: 1.0 (Sessão 4 — 07/08/2026)
+ * Versão: 2.0 (Sessão 6 — 09/08/2026)
+ *
+ * v2.0 (09/08/2026 — Sessão 6):
+ *  - 🔄 Nova aba "Visão Cliente" (mockup aprovado 09/08): operação inversa —
+ *    seleciona uma empresa canônica e mapeia os CONCORRENTES que a possuem
+ *    na carteira. Card central = cliente com métricas canônicas (idênticas
+ *    em qualquer contexto); cards abaixo = concorrentes. 100% interno.
+ *    Actions: listar_empresas + analisar_empresa (backend v2.1).
+ *  - ✏️ Edição de concorrente (nome/website/domínio) e 🗄️ arquivamento na
+ *    barra do seletor — usa a action já existente `atualizar_concorrente`.
+ *
+ * v1.0 (Sessão 4 — 07/08/2026):
  *
  * Módulo próprio no Sidebar (decisão Q1-A). Inteligência competitiva:
  * cruza a carteira de clientes de consultorias concorrentes com as 3
@@ -98,11 +109,53 @@ interface ResultadoAnalise {
   delta?: { analise_anterior_em: string | null; novos_na_carteira: number };
 }
 
+// 🆕 v2.0 — Visão Cliente × Concorrentes (espelham api v2.1)
+interface EmpresaOption {
+  id: number;
+  nome: string;
+  dominios: string[];
+  chave_busca: string | null;
+  num_concorrentes: number;
+}
+
+interface EmpresaMetricas {
+  id: number;
+  nome: string;
+  dominios: string[];
+  prospectados: number;
+  prospectados_corp: number;
+  leads_crm: number;
+  leads_em_campanha: number;
+  campanhas: number;
+  abordagens: number;
+  ultima_abordagem_em: string | null;
+  respostas: number;
+  frio_90d: boolean;
+}
+
+interface ConcorrenteDaEmpresa {
+  id: number;
+  nome: string;
+  website: string | null;
+  dominio: string | null;
+  descoberto_em: string;
+  origem_descoberta: string;
+  total_clientes: number;
+  cobertura_pct: number | null;
+  ultima_analise_em: string | null;
+}
+
+interface VisaoClienteResultado {
+  empresa: EmpresaMetricas;
+  concorrentes: ConcorrenteDaEmpresa[];
+  total_concorrentes: number;
+}
+
 interface EspionagemPageProps {
   currentUser: User;
 }
 
-type Aba = 'auto' | 'manual' | 'resultado';
+type Aba = 'auto' | 'manual' | 'resultado' | 'visao_cliente';
 
 const PERFIS_AUTORIZADOS = ['Administrador', 'Gestão Comercial', 'SDR'];
 
@@ -123,6 +176,18 @@ const EspionagemPage: React.FC<EspionagemPageProps> = ({ currentUser }) => {
   const [criando, setCriando] = useState(false);
   const [novoNome, setNovoNome] = useState('');
   const [novoSite, setNovoSite] = useState('');
+
+  // 🆕 v2.0 — Edição/arquivamento de concorrente
+  const [editandoConc, setEditandoConc] = useState(false);
+  const [edNome, setEdNome] = useState('');
+  const [edSite, setEdSite] = useState('');
+  const [edDominio, setEdDominio] = useState('');
+
+  // 🆕 v2.0 — Visão Cliente × Concorrentes
+  const [empresas, setEmpresas] = useState<EmpresaOption[]>([]);
+  const [empresaSelId, setEmpresaSelId] = useState<number | null>(null);
+  const [visaoResultado, setVisaoResultado] = useState<VisaoClienteResultado | null>(null);
+  const [mapeando, setMapeando] = useState(false);
 
   // Descoberta Gemini
   const [descobrindo, setDescobrindo] = useState(false);
@@ -305,6 +370,85 @@ const EspionagemPage: React.FC<EspionagemPageProps> = ({ currentUser }) => {
     } else avisar('erro', r.error || 'Falha ao remover');
   };
 
+  // ── 🆕 v2.0: Edição / arquivamento de concorrente ───────────
+  const abrirEdicaoConcorrente = () => {
+    if (!concorrente) return;
+    setEdNome(concorrente.nome);
+    setEdSite(concorrente.website || '');
+    setEdDominio(concorrente.dominio || '');
+    setEditandoConc(true);
+  };
+
+  const salvarEdicaoConcorrente = async () => {
+    if (!selecionadoId) return;
+    if (!edNome.trim()) return avisar('erro', 'Informe o nome do concorrente');
+    const r = await api.patch<{ success: boolean; concorrente: Concorrente }>(
+      'atualizar_concorrente', {
+        id: selecionadoId,
+        nome: edNome.trim(),
+        website: edSite.trim() || null,
+        dominio: edDominio.trim() || null,
+        ator_email: atorEmail,
+      });
+    if (r.ok) {
+      avisar('ok', 'Concorrente atualizado');
+      setEditandoConc(false);
+      await carregarConcorrentes();
+    } else avisar('erro', r.error || 'Falha ao atualizar concorrente');
+  };
+
+  const arquivarConcorrente = async () => {
+    if (!selecionadoId || !concorrente) return;
+    const ok = window.confirm(
+      `Arquivar o concorrente "${concorrente.nome}"?\n\n` +
+      'Ele sai da lista, mas a carteira e o histórico de análises são preservados ' +
+      '(remoção lógica — pode ser revertida via banco).'
+    );
+    if (!ok) return;
+    const r = await api.patch('atualizar_concorrente', {
+      id: selecionadoId, status: 'arquivado', ator_email: atorEmail,
+    });
+    if (r.ok) {
+      avisar('ok', `"${concorrente.nome}" arquivado`);
+      setEditandoConc(false);
+      setSelecionadoId(null);
+      setResultado(null); setResultadoEm(null); setClientesCarteira([]);
+      await carregarConcorrentes();
+    } else avisar('erro', r.error || 'Falha ao arquivar');
+  };
+
+  // ── 🆕 v2.0: Visão Cliente × Concorrentes ───────────────────
+  const carregarEmpresas = useCallback(async () => {
+    const r = await api.get<{ success: boolean; empresas: EmpresaOption[] }>(
+      'listar_empresas', { ator_email: atorEmail }
+    );
+    if (r.ok && r.data?.empresas) {
+      setEmpresas(r.data.empresas);
+      if (r.data.empresas.length > 0 && empresaSelId === null) {
+        setEmpresaSelId(r.data.empresas[0].id);
+      }
+    } else if (!r.ok) {
+      avisar('erro', r.error || 'Falha ao listar empresas');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, atorEmail, empresaSelId]);
+
+  useEffect(() => {
+    if (aba === 'visao_cliente' && empresas.length === 0) carregarEmpresas();
+  }, [aba]); // eslint-disable-line
+
+  const mapearConcorrentes = async () => {
+    if (!empresaSelId) return;
+    setMapeando(true);
+    const r = await api.get<{ success: boolean; resultado: VisaoClienteResultado }>(
+      'analisar_empresa', { empresa_id: empresaSelId, ator_email: atorEmail }
+    );
+    setMapeando(false);
+    if (r.ok && r.data?.resultado) {
+      setVisaoResultado(r.data.resultado);
+    } else avisar('erro', r.error || 'Falha ao mapear concorrentes');
+  };
+
   // ── Guard de RBAC (cortesia — backend também valida) ────────
   if (!autorizado) {
     return (
@@ -382,6 +526,17 @@ const EspionagemPage: React.FC<EspionagemPageProps> = ({ currentUser }) => {
             </option>
           ))}
         </select>
+        {/* 🆕 v2.0 — editar / arquivar concorrente */}
+        <button onClick={abrirEdicaoConcorrente} disabled={!selecionadoId}
+          title="Editar nome, website e domínio"
+          className="px-2.5 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm hover:bg-gray-50 disabled:opacity-40">
+          <i className="fa-solid fa-pen" />
+        </button>
+        <button onClick={arquivarConcorrente} disabled={!selecionadoId}
+          title="Arquivar concorrente (remoção lógica)"
+          className="px-2.5 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm hover:bg-red-50 hover:text-red-700 hover:border-red-200 disabled:opacity-40">
+          <i className="fa-solid fa-box-archive" />
+        </button>
         {concorrente?.ultima_analise && (
           <span className="text-xs text-gray-500">
             Última análise: {new Date(concorrente.ultima_analise.executado_em).toLocaleString('pt-BR')}
@@ -398,6 +553,35 @@ const EspionagemPage: React.FC<EspionagemPageProps> = ({ currentUser }) => {
         </div>
       </div>
 
+      {/* 🆕 v2.0 — Form de edição do concorrente */}
+      {editandoConc && concorrente && (
+        <div className="bg-white rounded-xl shadow p-4 border-2 border-indigo-100 flex flex-wrap items-end gap-3">
+          <div className="flex flex-col">
+            <label className="text-xs font-bold text-gray-500 uppercase mb-1">Nome</label>
+            <input value={edNome} onChange={e => setEdNome(e.target.value)}
+              className="border rounded-lg px-3 py-2 text-sm w-56" />
+          </div>
+          <div className="flex flex-col">
+            <label className="text-xs font-bold text-gray-500 uppercase mb-1">Website</label>
+            <input value={edSite} onChange={e => setEdSite(e.target.value)}
+              className="border rounded-lg px-3 py-2 text-sm w-64" placeholder="https://concorrente.com.br" />
+          </div>
+          <div className="flex flex-col">
+            <label className="text-xs font-bold text-gray-500 uppercase mb-1">Domínio</label>
+            <input value={edDominio} onChange={e => setEdDominio(e.target.value)}
+              className="border rounded-lg px-3 py-2 text-sm w-56" placeholder="concorrente.com.br" />
+          </div>
+          <button onClick={salvarEdicaoConcorrente} disabled={api.loading}
+            className="px-4 py-2 rounded-lg bg-indigo-900 text-white text-sm font-semibold disabled:opacity-50">
+            <i className="fa-solid fa-check mr-2" />Salvar
+          </button>
+          <button onClick={() => setEditandoConc(false)}
+            className="px-4 py-2 rounded-lg border border-gray-300 text-gray-600 text-sm font-semibold hover:bg-gray-50">
+            Cancelar
+          </button>
+        </div>
+      )}
+
       {/* Abas */}
       <div className="bg-white rounded-xl shadow">
         <div className="flex gap-1 border-b px-4 pt-3">
@@ -405,6 +589,7 @@ const EspionagemPage: React.FC<EspionagemPageProps> = ({ currentUser }) => {
             ['auto', '⚡ Análise Automática'],
             ['manual', '✍️ Análise Manual'],
             ['resultado', '📊 Resultado'],
+            ['visao_cliente', '🔄 Visão Cliente'],
           ] as [Aba, string][]).map(([k, label]) => (
             <button key={k} onClick={() => setAba(k)}
               className={`px-4 py-2 text-sm font-semibold rounded-t-lg border border-b-0 ${
@@ -527,6 +712,50 @@ const EspionagemPage: React.FC<EspionagemPageProps> = ({ currentUser }) => {
               )}
             </div>
           )}
+
+          {/* ══ ABA VISÃO CLIENTE (🆕 v2.0) ══ */}
+          {aba === 'visao_cliente' && (
+            <div className="space-y-5">
+              {/* Seletor de cliente (espelho invertido da barra de concorrente) */}
+              <div className="flex flex-wrap items-center gap-3 bg-gray-50 border border-gray-200 rounded-xl p-3">
+                <label className="text-xs font-bold text-gray-500 uppercase">Cliente</label>
+                <select
+                  value={empresaSelId ?? ''}
+                  onChange={e => { setEmpresaSelId(Number(e.target.value) || null); setVisaoResultado(null); }}
+                  className="border rounded-lg px-3 py-2 text-sm min-w-[260px]"
+                >
+                  {empresas.length === 0 && <option value="">— nenhuma empresa na base —</option>}
+                  {empresas.map(e => (
+                    <option key={e.id} value={e.id}>
+                      {e.nome} ({e.num_concorrentes} concorrente{e.num_concorrentes > 1 ? 's' : ''})
+                    </option>
+                  ))}
+                </select>
+                <span className="text-xs text-gray-500">
+                  <i className="fa-solid fa-database mr-1" />
+                  100% interno — sem Gemini
+                </span>
+                <div className="ml-auto">
+                  <button onClick={mapearConcorrentes} disabled={!empresaSelId || mapeando}
+                    className="px-4 py-2 rounded-lg bg-indigo-900 text-white text-sm font-semibold disabled:opacity-50">
+                    {mapeando
+                      ? <><i className="fa-solid fa-spinner fa-spin mr-2" />Mapeando…</>
+                      : <><i className="fa-solid fa-map-location-dot mr-2" />Mapear concorrentes</>}
+                  </button>
+                </div>
+              </div>
+
+              {!visaoResultado ? (
+                <div className="text-center text-gray-500 py-10">
+                  <i className="fa-solid fa-arrows-rotate text-3xl mb-3 text-gray-300" />
+                  <p>Selecione um cliente e clique em <b>Mapear concorrentes</b> para ver
+                     quem disputa esta conta.</p>
+                </div>
+              ) : (
+                <VisaoClienteHierarquica resultado={visaoResultado} />
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -637,6 +866,80 @@ const ResultadoHierarquico: React.FC<{
       <p className="text-[10px] text-gray-400 mt-2">
         Legenda: borda escura = campanhas ativas no CRM · cinza = conta intocada (oportunidade) ·
         Fontes: email_leads · email_empresas · prospect_leads
+      </p>
+    </div>
+  );
+};
+
+// 🆕 v2.0 — Visão Cliente × Concorrentes (mockup aprovado 09/08/2026)
+const VisaoClienteHierarquica: React.FC<{
+  resultado: VisaoClienteResultado;
+}> = ({ resultado }) => {
+  const e = resultado.empresa;
+  const presenca = e.leads_crm > 0 || e.abordagens > 0 || e.prospectados > 0;
+  const disputada = resultado.total_concorrentes >= 2;
+  const diasDesde = (iso: string) =>
+    Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+
+  return (
+    <div>
+      {/* Card central — o CLIENTE com métricas canônicas */}
+      <div className="mx-auto w-fit min-w-[380px] rounded-xl bg-indigo-950 text-white text-center py-3 px-8 shadow-lg">
+        <div className="font-bold tracking-wider">{e.nome.toUpperCase()}</div>
+        <div className="text-[11px] text-indigo-200">
+          {e.dominios.join(' · ') || 'sem domínio'}
+          {' — '}disputado por {resultado.total_concorrentes} concorrente(s)
+        </div>
+        <div className="flex justify-center gap-5 mt-2 pt-2 border-t border-indigo-800">
+          <Total v={e.prospectados} l="prospectados" />
+          <Total v={e.leads_crm} l="leads CRM" />
+          <Total v={e.campanhas} l="campanhas" />
+          <Total v={e.abordagens} l="abordagens" />
+          <Total v={e.respostas} l="respostas" />
+        </div>
+        <div className="flex justify-center gap-1.5 mt-2">
+          {disputada &&
+            <Chip cor="bg-amber-300 text-amber-900">⚔️ conta disputada</Chip>}
+          {presenca
+            ? <Chip cor="bg-green-300 text-green-900">✅ presença TechFor</Chip>
+            : <Chip cor="bg-gray-200 text-gray-600">oportunidade intocada</Chip>}
+          {e.frio_90d &&
+            <Chip cor="bg-amber-100 text-amber-800">frio +90d</Chip>}
+          {e.prospectados > 0 && e.prospectados_corp === 0 &&
+            <Chip cor="bg-amber-100 text-amber-800">só e-mail pessoal</Chip>}
+        </div>
+      </div>
+      <div className="w-0.5 h-4 bg-indigo-950 mx-auto" />
+      <div className="h-0.5 bg-indigo-950 mx-10 mb-4" />
+
+      {/* Grid de concorrentes que possuem este cliente na carteira */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        {resultado.concorrentes.map(c => (
+          <div key={c.id}
+            className="rounded-xl p-3 text-center border-[1.5px] bg-indigo-50 border-indigo-200">
+            <div className="text-[12px] font-bold text-indigo-950">{c.nome}</div>
+            <div className="text-2xl font-extrabold text-indigo-950">{c.total_clientes}</div>
+            <div className="text-[9px] text-gray-500">contas na carteira</div>
+            <div className="text-[9px] mt-1 text-gray-700">
+              na carteira desde {new Date(c.descoberto_em).toLocaleDateString('pt-BR')}
+            </div>
+            <div className="flex flex-wrap justify-center gap-1 mt-1.5">
+              <Chip cor={c.origem_descoberta === 'gemini'
+                ? 'bg-purple-100 text-purple-800' : 'bg-sky-100 text-sky-800'}>
+                origem: {c.origem_descoberta}
+              </Chip>
+              {diasDesde(c.descoberto_em) <= 7 &&
+                <Chip cor="bg-red-100 text-red-700">🔥 descoberto há {diasDesde(c.descoberto_em)}d</Chip>}
+              {c.cobertura_pct !== null &&
+                <Chip cor="bg-blue-100 text-blue-800">cobertura {c.cobertura_pct}%</Chip>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-[10px] text-gray-400 mt-3">
+        Métricas do card central são canônicas — idênticas em qualquer concorrente que
+        possua este cliente · Concorrentes arquivados e vínculos inativos não aparecem no mapa
       </p>
     </div>
   );
