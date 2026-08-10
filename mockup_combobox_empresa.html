@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Combobox Empresa (LeadFormModal)</title>
+<style>
+  :root{--indigo:#4F46E5;--ink:#1F2937;--mut:#6B7280;--line:#D1D5DB;--bg:#F9FAFB;--ok:#059669;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif;}
+  body{background:#111827;padding:28px;}
+  .hint{color:#9CA3AF;font-size:12px;text-align:center;margin-bottom:14px;}
+  .wrap{display:flex;gap:20px;flex-wrap:wrap;justify-content:center;}
+  .modal{width:400px;background:#fff;border-radius:12px;padding:20px;box-shadow:0 18px 45px rgba(0,0,0,.45);}
+  .modal h2{font-size:16px;color:var(--ink);margin-bottom:4px;}
+  .state{font-size:11px;color:var(--indigo);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px;}
+  label{display:block;font-size:12px;font-weight:600;color:var(--ink);margin:12px 0 5px;}
+  input,select{width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 11px;font-size:13px;color:var(--ink);}
+  input:focus{outline:none;border-color:var(--indigo);box-shadow:0 0 0 3px rgba(79,70,229,.15);}
+  .combo{position:relative;}
+  .drop{border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;max-height:190px;overflow:auto;background:#fff;}
+  .opt{padding:8px 11px;font-size:13px;color:var(--ink);cursor:pointer;border-bottom:1px solid #F3F4F6;}
+  .opt:hover{background:#EEF2FF;}
+  .opt small{display:block;color:var(--mut);font-size:11px;}
+  .opt.none{color:var(--mut);font-style:italic;}
+  .opt.create{background:#F5F3FF;color:var(--indigo);font-weight:600;border-bottom:none;}
+  .opt.create:hover{background:#EDE9FE;}
+  .loading{padding:10px 11px;font-size:12px;color:var(--mut);}
+  .chip{display:flex;align-items:center;gap:8px;border:1px solid var(--line);border-radius:8px;padding:8px 11px;background:var(--bg);font-size:13px;}
+  .chip b{color:var(--ink);}.chip span{color:var(--mut);font-size:11px;}
+  .chip button{margin-left:auto;border:none;background:none;color:var(--mut);cursor:pointer;font-size:14px;}
+  .inline{border:1px solid var(--indigo);border-radius:10px;padding:12px;background:#F5F3FF;margin-top:6px;}
+  .inline h4{font-size:12px;color:var(--indigo);margin-bottom:8px;}
+  .row{display:flex;gap:8px;}
+  .row>div{flex:1;}
+  .pre{font-size:10px;color:var(--ok);margin-top:3px;}
+  .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:10px;}
+  .btn{border:none;border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer;}
+  .bp{background:var(--indigo);color:#fff;} .bs{background:#fff;color:var(--mut);border:1px solid var(--line);}
+  .note{font-size:11px;color:var(--mut);margin-top:8px;line-height:1.5;}
+</style></head><body>
+<p class="hint">MOCKUP — Campo "Empresa" do LeadFormModal · 4 estados · aprovação Regra 9</p>
+<div class="wrap">
+
+  <!-- 1 -->
+  <div class="modal"><h2>Editar Lead</h2><div class="state">1 · Fechado (com empresa)</div>
+    <label>Email *</label><input value="roberto.perez@cvccorp.com.br" readonly>
+    <label>Empresa</label>
+    <div class="chip"><b>CVC Corp</b><span>cvccorp.com.br</span><button>✕</button></div>
+    <p class="note">Estado normal. O “✕” limpa e reabre a busca. Sem empresa vinculada, o campo mostra o placeholder <i>“Buscar empresa…”</i>.</p>
+  </div>
+
+  <!-- 2 -->
+  <div class="modal"><h2>Editar Lead</h2><div class="state">2 · Buscando (server-side)</div>
+    <label>Email *</label><input value="roberto.perez@cvccorp.com.br" readonly>
+    <label>Empresa</label>
+    <div class="combo">
+      <input value="cvc" placeholder="Buscar empresa…" style="border-radius:8px 8px 0 0">
+      <div class="drop">
+        <div class="loading">🔎 Buscando na base… (debounce 300ms)</div>
+      </div>
+    </div>
+    <p class="note">A busca vai ao backend a cada 300ms de pausa — <b>toda</b> a base é pesquisável, não apenas a página carregada na aba Empresas.</p>
+  </div>
+
+  <!-- 3 -->
+  <div class="modal"><h2>Editar Lead</h2><div class="state">3 · Resultados + criar</div>
+    <label>Email *</label><input value="roberto.perez@cvccorp.com.br" readonly>
+    <label>Empresa</label>
+    <div class="combo">
+      <input value="cvc" style="border-radius:8px 8px 0 0">
+      <div class="drop">
+        <div class="opt"><b>CVC Corp</b><small>cvccorp.com.br · Turismo</small></div>
+        <div class="opt"><b>CVC Viagens Corporativas</b><small>cvccorp.com.br · Turismo</small></div>
+        <div class="opt create">＋ Cadastrar nova empresa “cvc”</div>
+      </div>
+    </div>
+    <p class="note">Quando não há resultado, o dropdown mostra apenas <i>“Nenhuma empresa encontrada”</i> + a opção de criar.</p>
+  </div>
+
+  <!-- 4 -->
+  <div class="modal"><h2>Editar Lead</h2><div class="state">4 · Criação inline</div>
+    <label>Email *</label><input value="roberto.perez@cvccorp.com.br" readonly>
+    <label>Empresa</label>
+    <div class="inline">
+      <h4>＋ Nova empresa</h4>
+      <label style="margin-top:0">Nome *</label>
+      <input value="CVC Corp">
+      <div class="row" style="margin-top:8px">
+        <div><label style="margin-top:0">Domínio</label><input value="cvccorp.com.br">
+          <p class="pre">✓ pré-preenchido pelo e-mail do lead</p></div>
+        <div><label style="margin-top:0">Setor</label>
+          <select><option>— selecione —</option><option>Tecnologia</option><option selected>Varejo</option><option>Financeiro</option></select></div>
+      </div>
+      <div class="acts"><button class="btn bs">Cancelar</button><button class="btn bp">Criar e vincular</button></div>
+    </div>
+    <p class="note">Cria a empresa e já vincula ao lead — sem sair do formulário e sem perder o que foi digitado. O domínio vem do e-mail (aqui: <code>@cvccorp.com.br</code>), editável.</p>
+  </div>
+
+</div></body></html>

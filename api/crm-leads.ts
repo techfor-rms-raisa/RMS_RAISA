@@ -2,6 +2,51 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.30 (10/08/2026 — ARQUIVAMENTO DE LEADS / soft-delete):
+ *
+ *    A Base de Leads não tinha nenhuma forma de remover um lead cadastrado
+ *    por engano (duplicado, fora do ICP, dados incorretos). A única saída
+ *    era o Opt-Out — semanticamente errado: opt-out é manifestação de
+ *    vontade do TITULAR (LGPD), não faxina de cadastro do operador.
+ *
+ *    Decisão de produto (Messias, 10/08/2026): soft-delete IRREVERSÍVEL
+ *    pela interface. O registro permanece em `email_leads` — é isso que
+ *    faz a deduplicação por e-mail de `importar_prospects` continuar
+ *    bloqueando a reentrada do mesmo endereço.
+ *
+ *    MUDANÇAS:
+ *
+ *    (a) POST `arquivar_lead` — nova action. Grava o quarteto
+ *        arquivado/_em/_por/_motivo e zera `apto_campanha`.
+ *
+ *        🛡️ TRAVA: recusa leads com itens `pendente` em
+ *           email_fila cujas campanhas estejam ativa/pausada/agendada.
+ *           Sem ela, o lead sumiria da UI enquanto a fila continuaria
+ *           disparando e-mails para ele — invisível ao operador, ativo
+ *           no Resend. O caminho correto nesse caso é Opt-Out, que
+ *           cancela a fila em cascata.
+ *
+ *        Idempotente: segunda chamada devolve 200 + ja_arquivado=true.
+ *        Guarda de concorrência via `.eq('arquivado', false)` no UPDATE.
+ *
+ *    (b) FILTRO `arquivado` propagado a TODAS as leituras de email_leads
+ *        que alimentam listagens e contadores:
+ *          · listar_leads          (aba "Meus Leads")
+ *          · listar_invalidos      (aba "E-mails Inválidos")
+ *          · detalhe_empresa       (leads no drawer da empresa)
+ *          · buscar_global         (busca do header)
+ *          · stats                 (KPIs leads/prospects/clientes,
+ *                                   total_invalidos, total_optout)
+ *          · atualizarCountersEmpresa (total_leads/prospects/clientes)
+ *
+ *        NÃO alterado de propósito: a RPC
+ *        `crm_listar_leads_vinculo_em_lote` já exige `apto_campanha =
+ *        true`, e o arquivamento zera essa coluna — o lead arquivado
+ *        some da aba "Vincular em Lote" sem tocar no SQL da RPC.
+ *
+ *    DEPENDÊNCIA (aplicar no banco ANTES do deploy):
+ *      sql/2026-08-10_email_leads_arquivamento.sql
+ *
  *  - v1.29 (10/08/2026 — ENTREGABILIDADE NA LISTAGEM DE VÍNCULO EM LOTE):
  *
  *    O portão de entregabilidade (v1.23, 06/08/2026) recusa `invalid` no
@@ -1659,10 +1704,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (!empresa) return res.status(404).json({ success: false, error: 'Empresa não encontrada' });
 
         // Buscar leads desta empresa
+        // 🆕 v1.30 — leads arquivados não aparecem no drawer da empresa.
         const { data: leads, error: errLeads } = await supabase
           .from('email_leads')
           .select('*')
           .eq('empresa_id', id)
+          .not('arquivado', 'is', true)
           .order('nome', { ascending: true });
 
         if (errLeads) throw errLeads;
@@ -1761,6 +1808,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         //   SQL, mas a duplicação é pequena e local.
         query = query.not('bounced', 'is', true);
         query = query.is('motivo_invalidacao', null);
+
+        // 🆕 v1.30 (10/08/2026 — arquivamento): quarto filtro de
+        //   elegibilidade, mesma família dos três acima. Lead arquivado
+        //   é decisão explícita do operador ("este cadastro não deveria
+        //   existir") — some de toda a UI, mas permanece na tabela para
+        //   bloquear reimportação do mesmo e-mail.
+        //   `not(..., 'is', true)` (e não `.eq(false)`) por consistência
+        //   com os filtros vizinhos e tolerância a NULL histórico.
+        query = query.not('arquivado', 'is', true);
 
         // 🆕 v1.20 (22/06/2026) — RBAC de visibilidade na aba "Meus Leads".
         //   Aplicado APÓS os filtros de elegibilidade (opt_out, bounced,
@@ -2004,6 +2060,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .from('email_leads')
           .select('id, nome, email, cargo, funil_status, email_empresas(id, nome)')
           .or(`nome.ilike.%${q}%,email.ilike.%${q}%`)
+          .not('arquivado', 'is', true)   // 🆕 v1.30 — busca não ressuscita arquivado
           .order('nome')
           .limit(10);
 
@@ -2060,7 +2117,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let queryTotalLeads = supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
           .eq('funil_status', 'lead')
-          .not('opt_out', 'is', true);
+          .not('opt_out', 'is', true)
+          .not('arquivado', 'is', true);   // 🆕 v1.30
 
         if (currentUserTipoStats === 'Administrador') {
           // Sem filtro adicional
@@ -2082,12 +2140,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const { count: totalProspects } = await supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
           .eq('funil_status', 'prospect')
-          .not('opt_out', 'is', true);
+          .not('opt_out', 'is', true)
+          .not('arquivado', 'is', true);   // 🆕 v1.30
 
         const { count: totalClientes } = await supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
           .eq('funil_status', 'cliente')
-          .not('opt_out', 'is', true);
+          .not('opt_out', 'is', true)
+          .not('arquivado', 'is', true);   // 🆕 v1.30
 
         const { count: totalCampanhas } = await supabase
           .from('email_campanhas').select('id', { count: 'exact', head: true });
@@ -2137,7 +2197,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let queryTotalInvalidos = supabase
           .from('email_leads').select('id', { count: 'exact', head: true })
           .or('bounced.eq.true,motivo_invalidacao.not.is.null')
-          .not('opt_out', 'is', true);
+          .not('opt_out', 'is', true)
+          .not('arquivado', 'is', true);   // 🆕 v1.30
 
         if (currentUserTipoStats === 'Administrador') {
           // Sem filtro adicional — count global.
@@ -2184,6 +2245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .from('email_leads')
             .select('email')
             .not('email', 'is', null)
+            .not('arquivado', 'is', true)   // 🆕 v1.30
             .limit(CAP_LEADS_PARA_RBAC_OPTOUT);
           if (currentUserTipoStats === 'SDR') {
             qEmails = qEmails.or(
@@ -3076,6 +3138,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           )
           .or('bounced.eq.true,motivo_invalidacao.not.is.null')
           .not('opt_out', 'is', true)
+          .not('arquivado', 'is', true)   // 🆕 v1.30 — arquivado some de todas as abas
           .order('bounced_em', { ascending: false, nullsFirst: false })
           .order('atualizado_em', { ascending: false })
           .range(offset, offset + limitNum - 1);
@@ -5487,6 +5550,282 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json(responsePayload);
       }
 
+      // ─────────────────────────────────────────────────────────
+      // 🆕 v1.30 (10/08/2026) — ARQUIVAR LEAD (soft-delete irreversível)
+      // ─────────────────────────────────────────────────────────
+      //
+      // Remove o lead de TODA a interface sem apagá-lo da tabela.
+      // Diferença essencial em relação a `desabilitar_lead` (opt-out):
+      //
+      //   • opt-out  → manifestação do TITULAR. Irreversível por LGPD,
+      //                cancela fila, mantém o lead visível na aba Opt-Out.
+      //   • arquivar → faxina de CADASTRO pelo operador. O lead não
+      //                deveria existir (duplicado, fora do ICP, dados
+      //                errados). Some de tudo; o e-mail permanece na
+      //                tabela justamente para bloquear reimportação.
+      //
+      // Body esperado:
+      //   { lead_id: number, motivo: string, criado_por: string }
+      //
+      // `motivo` é obrigatório e vem de whitelist fechada (espelha a CHECK
+      // constraint criada em sql/2026-08-10_email_leads_arquivamento.sql).
+      // Fechado de propósito: texto livre aqui viraria lixo não-agregável,
+      // e a pergunta "por que N leads foram arquivados neste mês?" precisa
+      // ter resposta.
+      //
+      // Retornos:
+      //   200 { success: true,  lead_id, email, motivo }
+      //   200 { success: true,  ja_arquivado: true }        (idempotência)
+      //   200 { success: false, bloqueado: true, campanhas[] } (trava)
+      //   400/404/500 conforme o caso
+      //
+      // ⚠️ POR QUE O BLOQUEIO VOLTA COM HTTP 200 E NÃO 409:
+      //   `useCrmApi.parseResponse` descarta o corpo da resposta quando
+      //   `!resp.ok` — devolve `data: null` e preserva apenas a string
+      //   `error`. Um 409 perderia o array `campanhas[]`, e a UI não teria
+      //   como mostrar QUAL campanha está travando nem quantos envios
+      //   estão pendentes: o operador leria "não foi possível" sem saber
+      //   o que fazer a respeito.
+      //
+      //   O status HTTP aqui reporta o transporte (a requisição foi
+      //   processada com sucesso); `success:false` + `bloqueado:true`
+      //   reportam o desfecho de negócio. Contrato explícito, sem
+      //   ambiguidade para o chamador.
+      //
+      //   ⚙️ BACKLOG: campo `body` (corpo bruto sempre preservado) em
+      //      ApiResult<T> do useCrmApi. Enquanto não existir, TODO o
+      //      módulo CRM está limitado a erros de string — limitação
+      //      arquitetural, não peculiaridade desta feature.
+      //
+      if (action === 'arquivar_lead') {
+        const { lead_id, motivo, criado_por } = body;
+
+        if (!lead_id || !criado_por) {
+          return res.status(400).json({
+            success: false,
+            error: 'lead_id e criado_por são obrigatórios',
+          });
+        }
+
+        // Whitelist espelhada da CHECK constraint do banco. Mantida aqui
+        // para devolver erro legível (o erro nativo do Postgres numa CHECK
+        // violada é críptico para quem está na tela).
+        const MOTIVOS_ARQUIVAMENTO: Record<string, string> = {
+          duplicado:        'Duplicado',
+          fora_icp:         'Fora do perfil (ICP)',
+          dados_incorretos: 'Dados incorretos',
+          saiu_da_empresa:  'Saiu da empresa',
+          outro:            'Outro',
+        };
+        const motivoNorm = String(motivo || '').trim().toLowerCase();
+        if (!MOTIVOS_ARQUIVAMENTO[motivoNorm]) {
+          return res.status(400).json({
+            success: false,
+            error:
+              `Motivo inválido: "${motivo}". Valores aceitos: ` +
+              Object.keys(MOTIVOS_ARQUIVAMENTO).join(', '),
+          });
+        }
+
+        const leadIdNum = parseInt(String(lead_id));
+        if (isNaN(leadIdNum) || leadIdNum < 1) {
+          return res.status(400).json({
+            success: false,
+            error: `lead_id inválido: "${lead_id}"`,
+          });
+        }
+
+        const { data: leadAlvo, error: errLeadAlvo } = await supabase
+          .from('email_leads')
+          .select('id, nome, email, empresa_id, arquivado')
+          .eq('id', leadIdNum)
+          .maybeSingle();
+
+        if (errLeadAlvo) {
+          return res.status(500).json({
+            success: false,
+            error: `Falha ao buscar lead: ${errLeadAlvo.message}`,
+          });
+        }
+        if (!leadAlvo) {
+          return res.status(404).json({ success: false, error: 'Lead não encontrado' });
+        }
+
+        // Idempotência — clique duplo / retry de rede.
+        if (leadAlvo.arquivado === true) {
+          return res.status(200).json({
+            success: true,
+            lead_id: leadAlvo.id,
+            email: leadAlvo.email,
+            ja_arquivado: true,
+            mensagem: 'Lead já estava arquivado.',
+          });
+        }
+
+        // ── 🛡️ TRAVA: envios pendentes em campanha viva ──────────
+        //
+        //   Arquivar aqui criaria um FANTASMA: invisível na UI, ativo na
+        //   fila do Resend. O operador não teria como interromper depois,
+        //   porque o lead não aparece em lugar nenhum para ser aberto.
+        //
+        //   Statuses bloqueantes espelham a cascata de aplicarOptOut
+        //   (ativa/pausada/agendada) — as três situações em que a fila
+        //   ainda pode disparar.
+        const STATUS_CAMPANHA_BLOQUEANTE = ['ativa', 'pausada', 'agendada'];
+
+        const { data: pendentes, error: errFila } = await supabase
+          .from('email_fila')
+          .select('id, campanha_id, email_campanhas(id, nome, status)')
+          .eq('lead_id', leadAlvo.id)
+          .eq('status', 'pendente');
+
+        if (errFila) {
+          return res.status(500).json({
+            success: false,
+            error: `Falha ao verificar fila de envios: ${errFila.message}`,
+          });
+        }
+
+        const mapaBloqueantes = new Map<number, { id: number; nome: string; status: string; pendentes: number }>();
+        for (const item of pendentes || []) {
+          // PostgREST devolve o embed como objeto ou array conforme a
+          // cardinalidade inferida — normalizamos os dois formatos.
+          const camp: any = Array.isArray((item as any).email_campanhas)
+            ? (item as any).email_campanhas[0]
+            : (item as any).email_campanhas;
+          if (!camp) continue;
+          const statusCamp = String(camp.status || '').toLowerCase();
+          if (!STATUS_CAMPANHA_BLOQUEANTE.includes(statusCamp)) continue;
+
+          const atual = mapaBloqueantes.get(camp.id);
+          if (atual) {
+            atual.pendentes += 1;
+          } else {
+            mapaBloqueantes.set(camp.id, {
+              id: camp.id,
+              nome: camp.nome,
+              status: statusCamp,
+              pendentes: 1,
+            });
+          }
+        }
+
+        if (mapaBloqueantes.size > 0) {
+          const campanhasBloqueantes = Array.from(mapaBloqueantes.values());
+          const totalPendentes = campanhasBloqueantes.reduce((s, c) => s + c.pendentes, 0);
+          console.warn(
+            `⛔ [crm-leads] Arquivamento recusado — lead ${leadAlvo.id} tem ` +
+            `${totalPendentes} envio(s) pendente(s) em ${campanhasBloqueantes.length} campanha(s)`
+          );
+          return res.status(200).json({
+            success: false,
+            bloqueado: true,
+            motivo_bloqueio: 'campanha_ativa',
+            lead_id: leadAlvo.id,
+            nome: leadAlvo.nome,
+            email: leadAlvo.email,
+            campanhas: campanhasBloqueantes,
+            total_pendentes: totalPendentes,
+            error:
+              'Lead com envios pendentes em campanha ativa, pausada ou agendada. ' +
+              'Use Opt-Out para interromper os envios agora, ou aguarde o ' +
+              'encerramento da campanha para arquivar.',
+          });
+        }
+
+        // ── Gravação ─────────────────────────────────────────────
+        //
+        //   `apto_campanha: false` NÃO é redundante. É o que faz o lead
+        //   arquivado sumir também da aba "Vincular em Lote", cuja
+        //   elegibilidade mora na RPC crm_listar_leads_vinculo_em_lote
+        //   (que exige apto_campanha = true). Assim o filtro chega lá sem
+        //   precisarmos reescrever a RPC — e é semanticamente correto:
+        //   lead arquivado não é apto a campanha alguma.
+        //
+        //   `.eq('arquivado', false)` é guarda de concorrência: se duas
+        //   requisições chegarem juntas, apenas a primeira casa a
+        //   condição e escreve.
+        const agoraIso = new Date().toISOString();
+        const { data: leadArquivado, error: errUpdate } = await supabase
+          .from('email_leads')
+          .update({
+            arquivado: true,
+            arquivado_em: agoraIso,
+            arquivado_por: criado_por,
+            arquivado_motivo: motivoNorm,
+            apto_campanha: false,
+            atualizado_em: agoraIso,
+          })
+          .eq('id', leadAlvo.id)
+          .eq('arquivado', false)
+          .select('id, nome, email, empresa_id')
+          .maybeSingle();
+
+        if (errUpdate) {
+          return res.status(500).json({
+            success: false,
+            error: `Falha ao arquivar lead: ${errUpdate.message}`,
+          });
+        }
+        if (!leadArquivado) {
+          // Corrida perdida — outra requisição arquivou primeiro.
+          return res.status(200).json({
+            success: true,
+            lead_id: leadAlvo.id,
+            email: leadAlvo.email,
+            ja_arquivado: true,
+            mensagem: 'Lead já estava arquivado.',
+          });
+        }
+
+        // ── Histórico (best-effort) ──────────────────────────────
+        //   Falha de auditoria NÃO desfaz o arquivamento: o efeito
+        //   principal já está persistido e um rollback manual deixaria
+        //   estado pior. Registramos warning para inspeção posterior.
+        try {
+          const { error: errHist } = await supabase
+            .from('email_lead_historico')
+            .insert({
+              lead_id: leadArquivado.id,
+              tipo: 'lead_arquivado',
+              descricao: `Lead arquivado — ${MOTIVOS_ARQUIVAMENTO[motivoNorm]}`,
+              dados: {
+                motivo: motivoNorm,
+                motivo_label: MOTIVOS_ARQUIVAMENTO[motivoNorm],
+                arquivado_por: criado_por,
+                arquivado_em: agoraIso,
+              },
+              criado_por,
+            });
+          if (errHist) {
+            console.warn(`⚠️ [crm-leads] Histórico de arquivamento não registrado: ${errHist.message}`);
+          }
+        } catch (histErr: any) {
+          console.warn(`⚠️ [crm-leads] Histórico de arquivamento não registrado: ${histErr?.message}`);
+        }
+
+        // Contadores da empresa (coluna "Leads" da aba Minhas Empresas)
+        if (leadArquivado.empresa_id) {
+          await atualizarCountersEmpresa(leadArquivado.empresa_id);
+        }
+
+        console.log(
+          `📦 [crm-leads] Lead arquivado: ${leadArquivado.nome} ` +
+          `<${leadArquivado.email}> (ID ${leadArquivado.id}) — ${motivoNorm} — por ${criado_por}`
+        );
+
+        return res.status(200).json({
+          success: true,
+          lead_id: leadArquivado.id,
+          nome: leadArquivado.nome,
+          email: leadArquivado.email,
+          motivo: motivoNorm,
+          motivo_label: MOTIVOS_ARQUIVAMENTO[motivoNorm],
+          ja_arquivado: false,
+          mensagem: 'Lead arquivado.',
+        });
+      }
+
       return res.status(400).json({ success: false, error: `Ação POST desconhecida: ${action}` });
     }
 
@@ -5809,17 +6148,23 @@ async function findOrCreateEmpresa(
  * Atualiza os counters cache de leads/prospects/clientes na empresa
  */
 async function atualizarCountersEmpresa(empresaId: number): Promise<void> {
+  // 🆕 v1.30 (10/08/2026) — os 3 contadores desconsideram leads arquivados.
+  //   Sem isso, a coluna "Leads" da aba Minhas Empresas continuaria contando
+  //   registros que o operador já não enxerga em lugar nenhum.
   const { count: leads } = await supabase
     .from('email_leads').select('id', { count: 'exact', head: true })
-    .eq('empresa_id', empresaId).eq('funil_status', 'lead');
+    .eq('empresa_id', empresaId).eq('funil_status', 'lead')
+    .not('arquivado', 'is', true);
 
   const { count: prospects } = await supabase
     .from('email_leads').select('id', { count: 'exact', head: true })
-    .eq('empresa_id', empresaId).eq('funil_status', 'prospect');
+    .eq('empresa_id', empresaId).eq('funil_status', 'prospect')
+    .not('arquivado', 'is', true);
 
   const { count: clientes } = await supabase
     .from('email_leads').select('id', { count: 'exact', head: true })
-    .eq('empresa_id', empresaId).eq('funil_status', 'cliente');
+    .eq('empresa_id', empresaId).eq('funil_status', 'cliente')
+    .not('arquivado', 'is', true);
 
   await supabase
     .from('email_empresas')
@@ -6316,4 +6661,3 @@ async function vincularLeadACampanha(
     },
   };
 }
-

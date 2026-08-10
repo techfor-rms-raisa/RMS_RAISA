@@ -2,6 +2,19 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.17 (10/08/2026 — ARQUIVAMENTO DE LEADS / defesa em profundidade):
+ *    Pareado com crm-leads v1.30. Leads arquivados (soft-delete da Base
+ *    de Leads) não podem aparecer na seleção do Wizard nem passar pela
+ *    validação de vínculo.
+ *
+ *    Rigorosamente, o arquivamento já zera `apto_campanha` — e ambos os
+ *    pontos abaixo exigem apto_campanha=true, então o filtro seria
+ *    redundante HOJE. Foi adicionado assim mesmo porque a redundância é
+ *    barata e o acoplamento não é: se um dia `apto_campanha` voltar a
+ *    ser marcado por outra rotina (ex.: reprocessamento em lote), o
+ *    arquivado voltaria silenciosamente à seleção de campanha.
+ *    Mesma filosofia de defesa em camadas da v1.14 (bounced/opt_out).
+ *
  *  - v1.16 (14/06/2026 — Bug 2: Single Source of Truth de verticais):
  *    A action GET `listar_tipos` foi REESCRITA para ler de
  *    `email_tipos_campanha` (fonte canônica, mesma de
@@ -604,6 +617,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .eq('apto_campanha', true)
           .or('opt_out.is.null,opt_out.eq.false')
           .or('bounced.is.null,bounced.eq.false')
+          .not('arquivado', 'is', true)          // 🆕 v1.17 (arquivamento)
           .not('funil_status', 'eq', 'perdido')
           .order('nome', { ascending: true })
           .limit(parseInt(limit));
@@ -1341,7 +1355,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 🆕 v1.14 — SELECT inclui `bounced` e `opt_out` para filtro defensivo.
         const { data: leads } = await supabase
           .from('email_leads')
-          .select('id, email, reservado_por, vertical, apto_campanha, bounced, opt_out')
+          .select('id, email, reservado_por, vertical, apto_campanha, bounced, opt_out, arquivado')
           .in('id', lead_ids);
 
         // Filtrar: não opt-out, não bounced, apto, do responsável e da mesma vertical.
@@ -1351,6 +1365,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           l.apto_campanha === true &&
           l.bounced !== true &&
           l.opt_out !== true &&
+          l.arquivado !== true &&                 // 🆕 v1.17 (arquivamento)
           l.reservado_por === camp.responsavel_id &&
           l.vertical === camp.tipo
         );
