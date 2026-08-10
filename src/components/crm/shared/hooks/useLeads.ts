@@ -2,7 +2,28 @@
  * useLeads.ts — Hook de gestão de Leads
  *
  * Caminho: src/components/crm/shared/hooks/useLeads.ts
- * Versão: 1.4 (Filtros "CRECI" e "Analista" na aba "Meus Leads" — 30/06/2026)
+ * Versão: 1.5 (Arquivamento de leads — 10/08/2026)
+ *
+ * v1.5 (10/08/2026 — Arquivamento de leads / soft-delete):
+ *   Adicionado método `arquivar(leadId, motivo, criadoPor)` que chama a
+ *   action POST `arquivar_lead` da API (crm-leads.ts v1.30).
+ *
+ *   Diferença deliberada em relação a `desabilitar` (v1.1): este método
+ *   NÃO chama `alert()` em nenhum caminho. O chamador é um modal dedicado
+ *   (ArquivarLeadModal) que renderiza tanto o erro quanto o estado de
+ *   bloqueio com os detalhes das campanhas — um alert() nativo por cima
+ *   do modal duplicaria a mensagem e destruiria a informação estruturada.
+ *
+ *   O retorno `ArquivarLeadResult` distingue TRÊS desfechos, porque a UI
+ *   trata cada um de forma diferente:
+ *     • ok=true                → arquivado (ou já estava, via ja_arquivado)
+ *     • bloqueado=true         → campanhas[] preenchido, modal troca de estado
+ *     • ok=false sem bloqueio  → erro técnico em `erro`
+ *
+ *   ⚠️ O backend devolve o bloqueio com HTTP 200 + success:false de
+ *      propósito. `useCrmApi.parseResponse` descarta o corpo quando
+ *      !resp.ok, e um 409 apagaria o array `campanhas[]` antes de chegar
+ *      aqui. Ver comentário extenso na action `arquivar_lead`.
  *
  * v1.4 (30/06/2026 — Filtros "CRECI" e "Analista" na aba "Meus Leads"):
  *   Adicionados 2 novos estados controláveis, alinhados ao backend
@@ -128,6 +149,52 @@ export interface DesabilitarLeadResult {
   ok: boolean;
   total_cancelados: number;
   ja_estava_optout: boolean;
+}
+
+// 🆕 v1.5 — Campanha que impede o arquivamento (envios pendentes).
+//   Devolvida pelo backend agrupada por campanha, com a contagem de
+//   itens `pendente` em email_fila. Alimenta o estado de bloqueio do
+//   ArquivarLeadModal.
+export interface CampanhaBloqueanteArquivamento {
+  id: number;
+  nome: string;
+  /** 'ativa' | 'pausada' | 'agendada' */
+  status: string;
+  /** Quantidade de envios pendentes nesta campanha. */
+  pendentes: number;
+}
+
+// 🆕 v1.5 — Resposta bruta da action POST `arquivar_lead`.
+interface ArquivarLeadResponse {
+  success: boolean;
+  lead_id?: number;
+  nome?: string;
+  email?: string;
+  motivo?: string;
+  motivo_label?: string;
+  ja_arquivado?: boolean;
+  bloqueado?: boolean;
+  motivo_bloqueio?: string;
+  campanhas?: CampanhaBloqueanteArquivamento[];
+  total_pendentes?: number;
+  mensagem?: string;
+  error?: string;
+}
+
+// 🆕 v1.5 — Retorno do método `arquivar` para o chamador.
+export interface ArquivarLeadResult {
+  /** true apenas quando o lead terminou arquivado. */
+  ok: boolean;
+  /** true quando o lead JÁ estava arquivado (idempotência). */
+  ja_arquivado: boolean;
+  /** true quando a trava de campanha ativa recusou a operação. */
+  bloqueado: boolean;
+  /** Preenchido apenas quando bloqueado=true. */
+  campanhas: CampanhaBloqueanteArquivamento[];
+  /** Soma dos pendentes das campanhas bloqueantes. */
+  total_pendentes: number;
+  /** Mensagem de erro/bloqueio para exibição. Null quando ok=true. */
+  erro: string | null;
 }
 
 interface StatsResponse {
@@ -424,6 +491,88 @@ export function useLeads(options: UseLeadsOptions = {}) {
   );
 
   // ════════════════════════════════════════════════════════════
+  // 🆕 v1.5 (10/08/2026) — ARQUIVAR LEAD (soft-delete irreversível)
+  // ════════════════════════════════════════════════════════════
+  //
+  // `motivo` é obrigatório e precisa pertencer à whitelist fechada do
+  // backend: duplicado | fora_icp | dados_incorretos | saiu_da_empresa |
+  // outro. O modal só oferece essas opções, mas o backend valida de novo
+  // (nunca confiar na UI como única barreira).
+  //
+  // Não recarrega listagem nem stats — quem decide o momento do reload é
+  // o container (BaseLeadsPage), que precisa fechar o modal antes para
+  // evitar repaint da tabela por baixo de um overlay aberto.
+  const arquivar = useCallback(
+    async (
+      leadId: number,
+      motivo: string,
+      criadoPor: string
+    ): Promise<ArquivarLeadResult> => {
+      const vazio = {
+        ja_arquivado: false,
+        bloqueado: false,
+        campanhas: [] as CampanhaBloqueanteArquivamento[],
+        total_pendentes: 0,
+      };
+
+      setLoading(true);
+      try {
+        const resp = await api.post<ArquivarLeadResponse>('arquivar_lead', {
+          lead_id: leadId,
+          motivo,
+          criado_por: criadoPor,
+        });
+
+        // Falha de transporte ou erro HTTP real (400/404/500). Aqui o
+        // fetcher já descartou o corpo — só resta a string de erro.
+        if (!resp.ok || !resp.data) {
+          return {
+            ok: false,
+            ...vazio,
+            erro: resp.error || 'Erro ao arquivar lead',
+          };
+        }
+
+        const d = resp.data;
+
+        // Trava de campanha ativa — chega como 200 + success:false.
+        if (d.bloqueado) {
+          return {
+            ok: false,
+            ja_arquivado: false,
+            bloqueado: true,
+            campanhas: d.campanhas || [],
+            total_pendentes: d.total_pendentes || 0,
+            erro:
+              d.error ||
+              'Lead com envios pendentes em campanha ativa, pausada ou agendada.',
+          };
+        }
+
+        if (!d.success) {
+          return {
+            ok: false,
+            ...vazio,
+            erro: d.error || 'Erro ao arquivar lead',
+          };
+        }
+
+        return {
+          ok: true,
+          ja_arquivado: !!d.ja_arquivado,
+          bloqueado: false,
+          campanhas: [],
+          total_pendentes: 0,
+          erro: null,
+        };
+      } finally {
+        setLoading(false);
+      }
+    },
+    [api]
+  );
+
+  // ════════════════════════════════════════════════════════════
   // RETURN
   // ════════════════════════════════════════════════════════════
 
@@ -464,6 +613,8 @@ export function useLeads(options: UseLeadsOptions = {}) {
     mudarFunil,
     // 🆕 v1.1 — Opt-out manual
     desabilitar,
+    // 🆕 v1.5 (10/08/2026) — Arquivamento (soft-delete)
+    arquivar,
   };
 }
 

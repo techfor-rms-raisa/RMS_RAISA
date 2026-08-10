@@ -2,7 +2,24 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.19 (Separação CRM E-mail vs Base de Leads — 01/07/2026)
+ * Versão: 1.20 (Arquivamento de leads — 10/08/2026)
+ *
+ * 🆕 v1.20 (10/08/2026 — Arquivamento de leads / soft-delete):
+ *   Fecha o ciclo do botão 📦 da LeadsTab v1.3:
+ *     • state `arquivandoLead` (Lead | null) controla o novo modal;
+ *     • `handleArquivarLead` delega ao useLeads v1.5 (`arquivar`);
+ *     • `<ArquivarLeadModal />` renderizado junto aos demais modais.
+ *
+ *   Pós-sucesso recarrega listagem + stats: o lead some da tabela e os
+ *   KPIs do topo (LEADS/PROSPECTS/CLIENTES) descontam na mesma tela,
+ *   sem F5. O reload roda DEPOIS do modal fechar — repintar a tabela
+ *   por baixo de um overlay aberto produz flicker.
+ *
+ *   O estado de bloqueio (lead com envios pendentes) NÃO é tratado
+ *   aqui: ele vive dentro do próprio modal, que troca de estado e
+ *   mostra as campanhas travando. O container só recebe o desfecho
+ *   final. `onAbrirLead` conecta o modal ao LeadFormModal existente
+ *   para que o operador alcance o Opt-Out sem procurar a linha de novo.
  *
  * 🆕 v1.19 (01/07/2026 — Separação CRM E-mail vs Base de Leads):
  *   As 3 abas de comunicação por e-mail (CRM E-mail / E-mails Inválidos
@@ -74,6 +91,8 @@ import LeadFormModal from './LeadFormModal';
 import EmpresaDetailDrawer from './EmpresaDetailDrawer';
 import LeadDetailDrawer from './LeadDetailDrawer';
 import ImportProspectsModal from './ImportProspectsModal';
+// 🆕 v1.20 (10/08/2026) — Modal de arquivamento (soft-delete)
+import ArquivarLeadModal from './ArquivarLeadModal';
 // 🆕 v1.11 (Sub-fase 3.C — 17/06/2026)
 import { useLeadsImportados } from '../shared/hooks/useLeadsImportados';
 import ImportarListaLeadsModal from './ImportarListaLeadsModal';
@@ -174,6 +193,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   const [modalLead, setModalLead] = useState<'criar' | 'editar' | null>(null);
   const [formEmpresa, setFormEmpresa] = useState<Partial<Empresa>>({});
   const [formLead, setFormLead] = useState<Partial<Lead>>({});
+  // 🆕 v1.20 (10/08/2026) — Lead em processo de arquivamento (null = fechado)
+  const [arquivandoLead, setArquivandoLead] = useState<Lead | null>(null);
 
   // ── Modal de importação ──
   const [modalImportarAberto, setModalImportarAberto] = useState(false);
@@ -391,6 +412,49 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     setFormLead({});
     leadsH.carregar();
     leadsH.carregarStats();
+  };
+
+  // ════════════════════════════════════════════════════════════
+  // 🆕 v1.20 (10/08/2026) — ARQUIVAMENTO DE LEAD (soft-delete)
+  // ════════════════════════════════════════════════════════════
+  //
+  // Repassado ao ArquivarLeadModal como `onConfirmar`. O modal já valida
+  // que há motivo selecionado e cuida sozinho do estado de bloqueio
+  // (campanha ativa) — aqui só tratamos o desfecho final.
+  //
+  // Retorna o ArquivarLeadResult intacto para que o modal decida entre
+  // trocar de estado, mostrar erro inline ou fechar.
+  const handleArquivarLead = async (motivo: string) => {
+    if (!arquivandoLead) {
+      return {
+        ok: false,
+        ja_arquivado: false,
+        bloqueado: false,
+        campanhas: [],
+        total_pendentes: 0,
+        erro: 'Nenhum lead selecionado.',
+      };
+    }
+
+    const resultado = await leadsH.arquivar(
+      arquivandoLead.id,
+      motivo,
+      currentUser.nome_usuario
+    );
+
+    if (resultado.ok) {
+      // Recarrega DEPOIS de o modal fechar (o modal chama onFechar ao
+      // receber ok=true, e o setState de fechamento é processado no
+      // mesmo ciclo de render deste reload).
+      leadsH.carregar();
+      leadsH.carregarStats();
+      // Empresas: a coluna "Leads" da aba Minhas Empresas é recalculada
+      // no backend (atualizarCountersEmpresa), mas a lista em memória
+      // ainda tem o valor antigo.
+      empresasH.carregar();
+    }
+
+    return resultado;
   };
 
   const abrirDetalheLead = (id: number) => {
@@ -744,6 +808,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             onPaginaChange={leadsH.setPagina}
             onAbrirDetalhe={abrirDetalheLead}
             onEditar={abrirEditarLead}
+            // 🆕 v1.20 (10/08/2026) — Botão 📦 da coluna Ações
+            onArquivar={(lead) => setArquivandoLead(lead)}
             onNovoLead={abrirCriarLead}
           />
         )}
@@ -793,6 +859,21 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
         onSalvar={salvarLead}
         onFechar={() => setModalLead(null)}
         onDesabilitar={handleDesabilitarLead}
+      />
+
+      {/* 🆕 v1.20 (10/08/2026) — Modal "Arquivar lead" (soft-delete) */}
+      <ArquivarLeadModal
+        lead={arquivandoLead}
+        loading={leadsH.loading}
+        onConfirmar={handleArquivarLead}
+        onFechar={() => setArquivandoLead(null)}
+        onAbrirLead={(lead) => {
+          // Do estado de bloqueio, leva o operador ao formulário do lead,
+          // onde fica o botão Opt-Out (único caminho para interromper
+          // envios de uma campanha em andamento).
+          setArquivandoLead(null);
+          abrirEditarLead(lead);
+        }}
       />
 
       <ImportProspectsModal
