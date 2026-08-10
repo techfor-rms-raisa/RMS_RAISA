@@ -2,7 +2,37 @@
  * VincularEmLoteTab.tsx — Aba "Vincular em Lote" do CRM
  *
  * Caminho: src/components/crm/base-leads/VincularEmLoteTab.tsx
- * Versão: 2.2 (Estado de erro distinto do estado vazio — 23/07/2026)
+ * Versão: 2.3 (Entregabilidade do e-mail — 10/08/2026)
+ *
+ * v2.3 (10/08/2026 — Entregabilidade na aba Vincular em Lote):
+ *   Mockup aprovado por Messias em 10/08/2026. Pareada com
+ *   useVincularEmLote v1.3 + api/crm-leads v1.29 + lib/validacao-lead v1.1
+ *   + sql/2026-08-10_vinculo_em_lote_entregabilidade.sql.
+ *
+ *   O portão de entregabilidade (06/08/2026) recusava leads reprovados no
+ *   momento do vínculo, mas a listagem os exibia como disponíveis — 55 em
+ *   Produção. O analista montava o lote e só descobria na confirmação.
+ *
+ *   4 ADIÇÕES (nenhuma linha removida, nenhuma estrutura movida):
+ *     (1) PASSO 3 — bloco "Entregabilidade" com o toggle
+ *         "Incluir e-mails em dúvida" (ligado por padrão);
+ *     (2) PASSO 4 — faixa de contagens acima da tabela + nova coluna
+ *         "Entregabilidade" (colSpans ajustados de 8/9 para 9/10);
+ *     (3) MODAL — faixa âmbar listando os leads em dúvida selecionados,
+ *         com checkbox de aceite de risco;
+ *     (4) BARRA DE AÇÃO — o contador do botão passa a refletir quantos
+ *         leads serão REALMENTE vinculados.
+ *
+ *   🛡️ SEMÂNTICA — `probable` e `risky` são AMBOS âmbar "Em dúvida".
+ *      `probable` significa domínio catch-all (inverificável), não
+ *      "provavelmente bom": lib/validacao-lead grava
+ *      email_validacao_risco=true para os dois. Pintar `probable` de verde
+ *      ou azul rotularia como seguros leads que o motor considera
+ *      duvidosos. Distinguimos apenas pelo texto de apoio.
+ *
+ *   🛡️ Sem o aceite, os leads em dúvida SAEM do lote e os demais são
+ *      vinculados normalmente. Bloquear o botão obrigaria o analista a
+ *      voltar e desmarcar um por um.
  *
  * v2.2 (23/07/2026 — Incidente "0 leads disponíveis" / HTTP 414):
  *   Fecha o ciclo do incidente de 23/07/2026. Até a v2.1, uma falha do
@@ -125,8 +155,10 @@ import React, { useEffect } from 'react';
 import { useTiposCampanha } from '../shared/hooks/useTiposCampanha';
 import {
   useVincularEmLote,
+  leadEmDuvida,
   type LeadDisponivel,
   type PerPage,
+  type Entregabilidade,
 } from '../shared/hooks/useVincularEmLote';
 import type { CurrentUserLite } from '../types/crm.types';
 
@@ -176,6 +208,70 @@ function detalheEngajamento(lead: LeadDisponivel): string {
   if (c > 0) partes.push(`${c} clique${c !== 1 ? 's' : ''}`);
   if (r > 0) partes.push(`${r} resposta${r !== 1 ? 's' : ''}`);
   return partes.join(' / ');
+}
+
+/**
+ * 🆕 v2.3 — Aparência do veredito de entregabilidade.
+ *
+ * ⚠️ `probable` e `risky` compartilham o MESMO âmbar de propósito. A lib
+ *    grava email_validacao_risco=true para ambos — em 10/08/2026, os 90
+ *    leads `probable` da base estavam todos marcados como risco. Dar-lhes
+ *    cor de categoria segura contradiria o motor.
+ *
+ * A distinção entre eles vive no texto de apoio, não na cor.
+ */
+function visualEntregabilidade(e: Entregabilidade | undefined): {
+  rotulo: string;
+  detalhe: string;
+  icone: string;
+  classe: string;
+  classeDetalhe: string;
+} {
+  switch (e) {
+    case 'verified':
+      return {
+        rotulo: 'Confirmado',
+        detalhe: 'entrega verificada',
+        icone: 'fa-circle-check',
+        classe: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+        classeDetalhe: 'text-gray-400',
+      };
+    case 'probable':
+      return {
+        rotulo: 'Em dúvida',
+        detalhe: 'domínio aceita qualquer endereço',
+        icone: 'fa-triangle-exclamation',
+        classe: 'bg-amber-100 text-amber-800 border-amber-300 font-medium',
+        classeDetalhe: 'text-amber-700',
+      };
+    case 'risky':
+      return {
+        rotulo: 'Em dúvida',
+        detalhe: 'não foi possível verificar',
+        icone: 'fa-triangle-exclamation',
+        classe: 'bg-amber-100 text-amber-800 border-amber-300 font-medium',
+        classeDetalhe: 'text-amber-700',
+      };
+    case 'invalid':
+      // Não deveria chegar aqui: a RPC v1.29 exclui reprovados da listagem.
+      // Se aparecer, é sinal de migração não aplicada — e precisa ser
+      // visível, não silencioso.
+      return {
+        rotulo: 'Reprovado',
+        detalhe: 'não deveria estar nesta lista',
+        icone: 'fa-circle-xmark',
+        classe: 'bg-red-50 text-red-700 border-red-200 font-medium',
+        classeDetalhe: 'text-red-600',
+      };
+    default:
+      return {
+        rotulo: 'Não verificado',
+        detalhe: 'verifica na confirmação',
+        icone: 'fa-circle-question',
+        classe: 'bg-gray-50 text-gray-600 border-gray-200',
+        classeDetalhe: 'text-gray-400',
+      };
+  }
 }
 
 function formatarDiasCadastro(dias: number | undefined): string {
@@ -681,6 +777,43 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
               </div>
             </div>
 
+            {/* 🆕 v2.3 — ENTREGABILIDADE.
+                Fora do grid dos demais filtros de propósito: não é um recorte
+                da base comercial, é um recorte da qualidade do e-mail. */}
+            <div className="mt-4 pt-4 border-t border-dashed border-gray-200">
+              <label className="text-xs font-medium text-gray-700 block mb-2">
+                <i className="fa-solid fa-envelope-circle-check text-amber-600"></i>{' '}
+                Entregabilidade
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={h.filtrosRascunho.incluirEmDuvida}
+                  onChange={(e) =>
+                    h.setFiltrosRascunho((prev) => ({
+                      ...prev,
+                      incluirEmDuvida: e.target.checked,
+                    }))
+                  }
+                  className="mt-0.5 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                />
+                <span className="text-sm text-gray-700">
+                  Incluir e-mails em dúvida
+                  <span className="block text-xs text-gray-500 mt-0.5">
+                    Traz também os leads que o verificador não confirmou nem
+                    condenou — normalmente domínios que aceitam qualquer
+                    endereço. Aparecem marcados em âmbar e exigem aceite de
+                    risco na confirmação.
+                  </span>
+                </span>
+              </label>
+              <p className="text-xs text-gray-400 mt-2">
+                <i className="fa-solid fa-lock"></i> E-mails reprovados na
+                verificação nunca aparecem aqui — ficam na aba "E-mails para
+                revisar".
+              </p>
+            </div>
+
             <div className="mt-4 pt-3 border-t border-gray-100 flex gap-2">
               <button
                 onClick={h.limparFiltros}
@@ -730,6 +863,37 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
             </span>
           </div>
 
+          {/* 🆕 v2.3 — FAIXA DE ENTREGABILIDADE.
+              Contagens sobre o conjunto elegível COMPLETO (vêm da RPC), não
+              sobre a página — um número que mudasse ao paginar seria inútil
+              como indicador da base.
+              Só rende quando há dados: em erro ou lista vazia, calaria em vez
+              de exibir quatro zeros. */}
+          {!h.loadingLeads && !h.erroLeads && h.totalGeral > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-3 text-xs">
+              <span className="px-2 py-1 rounded border bg-emerald-50 text-emerald-700 border-emerald-200">
+                <i className="fa-solid fa-circle-check"></i>{' '}
+                {h.resumoEntregabilidade.verified} confirmado
+                {h.resumoEntregabilidade.verified !== 1 ? 's' : ''}
+              </span>
+              <span className="px-2 py-1 rounded border bg-amber-50 text-amber-800 border-amber-200">
+                <i className="fa-solid fa-triangle-exclamation"></i>{' '}
+                {h.resumoEntregabilidade.probable +
+                  h.resumoEntregabilidade.risky}{' '}
+                em dúvida
+              </span>
+              <span className="px-2 py-1 rounded border bg-gray-50 text-gray-600 border-gray-200">
+                <i className="fa-solid fa-circle-question"></i>{' '}
+                {h.resumoEntregabilidade.nao_verificado} não verificado
+                {h.resumoEntregabilidade.nao_verificado !== 1 ? 's' : ''}
+              </span>
+              <span className="text-gray-400">
+                <i className="fa-solid fa-ban"></i> reprovados ficam na aba
+                "E-mails para revisar"
+              </span>
+            </div>
+          )}
+
           {/* Toolbar: busca + perPage */}
           <div className="flex gap-2 mb-3 flex-wrap">
             <input
@@ -767,6 +931,14 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                   </th>
                   <th className="p-3">Lead</th>
                   <th className="p-3">Empresa / Setor</th>
+                  {/* 🆕 v2.3 */}
+                  <th className="p-3">
+                    Entregabilidade{' '}
+                    <i
+                      className="fa-solid fa-info-circle text-gray-400"
+                      title="Resultado da verificação do e-mail (cascade local → Hunter → Snov.io). Validade de 90 dias."
+                    ></i>
+                  </th>
                   <th className="p-3">Cidade/UF</th>
                   <th className="p-3">Vertical atual</th>
                   <th className="p-3">
@@ -785,7 +957,7 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                 {h.loadingLeads ? (
                   <tr>
                     <td
-                      colSpan={podeVerLeadsDeOutros ? 9 : 8}
+                      colSpan={podeVerLeadsDeOutros ? 10 : 9}
                       className="p-8 text-center text-gray-500"
                     >
                       <i className="fa-solid fa-spinner fa-spin mr-2"></i>
@@ -800,7 +972,7 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                      colSpan que as linhas de loading/vazio já usavam. */
                   <tr>
                     <td
-                      colSpan={podeVerLeadsDeOutros ? 9 : 8}
+                      colSpan={podeVerLeadsDeOutros ? 10 : 9}
                       className="p-8 text-center"
                     >
                       <div className="mx-auto max-w-2xl rounded-lg border border-red-300 bg-red-50 p-4 text-left">
@@ -826,7 +998,7 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                 ) : h.leads.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={podeVerLeadsDeOutros ? 9 : 8}
+                      colSpan={podeVerLeadsDeOutros ? 10 : 9}
                       className="p-8 text-center text-gray-500"
                     >
                       <p>Nenhum lead disponível com os filtros atuais.</p>
@@ -845,12 +1017,19 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                     const verticalDiferente =
                       lead.vertical !== h.verticalDestino;
                     const sc = classificarScore(lead.score_engajamento);
+                    // 🆕 v2.3 — o realce âmbar sinaliza a linha ANTES de o
+                    //   analista abrir o modal. Seleção (índigo) tem
+                    //   precedência: saber o que está marcado importa mais
+                    //   que o alerta, e o badge da coluna já carrega o aviso.
+                    const emDuvida = leadEmDuvida(lead);
                     return (
                       <tr
                         key={lead.id}
                         className={
                           checked
                             ? 'bg-indigo-50 hover:bg-indigo-100'
+                            : emDuvida
+                            ? 'bg-amber-50/40 hover:bg-amber-50'
                             : 'hover:bg-gray-50'
                         }
                       >
@@ -884,6 +1063,29 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                               {lead.email_empresas.setor}
                             </div>
                           )}
+                        </td>
+                        {/* 🆕 v2.3 — Entregabilidade */}
+                        <td className="p-3">
+                          {(() => {
+                            const ve = visualEntregabilidade(
+                              lead.entregabilidade
+                            );
+                            return (
+                              <>
+                                <span
+                                  className={`text-xs px-2 py-0.5 rounded border inline-block whitespace-nowrap ${ve.classe}`}
+                                >
+                                  <i className={`fa-solid ${ve.icone}`}></i>{' '}
+                                  {ve.rotulo}
+                                </span>
+                                <div
+                                  className={`text-[11px] mt-1 ${ve.classeDetalhe}`}
+                                >
+                                  {ve.detalhe}
+                                </div>
+                              </>
+                            );
+                          })()}
                         </td>
                         <td className="p-3 text-gray-700 text-xs">
                           {lead.email_empresas?.cidade ||
@@ -1020,6 +1222,13 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                     {h.leadsParaAlterar} terão vertical alterada
                   </span>
                 )}
+                {/* 🆕 v2.3 — aviso antes de abrir o modal */}
+                {h.selecionadosEmDuvida.length > 0 && (
+                  <span className="ml-3 text-amber-700">
+                    <i className="fa-solid fa-triangle-exclamation"></i>{' '}
+                    {h.selecionadosEmDuvida.length} com e-mail em dúvida
+                  </span>
+                )}
               </div>
             </div>
             <button
@@ -1056,6 +1265,11 @@ const VincularEmLoteTab: React.FC<VincularEmLoteTabProps> = ({
                 totalSelecionados={h.totalSelecionados}
                 leadsParaAlterar={h.leadsParaAlterar}
                 temMudancaVertical={h.temMudancaVertical}
+                // 🆕 v2.3 — aceite de risco
+                selecionadosEmDuvida={h.selecionadosEmDuvida}
+                riscoAceito={h.riscoAceito}
+                onAlterarRiscoAceito={h.setRiscoAceito}
+                totalAVincular={h.totalAVincular}
                 verticalDestino={h.verticalDestino}
                 campanhaNome={h.campanhaEscolhida?.nome}
                 campanhaStatus={h.campanhaEscolhida?.status}
@@ -1087,6 +1301,12 @@ interface ModalConfirmacaoProps {
   totalSelecionados: number;
   leadsParaAlterar: number;
   temMudancaVertical: boolean;
+  /** 🆕 v2.3 — leads selecionados com verificação inconclusiva */
+  selecionadosEmDuvida: LeadDisponivel[];
+  riscoAceito: boolean;
+  onAlterarRiscoAceito: (v: boolean) => void;
+  /** 🆕 v2.3 — quantos o botão realmente vinculará */
+  totalAVincular: number;
   verticalDestino: string;
   campanhaNome?: string;
   campanhaStatus?: string;
@@ -1099,6 +1319,10 @@ const ModalConfirmacao: React.FC<ModalConfirmacaoProps> = ({
   totalSelecionados,
   leadsParaAlterar,
   temMudancaVertical,
+  selecionadosEmDuvida,
+  riscoAceito,
+  onAlterarRiscoAceito,
+  totalAVincular,
   verticalDestino,
   campanhaNome,
   campanhaStatus,
@@ -1154,6 +1378,72 @@ const ModalConfirmacao: React.FC<ModalConfirmacaoProps> = ({
           </div>
         )}
 
+        {/* 🆕 v2.3 — FAIXA DE RISCO DE ENTREGABILIDADE.
+            Mesma linguagem visual do bloco de mudança de vertical acima —
+            é a segunda coisa nesta tela que exige decisão consciente. */}
+        {selecionadosEmDuvida.length > 0 && (
+          <div className="pl-3 border-l-4 border-amber-500 bg-amber-50 py-3 px-3 rounded">
+            <p className="text-amber-900 font-semibold">
+              <i className="fa-solid fa-triangle-exclamation mr-1"></i>
+              {selecionadosEmDuvida.length} de {totalSelecionados} lead
+              {totalSelecionados !== 1 ? 's' : ''} têm e-mail em dúvida
+            </p>
+
+            {/* Lista nominal — o analista precisa saber QUEM, não só quantos.
+                Teto de 8 para o modal não virar uma rolagem infinita. */}
+            <ul className="text-xs text-amber-800 mt-2 space-y-1">
+              {selecionadosEmDuvida.slice(0, 8).map((l) => {
+                const ve = visualEntregabilidade(l.entregabilidade);
+                return (
+                  <li key={l.id}>
+                    <i className="fa-solid fa-angle-right mr-1"></i>
+                    {l.nome} — {l.email}{' '}
+                    <span className="text-amber-600">· {ve.detalhe}</span>
+                  </li>
+                );
+              })}
+              {selecionadosEmDuvida.length > 8 && (
+                <li className="text-amber-600 italic">
+                  e mais {selecionadosEmDuvida.length - 8}…
+                </li>
+              )}
+            </ul>
+
+            <p className="text-xs text-amber-800 mt-3">
+              O verificador não confirmou nem reprovou estes endereços. Enviar
+              para eles pode gerar bounce e afetar a reputação dos domínios de
+              envio.
+            </p>
+
+            <label className="flex items-start gap-2 mt-3 cursor-pointer bg-white border border-amber-300 rounded p-2">
+              <input
+                type="checkbox"
+                checked={riscoAceito}
+                onChange={(e) => onAlterarRiscoAceito(e.target.checked)}
+                disabled={submitting}
+                className="mt-0.5 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+              />
+              <span className="text-xs text-amber-900">
+                <strong>
+                  Assumo o risco e quero incluir {selecionadosEmDuvida.length}{' '}
+                  lead{selecionadosEmDuvida.length !== 1 ? 's' : ''}.
+                </strong>
+                <span className="block text-amber-700 mt-0.5">
+                  Fica registrado no histórico do lead com seu nome e a data.
+                </span>
+              </span>
+            </label>
+
+            {!riscoAceito && (
+              <p className="text-xs text-amber-700 mt-2">
+                <i className="fa-solid fa-circle-info mr-1"></i>
+                Sem o aceite, estes leads saem do lote e os demais são
+                vinculados normalmente.
+              </p>
+            )}
+          </div>
+        )}
+
         <p className="text-xs text-gray-500">
           {campanhaStatus === 'agendada'
             ? '📅 A campanha está agendada — os envios serão programados quando ela for ativada.'
@@ -1171,8 +1461,11 @@ const ModalConfirmacao: React.FC<ModalConfirmacaoProps> = ({
         </button>
         <button
           onClick={onConfirmar}
-          disabled={submitting}
-          className={`px-4 py-2 text-white rounded-lg text-sm font-medium disabled:opacity-50 flex items-center gap-2 ${
+          /* 🆕 v2.3 — só desabilita quando NADA sobraria para vincular
+             (todos os selecionados em dúvida e sem aceite). Nos demais
+             casos o botão segue ativo e vincula o subconjunto viável. */
+          disabled={submitting || totalAVincular === 0}
+          className={`px-4 py-2 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
             temMudancaVertical
               ? 'bg-amber-600 hover:bg-amber-700'
               : 'bg-emerald-600 hover:bg-emerald-700'
@@ -1185,8 +1478,16 @@ const ModalConfirmacao: React.FC<ModalConfirmacaoProps> = ({
           ) : (
             <>
               <i className="fa-solid fa-check"></i>
+              {/* 🆕 v2.3 — o rótulo diz o número REAL quando ele difere do
+                  total selecionado. Um botão que promete 4 e vincula 2 é
+                  exatamente a classe de mentira de UI que a v2.2 corrigiu
+                  no empty state. */}
               {temMudancaVertical
-                ? 'Sim, alterar vertical e vincular'
+                ? `Sim, alterar vertical e vincular ${totalAVincular}`
+                : totalAVincular !== totalSelecionados
+                ? `Confirmar vinculação de ${totalAVincular} lead${
+                    totalAVincular !== 1 ? 's' : ''
+                  }`
                 : 'Confirmar vinculação'}
             </>
           )}
