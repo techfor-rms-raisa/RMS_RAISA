@@ -2,6 +2,42 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.29 (10/08/2026 — ENTREGABILIDADE NA LISTAGEM DE VÍNCULO EM LOTE):
+ *
+ *    O portão de entregabilidade (v1.23, 06/08/2026) recusa `invalid` no
+ *    MOMENTO DO VÍNCULO. A listagem, escrita 14 dias antes, não conhecia
+ *    as colunas email_validacao_* — e mostrava como DISPONÍVEIS 55 leads
+ *    que o portão recusaria adiante (medição em Produção, 10/08/2026).
+ *
+ *    O backend acertava; a listagem mentia antes dele. O analista montava
+ *    o lote, confirmava, e recebia falhas evitáveis na origem.
+ *
+ *    MUDANÇAS:
+ *
+ *    (a) GET `listar_leads_para_vinculo_em_lote`
+ *        · aceita `incluir_em_duvida` (querystring, default true) e o
+ *          repassa como p_incluir_em_duvida para a RPC v1.29;
+ *        · devolve `resumo_entregabilidade` (contagens sobre o conjunto
+ *          elegível COMPLETO, não sobre a página) para a faixa acima da
+ *          tabela;
+ *        · `filtros_aplicados` passa a refletir o novo filtro.
+ *
+ *    (b) PATCH `atualizar_lead` — INVALIDAÇÃO DE CACHE AO TROCAR O E-MAIL.
+ *        Bug real fechado aqui: a v1.11 já resetava `bounced` quando o
+ *        e-mail mudava, mas as colunas email_validacao_* permaneciam
+ *        apontando para o endereço ANTIGO. lib/validacao-lead compara o
+ *        e-mail do banco com o e-mail recebido — ambos já o NOVO no
+ *        momento da leitura — logo `mesmoEmail` dava true e o veredito
+ *        velho era servido do cache por até 90 dias.
+ *
+ *        Efeito prático: o analista corrigia o endereço do lead reprovado
+ *        e ele CONTINUAVA reprovado. O caminho de recuperação estava
+ *        fechado sem nenhum sinal na UI.
+ *
+ *    DEPENDÊNCIAS (aplicar no banco ANTES do deploy):
+ *      sql/2026-08-10_vinculo_em_lote_entregabilidade.sql
+ *      lib/validacao-lead.ts v1.1
+ *
  *  - v1.28 (23/07/2026 — CORREÇÃO PREVENTIVA: defeito adormecido de 1000 linhas
  *    em `listar_metadados_filtros_vinculo_em_lote`):
  *
@@ -3353,6 +3389,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const cadastroRange = ((req.query.cadastro_range as string) || 'qualquer').toLowerCase();
         const outrasCampanhas = ((req.query.outras_campanhas as string) || 'excluir').toLowerCase();
 
+        // 🆕 v1.29 (10/08/2026) — TOGGLE "Incluir e-mails em dúvida".
+        //   Controla se leads com verificação INCONCLUSIVA (probable =
+        //   catch-all, risky = cascade esgotada) aparecem na listagem.
+        //
+        //   🛡️ Default TRUE, deliberadamente. A decisão de produto de
+        //      06/08/2026 ("liberar com aviso") mantém esses leads em
+        //      circulação; um default false os faria sumir da lista sem
+        //      ninguém ter pedido. Só a string literal 'false' desliga —
+        //      querystring ausente, vazia ou malformada mantém o
+        //      comportamento anterior a esta versão.
+        //
+        //   ⚠️ Reprovados ('invalid') NÃO são afetados por este toggle:
+        //      a RPC os exclui incondicionalmente. Eles vivem na aba
+        //      "E-mails para revisar", com caminho de recuperação próprio.
+        const incluirEmDuvida =
+          String(req.query.incluir_em_duvida ?? 'true').toLowerCase() !== 'false';
+
         // Paginação — clamp defensivo (espelhado na RPC)
         let perPage = parseInt((req.query.per_page as string) || '30');
         if (isNaN(perPage) || perPage < 1) perPage = 30;
@@ -3388,6 +3441,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             p_responsavel_id: responsavelIdNum,
             p_per_page: perPage,
             p_offset: offset,
+            // 🆕 v1.29 — parâmetro novo, com DEFAULT na RPC. Um backend
+            //   antigo contra a RPC v1.29 continua funcionando.
+            p_incluir_em_duvida: incluirEmDuvida,
           }
         );
 
@@ -3403,8 +3459,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             success: false,
             error:
               `Erro ao listar leads elegíveis: ${errRpc.message}. ` +
-              `Verifique se a migration sql/2026-07-23_rpc_listar_leads_vinculo_em_lote.sql ` +
-              `foi aplicada no banco.`,
+              `Verifique se as migrations sql/2026-07-23_rpc_listar_leads_vinculo_em_lote.sql ` +
+              `e sql/2026-08-10_vinculo_em_lote_entregabilidade.sql foram aplicadas no banco.`,
           });
         }
 
@@ -3428,6 +3484,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const leadsPagina = payload.leads as any[];
+
+        // 🆕 v1.29 — Resumo de entregabilidade sobre o conjunto elegível
+        //   COMPLETO (a RPC o calcula na CTE `elegiveis`, antes da
+        //   paginação). Contar na página daria um número que muda ao
+        //   navegar — inútil como indicador da base.
+        //
+        //   Fallback com zeros: se a migração de 10/08 ainda não foi
+        //   aplicada, a UI renderiza a faixa vazia em vez de quebrar em
+        //   `undefined.verified`.
+        const resumoEntregabilidade = {
+          verified:       Number(payload?.resumo_entregabilidade?.verified       ?? 0),
+          probable:       Number(payload?.resumo_entregabilidade?.probable       ?? 0),
+          risky:          Number(payload?.resumo_entregabilidade?.risky          ?? 0),
+          nao_verificado: Number(payload?.resumo_entregabilidade?.nao_verificado ?? 0),
+        };
         const totalGeral: number =
           typeof payload.total_geral === 'number' ? payload.total_geral : 0;
 
@@ -3445,6 +3516,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           success: true,
           leads: leadsPagina,
           total_geral: totalGeral,
+          // 🆕 v1.29 — alimenta a faixa de contagens acima da tabela.
+          resumo_entregabilidade: resumoEntregabilidade,
           total_paginas: totalPaginas,
           pagina_atual: paginaAtual,
           per_page: perPage,
@@ -3460,6 +3533,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             cidade: cidade || null,
             cadastro_range: cadastroRange,
             outras_campanhas: outrasCampanhas,
+            // 🆕 v1.29
+            incluir_em_duvida: incluirEmDuvida,
             responsavel_id: responsavelIdQ || null,
             busca: busca || null,
           },
@@ -5469,19 +5544,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let bounceResetado = false;
         let emailAnterior: string | null = null;
         let bouncedMotivoAnterior: string | null = null;
+        // 🆕 v1.29 — ver bloco de invalidação de cache abaixo.
+        let validacaoInvalidada = false;
 
         if (campos.email) {
           const { data: leadAtual } = await supabase
             .from('email_leads')
-            .select('email, bounced, bounced_motivo')
+            .select('email, bounced, bounced_motivo, email_validacao_score, motivo_invalidacao')
             .eq('id', id)
             .maybeSingle();
 
-          if (
-            leadAtual &&
-            leadAtual.bounced === true &&
-            String(leadAtual.email || '').toLowerCase().trim() !== campos.email
-          ) {
+          const emailMudou =
+            !!leadAtual &&
+            String(leadAtual.email || '').toLowerCase().trim() !== campos.email;
+
+          if (leadAtual && leadAtual.bounced === true && emailMudou) {
             // Email mudou E lead estava marcado como bounced → reset.
             campos.bounced = false;
             campos.bounced_em = null;
@@ -5489,6 +5566,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             bounceResetado = true;
             emailAnterior = leadAtual.email;
             bouncedMotivoAnterior = leadAtual.bounced_motivo || null;
+          }
+
+          // ══════════════════════════════════════════════════════════
+          // 🆕 v1.29 (10/08/2026) — INVALIDAÇÃO DO CACHE DE VALIDAÇÃO
+          // ══════════════════════════════════════════════════════════
+          //
+          // MESMA CLASSE do reset de bounce da v1.11, aplicada às colunas
+          // email_validacao_*: o veredito pertence ao ENDEREÇO, não ao
+          // lead. Trocou o endereço, o veredito anterior não vale nada.
+          //
+          // POR QUE A LIB NÃO RESOLVE SOZINHA: garantirValidacaoLead
+          // compara `email_leads.email` (banco) com o e-mail recebido do
+          // caller. Depois do UPDATE os dois já são o endereço NOVO —
+          // `mesmoEmail` dá true e o veredito velho é servido do cache
+          // por até 90 dias. A guarda da lib protege contra o caller
+          // passar um e-mail divergente, não contra o e-mail ter mudado
+          // no banco.
+          //
+          // EFEITO SEM ESTA CORREÇÃO: o analista corrige o endereço de um
+          // lead reprovado e ele CONTINUA reprovado — invisível na aba de
+          // vínculo, preso na aba de revisão, sem nenhum sinal de por quê.
+          // O caminho de recuperação ficava fechado.
+          //
+          // 🛡️ `motivo_invalidacao` só é limpo quando vale
+          //    'f7_pre_campanha' (escrito pelo portão). 'bounce', 'mx' e
+          //    'edicao_manual' têm outros donos e permanecem — o reset de
+          //    bounce acima já trata o caso do bounce.
+          if (emailMudou && leadAtual?.email_validacao_score) {
+            campos.email_validacao_score = null;
+            campos.email_validacao_fonte = null;
+            campos.email_validado_em     = null;
+            campos.email_validacao_risco = false;
+            validacaoInvalidada = true;
+
+            if (leadAtual.motivo_invalidacao === 'f7_pre_campanha') {
+              campos.motivo_invalidacao = null;
+            }
+            if (!emailAnterior) emailAnterior = leadAtual.email;
           }
         }
 
@@ -5521,11 +5636,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           );
         }
 
-        console.log(`✅ [crm-leads] Lead atualizado: ID ${id} (${Object.keys(campos).length - 1} campos${bounceResetado ? ' + reset bounce' : ''})`);
+        // 🆕 v1.29 — Auditoria da invalidação do cache de validação.
+        //   Sem este registro, o lead simplesmente "volta a ser disponível"
+        //   e ninguém consegue reconstruir por quê meses depois.
+        if (validacaoInvalidada) {
+          await supabase.from('email_lead_historico').insert({
+            lead_id: id,
+            tipo: 'validacao_invalidada',
+            descricao:
+              `Verificação de entregabilidade descartada: o e-mail mudou de ` +
+              `"${emailAnterior}" para "${campos.email}". O novo endereço será ` +
+              `verificado na próxima tentativa de vínculo a campanha.`,
+            dados: {
+              email_anterior: emailAnterior,
+              email_novo: campos.email,
+            },
+            criado_por: body.criado_por || 'sistema_invalidacao_validacao',
+          });
+          console.log(
+            `🔄 [crm-leads] Validação invalidada: lead ${id} "${emailAnterior}" → "${campos.email}"`,
+          );
+        }
+
+        console.log(`✅ [crm-leads] Lead atualizado: ID ${id} (${Object.keys(campos).length - 1} campos${bounceResetado ? ' + reset bounce' : ''}${validacaoInvalidada ? ' + reset validação' : ''})`);
         return res.status(200).json({
           success: true,
           lead: data,
           bounce_resetado: bounceResetado,
+          // 🆕 v1.29 — a UI pode avisar que o e-mail será reverificado.
+          validacao_invalidada: validacaoInvalidada,
         });
       }
 

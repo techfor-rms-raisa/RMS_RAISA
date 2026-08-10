@@ -2,7 +2,32 @@
  * useVincularEmLote.ts — Hook orquestrador da aba "Vincular em Lote"
  *
  * Caminho: src/components/crm/shared/hooks/useVincularEmLote.ts
- * Versão: 1.2 (Incidente HTTP 414 — erro deixa de virar lista vazia — 23/07/2026)
+ * Versão: 1.3 (Entregabilidade na listagem — 10/08/2026)
+ *
+ * v1.3 (10/08/2026 — Entregabilidade na aba Vincular em Lote):
+ *   Pareada com api/crm-leads.ts v1.29 + lib/validacao-lead.ts v1.1 +
+ *   migration sql/2026-08-10_vinculo_em_lote_entregabilidade.sql.
+ *
+ *   CONTEXTO: o portão de entregabilidade (06/08/2026) recusa leads com
+ *   e-mail reprovado no MOMENTO DO VÍNCULO, mas a listagem não conhecia
+ *   esse veredito. Em 10/08/2026 havia 55 leads reprovados exibidos como
+ *   disponíveis em Produção. O analista montava o lote e só descobria na
+ *   confirmação.
+ *
+ *   MUDANÇAS (todas aditivas):
+ *     (1) `LeadDisponivel` ganha 4 campos de entregabilidade;
+ *     (2) `FiltrosRascunho.incluirEmDuvida` (default TRUE — preserva
+ *         integralmente o comportamento anterior);
+ *     (3) `resumoEntregabilidade` — contagens sobre o conjunto elegível
+ *         COMPLETO, vindas da RPC (não calculadas sobre a página);
+ *     (4) `selecionadosEmDuvida` + `riscoAceito` — o lote só inclui leads
+ *         inconclusivos com aceite explícito do analista.
+ *
+ *   🛡️ SEMÂNTICA (espelha lib/validacao-lead.ts):
+ *      `probable` e `risky` são AMBOS risco. `probable` significa domínio
+ *      catch-all — inverificável, não "provavelmente bom". Tratá-los de
+ *      forma diferente na UI rotularia como seguros leads que o próprio
+ *      motor classifica como duvidosos.
  *
  * v1.2 (23/07/2026 — Incidente "0 leads disponíveis"):
  *   Até a v1.1, o ramo `else` de `carregarLeads` tratava QUALQUER falha do
@@ -151,6 +176,44 @@ export type PerPage = 30 | 50 | 100;
  * responsavel_nome, email_empresas.setor/cidade/uf) seguem o contrato
  * do checkpoint 17/06; se o backend não trouxer, a UI exibe '—'.
  */
+/**
+ * 🆕 v1.3 — Veredito de entregabilidade do e-mail do lead.
+ *
+ * Espelha ValidateScore de lib/validate-emails.ts mais o estado
+ * 'nao_verificado' (nunca passou pelo portão, ou validação vencida).
+ *
+ * ⚠️ 'invalid' NUNCA chega ao frontend por esta rota — a RPC v1.29 o exclui
+ *    incondicionalmente. Fica declarado para completude do domínio e para
+ *    que um eventual vazamento apareça no type-check em vez de silenciar.
+ */
+/** 🆕 v1.3 — Contagens por veredito sobre o conjunto elegível completo. */
+export interface ResumoEntregabilidade {
+  verified: number;
+  probable: number;
+  risky: number;
+  nao_verificado: number;
+}
+
+export type Entregabilidade =
+  | 'verified'
+  | 'probable'
+  | 'risky'
+  | 'invalid'
+  | 'nao_verificado';
+
+/**
+ * 🆕 v1.3 — Scores que exigem aceite de risco do analista.
+ *
+ * Mantido em sincronia com SCORES_DE_RISCO de lib/validacao-lead.ts.
+ * Divergir aqui faria a UI prometer um comportamento que o portão não tem.
+ */
+export const SCORES_EM_DUVIDA: Entregabilidade[] = ['probable', 'risky'];
+
+/** 🆕 v1.3 — true quando o lead precisa de aceite explícito para entrar no lote. */
+export function leadEmDuvida(l: LeadDisponivel): boolean {
+  return SCORES_EM_DUVIDA.includes(l.entregabilidade ?? 'nao_verificado');
+}
+
 export interface LeadDisponivel {
   id: number;
   nome: string;
@@ -170,6 +233,15 @@ export interface LeadDisponivel {
   total_respostas?: number;
   dias_desde_cadastro?: number;
   responsavel_nome?: string | null;
+  // 🆕 v1.3 — Entregabilidade (RPC crm_listar_leads_vinculo_em_lote v1.29).
+  //   `entregabilidade` já vem NORMALIZADA pelo TTL de 90 dias: validação
+  //   vencida chega como 'nao_verificado', igual ao que a lib faria.
+  //   Opcionais por segurança: contra um backend anterior à v1.29 o campo
+  //   chega undefined e a UI degrada para 'nao_verificado'.
+  entregabilidade?: Entregabilidade;
+  email_validacao_fonte?: string | null;
+  email_validado_em?: string | null;
+  email_validacao_risco?: boolean;
   email_empresas?: {
     id: number;
     nome: string;
@@ -261,6 +333,13 @@ export interface UseVincularEmLoteAPI {
    *   de aprovação de layout). Até lá fica exposto e logado no console.
    */
   erroLeads: string | null;
+  /**
+   * 🆕 v1.3 — Contagens de entregabilidade sobre o conjunto elegível
+   *   COMPLETO (não sobre a página atual). Calculado na RPC.
+   *   Contar na página daria um número que muda ao paginar — inútil como
+   *   indicador da base.
+   */
+  resumoEntregabilidade: ResumoEntregabilidade;
   perPage: PerPage;
   setPerPage: (n: PerPage) => void;
   offset: number;
@@ -288,6 +367,21 @@ export interface UseVincularEmLoteAPI {
   leadsParaAlterar: number;
   /** Conveniência: leadsParaAlterar > 0 */
   temMudancaVertical: boolean;
+  /**
+   * 🆕 v1.3 — Leads SELECIONADOS cuja verificação foi inconclusiva.
+   *   Alimenta a faixa âmbar do modal de confirmação (lista nominal).
+   */
+  selecionadosEmDuvida: LeadDisponivel[];
+  /**
+   * 🆕 v1.3 — Aceite explícito de risco no modal de confirmação.
+   *   Enquanto false, os leads em dúvida são EXCLUÍDOS do lote — o vínculo
+   *   dos demais prossegue normalmente. Resetado a cada abertura do modal:
+   *   o aceite vale para um lote, nunca para a sessão.
+   */
+  riscoAceito: boolean;
+  setRiscoAceito: (v: boolean) => void;
+  /** 🆕 v1.3 — Quantos leads o botão de confirmação realmente vinculará. */
+  totalAVincular: number;
 
   // ── Submissão
   confirmacaoAberta: boolean;
@@ -314,6 +408,17 @@ export interface FiltrosRascunho {
   cadastroRange: FiltroCadastroRange;
   outrasCampanhas: FiltroOutrasCampanhas;
   responsavelId: number | null; // null = padrão (próprios para SDR/GC; todos para Admin)
+  /**
+   * 🆕 v1.3 — Quando false, oculta da listagem os leads com verificação
+   * INCONCLUSIVA (probable = catch-all, risky = cascade esgotada).
+   *
+   * 🛡️ Default TRUE por decisão de produto (06/08/2026, "liberar com
+   *    aviso"). Um default false faria esses leads sumirem da lista sem
+   *    ninguém ter pedido — regressão silenciosa da regra vigente.
+   *
+   * Não afeta reprovados ('invalid'): a RPC os exclui sempre.
+   */
+  incluirEmDuvida: boolean;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -328,9 +433,19 @@ const FILTROS_DEFAULT: FiltrosRascunho = {
   cadastroRange: 'qualquer',
   outrasCampanhas: 'excluir', // 🛡️ Regra de produto 09/06/2026
   responsavelId: null,
+  incluirEmDuvida: true, // 🆕 v1.3 — preserva o comportamento anterior
 };
 
 const PER_PAGE_DEFAULT: PerPage = 30;
+
+/** 🆕 v1.3 — Estado neutro do resumo. Usado antes da primeira carga e
+    quando o backend ainda não expõe o campo (anterior à v1.29). */
+const RESUMO_VAZIO: ResumoEntregabilidade = {
+  verified: 0,
+  probable: 0,
+  risky: 0,
+  nao_verificado: 0,
+};
 
 // ════════════════════════════════════════════════════════════
 // HOOK
@@ -378,6 +493,11 @@ export function useVincularEmLote(
   const [loadingLeads, setLoadingLeads] = useState(false);
   // 🆕 v1.2 (23/07/2026) — vide JSDoc do cabeçalho (incidente HTTP 414).
   const [erroLeads, setErroLeads] = useState<string | null>(null);
+  // 🆕 v1.3 — resumo de entregabilidade (vem da RPC, escopo global)
+  const [resumoEntregabilidade, setResumoEntregabilidade] =
+    useState<ResumoEntregabilidade>(RESUMO_VAZIO);
+  // 🆕 v1.3 — aceite de risco do lote corrente
+  const [riscoAceito, setRiscoAceito] = useState(false);
   const [totalGeral, setTotalGeral] = useState(0);
   const [perPage, setPerPageState] = useState<PerPage>(PER_PAGE_DEFAULT);
   const [offset, setOffset] = useState(0);
@@ -557,6 +677,7 @@ export function useVincularEmLote(
       setLeads([]);
       setTotalGeral(0);
       setErroLeads(null); // 🆕 v1.2 — estado neutro, não é falha
+      setResumoEntregabilidade(RESUMO_VAZIO); // 🆕 v1.3
       return;
     }
     const seq = ++fetchLeadsSeqRef.current;
@@ -577,6 +698,11 @@ export function useVincularEmLote(
       }
       if (filtrosAplicados.outrasCampanhas !== 'excluir') {
         params.set('outras_campanhas', filtrosAplicados.outrasCampanhas);
+      }
+      // 🆕 v1.3 — só envia quando DESLIGADO. Querystring ausente = default
+      //   true no backend, idêntico ao comportamento anterior a esta versão.
+      if (!filtrosAplicados.incluirEmDuvida) {
+        params.set('incluir_em_duvida', 'false');
       }
       if (buscaDebounced) params.set('busca', buscaDebounced);
       // 🆕 v1.1 (22/06/2026 — B1) — SDR em distribuição CRECI comporta-se
@@ -615,6 +741,14 @@ export function useVincularEmLote(
             : data.leads?.length || 0
         );
         setErroLeads(null);
+        // 🆕 v1.3 — fallback para zeros: contra um backend anterior à v1.29
+        //   a faixa renderiza vazia em vez de quebrar em undefined.verified.
+        setResumoEntregabilidade({
+          verified: Number(data?.resumo_entregabilidade?.verified ?? 0),
+          probable: Number(data?.resumo_entregabilidade?.probable ?? 0),
+          risky: Number(data?.resumo_entregabilidade?.risky ?? 0),
+          nao_verificado: Number(data?.resumo_entregabilidade?.nao_verificado ?? 0),
+        });
       } else {
         // 🐛 v1.2 (23/07/2026) — CORREÇÃO DO MASCARAMENTO DE ERRO.
         //   Até a v1.1, QUALQUER falha do backend (500, 414, timeout,
@@ -634,6 +768,7 @@ export function useVincularEmLote(
         setLeads([]);
         setTotalGeral(0);
         setErroLeads(msg);
+        setResumoEntregabilidade(RESUMO_VAZIO); // 🆕 v1.3
       }
     } catch (err: any) {
       if (seq !== fetchLeadsSeqRef.current) return;
@@ -646,6 +781,7 @@ export function useVincularEmLote(
         'Erro de rede ao consultar leads elegíveis: ' +
           (err?.message || 'desconhecido')
       );
+      setResumoEntregabilidade(RESUMO_VAZIO); // 🆕 v1.3
     } finally {
       if (seq === fetchLeadsSeqRef.current) {
         setLoadingLeads(false);
@@ -686,6 +822,7 @@ export function useVincularEmLote(
       filtrosRascunho.cidade !== filtrosAplicados.cidade ||
       filtrosRascunho.cadastroRange !== filtrosAplicados.cadastroRange ||
       filtrosRascunho.outrasCampanhas !== filtrosAplicados.outrasCampanhas ||
+      filtrosRascunho.incluirEmDuvida !== filtrosAplicados.incluirEmDuvida || // 🆕 v1.3
       filtrosRascunho.responsavelId !== filtrosAplicados.responsavelId
     );
   }, [filtrosRascunho, filtrosAplicados]);
@@ -789,6 +926,27 @@ export function useVincularEmLote(
 
   const temMudancaVertical = leadsParaAlterar > 0;
 
+  // ── 🆕 v1.3 — ENTREGABILIDADE DA SELEÇÃO ────────────────────
+  //
+  //   Só enxerga a PÁGINA atual (`leads`). É correto e não é limitação:
+  //   a seleção só pode ser feita sobre linhas visíveis, e `toggleTodosVisiveis`
+  //   marca apenas os visíveis. Não existe caminho pelo qual um lead
+  //   selecionado esteja fora de `leads`.
+  const selecionadosEmDuvida = useMemo(
+    () => leads.filter((l) => selecionados.has(l.id) && leadEmDuvida(l)),
+    [leads, selecionados]
+  );
+
+  //   Quantos o botão realmente vinculará. Sem aceite, os em dúvida saem
+  //   do lote e os demais seguem — o analista nunca fica travado.
+  const totalAVincular = useMemo(
+    () =>
+      riscoAceito
+        ? totalSelecionados
+        : totalSelecionados - selecionadosEmDuvida.length,
+    [riscoAceito, totalSelecionados, selecionadosEmDuvida.length]
+  );
+
   // ════════════════════════════════════════════════════════════
   // SUBMISSÃO
   // ════════════════════════════════════════════════════════════
@@ -797,6 +955,10 @@ export function useVincularEmLote(
     if (totalSelecionados === 0) return;
     if (!campanhaDestino) return;
     setResultadoVinculacao(null);
+    // 🆕 v1.3 — o aceite vale para UM lote. Sem este reset, um aceite dado
+    //   num lote anterior seguiria valendo para o próximo sem o analista
+    //   ter olhado a nova lista de leads em dúvida.
+    setRiscoAceito(false);
     setConfirmacaoAberta(true);
   }, [totalSelecionados, campanhaDestino]);
 
@@ -811,10 +973,35 @@ export function useVincularEmLote(
 
   const confirmarVinculacao = useCallback(async () => {
     if (!campanhaDestino || totalSelecionados === 0) return;
+
+    // 🆕 v1.3 — SEM ACEITE, os leads em dúvida saem do lote.
+    //
+    //   Decisão de desenho: excluir em vez de bloquear o botão. O analista
+    //   que não quer assumir o risco ainda vincula os demais em um clique;
+    //   bloquear o botão o obrigaria a voltar e desmarcar um por um.
+    //
+    //   🛡️ Filtragem no CLIENTE apenas para não enviar o que não deve ser
+    //      enviado. O portão do backend (crm-leads v1.29 → passo 7-bis)
+    //      continua sendo a autoridade — esta camada é conveniência de UX,
+    //      não controle de segurança.
+    const idsEmDuvida = new Set(selecionadosEmDuvida.map((l) => l.id));
+    const lead_ids = Array.from(selecionados).filter(
+      (id) => riscoAceito || !idsEmDuvida.has(id)
+    );
+
+    if (lead_ids.length === 0) {
+      setResultadoVinculacao({
+        success: false,
+        error:
+          'Todos os leads selecionados têm e-mail em dúvida. Marque o aceite de ' +
+          'risco para incluí-los, ou selecione outros leads.',
+      });
+      return;
+    }
+
     setSubmitting(true);
     setResultadoVinculacao(null);
     try {
-      const lead_ids = Array.from(selecionados);
       const resp = await fetch('/api/crm-leads', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -848,6 +1035,8 @@ export function useVincularEmLote(
     verticalDestino,
     currentUser.nome_usuario,
     carregarLeads,
+    riscoAceito, // 🆕 v1.3
+    selecionadosEmDuvida, // 🆕 v1.3
   ]);
 
   // ════════════════════════════════════════════════════════════
@@ -868,6 +1057,8 @@ export function useVincularEmLote(
     setOffset(0);
     setTotalGeral(0);
     setResultadoVinculacao(null);
+    setResumoEntregabilidade(RESUMO_VAZIO); // 🆕 v1.3
+    setRiscoAceito(false); // 🆕 v1.3
   }, []);
 
   // ════════════════════════════════════════════════════════════
@@ -908,6 +1099,7 @@ export function useVincularEmLote(
     leads,
     loadingLeads,
     erroLeads, // 🆕 v1.2
+    resumoEntregabilidade, // 🆕 v1.3
     perPage,
     setPerPage,
     offset,
@@ -929,6 +1121,11 @@ export function useVincularEmLote(
     totalSelecionados,
     leadsParaAlterar,
     temMudancaVertical,
+    // 🆕 v1.3 — entregabilidade da seleção
+    selecionadosEmDuvida,
+    riscoAceito,
+    setRiscoAceito,
+    totalAVincular,
 
     // Submissão
     confirmacaoAberta,

@@ -1,9 +1,46 @@
 /**
  * lib/validacao-lead.ts — Portão de validação de e-mail de LEAD
  *
- * v1.0 (06/08/2026)
+ * v1.1 (10/08/2026)
  *
  * Caminho: lib/validacao-lead.ts
+ *
+ * ──────────────────────────────────────────────────────────────────────
+ * v1.1 (10/08/2026) — O REPROVADO PASSA A TER ENDEREÇO
+ * ──────────────────────────────────────────────────────────────────────
+ *
+ * DEFEITO CORRIGIDO: o lead reprovado (`invalid`) ficava em LIMBO.
+ *
+ *   · A aba "E-mails para revisar" lista por
+ *     (bounced OR motivo_invalidacao IS NOT NULL) — nenhum dos dois
+ *     era marcado pelo portão.
+ *   · A aba "Vincular em Lote" não conhecia email_validacao_* e continuava
+ *     listando o lead como disponível.
+ *
+ *   Resultado medido em Produção (10/08/2026): 55 leads reprovados
+ *   ocupando a lista de disponíveis, invisíveis para correção, e
+ *   recusados só na confirmação do lote.
+ *
+ * CORREÇÃO: o veredito passa a ser gravado também em `motivo_invalidacao`,
+ * usando o código 'f7_pre_campanha' — já existente na whitelist da CHECK
+ * `email_leads_motivo_invalidacao_valido` e já traduzido na UI como
+ * "Invalidado antes da campanha". Nenhuma coluna nova, nenhuma migração
+ * de schema.
+ *
+ *   score       motivo_invalidacao
+ *   ----------  ---------------------------------------------------------
+ *   invalid     ← 'f7_pre_campanha'  (entra na aba de revisão)
+ *   demais      ← NULL, mas SOMENTE se o valor atual for 'f7_pre_campanha'
+ *
+ * 🛡️  A limpeza é CONDICIONADA ao valor anterior. Um lead com
+ *     motivo_invalidacao='bounce' que revalide como 'verified' NÃO tem o
+ *     bounce apagado: bounce é evidência de campo, mais forte que a
+ *     verificação prévia. Só desfazemos o que este módulo escreveu.
+ *
+ * 🛡️  PONTO ÚNICO DE ESCRITA PRESERVADO. A regra continua valendo, agora
+ *     estendida a `motivo_invalidacao` no que diz respeito ao código
+ *     'f7_pre_campanha'. Os demais códigos ('bounce', 'mx', 'edicao_manual'
+ *     …) continuam sendo escritos por seus donos originais.
  *
  * ──────────────────────────────────────────────────────────────────────
  * MOTIVAÇÃO
@@ -89,6 +126,21 @@ const SCORES_BLOQUEANTES: ValidateScore[] = ['invalid'];
 
 /** Scores que LIBERAM porém marcam risco. */
 const SCORES_DE_RISCO: ValidateScore[] = ['probable', 'risky'];
+
+/**
+ * 🆕 v1.1 — Código gravado em `email_leads.motivo_invalidacao` quando o
+ * portão reprova.
+ *
+ * Valor DELIBERADAMENTE reaproveitado: já consta da whitelist da CHECK
+ * `email_leads_motivo_invalidacao_valido` e já tem tradução na UI
+ * ("Invalidado antes da campanha"). Criar um código novo exigiria alterar
+ * a constraint e mapear a tradução, sem ganhar nada semanticamente.
+ *
+ * ⚠️  Mudar este valor exige, no mesmo commit: (a) ampliar a CHECK,
+ *     (b) traduzir na UI, (c) atualizar o backfill da migração
+ *     sql/2026-08-10_vinculo_em_lote_entregabilidade.sql.
+ */
+const MOTIVO_REPROVADO_NO_PORTAO = 'f7_pre_campanha';
 
 // ──────────────────────────────────────────────────────────────────────
 // TIPOS PÚBLICOS
@@ -207,6 +259,23 @@ export async function garantirValidacaoLead(
       ) {
         const score = atual.email_validacao_score as ValidateScore;
         const { risco, bloqueado } = classificar(score);
+
+        // 🆕 v1.1 — AUTOCURA no caminho de cache. Um lead reprovado cuja
+        //   validação ainda está vigente mas que perdeu o motivo_invalidacao
+        //   (escrita manual, restauração de backup, backfill não aplicado)
+        //   voltaria a aparecer na listagem de vínculo.
+        //
+        //   O `.is(..., null)` faz este UPDATE ser no-op no caso normal —
+        //   e o bloco inteiro só roda para score bloqueante, que a RPC v1.29
+        //   já removeu da listagem. Custo real no fluxo quente: zero.
+        if (bloqueado) {
+          await supabase
+            .from('email_leads')
+            .update({ motivo_invalidacao: MOTIVO_REPROVADO_NO_PORTAO })
+            .eq('id', lead.id)
+            .is('motivo_invalidacao', null);
+        }
+
         return {
           lead_id: lead.id,
           email: emailNorm,
@@ -249,15 +318,40 @@ export async function garantirValidacaoLead(
 
   // ── 3) Persistir ────────────────────────────────────────────────────
   try {
+    // 🆕 v1.1 — `motivo_invalidacao` entra no MESMO update quando o portão
+    //   reprova. Um update só: score e motivo nunca divergem, nem sob falha
+    //   parcial de rede.
+    const camposValidacao: Record<string, unknown> = {
+      email_validacao_score: score,
+      email_validacao_fonte: fonte,
+      email_validado_em: agora,
+      email_validacao_risco: risco,
+    };
+    if (bloqueado) {
+      camposValidacao.motivo_invalidacao = MOTIVO_REPROVADO_NO_PORTAO;
+    }
+
     await supabase
       .from('email_leads')
-      .update({
-        email_validacao_score: score,
-        email_validacao_fonte: fonte,
-        email_validado_em: agora,
-        email_validacao_risco: risco,
-      })
+      .update(camposValidacao)
       .eq('id', lead.id);
+
+    // 🆕 v1.1 — LIMPEZA CONDICIONADA. O lead que voltou a passar só perde o
+    //   motivo se o motivo tiver sido escrito por ESTE módulo. O filtro
+    //   `.eq('motivo_invalidacao', ...)` faz o Postgres decidir — sem SELECT
+    //   prévio e sem janela de corrida entre leitura e escrita.
+    //
+    //   Sem isto, o lead reprovado que tivesse o e-mail corrigido e
+    //   revalidado continuaria eternamente na aba de revisão: o motivo
+    //   nunca sairia, e a listagem de vínculo (RPC v1.29) o barraria para
+    //   sempre. O caminho de recuperação ficaria fechado.
+    if (!bloqueado) {
+      await supabase
+        .from('email_leads')
+        .update({ motivo_invalidacao: null })
+        .eq('id', lead.id)
+        .eq('motivo_invalidacao', MOTIVO_REPROVADO_NO_PORTAO);
+    }
   } catch (err: any) {
     // Falha de persistência NÃO invalida o veredito — apenas perde o cache.
     console.warn(`⚠️ [validacao-lead] persistência falhou (lead ${lead.id}): ${err?.message}`);
