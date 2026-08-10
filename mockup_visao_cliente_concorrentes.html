@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MOCKUP — Espionagem Estratégica · Visão Cliente × Concorrentes</title>
+<style>
+  /* Aproximação do padrão visual existente (Tailwind slate/indigo) */
+  * { margin:0; padding:0; box-sizing:border-box; font-family:'Segoe UI',system-ui,-apple-system,sans-serif; }
+  body { background:#f1f5f9; padding:20px; color:#1e293b; }
+  .banner { background:#fef9c3; border:1px solid #fde047; color:#854d0e; padding:8px 14px;
+            border-radius:8px; font-size:12px; margin-bottom:16px; font-weight:600; }
+
+  /* Header do módulo */
+  .mod-header { background:#fff; border-radius:12px; padding:16px 20px; box-shadow:0 1px 3px rgba(0,0,0,.08); margin-bottom:14px; }
+  .mod-title { font-size:19px; font-weight:800; color:#0f172a; }
+  .mod-sub { font-size:12px; color:#64748b; margin-top:2px; }
+
+  /* Barra do seletor */
+  .selector-bar { background:#fff; border-radius:12px; padding:14px 20px; box-shadow:0 1px 3px rgba(0,0,0,.08);
+                  display:flex; align-items:center; gap:14px; margin-bottom:14px; flex-wrap:wrap; }
+  .selector-label { font-size:11px; font-weight:700; color:#475569; letter-spacing:.5px; }
+  .selector-select { border:1px solid #cbd5e1; border-radius:8px; padding:8px 34px 8px 12px; font-size:13px;
+                     background:#fff; min-width:280px; appearance:none;
+                     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2364748b' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+                     background-repeat:no-repeat; background-position:right 10px center; }
+  .selector-meta { font-size:12px; color:#64748b; }
+  .btn-primary { margin-left:auto; background:#312e81; color:#fff; border:none; border-radius:8px;
+                 padding:10px 18px; font-size:13px; font-weight:700; cursor:pointer; display:flex; align-items:center; gap:8px; }
+
+  /* Abas */
+  .tabs { background:#fff; border-radius:12px 12px 0 0; box-shadow:0 1px 3px rgba(0,0,0,.08);
+          display:flex; gap:4px; padding:8px 12px 0; }
+  .tab { padding:9px 16px; font-size:13px; font-weight:600; color:#64748b; border-radius:8px 8px 0 0; cursor:pointer; }
+  .tab.active { color:#0f172a; background:#f8fafc; border:1px solid #e2e8f0; border-bottom:2px solid #f8fafc; font-weight:700; }
+  .tab.new { position:relative; }
+  .tab.new::after { content:'NOVA'; position:absolute; top:2px; right:2px; background:#4f46e5; color:#fff;
+                    font-size:8px; font-weight:800; padding:1px 5px; border-radius:6px; }
+
+  .canvas { background:#fff; border-radius:0 0 12px 12px; box-shadow:0 1px 3px rgba(0,0,0,.08); padding:28px 20px 32px; }
+
+  /* Card central — CLIENTE (mesmo estilo do card escuro do concorrente) */
+  .center-wrap { display:flex; justify-content:center; margin-bottom:6px; }
+  .center-card { background:#1e1b4b; color:#fff; border-radius:12px; padding:14px 30px; text-align:center;
+                 box-shadow:0 4px 12px rgba(30,27,75,.35); min-width:380px; }
+  .center-card .name { font-size:16px; font-weight:800; letter-spacing:1.5px; }
+  .center-card .sub { font-size:11px; color:#c7d2fe; margin-top:3px; }
+  .center-metrics { display:flex; justify-content:center; gap:22px; margin-top:10px; padding-top:10px;
+                    border-top:1px solid rgba(255,255,255,.15); }
+  .cm { text-align:center; }
+  .cm .v { font-size:18px; font-weight:800; }
+  .cm .l { font-size:9px; color:#a5b4fc; text-transform:uppercase; letter-spacing:.5px; }
+  .center-chips { margin-top:10px; display:flex; gap:6px; justify-content:center; }
+  .chip { font-size:9px; font-weight:700; padding:3px 9px; border-radius:20px; }
+  .chip-disputa { background:#fbbf24; color:#78350f; }
+  .chip-presenca { background:#34d399; color:#064e3b; }
+
+  /* Conector */
+  .connector { display:flex; justify-content:center; }
+  .connector .line-v { width:2px; height:22px; background:#1e1b4b; }
+  .line-h { height:2px; background:#1e1b4b; margin:0 60px; }
+
+  /* Cards dos CONCORRENTES (mesmo formato dos cards de cliente da tela atual) */
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(215px, 1fr)); gap:14px; margin-top:22px; }
+  .conc-card { border:1.5px solid #c7d2fe; background:#eef2ff; border-radius:12px; padding:16px 12px; text-align:center; }
+  .conc-card .nm { font-size:13px; font-weight:700; color:#1e293b; }
+  .conc-card .big { font-size:26px; font-weight:800; color:#0f172a; margin:4px 0 0; }
+  .conc-card .lbl { font-size:9px; color:#94a3b8; text-transform:lowercase; }
+  .conc-card .meta { font-size:10px; color:#64748b; margin-top:6px; }
+  .conc-card .chips { margin-top:8px; display:flex; gap:4px; justify-content:center; flex-wrap:wrap; }
+  .b-origem-g { background:#ede9fe; color:#5b21b6; }
+  .b-origem-m { background:#e0f2fe; color:#075985; }
+  .b-recente  { background:#fee2e2; color:#b91c1c; }
+  .b-cob      { background:#dbeafe; color:#1d4ed8; }
+
+  /* Estado vazio (cliente sem concorrente) — nível cinza, padrão da tela atual */
+  .empty-note { margin-top:26px; text-align:center; font-size:12px; color:#94a3b8; }
+</style>
+</head>
+<body>
+
+<div class="banner">🎨 MOCKUP ESTÁTICO — aba nova "🔄 Visão Cliente" do módulo Espionagem Estratégica · para aprovação (Regra 9) · dados de exemplo reais da sessão de 09/08</div>
+
+<div class="mod-header">
+  <div class="mod-title">🏛️ Espionagem Estratégica</div>
+  <div class="mod-sub">Inteligência competitiva — carteira dos concorrentes × CRM × Prospect Engine</div>
+</div>
+
+<!-- Barra do seletor: espelho da barra de concorrente, agora selecionando o CLIENTE -->
+<div class="selector-bar">
+  <span class="selector-label">CLIENTE</span>
+  <select class="selector-select">
+    <option>CVC (2 concorrentes)</option>
+    <option>Porto Seguro (2 concorrentes)</option>
+    <option>Mapfre (1 concorrente)</option>
+    <option>UOL (1 concorrente)</option>
+  </select>
+  <span class="selector-meta">🔍 busca por nome · dados 100% internos (sem Gemini)</span>
+  <button class="btn-primary">🗺️ Mapear concorrentes</button>
+</div>
+
+<div class="tabs">
+  <div class="tab">⚡ Análise Automática</div>
+  <div class="tab">✍️ Análise Manual</div>
+  <div class="tab">📊 Resultado</div>
+  <div class="tab active new">🔄 Visão Cliente</div>
+</div>
+
+<div class="canvas">
+
+  <!-- Card central: o CLIENTE com as métricas CANÔNICAS (idênticas em qualquer contexto) -->
+  <div class="center-wrap">
+    <div class="center-card">
+      <div class="name">CVC</div>
+      <div class="sub">cvc.com.br · cvccorp.com.br &nbsp;—&nbsp; disputado por 2 concorrente(s)</div>
+      <div class="center-metrics">
+        <div class="cm"><div class="v">4</div><div class="l">prospectados</div></div>
+        <div class="cm"><div class="v">6</div><div class="l">leads CRM</div></div>
+        <div class="cm"><div class="v">1</div><div class="l">campanha</div></div>
+        <div class="cm"><div class="v">3</div><div class="l">abordagens</div></div>
+        <div class="cm"><div class="v">0</div><div class="l">respostas</div></div>
+      </div>
+      <div class="center-chips">
+        <span class="chip chip-disputa">⚔️ conta disputada</span>
+        <span class="chip chip-presenca">✅ presença TechFor</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="connector"><div class="line-v"></div></div>
+  <div class="line-h"></div>
+
+  <!-- Cards dos concorrentes que possuem este cliente na carteira -->
+  <div class="grid">
+    <div class="conc-card">
+      <div class="nm">Talentfour</div>
+      <div class="big">41</div>
+      <div class="lbl">contas na carteira</div>
+      <div class="meta">CVC na carteira desde 07/08/2026</div>
+      <div class="chips">
+        <span class="chip b-origem-g">origem: gemini</span>
+        <span class="chip b-cob">cobertura 73.2%</span>
+      </div>
+    </div>
+    <div class="conc-card">
+      <div class="nm">Taking</div>
+      <div class="big">15</div>
+      <div class="lbl">contas na carteira</div>
+      <div class="meta">CVC na carteira desde 09/08/2026</div>
+      <div class="chips">
+        <span class="chip b-origem-g">origem: gemini</span>
+        <span class="chip b-recente">🔥 descoberto há 2 dias</span>
+        <span class="chip b-cob">cobertura 73.3%</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="empty-note">Concorrentes arquivados e vínculos inativos não aparecem no mapa.</div>
+
+</div>
+
+</body>
+</html>
