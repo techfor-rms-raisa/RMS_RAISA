@@ -2,7 +2,22 @@
  * LeadsTab.tsx — Aba "Meus Leads" da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/LeadsTab.tsx
- * Versão: 1.3 (Botão Arquivar na coluna Ações — 10/08/2026)
+ * Versão: 1.3.1 (Ajuste de alinhamento da coluna Ações — 10/08/2026)
+ *
+ * v1.3.1 (10/08/2026 — Ajuste de alinhamento):
+ *   Em produção os dois ícones da coluna AÇÕES quebraram para linhas
+ *   separadas (lápis em cima, caixa embaixo). Causa: eram dois <button>
+ *   inline soltos na célula; com a coluna ANALISTA presente, a largura
+ *   residual de AÇÕES ficou menor que a soma dos dois, e o fluxo inline
+ *   quebrou — comportamento normal de inline-level em espaço apertado.
+ *
+ *   Correção: os botões passam a viver dentro de um contêiner flex com
+ *   `whitespace-nowrap`. Flex não quebra linha por padrão, então o
+ *   alinhamento horizontal fica garantido em qualquer largura residual.
+ *   `gap-1` substitui o `ml-1` do botão de arquivar (espaçamento agora
+ *   é responsabilidade do contêiner, não do filho).
+ *
+ *   Nada mais mudou: mesmos ícones, mesmas cores, mesmos handlers.
  *
  * v1.3 (10/08/2026 — Arquivar lead):
  *   Coluna AÇÕES ganha um segundo botão (ícone caixa 📦) ao lado do
@@ -425,29 +440,34 @@ const LeadsTab: React.FC<LeadsTabProps> = ({
 
                   {/* 10. AÇÕES */}
                   <td
-                    className="px-3 py-2.5 text-center"
+                    className="px-3 py-2.5 text-center whitespace-nowrap"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <button
-                      onClick={() => onEditar(lead)}
-                      className="text-gray-400 hover:text-indigo-600 transition-colors p-1"
-                      title="Editar"
-                    >
-                      <i className="fa-solid fa-pen-to-square"></i>
-                    </button>
-
-                    {/* 🆕 v1.3 (10/08/2026) — Arquivar lead (soft-delete).
-                        Âmbar, não vermelho: vermelho é do Opt-Out. */}
-                    {onArquivar && (
+                    {/* 🆕 v1.3.1 — Contêiner flex: garante os ícones lado a
+                        lado mesmo quando a largura residual da coluna é
+                        pequena (vide cabeçalho). */}
+                    <div className="flex items-center justify-center gap-1">
                       <button
-                        onClick={() => onArquivar(lead)}
-                        className="text-gray-400 hover:text-amber-600 transition-colors p-1 ml-1"
-                        title="Arquivar lead"
-                        aria-label={`Arquivar lead ${lead.nome}`}
+                        onClick={() => onEditar(lead)}
+                        className="text-gray-400 hover:text-indigo-600 transition-colors p-1"
+                        title="Editar"
                       >
-                        <i className="fa-solid fa-box-archive"></i>
+                        <i className="fa-solid fa-pen-to-square"></i>
                       </button>
-                    )}
+
+                      {/* 🆕 v1.3 (10/08/2026) — Arquivar lead (soft-delete).
+                          Âmbar, não vermelho: vermelho é do Opt-Out. */}
+                      {onArquivar && (
+                        <button
+                          onClick={() => onArquivar(lead)}
+                          className="text-gray-400 hover:text-amber-600 transition-colors p-1"
+                          title="Arquivar lead"
+                          aria-label={`Arquivar lead ${lead.nome}`}
+                        >
+                          <i className="fa-solid fa-box-archive"></i>
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
