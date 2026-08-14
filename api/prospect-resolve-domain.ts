@@ -7,6 +7,21 @@
  * - POST { empresa_nome }           → resolve domínio de uma empresa
  * - POST { empresas: string[] }     → resolve em lote (máx 20 por chamada)
  *
+ * 🆕 v1.2 (14/08/2026): Refator lib/ — a função `resolverDominio()` (e a
+ *                       constante DOMINIOS_PESSOAIS) saíram deste arquivo
+ *                       para `lib/resolve-dominio.ts`, permitindo uso
+ *                       in-process por api/crm-linkedin-capture.ts sem
+ *                       fetch cross-function (bloqueado pelo Vercel
+ *                       Deployment Protection em Preview).
+ *
+ *                       Este endpoint continua existindo com contrato HTTP
+ *                       IDÊNTICO — nenhum caller precisa mudar. A lógica de
+ *                       resolução (prompt, modelo, thinkingBudget, validações)
+ *                       foi movida sem alteração de comportamento.
+ *
+ *                       Mudanças: remoção de getAI(), DOMINIOS_PESSOAIS e
+ *                       resolverDominio(); adição do import da lib. Nada mais.
+ *
  * 🆕 v1.1 (08/06/2026): Migração Gemini — 'gemini-2.0-flash' (depreciado, desativação 01/06/2026)
  *                       → 'gemini-2.5-flash' (estável, ativo).
  *                       Ajustes obrigatórios para gemini-2.5-flash com Search Grounding:
@@ -14,96 +29,14 @@
  *                       - thinkingConfig.thinkingBudget: 4096 (obrigatório p/ Search Grounding; sem isso retorna vazio)
  *                       Re-aplicação da entrega da sessão 05/06/2026 cujo commit foi perdido.
  *
- * Versão: 1.1
- * Data: 25/03/2026 (criação) | 08/06/2026 (migração modelo)
+ * Versão: 1.2
+ * Data: 25/03/2026 (criação) | 08/06/2026 (migração modelo) | 14/08/2026 (refator lib/)
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI } from '@google/genai';
+import { resolverDominio } from '../lib/resolve-dominio.js';
 
 export const config = { maxDuration: 30 };
-
-let aiInstance: GoogleGenAI | null = null;
-function getAI(): GoogleGenAI {
-    if (!aiInstance) {
-        const apiKey = process.env.API_KEY || '';
-        if (!apiKey) throw new Error('API_KEY não configurada.');
-        aiInstance = new GoogleGenAI({ apiKey });
-    }
-    return aiInstance;
-}
-
-// Domínios pessoais — nunca aceitar como domínio corporativo
-const DOMINIOS_PESSOAIS = new Set([
-    'gmail.com', 'hotmail.com', 'outlook.com', 'yahoo.com', 'yahoo.com.br',
-    'live.com', 'msn.com', 'icloud.com', 'bol.com.br', 'uol.com.br',
-    'terra.com.br', 'ig.com.br', 'globo.com', 'r7.com',
-]);
-
-// ─── RESOLVER ÚNICO ────────────────────────────────────────────────────────────
-
-async function resolverDominio(empresaNome: string): Promise<string | null> {
-    const ai = getAI();
-
-    const prompt = `
-Qual é o domínio de email corporativo oficial da empresa "${empresaNome}" no Brasil?
-
-Pesquise no Google e retorne APENAS o domínio (ex: empresa.com.br), sem protocolo http/https.
-Se a empresa tiver múltiplos domínios, retorne o principal/mais usado para emails corporativos.
-Se não encontrar com certeza, retorne null.
-
-Responda SOMENTE com JSON:
-{"dominio": "empresa.com.br"} ou {"dominio": null}
-`.trim();
-
-    try {
-        const result = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: prompt,
-            config: {
-                tools: [{ googleSearch: {} }],
-                temperature: 0.1,
-                maxOutputTokens: 8192,
-                thinkingConfig: { thinkingBudget: 4096 },
-            } as any,
-        });
-
-        // Extração robusta do texto
-        let rawText = '';
-        try {
-            const candidates = (result as any).candidates;
-            if (candidates?.[0]?.content?.parts) {
-                rawText = candidates[0].content.parts
-                    .filter((p: any) => p.text && typeof p.text === 'string')
-                    .map((p: any) => p.text)
-                    .join('');
-            }
-            if (!rawText && result.text) rawText = result.text;
-        } catch {
-            rawText = result.text || '';
-        }
-
-        // Parse JSON
-        const match = rawText.match(/\{[\s\S]*?\}/);
-        if (!match) return null;
-
-        const parsed = JSON.parse(match[0]);
-        const dominio = parsed.dominio?.toLowerCase()?.trim() || null;
-
-        // Validar: não aceitar domínios pessoais, genéricos ou inválidos
-        if (!dominio) return null;
-        if (DOMINIOS_PESSOAIS.has(dominio)) return null;
-        if (!dominio.includes('.')) return null;
-        if (dominio.length > 100) return null;
-
-        // Remover http/https se o modelo errar
-        return dominio.replace(/^https?:\/\//, '').replace(/\/$/, '');
-
-    } catch (err: any) {
-        console.warn(`⚠️ [resolve-domain] Erro ao resolver "${empresaNome}":`, err.message);
-        return null;
-    }
-}
 
 // ─── HANDLER ──────────────────────────────────────────────────────────────────
 
