@@ -9,8 +9,16 @@
  * e devolve para o frontend do Prospect Engine exibir na lista.
  * user_id vem da Extension via localStorage rms_user.
  *
- * Versão: 2.1
- * Data: 09/04/2026
+ * Versão: 2.2
+ * Data: 19/08/2026
+ *
+ * v2.2 — FIX: o INSERT passa a gravar `reservado_por` (= user_id da
+ *         Extension) além de `buscado_por`. Sem isso, todo lead capturado
+ *         nascia sem dono e sumia das telas que filtram por propriedade.
+ *         Diagnóstico 19/08/2026: 82 dos 150 leads de `motor='extension'`
+ *         com e-mail estavam órfãos. Os 68 restantes tinham dono porque
+ *         passaram pelo fluxo de salvamento do Prospect Engine
+ *         (api/prospect-save.ts), que já grava a reserva.
  *
  * v2.1 — FIX CRÍTICO: leads sem empresa_nome não são mais descartados.
  *         empresa_nome vazia é legítima — Google nem sempre exibe a empresa
@@ -278,6 +286,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (user_id && deduplicados.length > 0) {
       const rows = deduplicados.map(p => ({
         buscado_por:      user_id,
+        // 🆕 v2.2 (19/08/2026) — reserva automática para quem capturou.
+        //   Até a v2.1 este INSERT gravava apenas `buscado_por`, deixando
+        //   `reservado_por` NULL. Consequência: o lead capturado não
+        //   aparecia em "Meus Prospects Salvos" (a aba filtra por
+        //   reservado_por) nem no modal "Importar Prospects" depois que
+        //   este passou a respeitar a propriedade — ficava órfão, visível
+        //   só para Administrador em modo "toda a equipe".
+        //   Semântica: quem capturou pelo Chrome é o dono do lead, mesma
+        //   regra que api/prospect-save.ts já aplica no fluxo Nova Busca.
+        reservado_por:    user_id,
+        reservado_em:     new Date().toISOString(),
         motor:            'extension',
         fonte_id_gemini:  p.gemini_id,
         nome_completo:    p.nome_completo,   // já sanitizado em normalizarLead

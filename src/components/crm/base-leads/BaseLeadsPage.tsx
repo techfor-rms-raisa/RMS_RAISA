@@ -2,7 +2,18 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.20 (Arquivamento de leads — 10/08/2026)
+ * Versão: 1.22 (Escopo do modal Importar Prospects — 19/08/2026)
+ *
+ * 🆕 v1.22 (19/08/2026 — Escopo do modal "Importar Prospects"):
+ *   `useImportProspects` passa a receber `userId`. O modal listava a base
+ *   de prospects de TODA a equipe — agora respeita `reservado_por`.
+ *   Pareado com useImportProspects v1.1 e api/prospect-leads v1.3.
+ *
+ * 🆕 v1.21 (19/08/2026 — Descarte lógico do lead importado):
+ *   • state `descartandoLead` (LeadImportado | null);
+ *   • `<DescartarLeadImportadoModal />` delegando ao hook v1.6;
+ *   • prop `onDescartar` na LeadsImportadosTab;
+ *   • `verDescartados` incluído nas deps do useEffect de carga.
  *
  * 🆕 v1.20 (10/08/2026 — Arquivamento de leads / soft-delete):
  *   Fecha o ciclo do botão 📦 da LeadsTab v1.3:
@@ -182,7 +193,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     defaultIncluirCreci: defaultsLeads.defaultIncluirCreci,
     defaultFiltroAnalista: defaultsLeads.defaultFiltroAnalista,
   });
-  const importH = useImportProspects();
+  const importH = useImportProspects({ userId: currentUser.id });
   // 🆕 v1.19 (01/07/2026) — useRespostas e useInvalidos migrados ao CRMEmailPage.
   // 🆕 v1.4 (Lead RBAC fix) — fontes p/ o LeadFormModal
   const tiposCampanhaH = useTiposCampanha();

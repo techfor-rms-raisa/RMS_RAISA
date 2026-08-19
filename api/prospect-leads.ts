@@ -33,6 +33,15 @@
  *        absorve toda a regra (decisão arquitetural: filtros estruturais
  *        devem ficar no backend para consistência entre clientes).
  *
+ *  - v1.3 (19/08/2026 — `limit` passa a ser respeitado):
+ *    A query base tinha `.limit(500)` fixo e o query param `limit` era
+ *    silenciosamente ignorado. Com 7.302 registros em status='novo' no
+ *    momento do diagnóstico, o modal "Importar Prospects" da Base de Leads
+ *    exibia uma fatia arbitrária de ~6% da base (os mais recentes por
+ *    criado_em) sem nenhum indicativo de truncamento — nem para o operador,
+ *    nem no console. Agora: default 500 (comportamento anterior preservado
+ *    para qualquer chamador que não envie o param) e teto de 2.000.
+ *
  *  - v1.2 (03/08/2026 — CRUD do prospect na aba "Meus Prospects Salvos"):
  *    Três novas operações PATCH, pareadas com ProspectSearchPage v4.9:
  *
@@ -96,6 +105,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const {
             status, empresa, motor, origem, reservado_por,
             excluir_status, usuarios, kpis,
+            limit,   // 🆕 v1.3 (19/08/2026)
         } = req.query as Record<string, string>;
 
         // ── KPI Cards: Total Empresas + Importados Hoje RAISA ────────────
@@ -139,6 +149,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             return res.status(200).json({ success: true, usuarios: data });
         }
 
+        // 🆕 v1.3 (19/08/2026) — normalização do limite.
+        //   Valores inválidos (NaN, ≤0) caem no default de 500; acima de
+        //   2.000 são truncados para não estourar o payload da serverless.
+        const limitNum = Number(limit);
+        const limitEfetivo = Number.isFinite(limitNum) && limitNum > 0
+            ? Math.min(limitNum, 2000)
+            : 500;
+
         let query = supabase
             .from('prospect_leads')
             .select(`
@@ -154,7 +172,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 exportado_por_user:app_users!prospect_leads_exportado_por_fkey(id, nome_usuario)
             `)
             .order('criado_em', { ascending: false })
-            .limit(500);
+            // 🆕 v1.3 (19/08/2026) — o teto era `.limit(500)` fixo e o param
+            //   `limit` enviado pelo frontend era silenciosamente ignorado
+            //   (useImportProspects mandava `limit=200` desde 2026 sem efeito).
+            //   Pior: com 7.302 registros em status='novo', o corte descartava
+            //   93% da base sem nenhum aviso ao operador — a lista exibida era
+            //   uma fatia arbitrária dos mais recentes por criado_em.
+            //   Agora o param é respeitado, com default 500 (comportamento
+            //   histórico preservado) e teto de 2.000 para proteger o payload.
+            .limit(limitEfetivo);
 
         // Filtros de origem: 'empresas' = CV Extract; 'leads' = pesquisa manual
         if (origem === 'empresas') {
