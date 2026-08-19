@@ -102,6 +102,8 @@ import EditarLeadImportadoModal from './EditarLeadImportadoModal';
 import type { LeadImportado } from '../shared/hooks/useLeadsImportados';
 // 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026)
 import PromoverLeadModal from './PromoverLeadModal';
+// 🆕 v1.21 (19/08/2026) — Modal de descarte lógico do lead importado
+import DescartarLeadImportadoModal from './DescartarLeadImportadoModal';
 
 import KpiCard from '../shared/components/KpiCard';
 import type { CurrentUserLite, Empresa, Lead } from '../types/crm.types';
@@ -204,6 +206,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
   const [editandoLead, setEditandoLead] = useState<LeadImportado | null>(null);
   // 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026) — Modal "Promover Lead manualmente"
   const [promovendoLead, setPromovendoLead] = useState<LeadImportado | null>(null);
+  // 🆕 v1.21 (19/08/2026) — Modal "Descartar Lead Importado" (exclusão lógica)
+  const [descartandoLead, setDescartandoLead] = useState<LeadImportado | null>(null);
 
   // 🆕 v1.19 (01/07/2026) — States removidos (migrados ao CRMEmailPage):
   //   - recoveringLeadIds (motor Recovery da aba Inválidos)
@@ -270,6 +274,9 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     leadsImportadosH.apenasMeus,
     leadsImportadosH.filtroStatus,
     leadsImportadosH.ordenacao,
+    // 🆕 v1.21 (19/08/2026) — alternar "Ver descartados" troca o conjunto
+    //   retornado pelo backend, então precisa disparar novo fetch.
+    leadsImportadosH.verDescartados,
   ]);
 
   // 🆕 v1.1 (Fase 7-MVP) — Consumo do deep link.
@@ -830,6 +837,8 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             onEditar={(lead) => setEditandoLead(lead)}
             // 🆕 v1.13 (Sub-fase 3.D refino — 18/06/2026)
             onPromover={(lead) => setPromovendoLead(lead)}
+            // 🆕 v1.21 (19/08/2026) — descarte lógico
+            onDescartar={(lead) => setDescartandoLead(lead)}
           />
         )}
       </div>
@@ -933,6 +942,20 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           return r;
         }}
         onFechar={() => setPromovendoLead(null)}
+      />
+
+      {/* 🆕 v1.21 (19/08/2026) — Modal "Descartar Lead Importado" */}
+      <DescartarLeadImportadoModal
+        aberto={descartandoLead !== null}
+        lead={descartandoLead}
+        onConfirmar={async (lead_id) => {
+          // O hook v1.6 remove o item do array local em caso de sucesso.
+          // Não recarregamos as stats do topo (Empresas/Leads/Prospects)
+          // porque o descarte não altera nenhum dos contadores: o lead
+          // continua em prospect_leads, apenas com status='descartado'.
+          return await leadsImportadosH.descartar(lead_id);
+        }}
+        onFechar={() => setDescartandoLead(null)}
       />
 
       {/* 🆕 v1.19 (01/07/2026) — RecuperarParaCampanhaModal REMOVIDO

@@ -2,7 +2,34 @@
  * useLeadsImportados.ts — Hook orquestrador da aba "Leads Importados"
  *
  * Caminho: src/components/crm/shared/hooks/useLeadsImportados.ts
- * Versão: 1.5 (Cota parametrizada — 23/06/2026)
+ * Versão: 1.6 (Descarte lógico do lead importado — 19/08/2026)
+ *
+ * 🆕 v1.6 (19/08/2026 — Descarte lógico):
+ *   Espelha o comportamento da aba "Meus Prospects Salvos" do Prospect
+ *   Engine: o lead sai da listagem sem ser apagado do banco, e pode ser
+ *   trazido de volta pelo filtro "Ver descartados".
+ *
+ *   Novidades:
+ *     • Estado `verDescartados` (boolean, default false) — propagado ao
+ *       GET como `ver_descartados` e incluído nas deps de `carregar()`.
+ *     • `descartar(lead_id)`  → PATCH /api/prospect-leads { excluir_logico: true }
+ *     • `restaurar(lead_id)`  → PATCH /api/prospect-leads { restaurar: true }
+ *     • Estado `restaurandoLeadIds: Set<number>` para o spinner por linha
+ *       do botão Restaurar (o Descartar tem spinner próprio no modal).
+ *
+ *   Por que o PATCH vai para /api/prospect-leads e não para
+ *   /api/revalidacao-leads-importados: a trava de integridade que impede
+ *   descartar um lead já promovido ao CRM (status='no_crm' → HTTP 409) já
+ *   vive em prospect-leads v1.2. Duplicá-la em dois endpoints criaria duas
+ *   fontes de verdade que divergiriam na primeira manutenção.
+ *
+ *   Ambas as ações removem o item do array local e decrementam `total`,
+ *   porque em qualquer um dos dois modos de listagem o lead deixa de
+ *   pertencer ao conjunto exibido (descartar sai da lista ativa;
+ *   restaurar sai da lista de descartados).
+ *
+ *   Nenhuma alteração no contrato do GET, nas chaves de cota ou nas
+ *   demais ações do hook.
  *
  * 🆕 v1.5 (23/06/2026 — Cota parametrizada por usuário):
  *   Adiciona o estado `cotaTotal` (o limite diário do usuário, agora
@@ -271,9 +298,15 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
   //   `null` antes da 1ª carga (componente usa fallback 50). Após
   //   carregar(), reflete app_users.cota_revalidacao_diaria do usuário.
   const [cotaTotal, setCotaTotal]               = useState<number | null>(null);
+  // 🆕 v1.6 (19/08/2026) — modo "Ver descartados". Quando true, a listagem
+  //   traz SOMENTE os leads com status='descartado' (e o botão da linha
+  //   passa a ser "Restaurar" no lugar de Editar/Validar/Descartar).
+  const [verDescartados, setVerDescartados]     = useState(false);
 
   // ── Estado de ações por linha (spinners) ────────────────
   const [validandoLeadIds, setValidandoLeadIds] = useState<Set<number>>(new Set());
+  // 🆕 v1.6 — spinner do botão "Restaurar" por linha.
+  const [restaurandoLeadIds, setRestaurandoLeadIds] = useState<Set<number>>(new Set());
 
   // ── carregar() — GET /api/revalidacao-leads-importados ─────
   const carregar = useCallback(async () => {
@@ -287,6 +320,8 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
       params.set('per_page', String(perPage));
       if (filtroStatus) params.set('status', filtroStatus);
       if (busca.trim()) params.set('busca', busca.trim());
+      // 🆕 v1.6 — só envia quando ligado; backend tem default 'false'.
+      if (verDescartados) params.set('ver_descartados', 'true');
 
       const res = await fetch(`/api/revalidacao-leads-importados?${params.toString()}`);
       const data = await res.json();
@@ -311,7 +346,7 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     } finally {
       setLoading(false);
     }
-  }, [userId, apenasMeus, ordenacao, page, perPage, filtroStatus, busca]);
+  }, [userId, apenasMeus, ordenacao, page, perPage, filtroStatus, busca, verDescartados]);
 
   // ── validarLead() — POST /api/prospect-revalidate ───────
   const validarLead = useCallback(async (lead: LeadImportado): Promise<{
@@ -634,6 +669,97 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     return (data.resultados ?? []) as ItemVerificacaoDuplicidade[];
   }, []);
 
+  // ── 🆕 v1.6 descartar() — PATCH /api/prospect-leads ────────────────
+  /**
+   * Descarte LÓGICO do lead importado: marca `status='descartado'` em
+   * `prospect_leads`. Nada é apagado — o registro sai da listagem ativa,
+   * o histórico de revalidação (prospect_revalidacao_log) é preservado e
+   * o vínculo email_leads.prospect_lead_id continua rastreável.
+   *
+   * Reutiliza o endpoint do Prospect Engine (prospect-leads v1.2), que já
+   * concentra a trava de integridade: lead com status='no_crm' (já
+   * promovido ao CRM) devolve HTTP 409 e NÃO é descartado — nesse caso o
+   * tratamento correto é opt-out/arquivamento na Base de Leads.
+   *
+   * Remove o item do array local em caso de sucesso (a listagem padrão
+   * esconde descartados) e decrementa `total`.
+   *
+   * Nunca lança — sempre devolve { ok, error }.
+   */
+  const descartar = useCallback(async (
+    lead_id: number
+  ): Promise<{ ok: boolean; error?: string }> => {
+    try {
+      const res = await fetch('/api/prospect-leads', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids:            [lead_id],
+          excluir_logico: true,
+          atualizado_por: userId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.success) {
+        return { ok: false, error: data?.error || `HTTP ${res.status} ao descartar` };
+      }
+
+      setLeads(prev => prev.filter(l => l.id !== lead_id));
+      setTotal(prev => Math.max(0, prev - 1));
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Falha de rede' };
+    }
+  }, [userId]);
+
+  // ── 🆕 v1.6 restaurar() — PATCH /api/prospect-leads ────────────────
+  /**
+   * Desfaz o descarte: devolve o lead para `status='novo'`, voltando a
+   * aparecer na listagem ativa da aba. Só é acionável no modo
+   * `verDescartados=true`, então o item sai do array local (deixou de
+   * pertencer ao conjunto "descartados" que está sendo exibido).
+   *
+   * Nunca lança — sempre devolve { ok, error }.
+   */
+  const restaurar = useCallback(async (
+    lead_id: number
+  ): Promise<{ ok: boolean; error?: string }> => {
+    if (restaurandoLeadIds.has(lead_id)) {
+      return { ok: false, error: 'Restauração já em andamento' };
+    }
+    setRestaurandoLeadIds(prev => new Set(prev).add(lead_id));
+
+    try {
+      const res = await fetch('/api/prospect-leads', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids:            [lead_id],
+          restaurar:      true,
+          atualizado_por: userId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.success) {
+        return { ok: false, error: data?.error || `HTTP ${res.status} ao restaurar` };
+      }
+
+      setLeads(prev => prev.filter(l => l.id !== lead_id));
+      setTotal(prev => Math.max(0, prev - 1));
+      return { ok: true };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Falha de rede' };
+    } finally {
+      setRestaurandoLeadIds(prev => {
+        const novo = new Set(prev);
+        novo.delete(lead_id);
+        return novo;
+      });
+    }
+  }, [userId, restaurandoLeadIds]);
+
   return {
     // estado de listagem
     leads, total,
@@ -647,9 +773,12 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     cotaConsumidaHoje, cotaResidual,
     // 🆕 v1.5 (23/06/2026) — cota total parametrizada por usuário (substitui /50 hardcoded)
     cotaTotal,
+    // 🆕 v1.6 (19/08/2026) — modo "Ver descartados"
+    verDescartados, setVerDescartados,
 
     // estado por linha
     validandoLeadIds,
+    restaurandoLeadIds,      // 🆕 v1.6
 
     // ações
     carregar,
@@ -658,6 +787,8 @@ export function useLeadsImportados(options: UseLeadsImportadosOptions) {
     editar,                  // 🆕 v1.1
     promoverManualmente,     // 🆕 v1.3
     verificarDuplicidade,    // 🆕 v1.4
+    descartar,               // 🆕 v1.6
+    restaurar,               // 🆕 v1.6
   };
 }
 

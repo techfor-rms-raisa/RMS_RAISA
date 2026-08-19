@@ -2,7 +2,26 @@
  * LeadsImportadosTab.tsx — Aba "Leads Importados" do BaseLeadsPage
  *
  * Caminho: src/components/crm/base-leads/LeadsImportadosTab.tsx
- * Versão: 1.5 (Cota parametrizada — 23/06/2026)
+ * Versão: 1.6 (Descarte lógico do lead importado — 19/08/2026)
+ *
+ * 🆕 v1.6 (19/08/2026 — Descarte lógico), mockup aprovado por Messias:
+ *   • Botão "Descartar" (lixeira vermelha, somente ícone) na coluna Ações,
+ *     último da fila. Dispara `onDescartar(lead)` — o modal de confirmação
+ *     mora no BaseLeadsPage, mesmo padrão de Editar e Promover.
+ *   • Checkbox "Ver descartados" ao lado de "Apenas meus". Quando ligado,
+ *     a listagem traz SOMENTE os leads descartados e a coluna Ações passa
+ *     a exibir um único botão "Restaurar" (verde).
+ *   • Banner rosé de contexto no modo descartados, deixando explícito que
+ *     nada foi apagado do banco.
+ *   • Linhas descartadas em bg-rose-50/40, nome riscado e legenda
+ *     "Descartado · {data}" derivada de `atualizado_em` (coluna que o
+ *     PATCH já grava — sem migration).
+ *
+ *   O empty state também muda no modo descartados: "Nenhum lead
+ *   descartado" com convite a desligar o filtro, em vez de sugerir a
+ *   importação de lista (que ali seria instrução errada).
+ *
+ * v1.5 (Cota parametrizada — 23/06/2026)
  *
  * 🆕 v1.5 (23/06/2026 — Cota parametrizada por usuário):
  *   Remove o hardcode `/ 50` do badge "Cota Revalidação hoje" e passa
@@ -101,6 +120,8 @@ export interface LeadsImportadosTabProps {
   onEditar: (lead: LeadImportado) => void;
   /** 🆕 v1.2 — Callback chamado quando usuário clica no botão Promover de uma linha. */
   onPromover: (lead: LeadImportado) => void;
+  /** 🆕 v1.6 — Callback chamado quando usuário clica no botão Descartar (lixeira). */
+  onDescartar: (lead: LeadImportado) => void;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -170,12 +191,16 @@ const BadgeEmail: React.FC<BadgeEmailProps> = ({ score }) => {
 // COMPONENTE
 // ════════════════════════════════════════════════════════════
 
-const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar, onPromover }) => {
+const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({
+  hook, onEditar, onPromover, onDescartar,
+}) => {
   const {
     leads, total, page, perPage, apenasMeus, filtroStatus,
     ordenacao, busca, loading, cotaConsumidaHoje, cotaResidual,
     // 🆕 v1.5 (23/06/2026) — cota total parametrizada (substitui o /50 hardcoded)
     cotaTotal,
+    // 🆕 v1.6 (19/08/2026) — modo "Ver descartados"
+    verDescartados, setVerDescartados, restaurandoLeadIds, restaurar,
     validandoLeadIds,
     setPage, setPerPage, setApenasMeus, setFiltroStatus,
     setOrdenacao, setBusca,
@@ -205,6 +230,16 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
     }
   }, [validarLead, carregar]);
 
+  // 🆕 v1.6 — Restaurar 1 lead descartado (botão da coluna Ações no modo
+  //   "Ver descartados"). Sem modal de confirmação: a ação é construtiva
+  //   e reversível pelo próprio botão Descartar.
+  const onRestaurar = useCallback(async (lead: LeadImportado) => {
+    const r = await restaurar(lead.id);
+    if (!r.ok) {
+      alert(`Não foi possível restaurar o lead: ${r.error || 'erro desconhecido'}`);
+    }
+  }, [restaurar]);
+
   // ──────────────────────────────────────────────────────────
   return (
     <div className="p-4 space-y-4">
@@ -213,8 +248,13 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
       <div className="flex flex-col lg:flex-row lg:items-center gap-3 justify-between">
         <div className="flex items-center gap-2 text-sm text-gray-600">
           <i className="fa-solid fa-info-circle text-indigo-500"></i>
-          Mostrando <strong className="text-gray-900">{total} leads importados</strong>
-          {apenasMeus && ' reservados para você'}
+          {/* 🆕 v1.6 — o rótulo muda no modo "Ver descartados" para não
+              induzir o operador a achar que perdeu leads da base ativa. */}
+          Mostrando{' '}
+          <strong className="text-gray-900">
+            {total} {verDescartados ? 'leads descartados' : 'leads importados'}
+          </strong>
+          {apenasMeus && !verDescartados && ' reservados para você'}
           <span className="text-gray-400">·</span>
           Cota Revalidação hoje: <strong className="text-gray-900">{cotaConsumidaHoje} / {cotaTotalSafe}</strong>
           {cotaResidual > 0 && cotaResidual <= limiteAvisoRestante && (
@@ -234,6 +274,30 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
               className="accent-indigo-600"
             />
             <span className="text-indigo-700 font-medium">Apenas meus</span>
+          </label>
+
+          {/* 🆕 v1.6 — Ver descartados.
+              Vive fora do dropdown de status porque filtra a coluna
+              `status` (novo / no_crm / descartado), enquanto o dropdown
+              filtra `status_atualizacao` (atualizado / promovido / ...).
+              São eixos independentes; misturá-los no mesmo controle
+              produziria combinações sem sentido. */}
+          <label
+            className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-sm cursor-pointer ${
+              verDescartados
+                ? 'bg-rose-50 border-rose-200'
+                : 'bg-white border-gray-300 hover:bg-gray-50'
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={verDescartados}
+              onChange={e => { setVerDescartados(e.target.checked); setPage(1); }}
+              className="accent-rose-600"
+            />
+            <span className={`font-medium ${verDescartados ? 'text-rose-700' : 'text-gray-700'}`}>
+              Ver descartados
+            </span>
           </label>
 
           {/* Status */}
@@ -288,6 +352,15 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
         </div>
       </div>
 
+      {/* 🆕 v1.6 — Banner de contexto do modo "Ver descartados" */}
+      {verDescartados && (
+        <div className="bg-rose-50 border border-rose-200 rounded-lg px-4 py-2.5 text-sm text-rose-800 flex items-center gap-2">
+          <i className="fa-solid fa-trash-can"></i>
+          Exibindo apenas leads <strong>descartados</strong>. Nenhum registro foi apagado do
+          banco — use <strong>Restaurar</strong> para devolver o lead à listagem ativa.
+        </div>
+      )}
+
       {/* ── Tabela ─────────────────────────────────────────── */}
       <div className="border border-gray-200 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
@@ -315,23 +388,46 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
               ) : leads.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-10 text-center text-gray-400">
-                    <i className="fa-solid fa-inbox text-3xl"></i>
-                    <p className="mt-2 text-sm">Nenhum lead importado encontrado.</p>
-                    <p className="text-xs mt-1">
-                      Use o botão <strong>Importar Lista de Leads</strong> no topo da página.
-                    </p>
+                    {/* 🆕 v1.6 — o vazio de "descartados" pede instrução
+                        diferente: sugerir importar lista ali seria orientação
+                        errada para quem só ligou o filtro. */}
+                    {verDescartados ? (
+                      <>
+                        <i className="fa-solid fa-trash-can text-3xl"></i>
+                        <p className="mt-2 text-sm">Nenhum lead descartado.</p>
+                        <p className="text-xs mt-1">
+                          Desligue <strong>Ver descartados</strong> para voltar à listagem ativa.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <i className="fa-solid fa-inbox text-3xl"></i>
+                        <p className="mt-2 text-sm">Nenhum lead importado encontrado.</p>
+                        <p className="text-xs mt-1">
+                          Use o botão <strong>Importar Lista de Leads</strong> no topo da página.
+                        </p>
+                      </>
+                    )}
                   </td>
                 </tr>
               ) : (
                 leads.map(l => {
                   const validando = validandoLeadIds.has(l.id);
-                  const linhaCls = l.status_atualizacao === 'trocou_empresa'
-                    ? 'hover:bg-gray-50 bg-amber-50/30'
-                    : 'hover:bg-gray-50';
+                  // 🆕 v1.6 — no modo descartados a linha inteira ganha tom
+                  //   rosé; o destaque âmbar de 'trocou_empresa' perde
+                  //   utilidade ali (o lead saiu do fluxo de trabalho).
+                  const restaurando = restaurandoLeadIds.has(l.id);
+                  const linhaCls = verDescartados
+                    ? 'bg-rose-50/40 hover:bg-rose-50'
+                    : l.status_atualizacao === 'trocou_empresa'
+                      ? 'hover:bg-gray-50 bg-amber-50/30'
+                      : 'hover:bg-gray-50';
                   return (
                     <tr key={l.id} className={linhaCls}>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-gray-900 flex items-center gap-2">
+                        <div className={`font-medium flex items-center gap-2 ${
+                          verDescartados ? 'text-gray-500 line-through' : 'text-gray-900'
+                        }`}>
                           <span>{l.nome_completo}</span>
                           {/* v1.4 (19/06/2026): ícone LinkedIn discreto inline */}
                           {l.linkedin_url && (
@@ -350,9 +446,17 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
                         {l.cargo && (
                           <div className="text-xs text-gray-500">{l.cargo}</div>
                         )}
-                        {l.review_manual && (
+                        {l.review_manual && !verDescartados && (
                           <div className="text-xs text-amber-700">
                             <i className="fa-solid fa-triangle-exclamation"></i> Revisão manual
+                          </div>
+                        )}
+                        {/* 🆕 v1.6 — data do descarte via `atualizado_em`,
+                            gravado pelo PATCH excluir_logico. Sem migration. */}
+                        {verDescartados && (
+                          <div className="text-xs text-rose-700 mt-0.5">
+                            <i className="fa-solid fa-trash-can"></i> Descartado ·{' '}
+                            {formatarData(l.atualizado_em)}
                           </div>
                         )}
                       </td>
@@ -372,10 +476,43 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
                           </span>
                         ) : '—'}
                       </td>
-                      <td className="px-4 py-3"><BadgeStatus status={l.status_atualizacao} /></td>
+                      <td className="px-4 py-3">
+                        {/* 🆕 v1.6 — no modo descartados o status relevante é
+                            `status='descartado'`, não o `status_atualizacao`
+                            congelado no momento do descarte. */}
+                        {verDescartados ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-rose-100 text-rose-700">
+                            <i className="fa-solid fa-trash-can"></i> Descartado
+                          </span>
+                        ) : (
+                          <BadgeStatus status={l.status_atualizacao} />
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-gray-600 text-xs">{formatarData(l.validado_em)}</td>
                       <td className="px-4 py-3 text-gray-600 text-xs">{formatarDataCurta(l.proxima_validacao)}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
+                        {/* 🆕 v1.6 — no modo descartados a única ação possível
+                            é Restaurar. Editar/Validar/Promover em um lead
+                            descartado consumiria cota e produziria estado
+                            inconsistente (lead fora do fluxo sendo validado). */}
+                        {verDescartados ? (
+                          <button
+                            onClick={() => onRestaurar(l)}
+                            disabled={restaurando}
+                            title="Restaurar lead para a listagem ativa"
+                            className="px-3 py-1.5 bg-white border border-emerald-300 text-emerald-700 rounded-lg text-xs font-medium hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
+                          >
+                            {restaurando ? (
+                              <>
+                                <i className="fa-solid fa-spinner fa-spin"></i> Restaurando…
+                              </>
+                            ) : (
+                              <>
+                                <i className="fa-solid fa-rotate-left"></i> Restaurar
+                              </>
+                            )}
+                          </button>
+                        ) : (
                         <div className="inline-flex gap-1.5">
                           {/* 🆕 v1.1 — botão Editar (lápis) */}
                           <button
@@ -416,7 +553,19 @@ const LeadsImportadosTab: React.FC<LeadsImportadosTabProps> = ({ hook, onEditar,
                               </>
                             )}
                           </button>
+                          {/* 🆕 v1.6 — botão Descartar (lixeira).
+                              Exclusão LÓGICA: o backend (prospect-leads v1.2)
+                              marca status='descartado' e devolve 409 se o lead
+                              já estiver promovido ao CRM (status='no_crm'). */}
+                          <button
+                            onClick={() => onDescartar(l)}
+                            title="Descartar lead importado (exclusão lógica — reversível)"
+                            className="px-2.5 py-1.5 bg-white border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 inline-flex items-center"
+                          >
+                            <i className="fa-solid fa-trash"></i>
+                          </button>
                         </div>
+                        )}
                       </td>
                     </tr>
                   );
