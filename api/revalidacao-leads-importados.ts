@@ -2,46 +2,7 @@
  * api/revalidacao-leads-importados.ts — Listagem + Edição + Promoção + Anti-dup
  *
  * Caminho: api/revalidacao-leads-importados.ts
- * Versão: 1.7 (Descarte lógico do lead importado — 19/08/2026)
- *
- * 🆕 v1.7 (19/08/2026 — Descarte lógico na aba "Leads Importados"):
- *
- *   Pareado com LeadsImportadosTab v1.6 / useLeadsImportados v1.6, que
- *   ganharam o botão "Descartar" (lixeira) na coluna Ações — espelhando o
- *   comportamento já existente na aba "Meus Prospects Salvos" do Prospect
- *   Engine (ProspectSearchPage v4.9).
- *
- *   A ESCRITA do descarte NÃO acontece aqui: o frontend chama
- *   `PATCH /api/prospect-leads` com `excluir_logico: true` (ou `restaurar:
- *   true`), que já existe desde prospect-leads v1.2 e opera genericamente
- *   sobre `prospect_leads` — sem restrição por `motor`. Reaproveitar esse
- *   endpoint evita duplicar a trava de integridade (status='no_crm' → 409)
- *   em dois lugares, que inevitavelmente divergiriam com o tempo.
- *
- *   O que MUDA aqui é apenas a LEITURA. Sem este ajuste o botão pareceria
- *   quebrado: `status='descartado'` é coluna DIFERENTE de
- *   `status_atualizacao` (o filtro exposto no dropdown da aba), então o
- *   lead descartado continuaria listado normalmente após a ação.
- *
- *   Mudanças cirúrgicas em `handleListar`:
- *     1. Novo query param `ver_descartados=true|false` (default: false).
- *     2. Query base passa a ter dois modos mutuamente exclusivos:
- *          • ver_descartados=false (default) →
- *              .neq('status','no_crm').neq('status','descartado')
- *          • ver_descartados=true →
- *              .eq('status','descartado')
- *        No modo "ver descartados" o filtro `no_crm` é dispensável: um
- *        lead não pode estar simultaneamente descartado e promovido
- *        (prospect-leads v1.2 bloqueia o descarte de status='no_crm' com
- *        HTTP 409 antes de gravar).
- *
- *   Retorno do JSON inalterado — nenhuma chave nova, nenhuma removida.
- *   Backwards-compatible: cliente que não enviar `ver_descartados` recebe
- *   exatamente o mesmo conjunto de antes, menos os descartados (que, até
- *   esta versão, sequer podiam existir nesta aba).
- *
- *   Sem migration de banco: `status`, `atualizado_em` e `atualizado_por`
- *   já existem em `prospect_leads`.
+ * Versão: 1.6 (FIX bug "Promovido não some" + Cota parametrizada — 23/06/2026)
  *
  * 🆕 v1.6 (23/06/2026 — FIX bug "Promovido não some" + Cota parametrizada):
  *
@@ -198,9 +159,6 @@
  *       [&ordenacao=recente|antigo|proxima_validacao]   (default: recente)
  *       [&busca={texto livre em nome/email/empresa}]
  *       [&page=1&per_page=30|50|100]                    (default: page=1 per_page=30)
- *       [&ver_descartados=true|false]   🆕 v1.7          (default: false)
- *            false → esconde status IN ('no_crm','descartado')
- *            true  → lista SOMENTE status='descartado'
  *
  *   🆕 v1.1 — PATCH /api/prospect-leads-importados
  *       Body: { lead_id, user_id, novos_dados: {...campos...} }
@@ -320,11 +278,6 @@ async function handleListar(req: VercelRequest, res: VercelResponse) {
   const status     = (q.status ?? '').trim() || null;
   const busca      = (q.busca  ?? '').trim() || null;
 
-  // 🆕 v1.7 (19/08/2026) — modo "Ver descartados".
-  //   Default false: comportamento idêntico ao de sempre para qualquer
-  //   cliente que não conheça o parâmetro (rolling deploy seguro).
-  const verDescartados = (q.ver_descartados ?? 'false').toLowerCase() === 'true';
-
   let ordenacao: Ordenacao = 'recente';
   if (q.ordenacao === 'antigo' || q.ordenacao === 'proxima_validacao') {
     ordenacao = q.ordenacao;
@@ -348,30 +301,11 @@ async function handleListar(req: VercelRequest, res: VercelResponse) {
   //   O filtro `status != 'no_crm'` consegue isso porque APENAS o helper
   //   de promoção marca status='no_crm'. Demais status_atualizacao
   //   preservam o status anterior do prospect (default 'novo').
-  //
-  // 🆕 v1.7 (19/08/2026) — Descarte lógico.
-  //   `status='descartado'` (gravado por PATCH /api/prospect-leads com
-  //   excluir_logico=true) é coluna DIFERENTE de `status_atualizacao`, que
-  //   alimenta o dropdown de status da aba. Sem o filtro abaixo o lead
-  //   descartado continuaria aparecendo na listagem e o botão "Descartar"
-  //   pareceria não fazer nada.
-  //
-  //   Dois modos mutuamente exclusivos:
-  //     • verDescartados=false (default) → esconde promovidos E descartados
-  //     • verDescartados=true            → mostra SOMENTE os descartados
-  //   No segundo modo o filtro `no_crm` é redundante: prospect-leads v1.2
-  //   responde 409 ao tentar descartar um lead com status='no_crm', então
-  //   os dois estados nunca coexistem no mesmo registro.
   let query = supabase
     .from('prospect_leads')
     .select('*', { count: 'exact' })
-    .eq('motor', 'importacao_lista');
-
-  if (verDescartados) {
-    query = query.eq('status', 'descartado');
-  } else {
-    query = query.neq('status', 'no_crm').neq('status', 'descartado');
-  }
+    .eq('motor', 'importacao_lista')
+    .neq('status', 'no_crm');
 
   if (apenasMeus) {
     query = query.eq('reservado_por', user_id);
