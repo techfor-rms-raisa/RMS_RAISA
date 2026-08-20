@@ -42,12 +42,107 @@
  *   do CRM). Sem mudança da chave interna da aba ('leads' continua
  *   sendo o discriminator) e sem mudança de RBAC ou lógica.
  * - Comentários atualizados para refletir o vocabulário "Prospects".
+ *
+ * v4.4 (25/06/2026 — Fase 3 da reconciliação CV):
+ * - Botão admin "Reconciliar CVs" ao lado de "Nova Pesquisa", visível
+ *   apenas para tipo_usuario = 'Administrador'.
+ * - Mostra contador de candidatos com CV cadastrado mas SEM leads
+ *   correspondentes em prospect_leads (backlog do bug silencioso
+ *   de 91 dias descoberto em 25/06/2026).
+ * - Ao clicar abre modal de confirmação; ao iniciar dispara loop
+ *   automático de chamadas POST /api/prospect-cv-reconcile em lotes
+ *   de 20, com barra de progresso e contadores em tempo real.
+ * - Admin pode cancelar a qualquer momento; processo é idempotente,
+ *   então re-execução continua de onde parou.
+ *
+ * v4.5 (25/06/2026 — Fase 4 da normalização de empresas):
+ * - Botão admin "Normalizar" ao lado de "Reconciliar CVs", visível
+ *   apenas para tipo_usuario = 'Administrador'.
+ * - Mostra contador de nomes distintos de empresa em prospect_leads.
+ * - Ao clicar abre modal explicando as regras (sufixos legais
+ *   removidos, Title Case com proteção de siglas, etc) e dispara
+ *   loop automático de chamadas POST /api/prospect-empresa-normalize
+ *   em lotes de 50 nomes por vez.
+ * - Idempotente: rodar 2x não bagunça (nomes já normalizados são
+ *   detectados e pulados).
+ * - Auditoria completa em empresa_normalizacao_log.
+ * - ESCOPO Opção A: SÓ prospect_leads.empresa_nome (não toca
+ *   email_empresas, email_leads, etc).
+ *
+ * v4.6 (25/06/2026 — hotfix detecção de estagnação nos loops):
+ * - Reconciliação CV: detecta quando o lote processa pessoas mas
+ *   "restantes" não diminui — caso de pessoas sem motor classificável
+ *   (skills/cargos não batem com nenhuma keyword de cv_alocacao,
+ *   cv_infra, cv_ia_ml, cv_sap). Sem proteção, o loop pega sempre
+ *   os mesmos IDs (paginação ORDER BY p.id ASC + filtro pl.id IS NULL).
+ *   Validado em 25/06/2026 com loop que rodou 4.234 vezes em vez de
+ *   347 — 3 pessoas ficaram em limbo girando.
+ * - Normalização: garante que offset SEMPRE avança no loop, evitando
+ *   travamento por offset_proximo malformado.
+ * - Ambas correções defensivas, não mudam comportamento normal.
+ *
+ * v4.7 (25/06/2026 — hotfix finalização do modal de progresso):
+ * - Reconciliação CV: o status só transitava para 'concluido' quando
+ *   cancelado OU restantes===0. Quando o hotfix v4.6 disparava break
+ *   por estagnação (3 pessoas em limbo), nenhuma condição era satisfeita
+ *   e o modal ficava PRESO em 'rodando' eternamente.
+ * - Normalização: o status só transitava para 'concluido' quando
+ *   cancelado OU offset>=totalInicial. Mas o backend retorna terminou=true
+ *   antes do offset chegar lá (porque o total REAL de nomes distintos
+ *   diminui durante a execução — nomes colidem ao normalizar). Resultado:
+ *   modal preso em ~98% de progresso.
+ * - Solução comum: finalização via functional updater
+ *     setStatus(prev => prev === 'rodando' ? 'concluido' : prev)
+ *   Cobre TODOS os caminhos de saída (break, terminou, estagnação, erro).
+ *   Não pisa em 'erro' que já foi setado dentro do try/catch.
+ *
+ * v4.8 (29/06/2026 — Domínios Turnover, nova aba comercial):
+ * - Aba "Domínios Turnover" visível para Administrador, Admin,
+ *   Gestão Comercial e SDR. Lista o ranking de domínios em
+ *   prospect_leads ordenado por incidência (= turnover percebido).
+ * - Backend: view materializada mv_dominios_turnover + endpoint
+ *   /api/prospect-dominios-turnover (actions: listar, stats, refresh,
+ *   marcar_trabalhado, desmarcar_trabalhado, exportar_csv).
+ * - Calibração de tiers baseada em dados reais (top 50 inspecionado
+ *   em 29/06/2026): S≥40, A 20-39, B 10-19, C 5-9, D<5.
+ * - Unificação automática .com.br → .com quando ambos existem
+ *   (caso PicPay: 83+21 = 104 leads consolidados).
+ * - Marcação "já trabalhado" GLOBAL (visível a todos), governada
+ *   pelo endpoint: só o próprio autor OU Administrador pode desmarcar.
+ * - Filtros: busca por domínio, tier (S/A/B/C/D), "Esconder os
+ *   já trabalhados pela equipe". Paginação 50/página.
+ * - Ações por linha: 🎯 Prospectar (leva à aba "Nova Busca" com
+ *   domínio pré-preenchido), 📋 Copiar, 🔖 Marcar/Desmarcar.
+ * - Refresh manual via botão "Atualizar agora" (chama
+ *   refresh_dominios_turnover RPC com CONCURRENTLY).
+ *
+ * v4.9 (03/08/2026 — CRUD do prospect na aba "Meus Prospects Salvos"):
+ * - Nova coluna GERENCIAR, à direita de AÇÕES, com dois controles por
+ *   linha: ✏️ Editar (nome, cargo, empresa, email) e 🗑️ Descartar.
+ * - Motivação de negócio: prospects capturados pela Extension/Gemini
+ *   chegam com lacunas (sem email, empresa com texto do LinkedIn no
+ *   lugar do nome, cargo colado no nome). O analista precisa corrigir
+ *   ANTES de promover para Campanhas/Base de Leads — senão o erro se
+ *   propaga para email_leads e para o disparo de email.
+ * - Exclusão é LÓGICA (status='descartado'), decisão de produto de
+ *   03/08/2026: o registro continua auditável, some da listagem padrão
+ *   e reaparece no filtro "Ver descartados", de onde pode ser
+ *   restaurado pelo botão ↩️ (volta para status 'novo').
+ * - Trava de integridade: prospect com status 'no_crm' (já promovido)
+ *   não pode ser descartado por aqui — o backend recusa com 409 e o
+ *   botão aparece desabilitado com tooltip explicando o motivo.
+ * - Alteração de email invalida a verificação anterior no backend
+ *   (email_status/validado_em/proxima_validacao zerados), devolvendo o
+ *   lead à cascata de revalidação em vez de manter um 'valido' falso.
+ * - Backend pareado: api/prospect-leads.ts v1.2 (PATCH editar_prospect,
+ *   excluir_logico, restaurar).
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../config/supabase';
 import SelecionarCampanhaModal from '../crm/campanhas/SelecionarCampanhaModal';
+import ProspeccaoEmLoteTab from './ProspeccaoEmLoteTab';
 
 // ============================================
 // TIPOS
@@ -117,6 +212,23 @@ interface ProspectLead {
     vertical:           string | null;
 }
 
+// 🆕 v4.8 (29/06/2026) — Domínios Turnover
+interface DominioTurnover {
+    empresa_dominio:        string;
+    total_leads:            number;
+    pessoas_distintas:      number;
+    variantes_nome:         number;
+    pct_com_email:          number | null;
+    primeiro_lead:          string | null;
+    ultimo_lead:            string | null;
+    tier:                   'S' | 'A' | 'B' | 'C' | 'D';
+    aliases:                string[] | null;
+    trabalhado_por_id:      number | null;
+    trabalhado_por_nome:    string | null;
+    trabalhado_em:          string | null;
+    trabalhado_observacao:  string | null;
+}
+
 // ============================================
 // CONSTANTES
 // ============================================
@@ -144,7 +256,7 @@ const SENIORIDADES = [
 // COMPONENTE PRINCIPAL
 // ============================================
 interface ProspectSearchPageProps {
-    initialTab?: 'busca' | 'empresas' | 'leads' | 'exclusoes';
+    initialTab?: 'busca' | 'empresas' | 'leads' | 'exclusoes' | 'dominios_turnover' | 'prospeccao_lote';
 }
 
 const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'busca' }) => {
@@ -166,7 +278,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [toastMsg, setToastMsg]                       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
 
     // Abas
-    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'empresas'|'leads'|'exclusoes'>(initialTab ?? 'busca');
+    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'empresas'|'leads'|'exclusoes'|'dominios_turnover'|'prospeccao_lote'>(initialTab ?? 'busca');
 
     // Sincronizar abaAtiva quando initialTab mudar
     // (ex: usuário navega de "Buscar Leads" → "Meus Prospects" sem desmontar o componente)
@@ -194,6 +306,17 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [salvandoVertical, setSalvandoVertical]       = useState<number | null>(null);
     const [marcandoExclusao, setMarcandoExclusao]       = useState<number | null>(null); // NOVO
     const [resolvendoDominio, setResolvendoDominio]     = useState<number | null>(null); // id do lead sendo resolvido
+
+    // 🆕 v4.9 (03/08/2026) — CRUD do prospect salvo (editar / descartar)
+    const [modalEditarProspect, setModalEditarProspect] = useState<ProspectLead | null>(null);
+    const [formEditar, setFormEditar]                   = useState<{
+        nome_completo: string; cargo: string; empresa_nome: string; email: string;
+    }>({ nome_completo: '', cargo: '', empresa_nome: '', email: '' });
+    const [salvandoEdicao, setSalvandoEdicao]           = useState(false);
+    const [erroEdicao, setErroEdicao]                   = useState<string | null>(null);
+    const [confirmarExclusao, setConfirmarExclusao]     = useState<ProspectLead | null>(null);
+    const [descartandoProspect, setDescartandoProspect] = useState(false);
+    const [restaurandoId, setRestaurandoId]             = useState<number | null>(null);
 
     // Seleção de leads salvos (para reserva e exportação)
     const [leadsSelecionados, setLeadsSelecionados]     = useState<Set<number>>(new Set());
@@ -244,6 +367,67 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
 
     // Controle de queries já executadas — para marcação visual
     const [queriesExecutadas, setQueriesExecutadas]     = useState<Set<string>>(new Set());
+
+    // 🆕 v4.4 (25/06/2026 — Fase 3 reconciliação CV) — Admin only
+    const [reconciliacaoPendentes, setReconciliacaoPendentes] = useState<number | null>(null);
+    const [mostrarModalReconciliacao, setMostrarModalReconciliacao] = useState(false);
+    const [reconciliacaoStatus, setReconciliacaoStatus] = useState<'idle' | 'rodando' | 'concluido' | 'erro'>('idle');
+    const [reconciliacaoProgresso, setReconciliacaoProgresso] = useState({
+        totalInicial: 0,
+        processados: 0,
+        leadsInseridos: 0,
+        leadsIgnorados: 0,
+        restantes: 0,
+        erros: 0,
+    });
+    const cancelarReconciliacaoRef = useRef(false);
+
+    // 🆕 v4.5 (25/06/2026 — Fase 4 normalização de empresas) — Admin only
+    const [normalizacaoTotal, setNormalizacaoTotal] = useState<number | null>(null);
+    const [mostrarModalNormalizacao, setMostrarModalNormalizacao] = useState(false);
+    const [normalizacaoStatus, setNormalizacaoStatus] = useState<'idle' | 'rodando' | 'concluido' | 'erro'>('idle');
+    const [normalizacaoProgresso, setNormalizacaoProgresso] = useState({
+        totalInicial: 0,
+        processados: 0,
+        modificados: 0,
+        leadsAtualizados: 0,
+        erros: 0,
+    });
+    const cancelarNormalizacaoRef = useRef(false);
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 🆕 v4.8 (29/06/2026 — Domínios Turnover) — GC / SDR / Admin
+    // ════════════════════════════════════════════════════════════════════════
+    const [dominiosTurnover, setDominiosTurnover]               = useState<DominioTurnover[]>([]);
+    const [loadingDominiosTurnover, setLoadingDominiosTurnover] = useState(false);
+    const [dtBusca, setDtBusca]                                 = useState('');
+    const [dtTier, setDtTier]                                   = useState('');           // '' | 'S' | 'A' | 'B' | 'C' | 'D'
+    const [dtApenasNaoTrabalhados, setDtApenasNaoTrabalhados]   = useState(false);
+    const [dtPagina, setDtPagina]                               = useState(1);
+    const [dtTotal, setDtTotal]                                 = useState(0);
+    const [dtTotalPages, setDtTotalPages]                       = useState(0);
+    const ITENS_DT_POR_PAGINA = 50;
+
+    // Stats (cards do topo da aba)
+    const [dtStats, setDtStats]                                 = useState<{
+        total_dominios: number; total_leads: number;
+        tier_s_count: number; tier_a_count: number; tier_b_count: number;
+        tier_c_count: number; tier_d_count: number;
+        total_trabalhados: number;
+    } | null>(null);
+
+    // Refresh (botão "Atualizar agora")
+    const [dtRefreshing, setDtRefreshing]                       = useState(false);
+
+    // Modal de marcar trabalhado
+    const [dtModalMarcar, setDtModalMarcar]                     = useState<DominioTurnover | null>(null);
+    const [dtObservacao, setDtObservacao]                       = useState('');
+    const [dtSalvandoMarcacao, setDtSalvandoMarcacao]           = useState(false);
+    const [dtCopiado, setDtCopiado]                             = useState<string | null>(null);
+
+    // Permissão para usar a aba
+    const podeVerDominiosTurnover = ['Administrador', 'Admin', 'Gestão Comercial', 'SDR']
+        .includes(currentUser?.tipo_usuario || '');
 
     // ============================================
     // TOGGLES
@@ -308,6 +492,227 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     useEffect(() => {
         carregarKpis();
     }, [carregarKpis]);
+
+    // 🆕 v4.4 (Fase 3 reconciliação CV) — carregar count de candidatos pendentes
+    const carregarPendentesReconciliacao = useCallback(async () => {
+        if (currentUser?.tipo_usuario !== 'Administrador') return;
+        try {
+            const resp = await fetch('/api/prospect-cv-reconcile');
+            const data = await resp.json();
+            setReconciliacaoPendentes(typeof data?.pendentes === 'number' ? data.pendentes : 0);
+        } catch {
+            setReconciliacaoPendentes(0);
+        }
+    }, [currentUser?.tipo_usuario]);
+
+    useEffect(() => {
+        carregarPendentesReconciliacao();
+    }, [carregarPendentesReconciliacao]);
+
+    // 🆕 v4.4 — loop automático de reconciliação em lotes de 20
+    const executarReconciliacao = useCallback(async () => {
+        if (!currentUser?.id) return;
+
+        cancelarReconciliacaoRef.current = false;
+        setReconciliacaoStatus('rodando');
+
+        // Pegar total inicial para a barra de progresso
+        let totalInicial = 0;
+        try {
+            const r = await fetch('/api/prospect-cv-reconcile');
+            const d = await r.json();
+            totalInicial = typeof d?.pendentes === 'number' ? d.pendentes : 0;
+        } catch {
+            totalInicial = 0;
+        }
+
+        if (totalInicial === 0) {
+            setReconciliacaoStatus('concluido');
+            return;
+        }
+
+        setReconciliacaoProgresso({
+            totalInicial,
+            processados: 0,
+            leadsInseridos: 0,
+            leadsIgnorados: 0,
+            restantes: totalInicial,
+            erros: 0,
+        });
+
+        const LIMITE_LOTE = 20;
+        let restantes = totalInicial;
+        let restantesAnterior = totalInicial; // 🆕 v4.6 — rastreio para detectar estagnação
+        const acumulado = { processados: 0, leadsInseridos: 0, leadsIgnorados: 0, erros: 0 };
+
+        while (restantes > 0 && !cancelarReconciliacaoRef.current) {
+            try {
+                const resp = await fetch('/api/prospect-cv-reconcile', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ user_id: currentUser.id, limite: LIMITE_LOTE }),
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    setReconciliacaoStatus('erro');
+                    break;
+                }
+
+                acumulado.processados   += Number(data?.processados)     || 0;
+                acumulado.leadsInseridos += Number(data?.leads_inseridos) || 0;
+                acumulado.leadsIgnorados += Number(data?.leads_ignorados) || 0;
+                acumulado.erros          += Array.isArray(data?.erros) ? data.erros.length : 0;
+                restantes = Number(data?.restantes) || 0;
+
+                setReconciliacaoProgresso({
+                    totalInicial,
+                    processados:    acumulado.processados,
+                    leadsInseridos: acumulado.leadsInseridos,
+                    leadsIgnorados: acumulado.leadsIgnorados,
+                    restantes,
+                    erros:          acumulado.erros,
+                });
+
+                if (data?.terminou) break;
+
+                // 🆕 v4.6 — detecção de estagnação: lote processou pessoas mas restantes não diminuiu
+                // Significa que as mesmas pessoas estão voltando (sem motor classificável).
+                // Para o loop e mostra como "concluído" — admin vê o número correto de restantes.
+                if (Number(data?.processados) > 0 && restantes >= restantesAnterior) {
+                    console.warn(`[reconcile] estagnação detectada: ${Number(data?.processados)} processados mas restantes ${restantesAnterior} → ${restantes}. Encerrando loop.`);
+                    break;
+                }
+                restantesAnterior = restantes;
+
+                // Pequena pausa entre lotes — não martelar serverless
+                await new Promise(r => setTimeout(r, 500));
+            } catch {
+                setReconciliacaoStatus('erro');
+                break;
+            }
+        }
+
+        // 🐛 v4.7 — Finalização robusta: SEMPRE transitar de 'rodando' para
+        // 'concluido' ao sair do loop, exceto se já estiver em 'erro'.
+        // Cobre TODOS os caminhos de saída: cancelamento, terminou=true,
+        // estagnação (hotfix v4.6), e qualquer break não previsto.
+        // Sem isso, o modal ficava preso em 'rodando' eternamente quando
+        // a estagnação era detectada (caso das 3 pessoas em "limbo").
+        setReconciliacaoStatus(prev => prev === 'rodando' ? 'concluido' : prev);
+
+        setReconciliacaoPendentes(restantes);
+        carregarKpis();
+    }, [currentUser?.id, carregarKpis]);
+
+    // 🆕 v4.5 (Fase 4 normalização) — carregar total inicial de nomes distintos
+    const carregarNormalizacaoTotal = useCallback(async () => {
+        if (currentUser?.tipo_usuario !== 'Administrador') return;
+        try {
+            const resp = await fetch('/api/prospect-empresa-normalize');
+            const data = await resp.json();
+            setNormalizacaoTotal(typeof data?.total === 'number' ? data.total : 0);
+        } catch {
+            setNormalizacaoTotal(0);
+        }
+    }, [currentUser?.tipo_usuario]);
+
+    useEffect(() => {
+        carregarNormalizacaoTotal();
+    }, [carregarNormalizacaoTotal]);
+
+    // 🆕 v4.5 — loop automático de normalização em lotes de 50
+    const executarNormalizacao = useCallback(async () => {
+        if (!currentUser?.id) return;
+
+        cancelarNormalizacaoRef.current = false;
+        setNormalizacaoStatus('rodando');
+
+        // Pegar total inicial
+        let totalInicial = 0;
+        try {
+            const r = await fetch('/api/prospect-empresa-normalize');
+            const d = await r.json();
+            totalInicial = typeof d?.total === 'number' ? d.total : 0;
+        } catch {
+            totalInicial = 0;
+        }
+
+        if (totalInicial === 0) {
+            setNormalizacaoStatus('concluido');
+            return;
+        }
+
+        setNormalizacaoProgresso({
+            totalInicial,
+            processados: 0,
+            modificados: 0,
+            leadsAtualizados: 0,
+            erros: 0,
+        });
+
+        const LIMITE_LOTE = 50;
+        let offset = 0;
+        const acumulado = { processados: 0, modificados: 0, leadsAtualizados: 0, erros: 0 };
+
+        while (offset < totalInicial && !cancelarNormalizacaoRef.current) {
+            try {
+                const resp = await fetch('/api/prospect-empresa-normalize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: currentUser.id,
+                        offset,
+                        limite: LIMITE_LOTE,
+                    }),
+                });
+                const data = await resp.json();
+
+                if (!resp.ok) {
+                    setNormalizacaoStatus('erro');
+                    break;
+                }
+
+                acumulado.processados      += Number(data?.processados)       || 0;
+                acumulado.modificados      += Number(data?.modificados)       || 0;
+                acumulado.leadsAtualizados += Number(data?.leads_atualizados) || 0;
+                acumulado.erros            += Array.isArray(data?.erros) ? data.erros.length : 0;
+
+                // 🆕 v4.6 — guard de progresso: offset SEMPRE precisa avançar para evitar loop infinito
+                const offsetAnterior = offset;
+                offset = Number(data?.offset_proximo) || (offset + LIMITE_LOTE);
+                if (offset <= offsetAnterior) {
+                    console.warn(`[normalize] offset não avançou (${offsetAnterior} → ${offset}). Encerrando loop.`);
+                    break;
+                }
+
+                setNormalizacaoProgresso({
+                    totalInicial,
+                    ...acumulado,
+                });
+
+                if (data?.terminou) break;
+
+                // Pequena pausa entre lotes — não martelar serverless
+                await new Promise(r => setTimeout(r, 300));
+            } catch {
+                setNormalizacaoStatus('erro');
+                break;
+            }
+        }
+
+        // 🐛 v4.7 — Finalização robusta: SEMPRE transitar de 'rodando' para
+        // 'concluido' ao sair do loop, exceto se já estiver em 'erro'.
+        // Cobre TODOS os caminhos de saída, incluindo: backend retorna
+        // terminou=true quando offset_proximo ainda é menor que totalInicial
+        // (acontece porque o total real DIMINUI durante a normalização —
+        // nomes "Acme" e "ACME LTDA" colidem em "Acme" e o count cai).
+        // Sem isso, o modal ficava preso em 'rodando' em offset≈98% do total.
+        setNormalizacaoStatus(prev => prev === 'rodando' ? 'concluido' : prev);
+
+        carregarNormalizacaoTotal();
+        carregarKpis();
+    }, [currentUser?.id, carregarKpis, carregarNormalizacaoTotal]);
 
     // ============================================
     // RECEBER LEADS DA PROSPECT EXTENSION
@@ -557,6 +962,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     // ============================================
     const podeVerTodosLeads     = currentUser?.tipo_usuario === 'Administrador';
     const podeVerTodoTerritorio = ['Administrador', 'Gestão Comercial', 'SDR'].includes(currentUser?.tipo_usuario || '');
+    const podeVerProspeccaoLote = currentUser?.tipo_usuario === 'Administrador' || currentUser?.id === 2; // Admin ou Messias Vieira (id=2) — fase de validacao
 
     // ============================================
     // LEADS SALVOS
@@ -789,6 +1195,145 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
             setSalvandoVertical(null);
         }
     }, []);
+
+    // ============================================
+    // 🆕 v4.9 (03/08/2026) — CRUD DO PROSPECT SALVO
+    // ============================================
+    // Objetivo: permitir que o analista corrija o cadastro (nome, cargo,
+    // empresa, email) ANTES de o prospect virar lead no CRM. Toda a regra
+    // pesada (duplicidade de email, invalidação da verificação anterior,
+    // trava de lead já promovido) fica no backend — o front só coleta,
+    // pré-valida e reflete o resultado na linha.
+
+    const abrirEdicaoProspect = useCallback((lead: ProspectLead) => {
+        setErroEdicao(null);
+        setFormEditar({
+            nome_completo: lead.nome_completo || '',
+            cargo:         lead.cargo         || '',
+            empresa_nome:  lead.empresa_nome  || '',
+            email:         lead.email         || '',
+        });
+        setModalEditarProspect(lead);
+    }, []);
+
+    const salvarEdicaoProspect = useCallback(async () => {
+        if (!modalEditarProspect) return;
+        const leadId = modalEditarProspect.id;
+
+        // Pré-validação de UX (o backend revalida — nunca confiar só no front)
+        const nome = formEditar.nome_completo.trim();
+        if (!nome) { setErroEdicao('Informe o nome completo do prospect.'); return; }
+        const email = formEditar.email.trim().toLowerCase();
+        if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+            setErroEdicao('O email informado não tem um formato válido.'); return;
+        }
+
+        setSalvandoEdicao(true);
+        setErroEdicao(null);
+        try {
+            const resp = await fetch('/api/prospect-leads', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids: [leadId],
+                    editar_prospect: true,
+                    nome_completo:  nome,
+                    cargo:          formEditar.cargo.trim(),
+                    empresa_nome:   formEditar.empresa_nome.trim(),
+                    email,
+                    atualizado_por: currentUser?.id ?? null,
+                }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                setErroEdicao(data.error || 'Não foi possível salvar as alterações.');
+                return;
+            }
+            // Reflete a linha sem recarregar a lista inteira (preserva filtro/página)
+            setMeusLeads(prev => prev.map(l => l.id === leadId ? { ...l, ...data.lead } : l));
+            setModalEditarProspect(null);
+            setToastMsg({
+                tipo: 'ok',
+                msg: data.email_revalidar
+                    ? 'Prospect atualizado. O email voltou para "não verificado" e será revalidado.'
+                    : 'Prospect atualizado!',
+            });
+            setTimeout(() => setToastMsg(null), 4000);
+        } catch (e: any) {
+            setErroEdicao(`Erro de rede: ${e.message}`);
+        } finally {
+            setSalvandoEdicao(false);
+        }
+    }, [modalEditarProspect, formEditar, currentUser]);
+
+    // Exclusão LÓGICA — status='descartado'. Nada é apagado do banco.
+    const descartarProspect = useCallback(async () => {
+        if (!confirmarExclusao) return;
+        const leadId = confirmarExclusao.id;
+        setDescartandoProspect(true);
+        try {
+            const resp = await fetch('/api/prospect-leads', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids: [leadId],
+                    excluir_logico: true,
+                    atualizado_por: currentUser?.id ?? null,
+                }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Não foi possível descartar o prospect.' });
+                setTimeout(() => setToastMsg(null), 4000);
+                return;
+            }
+            // Se o filtro atual é "Ver descartados", a linha permanece (agora
+            // com o botão Restaurar); caso contrário ela sai da listagem.
+            if (filtroLeadsStatus === 'descartado') {
+                setMeusLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: 'descartado' } : l));
+            } else {
+                setMeusLeads(prev => prev.filter(l => l.id !== leadId));
+            }
+            setConfirmarExclusao(null);
+            setToastMsg({ tipo: 'ok', msg: 'Prospect descartado. Use o filtro "Ver descartados" para restaurar.' });
+            setTimeout(() => setToastMsg(null), 4500);
+        } catch (e: any) {
+            setToastMsg({ tipo: 'erro', msg: `Erro de rede: ${e.message}` });
+            setTimeout(() => setToastMsg(null), 4000);
+        } finally {
+            setDescartandoProspect(false);
+        }
+    }, [confirmarExclusao, currentUser, filtroLeadsStatus]);
+
+    // Restaurar um prospect descartado — volta para status 'novo'.
+    const restaurarProspect = useCallback(async (lead: ProspectLead) => {
+        setRestaurandoId(lead.id);
+        try {
+            const resp = await fetch('/api/prospect-leads', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ids: [lead.id],
+                    restaurar: true,
+                    atualizado_por: currentUser?.id ?? null,
+                }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.success) {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Não foi possível restaurar o prospect.' });
+                setTimeout(() => setToastMsg(null), 4000);
+                return;
+            }
+            setMeusLeads(prev => prev.map(l => l.id === lead.id ? { ...l, status: 'novo' } : l));
+            setToastMsg({ tipo: 'ok', msg: 'Prospect restaurado para "novo".' });
+            setTimeout(() => setToastMsg(null), 3000);
+        } catch (e: any) {
+            setToastMsg({ tipo: 'erro', msg: `Erro de rede: ${e.message}` });
+            setTimeout(() => setToastMsg(null), 4000);
+        } finally {
+            setRestaurandoId(null);
+        }
+    }, [currentUser]);
 
     // 🆕 Atualizar refs espelho — permite que o useEffect da extensão (acima no arquivo)
     // chame estas funções sem TDZ e sem dependências circulares.
@@ -1072,9 +1617,187 @@ A empresa ficará disponível para a equipe.`)) return;
         }
     }, []);
 
+    // ════════════════════════════════════════════════════════════════════════
+    // 🆕 v4.8 (29/06/2026) — DOMÍNIOS TURNOVER — funções de fetch e ações
+    // ════════════════════════════════════════════════════════════════════════
+
+    /** Carrega stats gerais (cards do topo) + lista paginada. */
+    const carregarDominiosTurnover = useCallback(async () => {
+        if (!podeVerDominiosTurnover) return;
+        setLoadingDominiosTurnover(true);
+        try {
+            // 1) Stats (cards)
+            const resStats  = await fetch('/api/prospect-dominios-turnover?action=stats');
+            const dataStats = await resStats.json();
+            if (dataStats.success) setDtStats(dataStats.stats);
+
+            // 2) Lista paginada
+            const params = new URLSearchParams();
+            params.set('action', 'listar');
+            params.set('page',  String(dtPagina));
+            params.set('limit', String(ITENS_DT_POR_PAGINA));
+            if (dtBusca)                  params.set('busca', dtBusca);
+            if (dtTier)                   params.set('tier',  dtTier);
+            if (dtApenasNaoTrabalhados)   params.set('apenas_nao_trabalhados', 'true');
+
+            const res  = await fetch(`/api/prospect-dominios-turnover?${params}`);
+            const data = await res.json();
+            if (data.success) {
+                setDominiosTurnover(data.dominios || []);
+                setDtTotal(data.total || 0);
+                setDtTotalPages(data.total_pages || 0);
+            } else {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Erro ao carregar domínios.' });
+                setTimeout(() => setToastMsg(null), 4000);
+            }
+        } catch (e: any) {
+            console.error('Erro ao carregar Domínios Turnover:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Falha ao carregar domínios.' });
+            setTimeout(() => setToastMsg(null), 4000);
+        } finally {
+            setLoadingDominiosTurnover(false);
+        }
+    }, [podeVerDominiosTurnover, dtPagina, dtBusca, dtTier, dtApenasNaoTrabalhados]);
+
+    /** Botão "Atualizar agora" — chama refresh_dominios_turnover via RPC. */
+    const atualizarDominiosTurnover = useCallback(async () => {
+        if (!currentUser?.id) return;
+        setDtRefreshing(true);
+        try {
+            const res  = await fetch('/api/prospect-dominios-turnover', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({ action: 'refresh', user_id: currentUser.id }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                const ms = data.resultado?.duracao_ms ?? data.duracao_total_ms;
+                setToastMsg({
+                    tipo: 'ok',
+                    msg:  `Atualizado: ${data.resultado?.total_dominios ?? '?'} domínios em ${ms}ms.`,
+                });
+                // Recarrega a lista atual
+                await carregarDominiosTurnover();
+            } else {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Falha ao atualizar.' });
+            }
+        } catch (e: any) {
+            console.error('Erro no refresh:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Erro de rede no refresh.' });
+        } finally {
+            setDtRefreshing(false);
+            setTimeout(() => setToastMsg(null), 4000);
+        }
+    }, [currentUser?.id, carregarDominiosTurnover]);
+
+    /** "Prospectar" — leva à aba Nova Busca com domínio pré-preenchido. */
+    const dtProspectar = useCallback((dominio: string) => {
+        setDomain(dominio);
+        setEmpresaNome('');
+        setAbaAtiva('busca');
+        setToastMsg({
+            tipo: 'ok',
+            msg:  `Domínio "${dominio}" carregado — configure os filtros e clique em Buscar`,
+        });
+        setTimeout(() => setToastMsg(null), 4000);
+    }, []);
+
+    /** "Copiar" — copia domínio para clipboard e dá feedback visual. */
+    const dtCopiar = useCallback(async (dominio: string) => {
+        try {
+            await navigator.clipboard.writeText(dominio);
+            setDtCopiado(dominio);
+            setTimeout(() => setDtCopiado(null), 2000);
+        } catch (e) {
+            console.error('Falha ao copiar:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Não foi possível copiar.' });
+            setTimeout(() => setToastMsg(null), 3000);
+        }
+    }, []);
+
+    /** Salva marcação "trabalhado" (chama endpoint upsert). */
+    const dtSalvarMarcacao = useCallback(async () => {
+        if (!dtModalMarcar || !currentUser?.id) return;
+        setDtSalvandoMarcacao(true);
+        try {
+            const res  = await fetch('/api/prospect-dominios-turnover', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    action:          'marcar_trabalhado',
+                    user_id:         currentUser.id,
+                    empresa_dominio: dtModalMarcar.empresa_dominio,
+                    observacao:      dtObservacao.trim() || null,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setToastMsg({
+                    tipo: 'ok',
+                    msg:  `"${dtModalMarcar.empresa_dominio}" marcado como trabalhado.`,
+                });
+                setDtModalMarcar(null);
+                setDtObservacao('');
+                await carregarDominiosTurnover();
+            } else {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Falha ao salvar.' });
+            }
+        } catch (e: any) {
+            console.error('Erro ao marcar:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Erro de rede ao salvar.' });
+        } finally {
+            setDtSalvandoMarcacao(false);
+            setTimeout(() => setToastMsg(null), 4000);
+        }
+    }, [dtModalMarcar, dtObservacao, currentUser?.id, carregarDominiosTurnover]);
+
+    /** Desmarcar "trabalhado" (apenas autor ou Administrador). */
+    const dtDesmarcar = useCallback(async (dominio: string) => {
+        if (!currentUser?.id) return;
+        if (!confirm(`Desmarcar "${dominio}" como trabalhado?\n\nA marcação será removida para toda a equipe.`)) return;
+        try {
+            const res  = await fetch('/api/prospect-dominios-turnover', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body:    JSON.stringify({
+                    action:          'desmarcar_trabalhado',
+                    user_id:         currentUser.id,
+                    empresa_dominio: dominio,
+                }),
+            });
+            const data = await res.json();
+            if (data.success) {
+                setToastMsg({ tipo: 'ok', msg: `"${dominio}" desmarcado.` });
+                await carregarDominiosTurnover();
+            } else {
+                setToastMsg({ tipo: 'erro', msg: data.error || 'Falha ao desmarcar.' });
+            }
+        } catch (e: any) {
+            console.error('Erro ao desmarcar:', e);
+            setToastMsg({ tipo: 'erro', msg: 'Erro de rede.' });
+        } finally {
+            setTimeout(() => setToastMsg(null), 4000);
+        }
+    }, [currentUser?.id, carregarDominiosTurnover]);
+
+    /** Exporta CSV respeitando filtros atuais (busca/tier/não trabalhados). */
+    const dtExportarCSV = useCallback(() => {
+        const params = new URLSearchParams();
+        params.set('action', 'exportar_csv');
+        if (dtBusca)                params.set('busca', dtBusca);
+        if (dtTier)                 params.set('tier',  dtTier);
+        if (dtApenasNaoTrabalhados) params.set('apenas_nao_trabalhados', 'true');
+        // Browser inicia download direto (Content-Disposition: attachment)
+        window.location.href = `/api/prospect-dominios-turnover?${params}`;
+    }, [dtBusca, dtTier, dtApenasNaoTrabalhados]);
+
     useEffect(() => {
         if (abaAtiva === 'exclusoes') carregarExclusoes();
     }, [abaAtiva, carregarExclusoes]);
+
+    useEffect(() => {
+        if (abaAtiva === 'dominios_turnover') carregarDominiosTurnover();
+    }, [abaAtiva, carregarDominiosTurnover]);
 
     useEffect(() => {
         if (abaAtiva === 'empresas') carregarLeadsSalvos();
@@ -1557,16 +2280,20 @@ A empresa ficará disponível para a equipe.`)) return;
 
         {/* Abas */}
         <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
-            {(['busca', 'empresas', 'leads', 'exclusoes'] as const).map(aba => (
+            {(['busca', 'empresas', 'leads', 'exclusoes', 'dominios_turnover', 'prospeccao_lote'] as const)
+                .filter(aba => (aba !== 'dominios_turnover' || podeVerDominiosTurnover) && (aba !== 'prospeccao_lote' || podeVerProspeccaoLote))
+                .map(aba => (
                 <button key={aba} onClick={() => setAbaAtiva(aba)}
                     className={`px-4 py-2 text-sm font-medium rounded-t transition-colors
                         ${abaAtiva === aba
                             ? 'bg-white border border-b-white border-gray-200 text-blue-600 -mb-px'
                             : 'text-gray-500 hover:text-gray-700'}`}>
-                    {aba === 'busca'     ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
-                     : aba === 'empresas' ? <><i className="fa-solid fa-building mr-2"></i>Lista Empresas</>
-                     : aba === 'leads'   ? <><i className="fa-solid fa-users mr-2"></i>Meus Prospects Salvos</>
-                                        : <><i className="fa-solid fa-ban mr-2 text-red-400"></i>Exclusões</>}
+                    {aba === 'busca'             ? <><i className="fa-solid fa-magnifying-glass mr-2"></i>Nova Busca</>
+                     : aba === 'empresas'         ? <><i className="fa-solid fa-building mr-2"></i>Lista Empresas</>
+                     : aba === 'leads'            ? <><i className="fa-solid fa-users mr-2"></i>Meus Prospects Salvos</>
+                     : aba === 'exclusoes'        ? <><i className="fa-solid fa-ban mr-2 text-red-400"></i>Exclusões</>
+                                                  : aba === 'dominios_turnover' ? <><i className="fa-solid fa-chart-line mr-2 text-emerald-500"></i>Domínios Turnover</>
+                                                  : <><i className="fa-solid fa-layer-group mr-2 text-indigo-500"></i>Prospecção em Lote<i className="fa-solid fa-lock ml-1.5 text-[10px] text-gray-400"></i></>}
                 </button>
             ))}
             {/* Botão Reset — limpa tudo para nova pesquisa */}
@@ -1578,11 +2305,58 @@ A empresa ficará disponível para a equipe.`)) return;
                 <i className="fa-solid fa-rotate-right"></i>
                 Nova Pesquisa
             </button>
+
+            {/* 🆕 v4.4 — Botão admin Reconciliar CVs (Fase 3) */}
+            {currentUser?.tipo_usuario === 'Administrador' && reconciliacaoPendentes !== null && reconciliacaoPendentes > 0 && (
+                <button
+                    onClick={() => {
+                        setReconciliacaoStatus('idle');
+                        setMostrarModalReconciliacao(true);
+                    }}
+                    title={`Reconciliar ${reconciliacaoPendentes} candidato${reconciliacaoPendentes > 1 ? 's' : ''} com CV cadastrado mas sem leads gerados`}
+                    className="ml-1 px-3 py-1.5 text-xs font-medium text-amber-700 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 border border-amber-200 rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                    <i className="fa-solid fa-arrows-rotate"></i>
+                    Reconciliar CVs
+                    <span className="ml-0.5 bg-amber-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                        {reconciliacaoPendentes}
+                    </span>
+                </button>
+            )}
+
+            {/* 🆕 v4.5 — Botão admin Normalizar empresas (Fase 4) */}
+            {currentUser?.tipo_usuario === 'Administrador' && normalizacaoTotal !== null && normalizacaoTotal > 0 && (
+                <button
+                    onClick={() => {
+                        setNormalizacaoStatus('idle');
+                        setMostrarModalNormalizacao(true);
+                    }}
+                    title={`Normalizar nomes de ${normalizacaoTotal} empresa${normalizacaoTotal > 1 ? 's' : ''} distinta${normalizacaoTotal > 1 ? 's' : ''}`}
+                    className="ml-1 px-3 py-1.5 text-xs font-medium text-cyan-700 hover:text-cyan-800 bg-cyan-50 hover:bg-cyan-100 border border-cyan-200 rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                    <i className="fa-solid fa-wand-magic-sparkles"></i>
+                    Normalizar
+                    <span className="ml-0.5 bg-cyan-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                        {normalizacaoTotal}
+                    </span>
+                </button>
+            )}
         </div>
 
         {/* ══════════════════════════════════════════ */}
         {/* ABA: NOVA BUSCA                            */}
         {/* ══════════════════════════════════════════ */}
+        {/* ══════════════════════════════════════════ */}
+        {/* 🆕 ABA: PROSPECÇÃO EM LOTE (Apollo)         */}
+        {/* Restrita a Admin e Messias Vieira (id=2)    */}
+        {/* ══════════════════════════════════════════ */}
+        {abaAtiva === 'prospeccao_lote' && podeVerProspeccaoLote && (
+            <ProspeccaoEmLoteTab
+                currentUser={currentUser}
+                onSalvou={() => { setAbaAtiva('leads'); carregarMeusLeads(); }}
+            />
+        )}
+
         {abaAtiva === 'busca' && (
         <>
             {/* Painel de filtros */}
@@ -2865,6 +3639,8 @@ A empresa ficará disponível para a equipe.`)) return;
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">STATUS</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">DATA</th>
                                 <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÕES</th>
+                                {/* 🆕 v4.9 — CRUD do prospect */}
+                                <th className="px-3 py-2 text-xs font-semibold text-indigo-600 text-center bg-indigo-50 border-l border-indigo-100">GERENCIAR</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -2995,6 +3771,48 @@ A empresa ficará disponível para a equipe.`)) return;
                                                 </button>
                                             );
                                         })()}
+                                    </td>
+                                    {/* 🆕 v4.9 — GERENCIAR: editar cadastro / descartar (exclusão lógica) */}
+                                    <td className="px-3 py-2 text-center bg-indigo-50/30 border-l border-indigo-100">
+                                        {podeGerenciarProspects() ? (
+                                            <div className="inline-flex items-center gap-1">
+                                                <button
+                                                    onClick={() => abrirEdicaoProspect(lead)}
+                                                    className="w-7 h-7 rounded-md border border-blue-200 text-blue-600 hover:bg-blue-600 hover:text-white transition-colors"
+                                                    title="Editar nome, cargo, empresa e email"
+                                                >
+                                                    <i className="fa-solid fa-pen-to-square text-[11px]"></i>
+                                                </button>
+                                                {lead.status === 'descartado' ? (
+                                                    <button
+                                                        onClick={() => restaurarProspect(lead)}
+                                                        disabled={restaurandoId === lead.id}
+                                                        className="w-7 h-7 rounded-md border border-green-200 text-green-600 hover:bg-green-600 hover:text-white transition-colors disabled:opacity-40"
+                                                        title="Restaurar prospect (volta para 'novo')"
+                                                    >
+                                                        <i className={`fa-solid ${restaurandoId === lead.id ? 'fa-spinner fa-spin' : 'fa-rotate-left'} text-[11px]`}></i>
+                                                    </button>
+                                                ) : lead.status === 'no_crm' ? (
+                                                    <button
+                                                        disabled
+                                                        className="w-7 h-7 rounded-md border border-gray-200 text-gray-300 cursor-not-allowed"
+                                                        title="Prospect já promovido ao CRM — trate o registro pela Base de Leads"
+                                                    >
+                                                        <i className="fa-solid fa-trash text-[11px]"></i>
+                                                    </button>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setConfirmarExclusao(lead)}
+                                                        className="w-7 h-7 rounded-md border border-red-200 text-red-500 hover:bg-red-600 hover:text-white transition-colors"
+                                                        title="Descartar prospect (exclusão lógica — reversível)"
+                                                    >
+                                                        <i className="fa-solid fa-trash text-[11px]"></i>
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="text-gray-300 text-xs">—</span>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -3169,6 +3987,357 @@ A empresa ficará disponível para a equipe.`)) return;
         </>
         )}
 
+        {/* ══════════════════════════════════════════════════════════ */}
+        {/* 🆕 v4.8 (29/06/2026) — ABA: DOMÍNIOS TURNOVER             */}
+        {/* ══════════════════════════════════════════════════════════ */}
+        {abaAtiva === 'dominios_turnover' && podeVerDominiosTurnover && (
+        <>
+            {/* Cabeçalho explicativo */}
+            <div className="mb-4 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <div className="flex items-start gap-3">
+                    <i className="fa-solid fa-chart-line text-emerald-500 text-lg mt-0.5"></i>
+                    <div className="flex-1">
+                        <p className="text-sm font-semibold text-emerald-800">Domínios Turnover — Ranking de Rotatividade</p>
+                        <p className="text-xs text-emerald-700 mt-0.5">
+                            Cada lead na base veio de um CV — ou seja, uma pessoa que <strong>passou ou saiu</strong> daquela empresa.
+                            Domínios com mais leads = empresas com maior turnover, e portanto maior demanda de reposição.
+                            Use o botão <strong>🎯 Prospectar</strong> para levar o domínio direto à aba Nova Busca.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Cards de stats */}
+            {dtStats && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                    <div className="bg-white border border-gray-200 rounded-xl p-3">
+                        <div className="text-xs text-gray-500 font-medium">TOTAL DE DOMÍNIOS</div>
+                        <div className="text-2xl font-bold text-gray-800 mt-0.5">{dtStats.total_dominios.toLocaleString('pt-BR')}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{dtStats.total_leads.toLocaleString('pt-BR')} leads</div>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-xl p-3">
+                        <div className="text-xs text-gray-500 font-medium">TIERS PREMIUM</div>
+                        <div className="text-2xl font-bold text-amber-600 mt-0.5">{dtStats.tier_s_count} <span className="text-sm text-gray-400">S</span></div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{dtStats.tier_a_count} A · {dtStats.tier_b_count} B</div>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-xl p-3">
+                        <div className="text-xs text-gray-500 font-medium">CAUDA LONGA</div>
+                        <div className="text-2xl font-bold text-gray-500 mt-0.5">{dtStats.tier_c_count + dtStats.tier_d_count}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">{dtStats.tier_c_count} C · {dtStats.tier_d_count} D</div>
+                    </div>
+                    <div className="bg-white border border-gray-200 rounded-xl p-3">
+                        <div className="text-xs text-gray-500 font-medium">JÁ TRABALHADOS</div>
+                        <div className="text-2xl font-bold text-blue-600 mt-0.5">{dtStats.total_trabalhados}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">marcações da equipe</div>
+                    </div>
+                </div>
+            )}
+
+            {/* Barra de filtros + ações */}
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+                <input
+                    type="text"
+                    value={dtBusca}
+                    onChange={e => { setDtBusca(e.target.value); setDtPagina(1); }}
+                    placeholder="Buscar domínio..."
+                    className="flex-1 min-w-[200px] px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                />
+
+                <select
+                    value={dtTier}
+                    onChange={e => { setDtTier(e.target.value); setDtPagina(1); }}
+                    className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                >
+                    <option value="">Todos os tiers</option>
+                    <option value="S">S (≥40 leads) — Premium</option>
+                    <option value="A">A (20-39) — Alto</option>
+                    <option value="B">B (10-19) — Médio</option>
+                    <option value="C">C (5-9) — Base</option>
+                    <option value="D">D (&lt;5) — Cauda</option>
+                </select>
+
+                <label className="flex items-center gap-1.5 text-xs text-gray-600 px-2">
+                    <input
+                        type="checkbox"
+                        checked={dtApenasNaoTrabalhados}
+                        onChange={e => { setDtApenasNaoTrabalhados(e.target.checked); setDtPagina(1); }}
+                        className="w-3.5 h-3.5 accent-emerald-600"
+                    />
+                    Esconder os já trabalhados
+                </label>
+
+                <button
+                    onClick={() => carregarDominiosTurnover()}
+                    title="Recarregar lista com filtros atuais"
+                    className="px-3 py-1.5 bg-gray-600 text-white rounded-lg text-sm hover:bg-gray-700 flex items-center gap-1"
+                >
+                    <i className="fa-solid fa-magnifying-glass"></i>
+                    Filtrar
+                </button>
+
+                <button
+                    onClick={dtExportarCSV}
+                    title="Exportar lista filtrada como CSV"
+                    className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 flex items-center gap-1"
+                >
+                    <i className="fa-solid fa-file-csv"></i>
+                    Exportar CSV
+                </button>
+
+                <button
+                    onClick={atualizarDominiosTurnover}
+                    disabled={dtRefreshing}
+                    title="Recalcula o ranking com base nos leads atuais"
+                    className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700 disabled:bg-gray-300 flex items-center gap-1"
+                >
+                    <i className={`fa-solid fa-arrows-rotate ${dtRefreshing ? 'fa-spin' : ''}`}></i>
+                    {dtRefreshing ? 'Atualizando...' : 'Atualizar agora'}
+                </button>
+            </div>
+
+            {/* Tabela */}
+            {loadingDominiosTurnover ? (
+                <div className="text-center py-10 text-gray-400">
+                    <i className="fa-solid fa-spinner fa-spin text-2xl mb-2 block"></i>
+                    Carregando domínios...
+                </div>
+            ) : dominiosTurnover.length === 0 ? (
+                <div className="text-center py-16 text-gray-400">
+                    <i className="fa-solid fa-chart-line text-5xl mb-3 block text-gray-200"></i>
+                    <p className="font-medium">Nenhum domínio encontrado</p>
+                    <p className="text-xs mt-1">Ajuste os filtros ou clique em "Atualizar agora"</p>
+                </div>
+            ) : (
+                <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                    {/* Contador */}
+                    <div className="px-4 py-2 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                        <span className="text-xs text-gray-500">
+                            Mostrando <strong>{(dtPagina - 1) * ITENS_DT_POR_PAGINA + 1}</strong>–
+                            <strong>{Math.min(dtPagina * ITENS_DT_POR_PAGINA, dtTotal)}</strong> de <strong>{dtTotal}</strong> domínios
+                        </span>
+                        {dtTotalPages > 1 && (
+                            <div className="flex items-center gap-1 text-xs">
+                                <button
+                                    disabled={dtPagina === 1}
+                                    onClick={() => setDtPagina(1)}
+                                    className="px-2 py-0.5 rounded hover:bg-gray-200 disabled:text-gray-300"
+                                    title="Primeira"
+                                >«</button>
+                                <button
+                                    disabled={dtPagina === 1}
+                                    onClick={() => setDtPagina(p => Math.max(1, p - 1))}
+                                    className="px-2 py-0.5 rounded hover:bg-gray-200 disabled:text-gray-300"
+                                >‹</button>
+                                <span className="px-2 text-gray-600">{dtPagina} / {dtTotalPages}</span>
+                                <button
+                                    disabled={dtPagina === dtTotalPages}
+                                    onClick={() => setDtPagina(p => Math.min(dtTotalPages, p + 1))}
+                                    className="px-2 py-0.5 rounded hover:bg-gray-200 disabled:text-gray-300"
+                                >›</button>
+                                <button
+                                    disabled={dtPagina === dtTotalPages}
+                                    onClick={() => setDtPagina(dtTotalPages)}
+                                    className="px-2 py-0.5 rounded hover:bg-gray-200 disabled:text-gray-300"
+                                    title="Última"
+                                >»</button>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                            <thead>
+                                <tr className="bg-gray-100 text-left">
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">#</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">DOMÍNIO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">TIER</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-right">LEADS</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-right">PESSOAS</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-right">% C/EMAIL</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">ÚLT. ATIV.</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600">TRABALHADO</th>
+                                    <th className="px-3 py-2 text-xs font-semibold text-gray-600 text-center">AÇÕES</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {dominiosTurnover.map((d, idx) => {
+                                    const posicao   = (dtPagina - 1) * ITENS_DT_POR_PAGINA + idx + 1;
+                                    const tierColor = d.tier === 'S' ? 'bg-amber-100 text-amber-700 border-amber-300'
+                                                    : d.tier === 'A' ? 'bg-blue-100 text-blue-700 border-blue-300'
+                                                    : d.tier === 'B' ? 'bg-emerald-100 text-emerald-700 border-emerald-300'
+                                                    : d.tier === 'C' ? 'bg-gray-100 text-gray-700 border-gray-300'
+                                                    :                  'bg-gray-50 text-gray-500 border-gray-200';
+                                    const pctEmail  = d.pct_com_email === null ? null : Number(d.pct_com_email);
+                                    const pctColor  = pctEmail === null   ? 'text-gray-400'
+                                                    : pctEmail >= 80      ? 'text-emerald-600 font-semibold'
+                                                    : pctEmail >= 40      ? 'text-amber-600'
+                                                    :                       'text-red-500';
+                                    const podeDesmarcar = d.trabalhado_por_id !== null
+                                        && (d.trabalhado_por_id === currentUser?.id
+                                            || currentUser?.tipo_usuario === 'Administrador');
+
+                                    return (
+                                        <tr key={d.empresa_dominio}
+                                            className={`border-t border-gray-100 hover:bg-gray-50
+                                                ${d.trabalhado_por_id ? 'bg-blue-50/30' : ''}`}>
+                                            <td className="px-3 py-2 text-xs text-gray-500 text-center font-medium">{posicao}</td>
+                                            <td className="px-3 py-2">
+                                                <div className="font-medium text-gray-800">{d.empresa_dominio}</div>
+                                                {d.aliases && d.aliases.length > 0 && (
+                                                    <div className="text-[10px] text-gray-400 mt-0.5">
+                                                        + {d.aliases.join(', ')}
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2 text-center">
+                                                <span className={`inline-block px-2 py-0.5 text-xs font-bold border rounded ${tierColor}`}>
+                                                    {d.tier}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-2 text-right font-semibold text-gray-800">{d.total_leads}</td>
+                                            <td className="px-3 py-2 text-right text-gray-600">{d.pessoas_distintas}</td>
+                                            <td className={`px-3 py-2 text-right ${pctColor}`}>
+                                                {pctEmail === null ? '—' : `${pctEmail}%`}
+                                            </td>
+                                            <td className="px-3 py-2 text-center text-xs text-gray-500">
+                                                {d.ultimo_lead || '—'}
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                {d.trabalhado_por_nome ? (
+                                                    <div className="text-xs">
+                                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full font-medium">
+                                                            <i className="fa-solid fa-bookmark text-[10px]"></i>
+                                                            {d.trabalhado_por_nome}
+                                                        </span>
+                                                        {d.trabalhado_em && (
+                                                            <span className="text-[10px] text-gray-400 ml-1">
+                                                                {new Date(d.trabalhado_em).toLocaleDateString('pt-BR')}
+                                                            </span>
+                                                        )}
+                                                        {d.trabalhado_observacao && (
+                                                            <div className="text-[10px] text-gray-500 italic mt-0.5 max-w-[180px] truncate"
+                                                                 title={d.trabalhado_observacao}>
+                                                                {d.trabalhado_observacao}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <span className="text-xs text-gray-300">—</span>
+                                                )}
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                <div className="flex items-center gap-1 justify-center">
+                                                    <button
+                                                        onClick={() => dtProspectar(d.empresa_dominio)}
+                                                        title="Levar domínio para a aba Nova Busca"
+                                                        className="px-2 py-1 text-xs bg-emerald-600 text-white rounded hover:bg-emerald-700 flex items-center gap-1"
+                                                    >
+                                                        <i className="fa-solid fa-bullseye"></i>
+                                                        Prospectar
+                                                    </button>
+                                                    <button
+                                                        onClick={() => dtCopiar(d.empresa_dominio)}
+                                                        title="Copiar domínio"
+                                                        className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded hover:bg-gray-200 flex items-center"
+                                                    >
+                                                        <i className={`fa-solid ${dtCopiado === d.empresa_dominio ? 'fa-check text-emerald-600' : 'fa-copy'}`}></i>
+                                                    </button>
+                                                    {d.trabalhado_por_id === null ? (
+                                                        <button
+                                                            onClick={() => { setDtModalMarcar(d); setDtObservacao(''); }}
+                                                            title="Marcar como já trabalhado (visível para toda a equipe)"
+                                                            className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200 flex items-center gap-1"
+                                                        >
+                                                            <i className="fa-solid fa-bookmark"></i>
+                                                            Marcar
+                                                        </button>
+                                                    ) : podeDesmarcar ? (
+                                                        <button
+                                                            onClick={() => dtDesmarcar(d.empresa_dominio)}
+                                                            title="Desmarcar como trabalhado"
+                                                            className="px-2 py-1 text-xs bg-red-50 text-red-600 rounded hover:bg-red-100 flex items-center gap-1"
+                                                        >
+                                                            <i className="fa-solid fa-bookmark fa-fw"></i>
+                                                            <i className="fa-solid fa-xmark text-[9px]"></i>
+                                                        </button>
+                                                    ) : null}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal — Marcar como trabalhado */}
+            {dtModalMarcar && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+                        <div className="px-6 py-4 border-b border-gray-100">
+                            <h2 className="text-base font-semibold text-gray-800">
+                                <i className="fa-solid fa-bookmark mr-2 text-blue-500"></i>
+                                Marcar como trabalhado
+                            </h2>
+                            <p className="text-xs text-gray-500 mt-1">
+                                A marcação fica <strong>visível para toda a equipe</strong> (Tatiana, Marcos, Roseni, Débora, Paulo).
+                            </p>
+                        </div>
+
+                        <div className="px-6 py-4 space-y-3">
+                            <div>
+                                <label className="text-xs text-gray-500 font-medium">DOMÍNIO</label>
+                                <div className="font-mono text-sm text-gray-800 mt-0.5">
+                                    {dtModalMarcar.empresa_dominio}
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-xs text-gray-500 font-medium" htmlFor="dt-obs">
+                                    OBSERVAÇÃO (opcional)
+                                </label>
+                                <textarea
+                                    id="dt-obs"
+                                    value={dtObservacao}
+                                    onChange={e => setDtObservacao(e.target.value)}
+                                    placeholder="Ex: Falamos com o RH, pediram para retomar em agosto"
+                                    rows={3}
+                                    maxLength={500}
+                                    className="w-full mt-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                                />
+                                <p className="text-[10px] text-gray-400 mt-0.5 text-right">
+                                    {dtObservacao.length}/500
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="px-6 py-3 bg-gray-50 border-t border-gray-100 flex items-center justify-end gap-2 rounded-b-2xl">
+                            <button
+                                onClick={() => { setDtModalMarcar(null); setDtObservacao(''); }}
+                                disabled={dtSalvandoMarcacao}
+                                className="px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-200 rounded-lg"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={dtSalvarMarcacao}
+                                disabled={dtSalvandoMarcacao}
+                                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 flex items-center gap-1"
+                            >
+                                {dtSalvandoMarcacao ? (
+                                    <><i className="fa-solid fa-spinner fa-spin"></i> Salvando...</>
+                                ) : (
+                                    <><i className="fa-solid fa-bookmark"></i> Marcar</>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </>
+        )}
+
     {/* ══════════════════════════════════════════════════════════
         MODAL — LEADS DA EMPRESA (View Território → Ver Leads)
         ══════════════════════════════════════════════════════════ */}
@@ -3301,6 +4470,520 @@ A empresa ficará disponível para a equipe.`)) return;
             onClose={() => setSelecaoCampanhaAberta(null)}
             onConfirm={executarPromocao}
         />
+    )}
+
+    {/* ════════════════════════════════════════════════════════ */}
+    {/* 🆕 v4.4 — MODAL DE RECONCILIAÇÃO DE CVs (Admin only)      */}
+    {/* ════════════════════════════════════════════════════════ */}
+    {mostrarModalReconciliacao && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+                {reconciliacaoStatus === 'idle' && (
+                    <>
+                        <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-arrows-rotate text-amber-600"></i>
+                            Reconciliar CVs Pendentes
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-3">
+                            Existem <span className="font-bold text-amber-700">{reconciliacaoPendentes}</span> candidato{(reconciliacaoPendentes || 0) > 1 ? 's' : ''} com CV cadastrado mas sem empresas extraídas para a Base de Prospects.
+                        </p>
+                        <p className="text-sm text-gray-600 mb-4">
+                            Esse backlog é do período em que o sistema de extração automática esteve em falha silenciosa (27/03 a 25/06). Reconciliar vai processar cada CV e gerar os leads correspondentes.
+                        </p>
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-xs text-amber-800">
+                            <p className="font-semibold mb-1">⚠️ Antes de iniciar:</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                                <li>Processamento em lotes de 20 por vez</li>
+                                <li>Cada CV consulta IA + APIs externas (~1-2s cada)</li>
+                                <li>Tempo total estimado: ~{Math.ceil(((reconciliacaoPendentes || 0) * 1.5) / 60)} minutos</li>
+                                <li>Não feche essa aba durante o processo</li>
+                                <li>Você pode cancelar a qualquer momento — o que já foi processado fica salvo</li>
+                            </ul>
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                            <button
+                                onClick={() => setMostrarModalReconciliacao(false)}
+                                className="px-4 py-2 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={executarReconciliacao}
+                                className="px-4 py-2 text-sm bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors flex items-center gap-2"
+                            >
+                                <i className="fa-solid fa-play"></i>
+                                Iniciar Reconciliação
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {reconciliacaoStatus === 'rodando' && (
+                    <>
+                        <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-spinner fa-spin text-blue-600"></i>
+                            Reconciliando CVs...
+                        </h3>
+                        <div className="mb-3">
+                            <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                <span>Progresso</span>
+                                <span className="font-semibold">
+                                    {reconciliacaoProgresso.processados} / {reconciliacaoProgresso.totalInicial}
+                                </span>
+                            </div>
+                            <div className="bg-gray-100 rounded-full h-3 overflow-hidden">
+                                <div
+                                    className="bg-blue-600 h-3 transition-all duration-300"
+                                    style={{ width: `${Math.min(100, (reconciliacaoProgresso.processados / Math.max(reconciliacaoProgresso.totalInicial, 1)) * 100)}%` }}
+                                />
+                            </div>
+                            <div className="text-[10px] text-gray-500 mt-1 text-right">
+                                Restam {reconciliacaoProgresso.restantes}
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+                            <div className="bg-green-50 rounded-lg p-2">
+                                <div className="text-[10px] text-green-700 uppercase font-semibold">Leads</div>
+                                <div className="text-lg font-bold text-green-700">{reconciliacaoProgresso.leadsInseridos}</div>
+                            </div>
+                            <div className="bg-amber-50 rounded-lg p-2">
+                                <div className="text-[10px] text-amber-700 uppercase font-semibold">Ignorados</div>
+                                <div className="text-lg font-bold text-amber-700">{reconciliacaoProgresso.leadsIgnorados}</div>
+                            </div>
+                            <div className="bg-red-50 rounded-lg p-2">
+                                <div className="text-[10px] text-red-700 uppercase font-semibold">Erros</div>
+                                <div className="text-lg font-bold text-red-700">{reconciliacaoProgresso.erros}</div>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => { cancelarReconciliacaoRef.current = true; }}
+                            disabled={cancelarReconciliacaoRef.current}
+                            className="w-full px-4 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                        >
+                            <i className="fa-solid fa-stop mr-1.5"></i>
+                            {cancelarReconciliacaoRef.current ? 'Finalizando lote atual...' : 'Cancelar (preserva o que já processou)'}
+                        </button>
+                    </>
+                )}
+
+                {reconciliacaoStatus === 'concluido' && (
+                    <>
+                        <h3 className="text-lg font-bold text-green-700 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-circle-check"></i>
+                            Reconciliação Concluída
+                        </h3>
+                        <div className="space-y-2 text-sm text-gray-700 mb-5 bg-gray-50 rounded-lg p-3">
+                            <div className="flex justify-between">
+                                <span>Candidatos processados:</span>
+                                <strong>{reconciliacaoProgresso.processados}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Empresas inseridas como leads:</span>
+                                <strong className="text-green-700">{reconciliacaoProgresso.leadsInseridos}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Empresas ignoradas (dup/exclusão):</span>
+                                <strong className="text-amber-700">{reconciliacaoProgresso.leadsIgnorados}</strong>
+                            </div>
+                            {reconciliacaoProgresso.erros > 0 && (
+                                <div className="flex justify-between">
+                                    <span>Erros encontrados:</span>
+                                    <strong className="text-red-700">{reconciliacaoProgresso.erros}</strong>
+                                </div>
+                            )}
+                            {reconciliacaoProgresso.restantes > 0 && (
+                                <div className="flex justify-between border-t border-gray-200 pt-2 mt-2">
+                                    <span>Restantes para próxima vez:</span>
+                                    <strong>{reconciliacaoProgresso.restantes}</strong>
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => {
+                                setMostrarModalReconciliacao(false);
+                                setReconciliacaoStatus('idle');
+                                carregarLeadsSalvos();
+                            }}
+                            className="w-full px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                            Fechar
+                        </button>
+                    </>
+                )}
+
+                {reconciliacaoStatus === 'erro' && (
+                    <>
+                        <h3 className="text-lg font-bold text-red-700 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-triangle-exclamation"></i>
+                            Erro na Reconciliação
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-4">
+                            Algo deu errado durante o processamento. O que já tinha sido inserido até o erro está salvo. Você pode tentar novamente — o sistema continua de onde parou.
+                        </p>
+                        <div className="grid grid-cols-2 gap-3 mb-5 text-center text-sm">
+                            <div className="bg-green-50 rounded p-2">
+                                <div className="text-[10px] text-green-700 uppercase">Inseridos</div>
+                                <div className="text-lg font-bold text-green-700">{reconciliacaoProgresso.leadsInseridos}</div>
+                            </div>
+                            <div className="bg-red-50 rounded p-2">
+                                <div className="text-[10px] text-red-700 uppercase">Erros</div>
+                                <div className="text-lg font-bold text-red-700">{reconciliacaoProgresso.erros}</div>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => {
+                                setMostrarModalReconciliacao(false);
+                                setReconciliacaoStatus('idle');
+                                carregarPendentesReconciliacao();
+                            }}
+                            className="w-full px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                        >
+                            Fechar
+                        </button>
+                    </>
+                )}
+            </div>
+        </div>
+    )}
+
+    {/* ════════════════════════════════════════════════════════ */}
+    {/* 🆕 v4.5 — MODAL DE NORMALIZAÇÃO DE EMPRESAS (Admin only)  */}
+    {/* ════════════════════════════════════════════════════════ */}
+    {mostrarModalNormalizacao && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full">
+                {normalizacaoStatus === 'idle' && (
+                    <>
+                        <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-wand-magic-sparkles text-cyan-600"></i>
+                            Normalizar Nomes de Empresa
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-3">
+                            A base atual tem <span className="font-bold text-cyan-700">{normalizacaoTotal}</span> nomes distintos de empresa em prospect_leads. Vou verificar cada um e padronizar conforme as regras abaixo.
+                        </p>
+                        <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3 mb-3 text-xs text-cyan-900">
+                            <p className="font-semibold mb-1">📋 Regras aplicadas:</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                                <li>Espaços extras removidos (trim + colapsa duplos)</li>
+                                <li>Pontuação final removida (. , ;)</li>
+                                <li>Sufixos legais removidos: Ltda, SA, ME, EPP, EIRELI, Inc, Corp, Ltd, LLC, Cia</li>
+                                <li>Title Case com proteção de siglas (NTT, SAP, IBM, etc) e preposições (de, da, do, e)</li>
+                            </ul>
+                        </div>
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-5 text-xs text-amber-800">
+                            <p className="font-semibold mb-1">⚠️ Antes de iniciar:</p>
+                            <ul className="list-disc list-inside space-y-0.5">
+                                <li>Processamento em lotes de 50 por vez</li>
+                                <li>Tempo total estimado: ~{Math.ceil(((normalizacaoTotal || 0) * 0.05) / 60)} minutos</li>
+                                <li>Não feche essa aba durante o processo</li>
+                                <li>Idempotente — rodar de novo não bagunça</li>
+                                <li>Cada mudança fica registrada em <code className="bg-amber-100 px-1 rounded">empresa_normalizacao_log</code> para auditoria</li>
+                                <li><strong>ESCOPO:</strong> só altera <code className="bg-amber-100 px-1 rounded">prospect_leads.empresa_nome</code>, não toca CRM/campanhas</li>
+                            </ul>
+                        </div>
+                        <div className="flex gap-2 justify-end">
+                            <button
+                                onClick={() => setMostrarModalNormalizacao(false)}
+                                className="px-4 py-2 text-sm border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={executarNormalizacao}
+                                className="px-4 py-2 text-sm bg-cyan-600 text-white rounded-lg hover:bg-cyan-700 transition-colors flex items-center gap-2"
+                            >
+                                <i className="fa-solid fa-play"></i>
+                                Iniciar Normalização
+                            </button>
+                        </div>
+                    </>
+                )}
+
+                {normalizacaoStatus === 'rodando' && (
+                    <>
+                        <h3 className="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-spinner fa-spin text-cyan-600"></i>
+                            Normalizando empresas...
+                        </h3>
+                        <div className="mb-3">
+                            <div className="flex justify-between text-xs text-gray-600 mb-1">
+                                <span>Progresso</span>
+                                <span className="font-semibold">
+                                    {normalizacaoProgresso.processados} / {normalizacaoProgresso.totalInicial}
+                                </span>
+                            </div>
+                            <div className="bg-gray-100 rounded-full h-3 overflow-hidden">
+                                <div
+                                    className="bg-cyan-600 h-3 transition-all duration-300"
+                                    style={{ width: `${Math.min(100, (normalizacaoProgresso.processados / Math.max(normalizacaoProgresso.totalInicial, 1)) * 100)}%` }}
+                                />
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+                            <div className="bg-cyan-50 rounded-lg p-2">
+                                <div className="text-[10px] text-cyan-700 uppercase font-semibold">Modificados</div>
+                                <div className="text-lg font-bold text-cyan-700">{normalizacaoProgresso.modificados}</div>
+                            </div>
+                            <div className="bg-green-50 rounded-lg p-2">
+                                <div className="text-[10px] text-green-700 uppercase font-semibold">Leads Atualizados</div>
+                                <div className="text-lg font-bold text-green-700">{normalizacaoProgresso.leadsAtualizados}</div>
+                            </div>
+                            <div className="bg-red-50 rounded-lg p-2">
+                                <div className="text-[10px] text-red-700 uppercase font-semibold">Erros</div>
+                                <div className="text-lg font-bold text-red-700">{normalizacaoProgresso.erros}</div>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => { cancelarNormalizacaoRef.current = true; }}
+                            disabled={cancelarNormalizacaoRef.current}
+                            className="w-full px-4 py-2 text-sm border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                        >
+                            <i className="fa-solid fa-stop mr-1.5"></i>
+                            {cancelarNormalizacaoRef.current ? 'Finalizando lote atual...' : 'Cancelar (preserva o que já normalizou)'}
+                        </button>
+                    </>
+                )}
+
+                {normalizacaoStatus === 'concluido' && (
+                    <>
+                        <h3 className="text-lg font-bold text-green-700 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-circle-check"></i>
+                            Normalização Concluída
+                        </h3>
+                        <div className="space-y-2 text-sm text-gray-700 mb-5 bg-gray-50 rounded-lg p-3">
+                            <div className="flex justify-between">
+                                <span>Nomes verificados:</span>
+                                <strong>{normalizacaoProgresso.processados}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Nomes modificados:</span>
+                                <strong className="text-cyan-700">{normalizacaoProgresso.modificados}</strong>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Leads atualizados:</span>
+                                <strong className="text-green-700">{normalizacaoProgresso.leadsAtualizados}</strong>
+                            </div>
+                            {normalizacaoProgresso.erros > 0 && (
+                                <div className="flex justify-between">
+                                    <span>Erros encontrados:</span>
+                                    <strong className="text-red-700">{normalizacaoProgresso.erros}</strong>
+                                </div>
+                            )}
+                            {normalizacaoProgresso.modificados === 0 && (
+                                <div className="bg-green-100 border border-green-300 rounded p-2 mt-2 text-green-800 text-xs">
+                                    ✨ Tudo já estava normalizado!
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => {
+                                setMostrarModalNormalizacao(false);
+                                setNormalizacaoStatus('idle');
+                                carregarKpis();
+                            }}
+                            className="w-full px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        >
+                            Fechar
+                        </button>
+                    </>
+                )}
+
+                {normalizacaoStatus === 'erro' && (
+                    <>
+                        <h3 className="text-lg font-bold text-red-700 mb-3 flex items-center gap-2">
+                            <i className="fa-solid fa-triangle-exclamation"></i>
+                            Erro na Normalização
+                        </h3>
+                        <p className="text-sm text-gray-600 mb-4">
+                            Algo deu errado durante o processamento. O que já tinha sido normalizado até o erro está salvo. Você pode tentar novamente — o sistema continua de onde parou (idempotente).
+                        </p>
+                        <div className="grid grid-cols-2 gap-3 mb-5 text-center text-sm">
+                            <div className="bg-cyan-50 rounded p-2">
+                                <div className="text-[10px] text-cyan-700 uppercase">Modificados</div>
+                                <div className="text-lg font-bold text-cyan-700">{normalizacaoProgresso.modificados}</div>
+                            </div>
+                            <div className="bg-red-50 rounded p-2">
+                                <div className="text-[10px] text-red-700 uppercase">Erros</div>
+                                <div className="text-lg font-bold text-red-700">{normalizacaoProgresso.erros}</div>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => {
+                                setMostrarModalNormalizacao(false);
+                                setNormalizacaoStatus('idle');
+                                carregarNormalizacaoTotal();
+                            }}
+                            className="w-full px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                        >
+                            Fechar
+                        </button>
+                    </>
+                )}
+            </div>
+        </div>
+    )}
+
+    {/* ════════════════════════════════════════════════════════ */}
+    {/* 🆕 v4.9 — MODAL: EDITAR PROSPECT                          */}
+    {/* ════════════════════════════════════════════════════════ */}
+    {modalEditarProspect && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+                    <h3 className="font-semibold text-gray-800 text-sm flex items-center gap-2">
+                        <i className="fa-solid fa-pen-to-square text-blue-600"></i>
+                        Editar Prospect
+                    </h3>
+                    <button
+                        onClick={() => setModalEditarProspect(null)}
+                        className="text-gray-400 hover:text-gray-600"
+                        title="Fechar"
+                    >
+                        <i className="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+
+                <div className="px-5 py-4 space-y-3 max-h-[70vh] overflow-y-auto">
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                            Nome completo <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            autoFocus
+                            value={formEditar.nome_completo}
+                            onChange={e => setFormEditar(f => ({ ...f, nome_completo: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Cargo</label>
+                        <input
+                            type="text"
+                            value={formEditar.cargo}
+                            onChange={e => setFormEditar(f => ({ ...f, cargo: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Empresa</label>
+                        <input
+                            type="text"
+                            value={formEditar.empresa_nome}
+                            onChange={e => setFormEditar(f => ({ ...f, empresa_nome: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        <p className="text-[11px] text-gray-400 mt-1">
+                            Domínio atual:{' '}
+                            <span className="font-mono text-gray-500">
+                                {modalEditarProspect.empresa_dominio || 'não definido'}
+                            </span>
+                            {' '}— o domínio não muda ao renomear a empresa.
+                        </p>
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">Email</label>
+                        <input
+                            type="email"
+                            value={formEditar.email}
+                            onChange={e => setFormEditar(f => ({ ...f, email: e.target.value }))}
+                            placeholder="nome@empresa.com.br"
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                        {formEditar.email.trim().toLowerCase() !== (modalEditarProspect.email || '').toLowerCase() && (
+                            <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+                                <i className="fa-solid fa-triangle-exclamation mt-0.5"></i>
+                                <span>
+                                    O email foi alterado. A verificação anterior será descartada e o
+                                    registro volta para <strong>não verificado</strong>, entrando na fila de revalidação.
+                                </span>
+                            </div>
+                        )}
+                    </div>
+
+                    {erroEdicao && (
+                        <div className="flex items-start gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-2 py-2">
+                            <i className="fa-solid fa-circle-exclamation mt-0.5"></i>
+                            <span>{erroEdicao}</span>
+                        </div>
+                    )}
+
+                    <div className="text-[11px] text-gray-400 border-t border-gray-100 pt-2">
+                        Origem: {modalEditarProspect.motor} · Criado em{' '}
+                        {new Date(modalEditarProspect.criado_em).toLocaleDateString('pt-BR')}
+                        {modalEditarProspect.reservado_por_nome ? ` · Analista: ${modalEditarProspect.reservado_por_nome}` : ''}
+                    </div>
+                </div>
+
+                <div className="flex justify-end gap-2 px-5 py-3 bg-gray-50 border-t border-gray-100">
+                    <button
+                        onClick={() => setModalEditarProspect(null)}
+                        disabled={salvandoEdicao}
+                        className="px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={salvarEdicaoProspect}
+                        disabled={salvandoEdicao}
+                        className="px-4 py-1.5 text-sm rounded-lg bg-blue-600 text-white hover:bg-blue-700 font-medium disabled:opacity-50 flex items-center gap-2"
+                    >
+                        {salvandoEdicao
+                            ? <><i className="fa-solid fa-spinner fa-spin"></i> Salvando</>
+                            : <>Salvar alterações</>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
+    )}
+
+    {/* ════════════════════════════════════════════════════════ */}
+    {/* 🆕 v4.9 — MODAL: CONFIRMAR DESCARTE (exclusão lógica)     */}
+    {/* ════════════════════════════════════════════════════════ */}
+    {confirmarExclusao && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+                <div className="px-5 py-4 text-center">
+                    <div className="w-12 h-12 rounded-full bg-red-50 text-red-500 flex items-center justify-center mx-auto mb-3">
+                        <i className="fa-solid fa-trash text-lg"></i>
+                    </div>
+                    <h3 className="font-semibold text-gray-800 text-sm">Descartar este prospect?</h3>
+                    <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+                        <strong className="text-gray-700">{confirmarExclusao.nome_completo || '—'}</strong><br />
+                        {confirmarExclusao.empresa_nome || 'sem empresa'}
+                        {confirmarExclusao.email ? ` · ${confirmarExclusao.email}` : ''}
+                    </p>
+                    <p className="text-[11px] text-gray-400 mt-3">
+                        O registro sai da listagem, mas continua no banco com status
+                        {' '}<strong>descartado</strong>. Você pode restaurá-lo pelo filtro
+                        {' '}"Ver descartados".
+                    </p>
+                </div>
+                <div className="flex gap-2 px-5 py-3 bg-gray-50 border-t border-gray-100">
+                    <button
+                        onClick={() => setConfirmarExclusao(null)}
+                        disabled={descartandoProspect}
+                        className="flex-1 px-3 py-1.5 text-sm rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-50"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        onClick={descartarProspect}
+                        disabled={descartandoProspect}
+                        className="flex-1 px-3 py-1.5 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                    >
+                        {descartandoProspect
+                            ? <><i className="fa-solid fa-spinner fa-spin"></i> Descartando</>
+                            : <>Descartar prospect</>
+                        }
+                    </button>
+                </div>
+            </div>
+        </div>
     )}
     </div>
     </>
