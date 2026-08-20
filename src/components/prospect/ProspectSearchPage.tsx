@@ -142,6 +142,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../config/supabase';
 import SelecionarCampanhaModal from '../crm/campanhas/SelecionarCampanhaModal';
+import ProspeccaoEmLoteTab from '../ProspeccaoEmLoteTab';
 
 // ============================================
 // TIPOS
@@ -255,7 +256,7 @@ const SENIORIDADES = [
 // COMPONENTE PRINCIPAL
 // ============================================
 interface ProspectSearchPageProps {
-    initialTab?: 'busca' | 'empresas' | 'leads' | 'exclusoes' | 'dominios_turnover';
+    initialTab?: 'busca' | 'empresas' | 'leads' | 'exclusoes' | 'dominios_turnover' | 'prospeccao_lote';
 }
 
 const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'busca' }) => {
@@ -277,7 +278,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     const [toastMsg, setToastMsg]                       = useState<{tipo: 'ok'|'erro'; msg: string} | null>(null);
 
     // Abas
-    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'empresas'|'leads'|'exclusoes'|'dominios_turnover'>(initialTab ?? 'busca');
+    const [abaAtiva, setAbaAtiva]                       = useState<'busca'|'empresas'|'leads'|'exclusoes'|'dominios_turnover'|'prospeccao_lote'>(initialTab ?? 'busca');
 
     // Sincronizar abaAtiva quando initialTab mudar
     // (ex: usuário navega de "Buscar Leads" → "Meus Prospects" sem desmontar o componente)
@@ -961,6 +962,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     // ============================================
     const podeVerTodosLeads     = currentUser?.tipo_usuario === 'Administrador';
     const podeVerTodoTerritorio = ['Administrador', 'Gestão Comercial', 'SDR'].includes(currentUser?.tipo_usuario || '');
+    const podeVerProspeccaoLote = ['Administrador', 'Admin'].includes(currentUser?.tipo_usuario || '') || Number(currentUser?.id) === 2; // Admin/Administrador ou Messias Vieira (id=2) — NÃO abre p/ trio GC
 
     // ============================================
     // LEADS SALVOS
@@ -2278,8 +2280,8 @@ A empresa ficará disponível para a equipe.`)) return;
 
         {/* Abas */}
         <div className="flex items-center gap-1 mb-6 border-b border-gray-200">
-            {(['busca', 'empresas', 'leads', 'exclusoes', 'dominios_turnover'] as const)
-                .filter(aba => aba !== 'dominios_turnover' || podeVerDominiosTurnover)
+            {(['busca', 'empresas', 'leads', 'exclusoes', 'dominios_turnover', 'prospeccao_lote'] as const)
+                .filter(aba => (aba !== 'dominios_turnover' || podeVerDominiosTurnover) && (aba !== 'prospeccao_lote' || podeVerProspeccaoLote))
                 .map(aba => (
                 <button key={aba} onClick={() => setAbaAtiva(aba)}
                     className={`px-4 py-2 text-sm font-medium rounded-t transition-colors
@@ -2290,7 +2292,8 @@ A empresa ficará disponível para a equipe.`)) return;
                      : aba === 'empresas'         ? <><i className="fa-solid fa-building mr-2"></i>Lista Empresas</>
                      : aba === 'leads'            ? <><i className="fa-solid fa-users mr-2"></i>Meus Prospects Salvos</>
                      : aba === 'exclusoes'        ? <><i className="fa-solid fa-ban mr-2 text-red-400"></i>Exclusões</>
-                                                  : <><i className="fa-solid fa-chart-line mr-2 text-emerald-500"></i>Domínios Turnover</>}
+                                                  : aba === 'dominios_turnover' ? <><i className="fa-solid fa-chart-line mr-2 text-emerald-500"></i>Domínios Turnover</>
+                                                  : <><i className="fa-solid fa-layer-group mr-2 text-indigo-500"></i>Prospecção em Lote<i className="fa-solid fa-lock ml-1.5 text-[10px] text-gray-400"></i></>}
                 </button>
             ))}
             {/* Botão Reset — limpa tudo para nova pesquisa */}
@@ -2343,6 +2346,17 @@ A empresa ficará disponível para a equipe.`)) return;
         {/* ══════════════════════════════════════════ */}
         {/* ABA: NOVA BUSCA                            */}
         {/* ══════════════════════════════════════════ */}
+        {/* ══════════════════════════════════════════ */}
+        {/* 🆕 ABA: PROSPECÇÃO EM LOTE (Apollo)         */}
+        {/* Restrita a Admin e Messias Vieira (id=2)    */}
+        {/* ══════════════════════════════════════════ */}
+        {abaAtiva === 'prospeccao_lote' && podeVerProspeccaoLote && (
+            <ProspeccaoEmLoteTab
+                currentUser={currentUser}
+                onSalvou={() => { setAbaAtiva('leads'); carregarMeusLeads(); }}
+            />
+        )}
+
         {abaAtiva === 'busca' && (
         <>
             {/* Painel de filtros */}
