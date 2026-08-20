@@ -962,7 +962,7 @@ const ProspectSearchPage: React.FC<ProspectSearchPageProps> = ({ initialTab = 'b
     // ============================================
     const podeVerTodosLeads     = currentUser?.tipo_usuario === 'Administrador';
     const podeVerTodoTerritorio = ['Administrador', 'Gestão Comercial', 'SDR'].includes(currentUser?.tipo_usuario || '');
-    const podeVerProspeccaoLote = currentUser?.tipo_usuario === 'Administrador' || currentUser?.id === 2; // Admin ou Messias Vieira (id=2) — fase de validacao
+    const podeVerProspeccaoLote = ['Administrador', 'Admin'].includes(currentUser?.tipo_usuario || '') || Number(currentUser?.id) === 2; // Admin/Administrador ou Messias Vieira (id=2) — NÃO abre p/ trio GC
 
     // ============================================
     // LEADS SALVOS
