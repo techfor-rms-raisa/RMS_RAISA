@@ -2,7 +2,25 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.20 (Arquivamento de leads — 10/08/2026)
+ * Versão: 1.23 (Botão "Importar Prospects" oculto — 19/08/2026)
+ *
+ * ⏸️ v1.23 (19/08/2026 — Botão "Importar Prospects" oculto):
+ *   Nova feature flag `MOSTRAR_IMPORTAR_PROSPECTS = false` suprime apenas
+ *   o botão do cabeçalho. Hook, modal, states, handlers e a action de
+ *   backend permanecem intactos — religar é trocar a constante para `true`.
+ *   Motivo: confusão no time comercial após a v1.22 restringir a listagem
+ *   à carteira do próprio usuário.
+ *
+ * 🆕 v1.22 (19/08/2026 — Escopo do modal "Importar Prospects"):
+ *   `useImportProspects` passa a receber `userId`. O modal listava a base
+ *   de prospects de TODA a equipe — agora respeita `reservado_por`.
+ *   Pareado com useImportProspects v1.1 e api/prospect-leads v1.3.
+ *
+ * 🆕 v1.21 (19/08/2026 — Descarte lógico do lead importado):
+ *   • state `descartandoLead` (LeadImportado | null);
+ *   • `<DescartarLeadImportadoModal />` delegando ao hook v1.6;
+ *   • prop `onDescartar` na LeadsImportadosTab;
+ *   • `verDescartados` incluído nas deps do useEffect de carga.
  *
  * 🆕 v1.20 (10/08/2026 — Arquivamento de leads / soft-delete):
  *   Fecha o ciclo do botão 📦 da LeadsTab v1.3:
@@ -109,6 +127,23 @@ import KpiCard from '../shared/components/KpiCard';
 import type { CurrentUserLite, Empresa, Lead } from '../types/crm.types';
 
 // ════════════════════════════════════════════════════════════
+// FEATURE FLAGS
+// ════════════════════════════════════════════════════════════
+
+/**
+ * ⏸️ v1.23 (19/08/2026) — Controla a exibição do botão "Importar Prospects"
+ * no cabeçalho da Base de Leads.
+ *
+ * `false` = botão oculto (estado atual, decisão Messias 19/08/2026).
+ * `true`  = botão visível, funcionalidade integralmente restaurada.
+ *
+ * Toda a mecânica por trás do botão continua no código e operacional —
+ * apenas o ponto de entrada na UI está suprimido. Alternar esta constante
+ * é a única mudança necessária para religar.
+ */
+const MOSTRAR_IMPORTAR_PROSPECTS = false;
+
+// ════════════════════════════════════════════════════════════
 // PROPS
 // ════════════════════════════════════════════════════════════
 
@@ -182,7 +217,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     defaultIncluirCreci: defaultsLeads.defaultIncluirCreci,
     defaultFiltroAnalista: defaultsLeads.defaultFiltroAnalista,
   });
-  const importH = useImportProspects();
+  const importH = useImportProspects({ userId: currentUser.id });
   // 🆕 v1.19 (01/07/2026) — useRespostas e useInvalidos migrados ao CRMEmailPage.
   // 🆕 v1.4 (Lead RBAC fix) — fontes p/ o LeadFormModal
   const tiposCampanhaH = useTiposCampanha();
@@ -601,12 +636,34 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
           </p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={abrirImportacao}
-            className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-1.5 transition-colors"
-          >
-            <i className="fa-solid fa-download"></i> Importar Prospects
-          </button>
+          {/* ⏸️ v1.23 (19/08/2026) — Botão "Importar Prospects" OCULTO.
+              Decisão Messias: a função estava gerando confusão no time
+              comercial. Após a correção de escopo da v1.22 (o modal passou
+              a respeitar `reservado_por`), a lista encolheu para os poucos
+              prospects do próprio usuário ainda em status='novo' — o que é
+              tecnicamente correto, mas contraintuitivo para quem via a base
+              inteira da equipe até ontem.
+
+              NADA foi removido: o hook `useImportProspects`, o
+              `ImportProspectsModal`, o state `modalImportarAberto`, os
+              handlers `abrirImportacao`/`fecharImportacao`/`executarImportacao`
+              e a action `importar_prospects` do api/crm-leads permanecem
+              íntegros e funcionais.
+
+              PARA RELIGAR: troque a constante abaixo para `true`. Nenhum
+              outro ajuste é necessário.
+
+              PENDÊNCIA aberta antes de religar: definir se o modal deve
+              aceitar apenas status='novo' (atual) ou também 'exportado'.
+              Ver useImportProspects v1.1, função `carregar`. */}
+          {MOSTRAR_IMPORTAR_PROSPECTS && (
+            <button
+              onClick={abrirImportacao}
+              className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 flex items-center gap-1.5 transition-colors"
+            >
+              <i className="fa-solid fa-download"></i> Importar Prospects
+            </button>
+          )}
           {/* 🆕 v1.11 (Sub-fase 3.C — 17/06/2026) — Importar Lista de Leads (Excel/CSV) */}
           <button
             onClick={() => setModalImportarListaAberto(true)}

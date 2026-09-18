@@ -7,10 +7,27 @@
  * Os leads chegam com: nome, cargo, empresa, linkedin_url, localização.
  * Este endpoint normaliza, valida, salva no Supabase (prospect_leads)
  * e devolve para o frontend do Prospect Engine exibir na lista.
- * user_id vem da Extension via localStorage rms_user.
+ * user_id vem da Extension, lida de `window.__RMS_USER_ID__` no MAIN world
+ * do tab do RMS-RAISA (background.js v1.07+).
  *
- * Versão: 2.1
- * Data: 09/04/2026
+ * Versão: 2.3
+ * Data: 18/09/2026
+ *
+ * v2.3 — OBSERVABILIDADE: a resposta passa a devolver `erro_persistencia`.
+ *         Até a v2.2 qualquer falha de gravação (user_id ausente ou erro do
+ *         Supabase) era apenas logada no servidor e o endpoint respondia
+ *         success:true / salvos:0. A Extension não tinha como distinguir
+ *         "gravou" de "não gravou" e exibia sucesso em ambos os casos —
+ *         leads perdidos sem nenhum sinal ao usuário. O campo novo é
+ *         aditivo: nenhum consumidor existente quebra.
+ *
+ * v2.2 — FIX: o INSERT passa a gravar `reservado_por` (= user_id da
+ *         Extension) além de `buscado_por`. Sem isso, todo lead capturado
+ *         nascia sem dono e sumia das telas que filtram por propriedade.
+ *         Diagnóstico 19/08/2026: 82 dos 150 leads de `motor='extension'`
+ *         com e-mail estavam órfãos. Os 68 restantes tinham dono porque
+ *         passaram pelo fluxo de salvamento do Prospect Engine
+ *         (api/prospect-save.ts), que já grava a reserva.
  *
  * v2.1 — FIX CRÍTICO: leads sem empresa_nome não são mais descartados.
  *         empresa_nome vazia é legítima — Google nem sempre exibe a empresa
@@ -275,9 +292,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ── Salvar no Supabase se user_id disponível ───────────────────────
     let savedIds: number[] = [];
+    let erroPersistencia: string | null = null;   // 🆕 v2.3
+
     if (user_id && deduplicados.length > 0) {
       const rows = deduplicados.map(p => ({
         buscado_por:      user_id,
+        // 🆕 v2.2 (19/08/2026) — reserva automática para quem capturou.
+        //   Até a v2.1 este INSERT gravava apenas `buscado_por`, deixando
+        //   `reservado_por` NULL. Consequência: o lead capturado não
+        //   aparecia em "Meus Prospects Salvos" (a aba filtra por
+        //   reservado_por) nem no modal "Importar Prospects" depois que
+        //   este passou a respeitar a propriedade — ficava órfão, visível
+        //   só para Administrador em modo "toda a equipe".
+        //   Semântica: quem capturou pelo Chrome é o dono do lead, mesma
+        //   regra que api/prospect-save.ts já aplica no fluxo Nova Busca.
+        reservado_por:    user_id,
+        reservado_em:     new Date().toISOString(),
         motor:            'extension',
         fonte_id_gemini:  p.gemini_id,
         nome_completo:    p.nome_completo,   // já sanitizado em normalizarLead
@@ -311,13 +341,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (saveError) {
         console.error('⚠️ [prospect-capture] Erro ao salvar no Supabase:', saveError.message);
-        // Não falha — retorna os leads mesmo sem salvar
+        // Não falha — retorna os leads mesmo sem salvar,
+        // mas 🆕 v2.3 informa o motivo real ao chamador.
+        erroPersistencia = `Falha ao gravar no Supabase: ${saveError.message}`;
       } else {
         savedIds = (saved || []).map((r: any) => r.id);
         console.log(`💾 [prospect-capture] ${savedIds.length} leads salvos no Supabase`);
+
+        if (savedIds.length === 0) {
+          erroPersistencia = 'O INSERT não retornou nenhuma linha gravada.';
+        }
       }
-    } else {
+    } else if (!user_id) {
       console.log(`ℹ️ [prospect-capture] user_id não enviado — leads não salvos no Supabase`);
+      erroPersistencia =
+        'user_id não recebido — nenhuma sessão do RMS-RAISA identificada. ' +
+        'Abra o sistema logado em outra aba e repita a captura.';
+    } else {
+      console.log(`ℹ️ [prospect-capture] Nenhum lead válido após normalização — nada a gravar`);
+      erroPersistencia = 'Nenhum lead válido após a normalização.';
     }
 
     return res.status(200).json({
@@ -326,6 +368,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       total:       deduplicados.length,
       descartados: descartados.length,
       salvos:      savedIds.length,
+      erro_persistencia: erroPersistencia,   // 🆕 v2.3 — null quando gravou tudo
       query:       query,
       motor:       'extension',
       creditos_consumidos: 0,
