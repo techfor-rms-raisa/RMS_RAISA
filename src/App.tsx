@@ -54,6 +54,8 @@ import { ConfiguracaoPriorizacaoDistribuicao } from './components/ConfiguracaoPr
 import DistribuicaoIAPage from './components/raisa/DistribuicaoIAPage';
 import ProspectSearchPage from './components/prospect/ProspectSearchPage';
 import CreditosTab from './components/prospect/CreditosTab';
+// 🆕 v65.0 (18/10/2026) — Vagas Publicadas (Prospect Engine, fontes públicas sem login)
+import VagasPublicadasPage from './components/prospect/VagasPublicadasPage';
 import CampanhaPrep from './components/prospect/CampanhaPrep';
 
 // ============================================
@@ -642,6 +644,9 @@ const App: React.FC = () => {
           return <CampanhaPrep currentUser={currentUser!} />;
       case 'prospect_credits':
           return <CreditosTab />;
+      // 🆕 v65.0 (18/10/2026) — Vagas Publicadas
+      case 'prospect_vagas':
+          return <VagasPublicadasPage />;
 
       // ============================================
       // ESPIONAGEM — 🆕 v64.0 (07/08/2026)

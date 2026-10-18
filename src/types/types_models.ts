@@ -37,6 +37,8 @@ export type View =
   | 'dashboard_ml' | 'dashboard_performance_ia' | 'dashboard_raisa_metrics'
   // PROSPECT Views
   | 'prospect_search' | 'prospect_list' | 'prospect_credits' | 'prospect_campaign'
+  // 🆕 v65.0 (18/10/2026) — Vagas Publicadas (scraper de vagas sem login, Prospect Engine)
+  | 'prospect_vagas'
   // CRM & Campanhas — view principal + sub-páginas promovidas ao menu lateral (30/05/2026)
   // Views legadas removidas na Fase 1E
   // 🆕 01/07/2026 — 'crm_email' adicionada (separação CRM E-mail vs Base de Leads).
