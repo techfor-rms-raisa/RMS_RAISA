@@ -2,6 +2,48 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.31 (30/10/2026 — CICLO DO LEAD + DESCANSO DE 7 DIAS):
+ *
+ *    PROBLEMA CONCEITUAL: "1 campanha por lead" era aplicado pelo STATUS DA
+ *    CAMPANHA. Campanhas duram meses; o ciclo do lead (4 e-mails) dura ~4
+ *    semanas. Lead que concluiu os 4 envios ficava preso até a campanha
+ *    encerrar. Sintoma (30/10/2026): 51 leads Alocação do Messias, aptos,
+ *    invisíveis no Vincular em Lote (total_excluir=0 / total_incluir=51).
+ *
+ *    DECISÃO DE PRODUTO (Messias 30/10/2026): terminado o ciclo, o lead fica
+ *    livre para outra campanha após 7 DIAS de descanso (do último e-mail
+ *    enviado).
+ *
+ *    FONTE ÚNICA: função SQL `crm_lead_bloqueio_campanha(lead, campanha)`
+ *    (sql/2026-10-30_ciclo_lead_campanha_descanso_7d.sql). Retorna NULL
+ *    (livre) ou jsonb { motivo, mensagem, ... } com motivo em:
+ *      • ja_participou_da_campanha — vínculo prévio com a campanha destino
+ *        (a mesma sequência nunca é reenviada; e a unique
+ *        email_lead_campanhas_unique faria o INSERT falhar)
+ *      • ciclo_em_andamento — há item 'pendente' na fila em campanha viva,
+ *        ou vínculo em campanha que ainda não iniciou
+ *      • descanso — último e-mail ENTREGUE há menos de 7 dias (bounce não
+ *        conta: e-mail que não chegou não "cansa" o contato)
+ *
+ *    MUDANÇAS (cirúrgicas):
+ *      (1) Helper `vincularLeadACampanha`, passo 6: o filtro local de
+ *          conflitos (status da campanha + status do vínculo) foi
+ *          SUBSTITUÍDO pela chamada à função SQL. Manter os dois criaria
+ *          duas regras divergentes — exatamente o defeito que a nota do
+ *          portão 7-bis (v1.23) manda evitar. Em modoRecuperacao passa
+ *          p_reativar_bounced = true: só vínculo 'bounced' na mesma
+ *          campanha pode ser reativado (fluxo v1.22.2); 'concluida' não.
+ *          Erro da RPC = FAIL-CLOSED (não vincula).
+ *      (2) Action `listar_leads_para_vinculo_em_lote`: repassa
+ *          `campanha_destino_id` (querystring) → `p_campanha_destino_id`
+ *          da RPC crm_listar_leads_vinculo_em_lote v1.30.
+ *
+ *    ⚠️ ORDEM DE DEPLOY: o SQL (função + RPC v1.30) ANTES deste arquivo.
+ *       Contra a RPC v1.29, o parâmetro novo gera erro de assinatura.
+ *
+ *    Pareado com: api/cron/disparar-fila.ts v1.15, api/crm-campanhas.ts
+ *    v1.18, api/crm-webhook.ts v1.19, useVincularEmLote.ts v1.4.
+ *
  *  - v1.30 (10/08/2026 — ARQUIVAMENTO DE LEADS / soft-delete):
  *
  *    A Base de Leads não tinha nenhuma forma de remover um lead cadastrado
@@ -3485,6 +3527,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           if (!isNaN(parsed) && parsed > 0) responsavelIdNum = parsed;
         }
 
+        // 🆕 v1.31 (30/10/2026) — campanha de destino. Permite à RPC excluir
+        //   leads que JÁ participaram desta campanha (a mesma sequência não
+        //   é reenviada). Mesmo padrão defensivo do responsavel_id: lixo vira
+        //   null, nunca NaN.
+        const campanhaDestinoIdQ = req.query.campanha_destino_id as string | undefined;
+        let campanhaDestinoIdNum: number | null = null;
+        if (campanhaDestinoIdQ !== undefined && campanhaDestinoIdQ !== null && campanhaDestinoIdQ !== '') {
+          const parsedCamp = parseInt(campanhaDestinoIdQ);
+          if (!isNaN(parsedCamp) && parsedCamp > 0) campanhaDestinoIdNum = parsedCamp;
+        }
+
         // ── 2) Chamada única à RPC ──────────────────────────
         //   RETURNS jsonb (UMA linha). Retorno escalar é imune ao limite
         //   default de 1000 linhas do cliente supabase-js — mesma lição
@@ -3507,6 +3560,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             // 🆕 v1.29 — parâmetro novo, com DEFAULT na RPC. Um backend
             //   antigo contra a RPC v1.29 continua funcionando.
             p_incluir_em_duvida: incluirEmDuvida,
+            // 🆕 v1.31 — exige RPC v1.30 (DEFAULT NULL). Ver cabeçalho.
+            p_campanha_destino_id: campanhaDestinoIdNum,
           }
         );
 
@@ -6356,21 +6411,41 @@ async function vincularLeadACampanha(
   //   Correção: adicionado filtro `['ativa', 'pausada'].includes(v.status)`
   //   para considerar apenas vínculos ATIVOS como conflito. Vínculos
   //   terminais não bloqueiam mais.
-  const { data: vinculosExistentes } = await supabase
-    .from('email_lead_campanhas')
-    .select('campanha_id, status, email_campanhas!inner(status, nome)')
-    .eq('lead_id', lead.id);
-
-  const conflitos = (vinculosExistentes || []).filter(
-    (v: any) =>
-      ['ativa', 'pausada', 'agendada'].includes(v.email_campanhas?.status) &&
-      ['ativa', 'pausada'].includes(v.status)
+  //
+  // 🔄 v1.31 (30/10/2026) — CICLO + DESCANSO DE 7 DIAS, FONTE ÚNICA SQL.
+  //   O filtro local acima (status campanha + status vínculo) foi
+  //   SUBSTITUÍDO pela função `crm_lead_bloqueio_campanha`. Motivo: o
+  //   vínculo nunca era fechado ao fim dos 4 e-mails, então o lead ficava
+  //   preso até a campanha encerrar (meses). A função decide pela FILA
+  //   (itens pendentes) e pelo último envio entregue — ver cabeçalho v1.31.
+  //
+  //   modoRecuperacao → p_reativar_bounced = true: reativar vínculo
+  //   'bounced' NA MESMA campanha continua permitido (fluxo v1.22.2). Vínculo
+  //   em qualquer OUTRO status (ex.: 'concluida') continua bloqueando — o
+  //   upsert+DELETE da etapa 8/9 reenviaria a sequência inteira a quem já
+  //   a recebeu.
+  //   Erro da RPC → FAIL-CLOSED: na dúvida, não vincula (não dispara e-mail).
+  const { data: bloqueio, error: errBloqueio } = await supabase.rpc(
+    'crm_lead_bloqueio_campanha',
+    {
+      p_lead_id: lead.id,
+      p_campanha_destino_id: camp.id,
+      p_reativar_bounced: opts?.modoRecuperacao === true,
+    }
   );
-  if (conflitos.length > 0) {
-    const nomes = conflitos.map((v: any) => `"${v.email_campanhas?.nome}"`).join(', ');
+
+  if (errBloqueio) {
     return {
       success: false,
-      error: `Lead já vinculado a campanha em andamento: ${nomes}. Aguarde conclusão ou desvincule antes.`,
+      error: `Falha ao verificar disponibilidade do lead para campanha: ${errBloqueio.message}`,
+    };
+  }
+  if (bloqueio) {
+    return {
+      success: false,
+      error:
+        (bloqueio as any).mensagem ||
+        'Lead indisponível para nova campanha (ciclo em andamento ou em descanso).',
     };
   }
 

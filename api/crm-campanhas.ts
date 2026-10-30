@@ -2,6 +2,27 @@
  * api/crm-campanhas.ts — API de Campanhas de Email
  *
  * Histórico:
+ *  - v1.18 (30/10/2026 — CICLO DO LEAD + DESCANSO DE 7 DIAS):
+ *    Pareado com crm-leads v1.31 + sql/2026-10-30_ciclo_lead_campanha_descanso_7d.sql.
+ *    Action `listar_campanhas_disponiveis_para_lead`:
+ *      (a) Bloqueio de ciclo/descanso passa a vir da função SQL única
+ *          `crm_lead_bloqueio_campanha(lead, null)`. Lead com ciclo em
+ *          andamento ou em descanso → lista vazia + `motivo` explicativo
+ *          (antes: campanhas vivas eram omitidas, mas OUTRAS apareciam e o
+ *          vínculo falhava depois no helper — UX inconsistente).
+ *      (b) Campanhas em que o lead JÁ participou deixam de ser oferecidas
+ *          (a mesma sequência não é reenviada; a unique
+ *          email_lead_campanhas_unique recusaria o INSERT). EXCEÇÃO:
+ *          vínculo 'bounced' continua oferecido — preserva o fluxo de
+ *          reativação da aba E-mails Inválidos (v1.22.2 / caso Rafael Baroni).
+ *      Erro da RPC → 500 (fail-closed), nunca lista "livre" por engano.
+ *    Action `desvincular_leads` (2 correções de defeitos pré-existentes):
+ *      (c) Cancela a fila PENDENTE do lead na campanha ANTES de apagar o
+ *          vínculo (motivo_cancelamento='desvinculado'). Antes, o cron
+ *          continuava disparando para o lead desvinculado.
+ *      (d) Contador total_destinatarios: filtro `.eq('campanha_id')` em
+ *          email_campanhas (coluna inexistente) corrigido para `.eq('id')`.
+ *
  *  - v1.17 (10/08/2026 — ARQUIVAMENTO DE LEADS / defesa em profundidade):
  *    Pareado com crm-leads v1.30. Leads arquivados (soft-delete da Base
  *    de Leads) não podem aparecer na seleção do Wizard nem passar pela
@@ -765,17 +786,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         //   Vínculos terminais ('bounced', 'cancelado', 'concluida', etc.)
         //   NÃO bloqueiam re-vinculação — o lead pode entrar de novo na
         //   mesma campanha (se for o caso) ou em outra.
+        //
+        // 🔄 v1.18 (30/10/2026) — CICLO + DESCANSO DE 7 DIAS.
+        //   (a) Ciclo/descanso: decidido pela função SQL única
+        //       crm_lead_bloqueio_campanha (mesma regra do helper e da
+        //       listagem do Vincular em Lote). Bloqueado → lista vazia.
+        //   (b) `campanhasBloqueadas` passa a significar "campanhas em que o
+        //       lead JÁ participou" (qualquer status de campanha), exceto
+        //       vínculo 'bounced' — reativável pelo fluxo de E-mails Inválidos.
         let campanhasBloqueadas: number[] = [];
         if (leadIdReal) {
-          const { data: vinculos } = await supabase
+          const { data: bloqueioLead, error: errBloqueioLead } = await supabase.rpc(
+            'crm_lead_bloqueio_campanha',
+            { p_lead_id: leadIdReal, p_campanha_destino_id: null }
+          );
+          if (errBloqueioLead) {
+            return res.status(500).json({
+              success: false,
+              error: `Falha ao verificar disponibilidade do lead: ${errBloqueioLead.message}`,
+            });
+          }
+          if (bloqueioLead) {
+            return res.status(200).json({
+              success: true,
+              campanhas: [],
+              motivo:
+                (bloqueioLead as any).mensagem ||
+                'Lead indisponível para nova campanha (ciclo em andamento ou em descanso).',
+              bloqueio: bloqueioLead,
+            });
+          }
+
+          const { data: vinculos, error: errVinculos } = await supabase
             .from('email_lead_campanhas')
             .select('campanha_id, status, email_campanhas!inner(status)')
             .eq('lead_id', leadIdReal);
+          // Fail-closed: sem esta leitura, ofereceríamos campanhas das quais
+          // o lead já participou (o helper recusaria só na confirmação).
+          if (errVinculos) {
+            return res.status(500).json({
+              success: false,
+              error: `Falha ao ler vínculos do lead: ${errVinculos.message}`,
+            });
+          }
           campanhasBloqueadas = (vinculos || [])
-            .filter((v: any) =>
-              ['ativa', 'pausada', 'agendada'].includes(v.email_campanhas?.status) &&
-              ['ativa', 'pausada'].includes(v.status)
-            )
+            .filter((v: any) => v.status !== 'bounced')
             .map((v: any) => v.campanha_id);
         }
 
@@ -803,7 +858,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (lista.length === 0) {
           let motivo: string;
           if (campanhasBloqueadas.length > 0) {
-            motivo = `Lead já vinculado a ${campanhasBloqueadas.length} campanha(s). Aguarde a conclusão ou desvincule antes de adicionar a outra.`;
+            // 🔄 v1.18 — o lead está livre (ciclo/descanso já checados acima);
+            //   só restavam campanhas das quais ele já participou.
+            motivo = `Nenhuma campanha nova para este lead: ele já participou das campanhas elegíveis da vertical "${vertical}".`;
           } else {
             motivo = `Nenhuma campanha elegível para a vertical "${vertical}" com você como responsável.`;
           }
@@ -1935,6 +1992,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const ids = lead_ids.split(',').map(Number).filter(Boolean);
 
+        // 🆕 v1.18 (30/10/2026) — Cancelar a fila PENDENTE antes de apagar o
+        //   vínculo. Até a v1.17 o desvincular apagava só o vínculo: os itens
+        //   'pendente' continuavam na email_fila e o cron SEGUIA DISPARANDO
+        //   para o lead desvinculado (a seleção do lote não olha o vínculo).
+        //   Com a regra de ciclo (crm_lead_bloqueio_campanha), esses pendentes
+        //   também manteriam o lead bloqueado — contradizendo a própria
+        //   mensagem "…ou desvincule antes". Ordem proposital: cancela
+        //   primeiro; se falhar, nada é apagado (sem fantasma na fila).
+        const { error: errCancelFila } = await supabase
+          .from('email_fila')
+          .update({ status: 'cancelado', motivo_cancelamento: 'desvinculado' })
+          .eq('campanha_id', campanha_id)
+          .in('lead_id', ids)
+          .eq('status', 'pendente');
+
+        if (errCancelFila) {
+          return res.status(500).json({
+            success: false,
+            error: `Falha ao cancelar envios pendentes antes de desvincular: ${errCancelFila.message}`,
+          });
+        }
+
         const { error } = await supabase
           .from('email_lead_campanhas')
           .delete()
@@ -1949,10 +2028,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .select('id', { count: 'exact', head: true })
           .eq('campanha_id', campanha_id);
 
+        // 🔧 v1.18 — filtro corrigido: email_campanhas não tem coluna
+        //   `campanha_id` (é `id`). O UPDATE falhava em silêncio e
+        //   total_destinatarios nunca era atualizado ao desvincular.
         await supabase
           .from('email_campanhas')
           .update({ total_destinatarios: totalDest || 0, atualizado_em: new Date().toISOString() })
-          .eq('campanha_id', campanha_id);
+          .eq('id', campanha_id);
 
         return res.status(200).json({ success: true, desvinculados: ids.length });
       }

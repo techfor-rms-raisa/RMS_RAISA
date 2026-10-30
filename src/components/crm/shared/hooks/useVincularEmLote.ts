@@ -2,7 +2,15 @@
  * useVincularEmLote.ts — Hook orquestrador da aba "Vincular em Lote"
  *
  * Caminho: src/components/crm/shared/hooks/useVincularEmLote.ts
- * Versão: 1.3 (Entregabilidade na listagem — 10/08/2026)
+ * Versão: 1.4 (Ciclo do lead + descanso de 7 dias — 30/10/2026)
+ *
+ * v1.4 (30/10/2026 — Ciclo do lead + descanso de 7 dias):
+ *   Pareada com api/crm-leads.ts v1.31 + RPC crm_listar_leads_vinculo_em_lote
+ *   v1.30. Única mudança: `carregarLeads` envia `campanha_destino_id`, para a
+ *   RPC excluir leads que JÁ participaram da campanha escolhida (a mesma
+ *   sequência não é reenviada). `campanhaDestino` já era pré-condição da
+ *   listagem e já estava na dep array — zero impacto em re-render.
+ *   Nenhuma alteração de UI/layout.
  *
  * v1.3 (10/08/2026 — Entregabilidade na aba Vincular em Lote):
  *   Pareada com api/crm-leads.ts v1.29 + lib/validacao-lead.ts v1.1 +
@@ -686,6 +694,8 @@ export function useVincularEmLote(
       const params = new URLSearchParams();
       params.set('action', 'listar_leads_para_vinculo_em_lote');
       params.set('vertical_destino', verticalDestino);
+      // 🆕 v1.4 — RPC v1.30 exclui quem já participou desta campanha.
+      params.set('campanha_destino_id', String(campanhaDestino));
       params.set('tipo_busca', tipoBusca);
       if (filtrosAplicados.engajamento !== 'qualquer') {
         params.set('engajamento', filtrosAplicados.engajamento);

@@ -4,6 +4,46 @@
  * Caminho: api/cron/disparar-fila.ts
  *
  * Histórico:
+ *  - v1.15 (30/10/2026 — FIM DO CICLO DO LEAD NA CAMPANHA).
+ *
+ *      PROBLEMA CONCEITUAL: a regra "1 campanha por lead" bloqueava pelo
+ *      STATUS DA CAMPANHA. Campanhas duram meses; o ciclo do lead (4 e-mails,
+ *      D+0/+4/+9/+15) dura ~4 semanas. Resultado: lead que já recebeu os 4
+ *      e-mails ficava preso à campanha até ela encerrar. Em 30/10/2026
+ *      havia 5.471 vínculos 'ativa' e ZERO 'concluida' em Produção —
+ *      nenhum código jamais fechava o vínculo.
+ *
+ *      DECISÃO DE PRODUTO (Messias 30/10/2026): ao terminar o ciclo, o lead
+ *      fica livre para outra campanha após 7 DIAS de descanso (contados do
+ *      último e-mail enviado).
+ *
+ *      MUDANÇA AQUI (aditiva, zero linhas removidas): após o envio com
+ *      sucesso e o avanço de step_atual, se não restar NENHUM item
+ *      'pendente' do lead nesta campanha, o vínculo passa de 'ativa' para
+ *      'concluida'.
+ *
+ *      🛡️  O STATUS DO VÍNCULO É INFORMATIVO. A decisão de bloqueio mora na
+ *      função SQL `crm_lead_bloqueio_campanha` (fonte única), que olha a
+ *      FILA (itens pendentes) e o último `enviado_em` — não este status.
+ *      Por isso uma falha aqui é GRACEFUL: só loga e segue.
+ *
+ *      Por que "nenhum pendente" e não "último step": cobre também os
+ *      casos em que steps futuros foram cancelados (resposta, opt-out,
+ *      bounce) e não depende de `mapaSteps`, que só contém os steps do lote.
+ *
+ *      Filtro `.eq('status','ativa')` = idempotência: não sobrescreve
+ *      'bounced', 'pausada' ou outro estado terminal.
+ *
+ *      LIMITE CONHECIDO (aceito): ciclos que terminam SEM envio — resposta,
+ *      opt-out, encerramento da campanha, erro definitivo — não passam por
+ *      aqui e o vínculo segue 'ativa'. Não afeta o bloqueio (a função olha a
+ *      fila); afeta só o rótulo informativo.
+ *
+ *      Pareado com: sql/2026-10-30_ciclo_lead_campanha_descanso_7d.sql,
+ *      api/crm-leads.ts v1.31, api/crm-campanhas.ts v1.18,
+ *      api/crm-webhook.ts (bounce sobre vínculo 'concluida'),
+ *      src/components/crm/shared/hooks/useVincularEmLote.ts v1.4.
+ *
  *  - v1.14 (06/08/2026 — CORREÇÃO DE HEAD-OF-LINE BLOCKING).
  *
  *      INCIDENTE: de 23/07 a 06/08/2026 a plataforma passou 14 DIAS sem
@@ -1199,6 +1239,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               `[disparar-fila] 📊 step_atual avançado: lead=${item.lead_id} ` +
               `campanha=${item.campanha_id} step=${stepOrdem}`,
             );
+          }
+        }
+
+        // 🆕 v1.15 (30/10/2026) — Fim do ciclo do lead nesta campanha.
+        //   Sem itens 'pendente' restantes → vínculo 'ativa' vira 'concluida'.
+        //   Informativo (a trava real é crm_lead_bloqueio_campanha). GRACEFUL.
+        if (item.lead_id && item.campanha_id) {
+          // 'enviando' conta como restante: após um represamento, steps do
+          //   MESMO lead podem cair no mesmo lote — sem isso o vínculo seria
+          //   fechado antes do último deles sair.
+          const { count: pendentesRestantes, error: errPend } = await supabase
+            .from('email_fila')
+            .select('id', { count: 'exact', head: true })
+            .eq('lead_id', item.lead_id)
+            .eq('campanha_id', item.campanha_id)
+            .in('status', ['pendente', 'enviando']);
+
+          if (errPend) {
+            console.warn(
+              `[disparar-fila] ⚠️ Falha ao verificar fim de ciclo do lead ${item.lead_id} ` +
+              `em campanha ${item.campanha_id}:`,
+              errPend.message,
+            );
+          } else if ((pendentesRestantes || 0) === 0) {
+            const { error: errConcl } = await supabase
+              .from('email_lead_campanhas')
+              .update({ status: 'concluida' })
+              .eq('lead_id', item.lead_id)
+              .eq('campanha_id', item.campanha_id)
+              .eq('status', 'ativa');
+            if (errConcl) {
+              console.warn(
+                `[disparar-fila] ⚠️ Falha ao marcar vínculo concluída: lead=${item.lead_id} ` +
+                `campanha=${item.campanha_id}:`,
+                errConcl.message,
+              );
+            } else {
+              console.log(
+                `[disparar-fila] 🏁 Ciclo concluído: lead=${item.lead_id} ` +
+                `campanha=${item.campanha_id} (descanso de 7 dias a partir de agora)`,
+              );
+            }
           }
         }
 
