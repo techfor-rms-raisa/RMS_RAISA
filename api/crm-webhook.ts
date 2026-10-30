@@ -3,6 +3,16 @@
  *
  * Fase 5C-1 + Fase 7-MVP — 03/06/2026 (CRM Campanhas)
  *
+ * v1.19 — 30/10/2026 — Bounce sobre vínculo já 'concluida'
+ *   A partir de api/cron/disparar-fila.ts v1.15, o cron marca o vínculo como
+ *   'concluida' no instante em que o ÚLTIMO e-mail do ciclo sai. O bounce
+ *   desse e-mail chega segundos depois — com o filtro antigo
+ *   `.eq('status','ativa')` o vínculo ficava 'concluida' em vez de 'bounced'
+ *   (dado enganoso na lista de leads da campanha).
+ *   Correção (1 linha): o UPDATE para 'bounced' aceita origem 'ativa' OU
+ *   'concluida'. Idempotência preservada: 'bounced', 'pausada' e demais
+ *   estados continuam intocados. Nenhuma outra lógica alterada.
+ *
  * v1.18 — 08/07/2026 — Idempotência + rastreabilidade de thread em `email_respostas`
  *   (descoberto via forensic da Campanha_06_Ousourcing_Ecossistema_SAP no caso
  *    do lead Rodrigo Olivas/Benteler — sessão de Messias, 08/07/2026).
@@ -1692,7 +1702,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .update({ status: 'bounced' })
           .eq('lead_id', fila.lead_id)
           .eq('campanha_id', fila.campanha_id)
-          .eq('status', 'ativa')
+          // 🔧 v1.19 (30/10/2026) — aceita 'concluida' (cron v1.15 fecha o
+          //   vínculo no último envio; o bounce desse envio chega depois).
+          .in('status', ['ativa', 'concluida'])
           .select('id');
 
         if (errVinc) {
