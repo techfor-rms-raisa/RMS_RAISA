@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, FinishReason } from '@google/genai';
 
 // ============================================================
 // CONFIGURAÇÃO - Lazy Initialization
@@ -28,8 +28,12 @@ function getAI(): GoogleGenAI {
 // ============================================================
 // CONFIGURAÇÃO VERCEL - Timeout estendido + body size aumentado para PDFs grandes
 // ============================================================
+// v5.1 — 2026-11-17: maxDuration 60 → 300 (alinhado ao vercel.json "api/**/*.ts": 300).
+//   Motivo: com o Gemini 2.5 Flash o "thinking" é dinâmico e não pode ser limitado pelo
+//   SDK @google/genai 0.6.1 (thinkingBudget é descartado). A análise de respostas escritas
+//   longas precisa de folga de tempo para não estourar 60s após o aumento do maxOutputTokens.
 export const config = {
-  maxDuration: 60, // 60 segundos (máximo do plano Pro)
+  maxDuration: 300, // 5 minutos (teto do Vercel Pro; mesmo valor do vercel.json)
   api: {
     bodyParser: {
       sizeLimit: '10mb', // PDFs em base64 chegam a ~5MB para arquivos de 3.5MB
@@ -1530,6 +1534,7 @@ Para cada pergunta, identifique a resposta correspondente e avalie:
 - Qualidade técnica (excelente/boa/regular/fraca/nao_respondeu)
 - Score de 0-100
 - Observação sobre a resposta
+- Em "resposta_extraida" cite APENAS um trecho curto e representativo (máximo 200 caracteres). NÃO copie a resposta inteira — a transcrição completa já é armazenada pelo sistema.
 
 ### PARTE 3: AVALIAÇÃO GERAL
 - Score técnico (0-100)
@@ -1553,7 +1558,7 @@ RESPONDA EXCLUSIVAMENTE em JSON válido (sem markdown, sem backticks):
   "respostas_identificadas": [
     {
       "pergunta_relacionada": "<pergunta original>",
-      "resposta_extraida": "<trecho da resposta identificada>",
+      "resposta_extraida": "<trecho curto da resposta, máximo 200 caracteres>",
       "qualidade": "excelente|boa|regular|fraca|nao_respondeu",
       "score": <0-100>,
       "observacao": "<análise da resposta>"
@@ -1576,12 +1581,24 @@ RESPONDA EXCLUSIVAMENTE em JSON válido (sem markdown, sem backticks):
       contents: prompt,
       config: {
         temperature: 0.3,
-        maxOutputTokens: 8192,
+        // v5.1 — 2026-11-17: 8192 → 32768. No Gemini 2.5 Flash os tokens de "thinking"
+        //   consomem o MESMO limite de maxOutputTokens; com 8192 o raciocínio esgotava o
+        //   orçamento e o JSON vinha cortado ("Unterminated string in JSON").
+        maxOutputTokens: 32768,
         responseMimeType: 'application/json'
       }
     });
 
     const text = result.text || '';
+
+    // v5.1 — 2026-11-17: diagnóstico de consumo de tokens + detecção explícita de truncamento
+    const finishReason = result.candidates?.[0]?.finishReason;
+    const usage = result.usageMetadata;
+    console.log(`   Tokens → prompt: ${usage?.promptTokenCount ?? '?'} | thinking: ${usage?.thoughtsTokenCount ?? '?'} | resposta: ${usage?.candidatesTokenCount ?? '?'} | finishReason: ${finishReason ?? '?'} | texto: ${text.length} caracteres`);
+
+    if (finishReason === FinishReason.MAX_TOKENS) {
+      throw new Error('A análise da IA foi interrompida pelo limite de tokens (MAX_TOKENS) antes de concluir o resultado. Tente novamente; se persistir, informe o suporte técnico.');
+    }
 
     if (!text) {
       throw new Error('Resposta vazia da Gemini');
