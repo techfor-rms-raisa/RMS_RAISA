@@ -35,7 +35,14 @@
  *   do CRM (Admin, Gestão de R&S, Gestão Comercial, Analista de R&S, SDR).
  * - Sem outras mudanças de estrutura ou permissões nesta versão.
  *
- * Data: 01/07/2026
+ * 🆕 v65.0 (18/10/2026 — Vagas Publicadas):
+ * - PROSPECT: novo item "Vagas Publicadas" (view 'prospect_vagas', ícone lupa)
+ *   entre "Buscar Prospects" e "Consumo Créditos". Empresas com vagas abertas
+ *   em TI/Dados/Segurança/Infra capturadas de fontes públicas SEM LOGIN
+ *   (Gupy, LinkedIn Jobs, Vagas.com, Programathor). RBAC igual aos demais
+ *   itens do PROSPECT (Admin, Gestão Comercial, SDR).
+ *
+ * Data: 18/10/2026
  */
 
 import React, { useState, useEffect } from 'react';
@@ -371,6 +378,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentView, onNavigate,
             view: 'prospect_search', 
             label: 'Buscar Prospects', 
             icon: 'fa-solid fa-magnifying-glass-dollar', 
+            roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
+        },
+        // 🆕 v65.0 (18/10/2026) — Vagas Publicadas: empresas contratando (fontes públicas sem login)
+        { 
+            view: 'prospect_vagas', 
+            label: 'Vagas Publicadas', 
+            icon: 'fa-solid fa-magnifying-glass', 
             roles: ['Administrador', 'Gestão Comercial', 'SDR'] 
         },
         { 
