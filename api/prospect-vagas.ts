@@ -27,8 +27,11 @@
  *
  * Pré-requisito SQL: 2026-10-18_vagas_publicadas_02_schema.sql
  *
- * Versão: 1.0
- * Data:   18/10/2026
+ * Versão: 1.1
+ * Data:   18/11/2026
+ *   v1.1 (18/11/2026): autenticar() aceita user_id numérico no body do POST
+ *         (corrige "user_id obrigatório" ao Salvar p/ prospectar — relatado por Marcos Rossi)
+ *   v1.0 (18/10/2026): versão inicial
  * Autor:  Messias + Claude DEV
  */
 
@@ -59,7 +62,10 @@ function lista<T extends string>(v: unknown, guard: (x: string) => x is T): T[] 
 }
 
 async function autenticar(req: VercelRequest, res: VercelResponse): Promise<UsuarioAtual | null> {
-  const raw = req.method === 'GET' ? str(req.query.user_id) : str(req.body?.user_id);
+  // v1.1: no POST o JSON traz user_id NUMÉRICO (currentUser.id) — str() só aceita string
+  // e devolvia null → "user_id obrigatório" em todo salvar_empresa/atualizar_salva.
+  const valor = req.method === 'GET' ? req.query.user_id : req.body?.user_id;
+  const raw = typeof valor === 'number' ? String(valor) : str(valor);
   const userId = Number(raw);
   if (!raw || !Number.isInteger(userId) || userId <= 0) {
     res.status(400).json({ success: false, error: 'user_id obrigatório' });
