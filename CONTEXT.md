@@ -603,13 +603,13 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 
 | Módulo | Arquivos | Tamanho | Última modificação |
 |---|---|---|---|
-| `api/` | 85 arquivos | 1.55 MB | 17/11/2026 |
-| `src/components/` | 191 arquivos | 946.4 KB | 17/11/2026 |
+| `api/` | 86 arquivos | 1.56 MB | 18/11/2026 |
+| `src/components/` | 192 arquivos | 902.6 KB | 18/11/2026 |
 | `src/pages/` | 0 arquivos | 0 KB | N/A |
-| `src/contexts/` | 2 arquivos | 2.3 KB | 17/11/2026 |
-| `src/types/` | 6 arquivos | 31.4 KB | 17/11/2026 |
-| `database/` | 0 arquivos | 109.5 KB | 17/11/2026 |
-| `scripts/` | 1 arquivos | 15.3 KB | 17/11/2026 |
+| `src/contexts/` | 2 arquivos | 2.3 KB | 18/11/2026 |
+| `src/types/` | 6 arquivos | 31.5 KB | 18/11/2026 |
+| `database/` | 0 arquivos | 109.5 KB | 18/11/2026 |
+| `scripts/` | 1 arquivos | 15.3 KB | 18/11/2026 |
 
 ### Endpoints API ativos
 - `api/analise-adequacao-perfil.ts`
@@ -661,6 +661,7 @@ Ao final de cada sessão importante, registrar no CONTEXT.md:
 - `api/prospect-save.ts`
 - `api/prospect-snovio-search.ts`
 - `api/prospect-stats.ts`
+- `api/prospect-vagas.ts`
 - `api/prospect-validate-emails.ts`
 - `api/questoes-inteligentes.ts`
 - `api/recomendacao-analista.ts`
