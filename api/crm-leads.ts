@@ -2,6 +2,18 @@
  * api/crm-leads.ts — CRUD Empresas + Leads (CRM de Campanhas)
  *
  * Histórico:
+ *  - v1.32 (19/11/2026 — FILTRO "DATAS RECENTES" EM MINHAS EMPRESAS):
+ *
+ *    `listar_empresas` aceita o parâmetro opcional `datas`:
+ *      • (vazio)   → ordem por nome A–Z (comportamento anterior, inalterado)
+ *      • recentes  → base inteira, criado_em desc
+ *      • hoje      → criado_em >= 00:00 de hoje (São Paulo), criado_em desc
+ *      • 7d / 30d  → criado_em >= 00:00 de 6 / 29 dias atrás (São Paulo), desc
+ *    Valor fora da lista é ignorado (whitelist). Desempate por id desc para
+ *    paginação estável. Combina com busca/setor/porte. Sem mudança de schema
+ *    (colunas criado_em/origem/criado_por confirmadas por introspecção em
+ *    Produção, 19/11/2026). Pareado com useEmpresas v1.1 e EmpresasTab v1.2.
+ *
  *  - v1.31 (30/10/2026 — CICLO DO LEAD + DESCANSO DE 7 DIAS):
  *
  *    PROBLEMA CONCEITUAL: "1 campanha por lead" era aplicado pelo STATUS DA
@@ -1460,7 +1472,7 @@
  *    invisíveis em campanha).
  *
  * Endpoints:
- * GET  ?action=listar_empresas[&busca=X&setor=X&page=1&limit=20]
+ * GET  ?action=listar_empresas[&busca=X&setor=X&page=1&limit=20&datas=recentes|hoje|7d|30d]
  * GET  ?action=detalhe_empresa&id=X
  * GET  ?action=listar_leads[&empresa_id=X&funil=X&busca=X&page=1&limit=30]
  * GET  ?action=detalhe_lead&id=X  (inclui timeline + campanhas)
@@ -1627,6 +1639,40 @@ const COLUNAS_EDITAVEIS_EMPRESA = [
 ] as const;
 
 /**
+ * 🆕 v1.32 (19/11/2026) — Filtro "Datas recentes" de `listar_empresas`.
+ * Valor do parâmetro `datas` → nº de dias do período (contando hoje).
+ * `recentes` = sem corte de data, só ordena por criado_em desc.
+ */
+const FILTRO_DATAS_EMPRESA: Record<string, number | null> = {
+  recentes: null,
+  hoje: 1,
+  '7d': 7,
+  '30d': 30,
+};
+
+/**
+ * 🆕 v1.32 (19/11/2026) — Início do período em horário de São Paulo, em ISO.
+ * "Hoje" é o dia civil de São Paulo (a Vercel roda em UTC). O deslocamento é
+ * lido do próprio fuso (Intl) em vez de fixar -03:00.
+ *   dias = 1  → hoje 00:00
+ *   dias = 7  → 00:00 de 6 dias atrás (7 dias contando hoje)
+ */
+function inicioPeriodoSaoPaulo(dias: number, agora: Date = new Date()): string {
+  const partes = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZoneName: 'longOffset',
+  }).formatToParts(agora);
+  const p = (tipo: string) => partes.find((x) => x.type === tipo)?.value || '';
+  const offset = p('timeZoneName').replace('GMT', '') || '-03:00'; // "GMT-03:00" → "-03:00"
+  const inicio = new Date(`${p('year')}-${p('month')}-${p('day')}T00:00:00${offset}`);
+  inicio.setUTCDate(inicio.getUTCDate() - (dias - 1));
+  return inicio.toISOString();
+}
+
+/**
  * 🆕 v1.15.1 (16/06/2026 — F8 FIX) — Tradução código → string visível para
  * o campo `email_leads.motivo_invalidacao`.
  *
@@ -1702,14 +1748,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ── LISTAR EMPRESAS ──────────────────────────
       if (action === 'listar_empresas') {
-        const { busca, setor, porte, page = '1', limit = '20' } = req.query as Record<string, string>;
+        const { busca, setor, porte, page = '1', limit = '20', datas = '' } = req.query as Record<string, string>;
         const offset = (parseInt(page) - 1) * parseInt(limit);
+
+        // 🆕 v1.32 (19/11/2026) — filtro "Datas recentes" (whitelist)
+        const filtroDatas = Object.prototype.hasOwnProperty.call(FILTRO_DATAS_EMPRESA, datas) ? datas : '';
 
         let query = supabase
           .from('email_empresas')
           .select('*', { count: 'exact' })
-          .order('nome', { ascending: true })
+          // v1.32 — com filtro de datas: mais recentes primeiro; sem: nome A–Z (como antes)
+          .order(filtroDatas ? 'criado_em' : 'nome', { ascending: !filtroDatas })
           .range(offset, offset + parseInt(limit) - 1);
+
+        if (filtroDatas) {
+          query = query.order('id', { ascending: false }); // desempate estável na paginação
+          const dias = FILTRO_DATAS_EMPRESA[filtroDatas];
+          if (dias) query = query.gte('criado_em', inicioPeriodoSaoPaulo(dias));
+        }
 
         if (busca) {
           // Busca por nome OU domínio
