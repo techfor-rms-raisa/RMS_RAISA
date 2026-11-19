@@ -2,7 +2,13 @@
  * useEmpresas.ts — Hook de gestão de Empresas
  *
  * Caminho: src/components/crm/shared/hooks/useEmpresas.ts
- * Versão: 1.0 (Fase 1C — 29/05/2026)
+ * Versão: 1.1 (19/11/2026)
+ *
+ * Histórico:
+ *   v1.1 — 19/11/2026: filtro "Datas recentes" (filtroDatas → parâmetro
+ *          `datas` de listar_empresas; crm-leads v1.32). Valores:
+ *          '' (A–Z, padrão) | 'recentes' | 'hoje' | '7d' | '30d'.
+ *   v1.0 — 29/05/2026 (Fase 1C): versão inicial.
  *
  * Responsabilidade:
  *  - Encapsular todo o ciclo de Empresas: listagem, filtros (busca,
@@ -66,6 +72,8 @@ export function useEmpresas(options: UseEmpresasOptions = {}) {
   const [pagina, setPagina] = useState(1);
   const [busca, setBusca] = useState('');
   const [filtroSetor, setFiltroSetor] = useState('');
+  // 🆕 v1.1 (19/11/2026) — '' = A–Z (padrão) | recentes | hoje | 7d | 30d
+  const [filtroDatas, setFiltroDatas] = useState('');
   const [loading, setLoading] = useState(false);
   const [detalhe, setDetalhe] = useState<DetalheEmpresaResponse | null>(null);
 
@@ -82,6 +90,7 @@ export function useEmpresas(options: UseEmpresasOptions = {}) {
       };
       if (busca) params.busca = busca;
       if (filtroSetor) params.setor = filtroSetor;
+      if (filtroDatas) params.datas = filtroDatas; // 🆕 v1.1
 
       const resp = await api.get<ListarEmpresasResponse>('listar_empresas', params);
       if (resp.ok && resp.data?.success) {
@@ -93,7 +102,7 @@ export function useEmpresas(options: UseEmpresasOptions = {}) {
     } finally {
       setLoading(false);
     }
-  }, [api, pagina, pageSize, busca, filtroSetor]);
+  }, [api, pagina, pageSize, busca, filtroSetor, filtroDatas]);
 
   // ════════════════════════════════════════════════════════════
   // SALVAR (criar ou atualizar)
@@ -163,6 +172,8 @@ export function useEmpresas(options: UseEmpresasOptions = {}) {
     setBusca,
     filtroSetor,
     setFiltroSetor,
+    filtroDatas,     // 🆕 v1.1
+    setFiltroDatas,  // 🆕 v1.1
     loading,
     carregar,
     pageSize,

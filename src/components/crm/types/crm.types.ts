@@ -2,7 +2,12 @@
  * crm.types.ts — Tipos compartilhados do Módulo CRM & Campanhas
  *
  * Caminho: src/components/crm/types/crm.types.ts
- * Versão: 1.7 (F8 — Aba Inválidos lead-centric + Lead com estados de invalidação — 16/06/2026)
+ * Versão: 1.8 (Empresa.criado_por — 19/11/2026)
+ *
+ * v1.8 (19/11/2026 — Filtro "Datas recentes" em Minhas Empresas):
+ *   `Empresa.criado_por?` (opcional) — exibido na coluna "Incluída em" da
+ *   EmpresasTab v1.2. Coluna já existente em email_empresas (text),
+ *   confirmada por introspecção em Produção. listar_empresas faz select('*').
  *
  * v1.7 (16/06/2026 — F8: Aba Inválidos lead-centric):
  *   Alinhamento dos tipos com a reformulação da aba "Inválidos" entregue
@@ -127,6 +132,8 @@ export interface Empresa {
   total_prospects: number;
   total_clientes: number;
   criado_em: string;
+  /** 🆕 19/11/2026 — nome de quem incluiu (coluna "Incluída em" da EmpresasTab v1.2). */
+  criado_por?: string | null;
 }
 
 export type EmpresaInput = Omit<

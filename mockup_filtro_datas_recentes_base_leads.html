@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Filtro "Datas recentes" na Base de Leads (Minhas Empresas)</title>
+<style>
+  :root{--indigo:#4F46E5;--ink:#1F2937;--mut:#6B7280;--line:#E5E7EB;--bg:#F9FAFB;--li:#1D4ED8;--new:#F59E0B;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif;}
+  body{background:#111827;padding:28px;color:var(--ink);}
+  .hint{color:#9CA3AF;font-size:12px;text-align:center;margin-bottom:6px;}
+  .hint b{color:#FCD34D;}
+  h1.sec{color:#E5E7EB;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin:26px auto 10px;max-width:1240px;}
+  h1.sec span{color:#FCD34D;}
+  .screen{background:#F3F4F6;border-radius:12px;padding:20px;max-width:1240px;margin:0 auto;}
+  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;}
+  .top h2{font-size:18px;display:flex;align-items:center;gap:8px;}
+  .top h2 .ic{width:20px;height:20px;border-radius:4px;background:#6366F1;}
+  .top p{font-size:12px;color:var(--mut);margin-top:2px;}
+  .btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#fff;}
+  .btn.teal{background:#0F766E;} .btn.green{background:#15803D;margin-left:6px;}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;}
+  .kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;}
+  .kpi small{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.4px;}
+  .kpi div{font-size:20px;font-weight:700;margin-top:4px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);padding:0 10px;}
+  .tab{font-size:12px;color:var(--mut);padding:11px 14px;}
+  .tab.on{color:var(--indigo);border-bottom:2px solid var(--indigo);font-weight:600;}
+  .tab .n{background:#EEF2FF;color:var(--indigo);border-radius:10px;padding:1px 7px;font-size:10px;margin-left:4px;}
+  .body{padding:14px;}
+  .tool{display:flex;gap:8px;margin-bottom:10px;align-items:stretch;}
+  .tool input{flex:1;border:1px solid #D1D5DB;border-radius:8px;padding:8px 11px;font-size:13px;}
+  .sel{border:1px solid #D1D5DB;border-radius:8px;padding:8px 11px;font-size:13px;background:#fff;display:flex;align-items:center;gap:8px;white-space:nowrap;}
+  .sel.novo{outline:2px dashed var(--new);outline-offset:2px;background:#EEF2FF;border-color:#C7D2FE;color:#3730A3;font-weight:600;}
+  .tool .b{background:var(--indigo);color:#fff;border-radius:8px;padding:8px 14px;font-size:13px;display:flex;align-items:center;}
+  .faixa{display:flex;align-items:center;gap:10px;background:#EEF2FF;border:1px solid #C7D2FE;border-radius:8px;padding:7px 12px;font-size:12.5px;color:#3730A3;margin-bottom:12px;outline:2px dashed var(--new);outline-offset:2px;}
+  .faixa a{margin-left:auto;color:#4338CA;text-decoration:underline;cursor:pointer;font-size:12px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{background:var(--bg);color:#4B5563;font-size:11px;text-transform:uppercase;font-weight:600;text-align:left;padding:10px 12px;}
+  th.c,td.c{text-align:center;}
+  td{padding:9px 12px;border-top:1px solid #F3F4F6;vertical-align:middle;}
+  td.nome{font-weight:600;}
+  td.mut{color:var(--mut);}
+  th.novo{background:#FFFBEB;color:#92400E;outline:2px dashed var(--new);outline-offset:-2px;}
+  td.novo{background:#FFFBEB;}
+  .badge-new{display:inline-block;background:var(--new);color:#fff;font-size:9px;border-radius:4px;padding:1px 5px;margin-left:5px;vertical-align:middle;}
+  .li{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:6px;padding:3px 8px;}
+  .li.tem{color:var(--li);background:#EFF6FF;}
+  .li.busca{color:var(--mut);border:1px dashed #9CA3AF;background:#fff;}
+  .logo{width:14px;height:14px;border-radius:3px;background:var(--li);color:#fff;font-size:9px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;}
+  .busca .logo{background:#9CA3AF;}
+  .dt{font-size:12.5px;color:var(--ink);white-space:nowrap;}
+  .dt small{display:block;font-size:11px;color:var(--mut);}
+  .dt .rel{color:#059669;}
+  .pen{color:#9CA3AF;}
+  .ilus{font-size:10px;color:var(--mut);font-style:italic;font-weight:400;}
+  .leg{max-width:1240px;margin:12px auto 0;background:#1F2937;border:1px solid #374151;border-radius:10px;padding:14px 16px;color:#D1D5DB;font-size:12.5px;line-height:1.65;}
+  .leg b{color:#fff;}
+  .row2{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;max-width:1240px;margin:0 auto;}
+  .drop{width:330px;background:#fff;border-radius:10px;box-shadow:0 18px 45px rgba(0,0,0,.45);overflow:hidden;}
+  .drop .head{border:1px solid #C7D2FE;background:#EEF2FF;color:#3730A3;font-weight:600;font-size:13px;padding:9px 12px;display:flex;justify-content:space-between;}
+  .opt{padding:9px 12px;font-size:13px;border-top:1px solid #F3F4F6;color:var(--ink);}
+  .opt small{display:block;color:var(--mut);font-size:11px;}
+  .opt.on{background:#EEF2FF;color:#3730A3;font-weight:600;}
+  .empty{width:520px;background:#fff;border-radius:10px;box-shadow:0 18px 45px rgba(0,0,0,.45);padding:26px;text-align:center;color:var(--mut);}
+  .empty .ico{font-size:28px;margin-bottom:6px;}
+  .empty b{display:block;color:var(--ink);font-size:14px;margin-bottom:4px;}
+  .cap{color:#9CA3AF;font-size:11.5px;text-align:center;margin-top:8px;max-width:520px;}
+</style></head>
+<body>
+
+<p class="hint">MOCKUP ESTÁTICO — aguardando aprovação (Regra 9) · 19/11/2026 · Nada foi alterado no código.</p>
+<p class="hint">Elementos com <b>borda tracejada amarela</b> são o que muda. Nomes e horários abaixo são os das empresas salvas hoje em Vagas Publicadas (do seu CSV); domínio, contadores e analista são <b>ilustrativos</b>.</p>
+
+<!-- ═════════════ PAINEL 1 — TELA COM O FILTRO ATIVO ═════════════ -->
+<h1 class="sec">① Minhas Empresas com <span>"Datas: últimos 7 dias"</span> selecionado</h1>
+<div class="screen">
+  <div class="top">
+    <div><h2><span class="ic"></span>Base de Leads</h2><p>Gestão do funil de prospecção — empresas, leads e importações</p></div>
+    <div><span class="btn teal">Importar Lista de Leads</span><span class="btn green">+ Nova Empresa</span></div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><small>Empresas</small><div>1.301</div></div>
+    <div class="kpi"><small>Leads</small><div>1.214</div></div>
+    <div class="kpi"><small>Prospects</small><div>0</div></div>
+    <div class="kpi"><small>Clientes</small><div>0</div></div>
+  </div>
+  <div class="card">
+    <div class="tabs">
+      <div class="tab on">Minhas Empresas <span class="n">1301</span></div>
+      <div class="tab">Meus Leads <span class="n">1214</span></div>
+      <div class="tab">Leads Importados <span class="n">0</span></div>
+      <div class="tab">Vincular em Lote</div>
+    </div>
+    <div class="body">
+      <div class="tool">
+        <input placeholder="Buscar por nome ou domínio...">
+        <span class="sel">Todos os setores ▾</span>
+        <span class="sel novo">📅 Datas: últimos 7 dias ▾</span>
+        <span class="b">🔍&nbsp;Buscar</span>
+      </div>
+      <div class="faixa">
+        <span>📅 Empresas incluídas nos <b>últimos 7 dias</b> — <b>13 empresas</b>, mais recentes primeiro <span class="ilus">(contagem ilustrativa)</span></span>
+        <a>✕ limpar filtro de datas</a>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Empresa</th>
+          <th>Domínio</th>
+          <th>LinkedIn</th>
+          <th>Setor</th>
+          <th class="c">Leads</th>
+          <th class="c">Prospects</th>
+          <th class="c">Clientes</th>
+          <th>Local</th>
+          <th class="novo">Incluída em <span class="badge-new">NOVO</span> ▼</th>
+          <th class="c">Ações</th>
+        </tr></thead>
+        <tbody>
+          <tr><td class="nome">Tata Consultancy Services</td><td class="mut">tcs.com</td>
+            <td><span class="li tem"><span class="logo">in</span>Perfil</span></td><td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="novo"><div class="dt">19/11/2026 <small><span class="rel">hoje, 09:40</span> · Vagas Publicadas · <i>por analista</i></small></div></td><td class="c pen">✎</td></tr>
+          <tr><td class="nome">Gobrax</td><td class="mut">gobrax.com</td>
+            <td><span class="li tem"><span class="logo">in</span>Perfil</span></td><td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="novo"><div class="dt">19/11/2026 <small><span class="rel">hoje, 09:39</span> · Vagas Publicadas · <i>por analista</i></small></div></td><td class="c pen">✎</td></tr>
+          <tr><td class="nome">Oncoclínicas&amp;Co</td><td class="mut">—</td>
+            <td><span class="li tem"><span class="logo">in</span>Perfil</span></td><td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="novo"><div class="dt">19/11/2026 <small><span class="rel">hoje, 09:39</span> · Vagas Publicadas · <i>por analista</i></small></div></td><td class="c pen">✎</td></tr>
+          <tr><td class="nome">Paketá</td><td class="mut">—</td>
+            <td><span class="li tem"><span class="logo">in</span>Perfil</span></td><td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="novo"><div class="dt">19/11/2026 <small><span class="rel">hoje, 09:39</span> · Vagas Publicadas · <i>por analista</i></small></div></td><td class="c pen">✎</td></tr>
+          <tr><td class="nome">Infracommerce</td><td class="mut">—</td>
+            <td><span class="li tem"><span class="logo">in</span>Perfil</span></td><td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="novo"><div class="dt">19/11/2026 <small><span class="rel">hoje, 09:38</span> · Vagas Publicadas · <i>por analista</i></small></div></td><td class="c pen">✎</td></tr>
+          <tr><td class="nome">Econverse</td><td class="mut">—</td>
+            <td><span class="li busca"><span class="logo">in</span>Buscar</span></td><td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="novo"><div class="dt">19/11/2026 <small><span class="rel">hoje, 09:34</span> · Vagas Publicadas · <i>por analista</i></small></div></td><td class="c pen">✎</td></tr>
+          <tr><td class="nome">Empresa cadastrada à mão <span class="ilus">(exemplo)</span></td><td class="mut">—</td>
+            <td><span class="li busca"><span class="logo">in</span>Buscar</span></td><td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="novo"><div class="dt">14/11/2026 <small>há 5 dias · Manual · <i>por analista</i></small></div></td><td class="c pen">✎</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div class="leg">
+  <b>Como funciona</b><br>
+  • Novo seletor <b>📅 Datas</b> ao lado de "Todos os setores". O padrão continua <b>"Datas: todas (A–Z)"</b>, ou seja, a tela abre como hoje.<br>
+  • Escolhendo qualquer outra opção, a lista passa a vir pela <b>data de inclusão, mais recentes primeiro</b>, e volta para a página 1. Combina com a busca por nome/domínio e com o filtro de setor.<br>
+  • Com filtro de datas ativo aparece a <b>faixa azul</b> com o total de empresas do período e o link <b>"✕ limpar filtro de datas"</b>.<br>
+  • Nova coluna <b>"Incluída em"</b> (sempre visível): data + hora relativa ("hoje, 09:40" / "há 5 dias") + <b>origem</b> (Vagas Publicadas, Prospect Engine, Manual) + <b>quem incluiu</b>. Vem dos campos <code>criado_em</code>, <code>origem</code> e <code>criado_por</code> da empresa — nenhum campo novo no banco.<br>
+  • "Hoje" segue o horário de São Paulo.<br>
+  • No código real o 📅 é o ícone de calendário do Font Awesome (mesma família de ícones da tela).
+</div>
+
+<!-- ═════════════ PAINÉIS 2 e 3 ═════════════ -->
+<h1 class="sec">② Opções do seletor <span>📅 Datas</span> &nbsp;·&nbsp; ③ <span>Período sem empresas</span></h1>
+<div class="row2">
+  <div>
+    <div class="drop">
+      <div class="head">📅 Datas: últimos 7 dias <span>▴</span></div>
+      <div class="opt">Datas: todas (A–Z)<small>padrão — igual a hoje, ordem alfabética</small></div>
+      <div class="opt">Datas: todas — mais recentes primeiro<small>a base inteira, da inclusão mais nova para a mais antiga</small></div>
+      <div class="opt">Datas: incluídas hoje</div>
+      <div class="opt on">Datas: últimos 7 dias</div>
+      <div class="opt">Datas: últimos 30 dias</div>
+    </div>
+    <p class="cap">Mesmo estilo do seletor "Ordenar" que já existe em Meus Leads.</p>
+  </div>
+  <div>
+    <div class="empty">
+      <div class="ico">📅</div>
+      <b>Nenhuma empresa incluída hoje</b>
+      Escolha um período maior ou limpe o filtro de datas.
+    </div>
+    <p class="cap">Mensagem quando o período escolhido não tem empresas (substitui o "Nenhuma empresa encontrada" só nesse caso).</p>
+  </div>
+</div>
+
+</body></html>

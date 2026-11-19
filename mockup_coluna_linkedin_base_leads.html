@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mockup — Coluna LinkedIn na Base de Leads (Minhas Empresas)</title>
+<style>
+  :root{--indigo:#4F46E5;--ink:#1F2937;--mut:#6B7280;--line:#E5E7EB;--bg:#F9FAFB;--li:#0A66C2;--new:#F59E0B;}
+  *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,sans-serif;}
+  body{background:#111827;padding:28px;color:var(--ink);}
+  .hint{color:#9CA3AF;font-size:12px;text-align:center;margin-bottom:6px;}
+  .hint b{color:#FCD34D;}
+  h1.sec{color:#E5E7EB;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;margin:26px 0 10px;}
+  h1.sec span{color:#FCD34D;}
+  .screen{background:#F3F4F6;border-radius:12px;padding:20px;max-width:1240px;margin:0 auto;}
+  /* header */
+  .top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;}
+  .top h2{font-size:18px;display:flex;align-items:center;gap:8px;}
+  .top h2 .ic{width:20px;height:20px;border-radius:4px;background:#6366F1;}
+  .top p{font-size:12px;color:var(--mut);margin-top:2px;}
+  .btn{border:none;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:600;color:#fff;cursor:default;}
+  .btn.teal{background:#0F766E;} .btn.green{background:#15803D;margin-left:6px;}
+  /* kpis */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px;}
+  .kpi{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;}
+  .kpi small{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.4px;}
+  .kpi div{font-size:20px;font-weight:700;margin-top:4px;}
+  /* card */
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;}
+  .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);padding:0 10px;}
+  .tab{font-size:12px;color:var(--mut);padding:11px 14px;}
+  .tab.on{color:var(--indigo);border-bottom:2px solid var(--indigo);font-weight:600;}
+  .tab .n{background:#EEF2FF;color:var(--indigo);border-radius:10px;padding:1px 7px;font-size:10px;margin-left:4px;}
+  .body{padding:14px;}
+  .tool{display:flex;gap:8px;margin-bottom:14px;}
+  .tool input{flex:1;border:1px solid #D1D5DB;border-radius:8px;padding:8px 11px;font-size:13px;}
+  .tool select{border:1px solid #D1D5DB;border-radius:8px;padding:8px 11px;font-size:13px;}
+  .tool .b{background:var(--indigo);color:#fff;border-radius:8px;padding:8px 14px;font-size:13px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{background:var(--bg);color:#4B5563;font-size:11px;text-transform:uppercase;font-weight:600;text-align:left;padding:10px 12px;}
+  th.c,td.c{text-align:center;}
+  td{padding:10px 12px;border-top:1px solid #F3F4F6;}
+  tr:hover td{background:#F9FAFB;}
+  td.nome{font-weight:600;}
+  td.mut{color:var(--mut);}
+  /* coluna nova */
+  th.novo{background:#FFFBEB;color:#92400E;outline:2px dashed var(--new);outline-offset:-2px;}
+  td.novo{background:#FFFBEB;}
+  .badge-new{display:inline-block;background:var(--new);color:#fff;font-size:9px;border-radius:4px;padding:1px 5px;margin-left:5px;vertical-align:middle;}
+  .li{display:inline-flex;align-items:center;gap:6px;font-size:12px;text-decoration:none;border-radius:6px;padding:3px 8px;}
+  .li.tem{color:var(--li);background:#E8F1FB;}
+  .li.tem:hover{background:#D3E5F8;}
+  .li.busca{color:var(--mut);border:1px dashed #9CA3AF;background:#fff;}
+  .li.busca:hover{color:var(--li);border-color:var(--li);}
+  .logo{width:15px;height:15px;border-radius:3px;background:var(--li);color:#fff;font-size:10px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;font-family:Arial,sans-serif;}
+  .busca .logo{background:#9CA3AF;}
+  .pen{color:#9CA3AF;}
+  .mk{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:var(--new);color:#fff;font-size:10px;font-weight:700;margin-left:6px;}
+  .ilus{font-size:10px;color:var(--mut);font-style:italic;font-weight:400;}
+  /* legenda */
+  .leg{max-width:1240px;margin:12px auto 0;background:#1F2937;border:1px solid #374151;border-radius:10px;padding:14px 16px;color:#D1D5DB;font-size:12.5px;line-height:1.6;}
+  .leg b{color:#fff;}
+  .leg .mk{margin:0 6px 0 0;}
+  /* paineis 2 e 3 */
+  .row2{display:flex;gap:20px;flex-wrap:wrap;justify-content:center;}
+  .modal{width:460px;background:#fff;border-radius:12px;box-shadow:0 18px 45px rgba(0,0,0,.45);overflow:hidden;}
+  .mh{display:flex;justify-content:space-between;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line);}
+  .mh h3{font-size:16px;}
+  .mb{padding:16px 20px;}
+  label{display:block;font-size:12.5px;font-weight:600;color:#374151;margin:10px 0 4px;}
+  .f{width:100%;border:1px solid #D1D5DB;border-radius:8px;padding:8px 11px;font-size:13px;color:var(--ink);background:#fff;}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .fieldnew{background:#FFFBEB;border:2px dashed var(--new);border-radius:10px;padding:2px 10px 10px;margin-top:10px;}
+  .help{font-size:11px;color:var(--mut);margin-top:4px;}
+  .err{font-size:11px;color:#B91C1C;margin-top:4px;}
+  .mf{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--line);background:var(--bg);}
+  .mf .c1{font-size:13px;color:#4B5563;padding:8px 14px;}
+  .mf .c2{font-size:13px;color:#fff;background:var(--indigo);border-radius:8px;padding:8px 14px;font-weight:600;}
+  .drawer{width:520px;background:#fff;border-radius:12px;box-shadow:0 18px 45px rgba(0,0,0,.45);overflow:hidden;}
+  .dh{background:#EEF2FF;padding:14px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;}
+  .dh h3{font-size:17px;} .dh p{font-size:12.5px;color:var(--mut);}
+  .db{padding:16px 20px;display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;}
+  .db span.k{color:var(--mut);}
+  .db .hl{grid-column:1 / span 2;background:#FFFBEB;border:2px dashed var(--new);border-radius:8px;padding:8px 10px;}
+  .db a{color:var(--indigo);text-decoration:none;}
+  .cap{color:#9CA3AF;font-size:11.5px;text-align:center;margin-top:8px;max-width:520px;}
+</style></head>
+<body>
+
+<p class="hint">MOCKUP ESTÁTICO — aguardando aprovação (Regra 9) · 19/11/2026 · Nada foi alterado no código.</p>
+<p class="hint">Elementos com <b>borda tracejada amarela</b> são o que muda. Linhas da tabela são <b>exemplos ilustrativos</b> para mostrar os estados.</p>
+
+<!-- ═════════════════════ PAINEL 1 — TABELA ═════════════════════ -->
+<h1 class="sec">① Base de Leads › Minhas Empresas — <span>nova coluna "LinkedIn"</span></h1>
+<div class="screen">
+  <div class="top">
+    <div><h2><span class="ic"></span>Base de Leads</h2><p>Gestão do funil de prospecção — empresas, leads e importações</p></div>
+    <div><span class="btn teal">Importar Lista de Leads</span><span class="btn green">+ Nova Empresa</span></div>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><small>Empresas</small><div>1.300</div></div>
+    <div class="kpi"><small>Leads</small><div>1.214</div></div>
+    <div class="kpi"><small>Prospects</small><div>0</div></div>
+    <div class="kpi"><small>Clientes</small><div>0</div></div>
+  </div>
+  <div class="card">
+    <div class="tabs">
+      <div class="tab on">Minhas Empresas <span class="n">1300</span></div>
+      <div class="tab">Meus Leads <span class="n">1214</span></div>
+      <div class="tab">Leads Importados <span class="n">0</span></div>
+      <div class="tab">Vincular em Lote</div>
+    </div>
+    <div class="body">
+      <div class="tool">
+        <input value="" placeholder="Buscar por nome ou domínio...">
+        <select><option>Todos os setores</option></select>
+        <span class="b">Buscar</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Empresa</th>
+          <th>Domínio</th>
+          <th class="novo">LinkedIn <span class="badge-new">NOVO</span></th>
+          <th>Setor</th>
+          <th class="c">Leads</th>
+          <th class="c">Prospects</th>
+          <th class="c">Clientes</th>
+          <th>Local</th>
+          <th class="c">Ações</th>
+        </tr></thead>
+        <tbody>
+          <tr>
+            <td class="nome">Gobrax</td>
+            <td class="mut">gobrax.com</td>
+            <td class="novo"><a class="li tem" title="Abre a página da empresa no LinkedIn (nova aba)"><span class="logo">in</span>Perfil</a><span class="mk">A</span></td>
+            <td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="c pen">✎</td>
+          </tr>
+          <tr>
+            <td class="nome">Tata Consultancy Services</td>
+            <td class="mut">tcs.com</td>
+            <td class="novo"><a class="li tem" title="Abre a página da empresa no LinkedIn (nova aba)"><span class="logo">in</span>Perfil</a><span class="mk">A</span></td>
+            <td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="c pen">✎</td>
+          </tr>
+          <tr>
+            <td class="nome">Empresa sem perfil <span class="ilus">(exemplo)</span></td>
+            <td class="mut">—</td>
+            <td class="novo"><a class="li busca" title="Perfil ainda não cadastrado — abre a busca de empresas do LinkedIn com este nome"><span class="logo">in</span>Buscar</a><span class="mk">B</span></td>
+            <td>—</td><td class="c">0</td><td class="c">0</td><td class="c">0</td><td>—</td>
+            <td class="c pen">✎</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<div class="leg">
+  <span class="mk">A</span><b>Empresa com perfil cadastrado</b> (<code>email_empresas.linkedin_url</code> preenchido — é o caso das empresas salvas a partir de vaga do LinkedIn Jobs): botão azul <b>"Perfil"</b> abre a página da empresa no LinkedIn em <b>nova aba</b>. Passando o mouse, mostra o endereço completo.<br>
+  <span class="mk">B</span><b>Empresa sem perfil</b> (vaga veio do Gupy / Vagas.com / Programathor, ou empresa cadastrada antes): botão cinza tracejado <b>"Buscar"</b> abre a busca de empresas do LinkedIn já com o nome da empresa. Achou o perfil certo? Cola o endereço no <b>Editar</b> (painel ②) e a linha passa a mostrar <b>"Perfil"</b>.<br>
+  • Clicar no botão <b>não</b> abre o painel lateral da empresa (só o resto da linha abre, como hoje).<br>
+  • A coluna fica visível em qualquer largura de tela (Domínio, Setor e Local continuam escondendo em telas menores, como hoje).<br>
+  • O sistema <b>não</b> acessa o LinkedIn: é só um link que o analista abre no próprio navegador (compatível com a regra <code>podeUsarLinkedIn</code> negada para Gestão Comercial).<br>
+  • No código real o ícone é o mesmo <code>fa-brands fa-linkedin</code> já usado na tela Vagas Publicadas.
+</div>
+
+<!-- ═════════════════════ PAINÉIS 2 e 3 ═════════════════════ -->
+<h1 class="sec">② Editar Empresa — <span>novo campo "LinkedIn da empresa"</span> &nbsp;&nbsp;·&nbsp;&nbsp; ③ Painel lateral da empresa — <span>link do LinkedIn</span></h1>
+<div class="row2">
+  <div>
+    <div class="modal">
+      <div class="mh"><h3>Editar Empresa</h3><span style="color:#9CA3AF;font-size:20px">×</span></div>
+      <div class="mb">
+        <label style="margin-top:0">Nome *</label><input class="f" value="Empresa sem perfil (exemplo)">
+        <div class="g2">
+          <div><label>Domínio</label><input class="f" placeholder="empresa.com.br"></div>
+          <div><label>CNPJ</label><input class="f"></div>
+        </div>
+        <div class="g2">
+          <div><label>Setor</label><select class="f"><option>Selecionar</option></select></div>
+          <div><label>Porte</label><select class="f"><option>Selecionar</option></select></div>
+        </div>
+        <div class="g2">
+          <div><label>Cidade</label><input class="f"></div>
+          <div><label>UF</label><input class="f"></div>
+        </div>
+        <label>Website</label><input class="f" placeholder="https://">
+        <div class="fieldnew">
+          <label>LinkedIn da empresa <span class="badge-new">NOVO</span></label>
+          <input class="f" placeholder="https://www.linkedin.com/company/...">
+          <div class="help">Cole o endereço da página da empresa no LinkedIn.</div>
+          <div class="err">Exemplo de aviso se colar outro tipo de link: "Informe um endereço do LinkedIn (linkedin.com/company/…)".</div>
+        </div>
+        <label>Observações</label><textarea class="f" rows="2"></textarea>
+      </div>
+      <div class="mf"><span class="c1">Cancelar</span><span class="c2">Salvar</span></div>
+    </div>
+    <p class="cap">O campo fica logo abaixo de Website. Vale também para <b>+ Nova Empresa</b>. O backend já aceita e grava esse campo hoje — só falta o campo na tela.</p>
+  </div>
+
+  <div>
+    <div class="drawer">
+      <div class="dh"><div><h3>Gobrax</h3><p>gobrax.com — Sem setor</p></div><span style="color:#9CA3AF;font-size:22px">×</span></div>
+      <div class="db">
+        <div><span class="k">Site:</span> <a>https://gobrax.com</a></div>
+        <div></div>
+        <div class="hl"><span class="k">LinkedIn:</span> <a><span class="logo" style="vertical-align:-3px">in</span> Abrir página da empresa no LinkedIn</a> <span class="badge-new">NOVO</span></div>
+      </div>
+      <div style="padding:0 20px 16px;font-size:13px;color:#374151;font-weight:700">👥 Leads desta empresa (0)</div>
+    </div>
+    <p class="cap">Quando a empresa tiver perfil cadastrado, o painel lateral (aberto ao clicar na linha) mostra o link junto do Site. Sem perfil, a linha não aparece.</p>
+  </div>
+</div>
+
+</body></html>

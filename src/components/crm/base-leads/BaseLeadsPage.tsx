@@ -2,7 +2,12 @@
  * BaseLeadsPage.tsx — Container da Base de Leads
  *
  * Caminho: src/components/crm/base-leads/BaseLeadsPage.tsx
- * Versão: 1.23 (Botão "Importar Prospects" oculto — 19/08/2026)
+ * Versão: 1.24 (Filtro "Datas recentes" em Minhas Empresas — 19/11/2026)
+ *
+ * 🆕 v1.24 (19/11/2026 — Filtro "Datas recentes" em Minhas Empresas):
+ *   Repassa `filtroDatas`/`setFiltroDatas` do useEmpresas v1.1 para a
+ *   EmpresasTab v1.2 (troca de período volta para a página 1) e inclui
+ *   `empresasH.filtroDatas` nas dependências do recarregamento da aba.
  *
  * ⏸️ v1.23 (19/08/2026 — Botão "Importar Prospects" oculto):
  *   Nova feature flag `MOSTRAR_IMPORTAR_PROSPECTS = false` suprime apenas
@@ -275,6 +280,7 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
     empresasH.pagina,
     empresasH.busca,
     empresasH.filtroSetor,
+    empresasH.filtroDatas, // 🆕 v1.24
   ]);
 
   useEffect(() => {
@@ -811,10 +817,16 @@ const BaseLeadsPage: React.FC<BaseLeadsPageProps> = ({
             pageSize={empresasH.pageSize}
             busca={empresasH.busca}
             filtroSetor={empresasH.filtroSetor}
+            filtroDatas={empresasH.filtroDatas}
             loading={empresasH.loading}
             onBuscaChange={empresasH.setBusca}
             onFiltroSetorChange={(v) => {
               empresasH.setFiltroSetor(v);
+              empresasH.setPagina(1);
+            }}
+            // 🆕 v1.24 (19/11/2026) — filtro "Datas recentes"
+            onFiltroDatasChange={(v) => {
+              empresasH.setFiltroDatas(v);
               empresasH.setPagina(1);
             }}
             onBuscar={() => {
