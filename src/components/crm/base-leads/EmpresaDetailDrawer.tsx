@@ -2,14 +2,20 @@
  * EmpresaDetailDrawer.tsx — Drawer de detalhe da empresa
  *
  * Caminho: src/components/crm/base-leads/EmpresaDetailDrawer.tsx
- * Versão: 1.0 (Fase 1C — 29/05/2026)
+ * Versão: 1.1 (19/11/2026)
  *
- * Decomposto de EmpresasLeadsCRM.tsx (linhas 864-921).
- * Mostra dados da empresa + lista de leads vinculados.
+ * Histórico:
+ *   v1.1 — 19/11/2026: linha "LinkedIn" abaixo de Site (mockup aprovado por
+ *          Messias). Só aparece quando email_empresas.linkedin_url é uma
+ *          página de empresa do LinkedIn. detalhe_empresa já faz select('*').
+ *   v1.0 — 29/05/2026 (Fase 1C): decomposto de EmpresasLeadsCRM.tsx
+ *          (linhas 864-921). Mostra dados da empresa + lista de leads vinculados.
  */
 
 import React from 'react';
 import FunilBadge from '../shared/components/FunilBadge';
+// 🆕 v1.1 (19/11/2026) — link do LinkedIn da empresa
+import { hrefLinkedinEmpresa } from '../shared/utils/linkedinEmpresa';
 
 // ════════════════════════════════════════════════════════════
 // TIPOS
@@ -34,6 +40,7 @@ interface EmpresaDetalhe {
     porte: string | null;
     cnpj: string | null;
     website: string | null;
+    linkedin_url?: string | null; // 🆕 v1.1 (19/11/2026)
     observacoes: string | null;
   };
   leads: LeadDaEmpresa[];
@@ -58,6 +65,8 @@ const EmpresaDetailDrawer: React.FC<EmpresaDetailDrawerProps> = ({
 }) => {
   if (!detalhe) return null;
   const { empresa, leads, total_leads } = detalhe;
+  // 🆕 v1.1 (19/11/2026) — null quando vazio ou não é página de empresa
+  const linkedinHref = hrefLinkedinEmpresa(empresa.linkedin_url);
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex justify-end">
@@ -107,6 +116,22 @@ const EmpresaDetailDrawer: React.FC<EmpresaDetailDrawerProps> = ({
                   className="text-indigo-600 hover:underline"
                 >
                   {empresa.website}
+                </a>
+              </div>
+            )}
+            {/* 🆕 v1.1 (19/11/2026) — LinkedIn da empresa (linha inteira, abaixo de Site) */}
+            {linkedinHref && (
+              <div className="col-span-2">
+                <span className="text-gray-500">LinkedIn:</span>{' '}
+                <a
+                  href={linkedinHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={linkedinHref}
+                  className="text-indigo-600 hover:underline"
+                >
+                  <i className="fa-brands fa-linkedin text-blue-700 mr-1"></i>
+                  Abrir página da empresa no LinkedIn
                 </a>
               </div>
             )}

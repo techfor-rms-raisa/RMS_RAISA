@@ -20,7 +20,19 @@
  *     (o endpoint responde HTTP 200 — padrão useCrmApi.parseResponse).
  *   • Nenhum dado pessoal gravado (LGPD).
  *
- * Versão: 1.0 — 18/10/2026
+ * Versão: 1.1 — 19/11/2026
+ *
+ * Histórico:
+ *   v1.1 — 19/11/2026: LinkedIn da empresa no "Salvar p/ prospectar".
+ *          • Antes só gravava email_empresas.linkedin_url quando a empresa era
+ *            NOVA e a vaga escolhida vinha do LinkedIn. Empresa que já existia
+ *            ficava sem o link (caso real: XP Inc., email_empresas#1169).
+ *          • Agora: descobrirLinkedinEmpresa() usa a URL da vaga salva se for
+ *            página de empresa do LinkedIn; senão procura outra vaga da mesma
+ *            empresa (empresa_nome_norm) capturada do LinkedIn Jobs no cache.
+ *          • Empresa existente: completa linkedin_url só se estiver vazio
+ *            (nunca sobrescreve). Fail-soft: falha aqui não derruba o salvar.
+ *   v1.0 — 18/10/2026: versão inicial.
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -300,6 +312,32 @@ export type SalvarEmpresaResultado =
   | { success: true;  salva_id: number; email_empresa_id: number; empresa_dominio: string | null; vinculou_existente: boolean }
   | { success: false; motivo: 'territorio' | 'ja_salva' | 'invalido' | 'erro'; mensagem: string; dono_nome?: string | null; dono_user_id?: number | null };
 
+// 🆕 v1.1 (19/11/2026) — página de empresa no LinkedIn (company/school/showcase)
+const RE_LINKEDIN_EMPRESA = /linkedin\.com\/(company|school|showcase)\//i;
+
+/**
+ * 🆕 v1.1 (19/11/2026) — URL da página da empresa no LinkedIn.
+ *   1) a da vaga escolhida, se for página de empresa do LinkedIn;
+ *   2) senão, a de outra vaga da mesma empresa capturada do LinkedIn Jobs
+ *      (cache prospect_vagas, mais recente).
+ * Fail-soft: erro de consulta devolve null (o salvar segue sem o link).
+ */
+async function descobrirLinkedinEmpresa(urlVaga: string | null, norm: string): Promise<string | null> {
+  if (urlVaga && RE_LINKEDIN_EMPRESA.test(urlVaga)) return urlVaga;
+  const { data, error } = await sb().from('prospect_vagas')
+    .select('empresa_url')
+    .eq('fonte', 'linkedin')
+    .eq('empresa_nome_norm', norm)
+    .ilike('empresa_url', '%linkedin.com/company/%')
+    .order('ultima_captura_em', { ascending: false })
+    .limit(1);
+  if (error) {
+    console.warn(`⚠️ [vagas-persistencia] descobrir LinkedIn de "${norm}": ${error.message}`);
+    return null;
+  }
+  return (data?.[0]?.empresa_url as string | undefined) ?? null;
+}
+
 export async function salvarEmpresa(inp: SalvarEmpresaInput, u: UsuarioAtual): Promise<SalvarEmpresaResultado> {
   const nome = (inp.empresa_nome || '').trim();
   const norm = normalizarNomeEmpresa(nome);
@@ -326,6 +364,9 @@ export async function salvarEmpresa(inp: SalvarEmpresaInput, u: UsuarioAtual): P
     dominio = await resolverDominio(nome);     // fail-soft: null se não achar
   }
 
+  // 2b) 🆕 v1.1 — LinkedIn da empresa (vaga escolhida ou outra vaga LinkedIn da mesma empresa)
+  const linkedinUrl = await descobrirLinkedinEmpresa(inp.empresa_url, norm);
+
   // 3) espelho em email_empresas
   let emailEmpresaId = match.email_empresa_id;
   let vinculouExistente = false;
@@ -345,7 +386,7 @@ export async function salvarEmpresa(inp: SalvarEmpresaInput, u: UsuarioAtual): P
     const { data, error } = await sb().from('email_empresas')
       .insert({
         nome, dominio, website: dominio ? `https://${dominio}` : null,
-        linkedin_url: inp.empresa_url && /linkedin\.com/i.test(inp.empresa_url) ? inp.empresa_url : null,
+        linkedin_url: linkedinUrl,             // v1.1 — antes: só a URL da vaga, se fosse LinkedIn
         origem: 'vagas_publicadas',
         observacoes: inp.observacao || null,
         criado_por: u.nome_usuario,
@@ -370,6 +411,18 @@ export async function salvarEmpresa(inp: SalvarEmpresaInput, u: UsuarioAtual): P
       }
     } else {
       emailEmpresaId = data.id;
+    }
+  }
+
+  // 3b) 🆕 v1.1 — empresa que JÁ existia: completa o LinkedIn só se estiver vazio
+  //     (nunca sobrescreve o que o analista cadastrou). Fail-soft.
+  if (vinculouExistente && emailEmpresaId && linkedinUrl) {
+    const { error: errLinkedin } = await sb().from('email_empresas')
+      .update({ linkedin_url: linkedinUrl, atualizado_em: agora })
+      .eq('id', emailEmpresaId)
+      .is('linkedin_url', null);
+    if (errLinkedin) {
+      console.warn(`⚠️ [vagas-persistencia] completar LinkedIn de email_empresas#${emailEmpresaId}: ${errLinkedin.message}`);
     }
   }
 

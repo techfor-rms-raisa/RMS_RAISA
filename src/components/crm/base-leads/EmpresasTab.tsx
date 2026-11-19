@@ -2,16 +2,24 @@
  * EmpresasTab.tsx — Aba Empresas
  *
  * Caminho: src/components/crm/base-leads/EmpresasTab.tsx
- * Versão: 1.0 (Fase 1C — 29/05/2026)
+ * Versão: 1.1 (19/11/2026)
  *
- * Decomposto de EmpresasLeadsCRM.tsx (linhas 524-610).
- * Toolbar de busca/filtro + tabela + paginação + ações.
+ * Histórico:
+ *   v1.1 — 19/11/2026: coluna "LinkedIn" (mockup aprovado por Messias).
+ *          Com email_empresas.linkedin_url → botão "Perfil" (abre a página
+ *          da empresa em nova aba). Sem perfil → botão "Buscar" (busca de
+ *          empresas do LinkedIn com o nome). Clique no botão não abre o
+ *          painel lateral. Coluna visível em qualquer largura de tela.
+ *   v1.0 — 29/05/2026 (Fase 1C): decomposto de EmpresasLeadsCRM.tsx
+ *          (linhas 524-610). Toolbar de busca/filtro + tabela + paginação + ações.
  */
 
 import React from 'react';
 import { SETORES } from '../types/crm.constants';
 import EmptyState from '../shared/components/EmptyState';
 import type { Empresa } from '../types/crm.types';
+// 🆕 v1.1 (19/11/2026) — link do LinkedIn da empresa
+import { hrefLinkedinEmpresa, urlBuscaLinkedinEmpresa } from '../shared/utils/linkedinEmpresa';
 
 // ════════════════════════════════════════════════════════════
 // PROPS
@@ -103,6 +111,8 @@ const EmpresasTab: React.FC<EmpresasTabProps> = ({
                 <th className="px-3 py-2.5 text-left font-semibold hidden md:table-cell">
                   Domínio
                 </th>
+                {/* 🆕 v1.1 (19/11/2026) — coluna LinkedIn */}
+                <th className="px-3 py-2.5 text-left font-semibold">LinkedIn</th>
                 <th className="px-3 py-2.5 text-left font-semibold hidden lg:table-cell">
                   Setor
                 </th>
@@ -116,7 +126,10 @@ const EmpresasTab: React.FC<EmpresasTabProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {empresas.map((emp) => (
+              {empresas.map((emp) => {
+                // 🆕 v1.1 (19/11/2026) — null quando vazio ou não é página de empresa
+                const linkedinHref = hrefLinkedinEmpresa(emp.linkedin_url);
+                return (
                 <tr
                   key={emp.id}
                   className="hover:bg-gray-50 transition-colors cursor-pointer"
@@ -125,6 +138,33 @@ const EmpresasTab: React.FC<EmpresasTabProps> = ({
                   <td className="px-3 py-2.5 font-medium text-gray-800">{emp.nome}</td>
                   <td className="px-3 py-2.5 text-gray-500 hidden md:table-cell">
                     {emp.dominio || '—'}
+                  </td>
+                  {/* 🆕 v1.1 (19/11/2026) — LinkedIn: "Perfil" ou "Buscar" */}
+                  <td
+                    className="px-3 py-2.5 whitespace-nowrap"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {linkedinHref ? (
+                      <a
+                        href={linkedinHref}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={linkedinHref}
+                        className="inline-flex items-center gap-1.5 text-xs text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded-md transition-colors"
+                      >
+                        <i className="fa-brands fa-linkedin"></i> Perfil
+                      </a>
+                    ) : (
+                      <a
+                        href={urlBuscaLinkedinEmpresa(emp.nome)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title="Perfil ainda não cadastrado — abre a busca de empresas do LinkedIn com este nome"
+                        className="inline-flex items-center gap-1.5 text-xs text-gray-500 border border-dashed border-gray-400 hover:text-blue-700 hover:border-blue-700 px-2 py-1 rounded-md transition-colors"
+                      >
+                        <i className="fa-brands fa-linkedin"></i> Buscar
+                      </a>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 hidden lg:table-cell">
                     {emp.setor ? (
@@ -154,7 +194,8 @@ const EmpresasTab: React.FC<EmpresasTabProps> = ({
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

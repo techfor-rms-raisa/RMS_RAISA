@@ -2,15 +2,24 @@
  * EmpresaFormModal.tsx — Modal de criar/editar empresa
  *
  * Caminho: src/components/crm/base-leads/EmpresaFormModal.tsx
- * Versão: 1.0 (Fase 1C — 29/05/2026)
+ * Versão: 1.1 (19/11/2026)
  *
- * Decomposto de EmpresasLeadsCRM.tsx (linhas 717-794).
- * Comportamento e estilo preservados integralmente.
+ * Histórico:
+ *   v1.1 — 19/11/2026: campo "LinkedIn da empresa" abaixo de Website
+ *          (mockup aprovado por Messias). Grava em email_empresas.linkedin_url
+ *          (backend já aceitava em criar_empresa/atualizar_empresa).
+ *          Ao sair do campo: apara espaços, vazio vira null, acrescenta https://.
+ *          Endereço que não seja página de empresa do LinkedIn mostra aviso
+ *          e bloqueia o Salvar até ser corrigido ou apagado.
+ *   v1.0 — 29/05/2026 (Fase 1C): decomposto de EmpresasLeadsCRM.tsx
+ *          (linhas 717-794). Comportamento e estilo preservados integralmente.
  */
 
 import React from 'react';
 import { SETORES, PORTES } from '../types/crm.constants';
 import type { Empresa } from '../types/crm.types';
+// 🆕 v1.1 (19/11/2026) — validação/normalização do LinkedIn da empresa
+import { isLinkedinEmpresaValido, normalizarLinkedinEmpresa } from '../shared/utils/linkedinEmpresa';
 
 // ════════════════════════════════════════════════════════════
 // PROPS
@@ -42,6 +51,9 @@ const EmpresaFormModal: React.FC<EmpresaFormModalProps> = ({
   const setField = <K extends keyof Empresa>(key: K, value: Empresa[K]) => {
     onChange({ ...form, [key]: value });
   };
+
+  // 🆕 v1.1 (19/11/2026) — campo opcional; só bloqueia se preenchido errado
+  const linkedinInvalido = !isLinkedinEmpresaValido(form.linkedin_url);
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -154,6 +166,29 @@ const EmpresaFormModal: React.FC<EmpresaFormModalProps> = ({
             />
           </div>
 
+          {/* 🆕 v1.1 (19/11/2026) — LinkedIn da empresa */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">LinkedIn da empresa</label>
+            <input
+              value={form.linkedin_url || ''}
+              onChange={(e) => setField('linkedin_url', e.target.value)}
+              onBlur={(e) => setField('linkedin_url', normalizarLinkedinEmpresa(e.target.value))}
+              placeholder="https://www.linkedin.com/company/..."
+              className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-indigo-400 focus:outline-none ${
+                linkedinInvalido ? 'border-red-400' : ''
+              }`}
+            />
+            {linkedinInvalido ? (
+              <p className="text-xs text-red-600 mt-1">
+                Informe um endereço do LinkedIn (linkedin.com/company/…)
+              </p>
+            ) : (
+              <p className="text-xs text-gray-500 mt-1">
+                Cole o endereço da página da empresa no LinkedIn.
+              </p>
+            )}
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Observações</label>
             <textarea
@@ -175,7 +210,7 @@ const EmpresaFormModal: React.FC<EmpresaFormModalProps> = ({
           </button>
           <button
             onClick={onSalvar}
-            disabled={!form.nome || loading}
+            disabled={!form.nome || loading || linkedinInvalido}
             className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 disabled:opacity-50"
           >
             {loading ? 'Salvando...' : 'Salvar'}
