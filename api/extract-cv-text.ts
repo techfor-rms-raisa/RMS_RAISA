@@ -7,11 +7,14 @@
  * Vantagem sobre gemini-analyze: usa multipart (limite 50MB no Vercel)
  * em vez de JSON body (limite 4.5MB) — resolve o HTTP 413 em PDFs grandes
  * 
+ * Versão: 1.1 — 2026-11-22: migração Gemini 2.5 → 3.x (Commit 1). PDF→texto usa GEMINI_MODEL_LITE
+ *         (./_utils/gemini-model.ts); temperature removido; maxOutputTokens 8192 → 32768.
  * Versão: 1.0
  */
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
+import { GEMINI_MODEL_LITE, GEMINI_MAX_OUTPUT_TOKENS, logarModelosGemini } from './_utils/gemini-model.js';
 import { IncomingForm, Fields, Files } from 'formidable';
 import fs from 'fs';
 
@@ -34,6 +37,7 @@ function getAI(): GoogleGenAI {
     const apiKey = process.env.API_KEY || '';
     if (!apiKey) throw new Error('API_KEY não configurada.');
     aiInstance = new GoogleGenAI({ apiKey });
+    logarModelosGemini('extract-cv-text');
   }
   return aiInstance;
 }
@@ -110,7 +114,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`🤖 [extract-cv-text] Enviando PDF ao Gemini (${tamanhoMB.toFixed(2)} MB em base64)...`);
 
       const result = await getAI().models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: GEMINI_MODEL_LITE, // v1.1: transcrição PDF→texto = baixa inferência
         contents: [{
           role: 'user',
           parts: [
@@ -123,8 +127,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ]
         }],
         config: {
-          temperature: 0.1,
-          maxOutputTokens: 8192
+          // v1.1: temperature removido (ignorado nos modelos 3.x)
+          maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS
         }
       });
 

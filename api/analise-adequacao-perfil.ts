@@ -3,11 +3,15 @@
 // Endpoint: /api/analise-adequacao-perfil
 // ============================================================
 // v2.0 - Migrado de Claude para Gemini 2.0 Flash
+// v2.3 - 2026-11-22: migração Gemini 2.5 → 3.x (Commit 1). Modelo lido de ./_utils/gemini-model.ts;
+//        temperature removido (ignorado nos 3.x); maxOutputTokens 8192 → 32768 (tokens de thinking
+//        consomem o mesmo orçamento — causa raiz do JSON truncado tratado na recuperação parcial v2.1).
 // Análise profunda requisito a requisito entre Candidato × Vaga
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI } from '@google/genai';
+import { GEMINI_MODEL_ANALISE, GEMINI_MAX_OUTPUT_TOKENS, logarModelosGemini } from './_utils/gemini-model.js';
 
 // ============================================================
 // CONFIGURAÇÃO VERCEL
@@ -36,11 +40,12 @@ function getAI(): GoogleGenAI {
     }
     console.log('✅ API_KEY (Gemini) carregada com sucesso');
     _aiInstance = new GoogleGenAI({ apiKey });
+    logarModelosGemini('analise-adequacao-perfil');
   }
   return _aiInstance;
 }
 
-const GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL = GEMINI_MODEL_ANALISE; // v2.3
 
 // ============================================================
 // TIPOS
@@ -183,8 +188,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
           ],
           config: {
-            temperature: 0.3,
-            maxOutputTokens: 8192,  // 🔧 v2.2: Reduzido de 16384 → 8192 para evitar timeout 504
+            // v2.3: temperature removido (ignorado nos modelos 3.x).
+            // v2.3: 8192 → 32768. O v2.2 havia reduzido para evitar 504 com maxDuration 60; hoje vercel.json
+            //       permite 300s e o thinking do 3.x consome o mesmo limite — 8192 truncava o JSON.
+            maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
           }
         });
         
@@ -206,7 +213,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!responseText || responseText.trim().length < 50) {
       console.error('❌ Resposta vazia ou muito curta da API Gemini');
       return res.status(500).json({ 
-        error: '❌ Erro na API Gemini (gemini-2.5-flash): Resposta vazia',
+        error: `❌ Erro na API Gemini (${GEMINI_MODEL}): Resposta vazia`,
         tipo: 'EMPTY_RESPONSE',
         acao: 'A API não retornou dados. Tente novamente em alguns segundos.',
         raw: responseText
@@ -347,7 +354,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // API Key inválida ou revogada
     if (errorStatus === 401 || errorStatus === 403 || errorMessage.includes('API key')) {
       return res.status(500).json({ 
-        error: '❌ Erro na API Gemini (gemini-2.5-flash): Chave de API inválida ou revogada',
+        error: `❌ Erro na API Gemini (${GEMINI_MODEL}): Chave de API inválida ou revogada`,
         tipo: 'AUTH_ERROR',
         acao: 'Atualize a API_KEY no Vercel com uma chave válida do Google AI Studio',
         codigo: errorStatus
@@ -357,7 +364,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Créditos/Quota esgotada
     if (errorStatus === 429 || errorMessage.includes('quota') || errorMessage.includes('rate')) {
       return res.status(500).json({ 
-        error: '❌ Erro na API Gemini (gemini-2.5-flash): Limite de requisições ou créditos esgotados',
+        error: `❌ Erro na API Gemini (${GEMINI_MODEL}): Limite de requisições ou créditos esgotados`,
         tipo: 'QUOTA_ERROR',
         acao: 'Aguarde alguns minutos ou verifique os créditos no Google Cloud Console',
         codigo: errorStatus
@@ -366,7 +373,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     
     // Erro genérico
     return res.status(500).json({ 
-      error: `❌ Erro na API Gemini (gemini-2.5-flash): ${errorMessage || 'Erro interno'}`,
+      error: `❌ Erro na API Gemini (${GEMINI_MODEL}): ${errorMessage || 'Erro interno'}`,
       tipo: 'SERVER_ERROR',
       acao: 'Tente novamente. Se persistir, contate o suporte.',
       codigo: errorStatus

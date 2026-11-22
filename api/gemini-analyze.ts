@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { GoogleGenAI, FinishReason } from '@google/genai';
+import { GEMINI_MODEL_ANALISE, GEMINI_MODEL_LITE, GEMINI_MAX_OUTPUT_TOKENS, logarModelosGemini } from './_utils/gemini-model.js';
 
 // ============================================================
 // CONFIGURAÇÃO - Lazy Initialization
@@ -21,6 +22,7 @@ function getAI(): GoogleGenAI {
     console.log(`🔑 API_KEY preview: ${apiKey.substring(0, 10)}...${apiKey.substring(apiKey.length - 4)}`);
     
     aiInstance = new GoogleGenAI({ apiKey });
+    logarModelosGemini('gemini-analyze');
   }
   return aiInstance;
 }
@@ -32,6 +34,9 @@ function getAI(): GoogleGenAI {
 //   Motivo: com o Gemini 2.5 Flash o "thinking" é dinâmico e não pode ser limitado pelo
 //   SDK @google/genai 0.6.1 (thinkingBudget é descartado). A análise de respostas escritas
 //   longas precisa de folga de tempo para não estourar 60s após o aumento do maxOutputTokens.
+// v5.2 — 2026-11-22: migração Gemini 2.5 → 3.x (Commit 1). Modelos lidos de ./_utils/gemini-model.ts
+//   (ANALISE = gemini-3.8-flash | LITE = gemini-3.5-flash-lite). `temperature` removido (ignorado nos 3.x);
+//   maxOutputTokens 8192 → GEMINI_MAX_OUTPUT_TOKENS (32768) onde fixado. Ver aviso Google de 01/12/2026.
 export const config = {
   maxDuration: 300, // 5 minutos (teto do Vercel Pro; mesmo valor do vercel.json)
   api: {
@@ -191,7 +196,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: GEMINI_MODEL_ANALISE, contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -246,7 +251,7 @@ ${reportText}
 \`\`\`
 `;
 
-  const result = await getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: GEMINI_MODEL_ANALISE, contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -260,7 +265,7 @@ ${reportText}
 }
 
 async function generateContent(model: string, prompt: string) {
-  const result = await getAI().models.generateContent({ model: model || 'gemini-2.5-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: model || GEMINI_MODEL_ANALISE, contents: prompt });
   const text = result.text || '';
 
   return { text };
@@ -300,7 +305,7 @@ Analise a seguinte vaga e sugira melhorias para torná-la mais atrativa e eficaz
 }
 `;
 
-  const result = await getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: prompt });
+  const result = await getAI().models.generateContent({ model: GEMINI_MODEL_ANALISE, contents: prompt });
   const text = result.text || '';
 
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/{[\s\S]*}/);
@@ -352,7 +357,7 @@ RESPONDA EM JSON:
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.5-flash', 
+      model: GEMINI_MODEL_ANALISE, 
       contents: prompt 
     });
     
@@ -453,7 +458,7 @@ async function extrairTextoPDF(base64PDF: string) {
 
   try {
     const result = await getAI().models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: GEMINI_MODEL_LITE, // v5.2: transcrição PDF→texto = baixa inferência
       contents: [{
         role: 'user',
         parts: [
@@ -462,8 +467,8 @@ async function extrairTextoPDF(base64PDF: string) {
         ]
       }],
       config: {
-        temperature: 0.1,
-        maxOutputTokens: 8192
+        // v5.2: temperature removido (ignorado nos modelos 3.x); teto elevado para CVs longos
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS
       }
     });
 
@@ -524,7 +529,7 @@ async function extrairDadosCV(textoCV?: string, base64PDF?: string) {
       
       try {
         const resultTexto = await getAI().models.generateContent({
-          model: 'gemini-2.5-flash',
+          model: GEMINI_MODEL_LITE, // v5.2: transcrição PDF→texto
           contents: [{
             role: 'user',
             parts: [
@@ -673,9 +678,9 @@ Retorne APENAS este JSON:
 
     // Executar em PARALELO
     const [resultPessoais, resultSkills, resultExperiencias] = await Promise.all([
-      getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: criarConteudo(promptPessoais) }),
-      getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: criarConteudo(promptSkills) }),
-      getAI().models.generateContent({ model: 'gemini-2.5-flash', contents: criarConteudo(promptExperiencias) })
+      getAI().models.generateContent({ model: GEMINI_MODEL_ANALISE, contents: criarConteudo(promptPessoais) }),
+      getAI().models.generateContent({ model: GEMINI_MODEL_ANALISE, contents: criarConteudo(promptSkills) }),
+      getAI().models.generateContent({ model: GEMINI_MODEL_ANALISE, contents: criarConteudo(promptExperiencias) })
     ]);
 
     const tempoProcessamento = Date.now() - startTime;
@@ -791,7 +796,7 @@ RESPONDA EM JSON:
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.5-flash', 
+      model: GEMINI_MODEL_ANALISE, 
       contents: prompt 
     });
     
@@ -868,11 +873,11 @@ RESPONDA APENAS com este JSON válido (sem markdown, sem backticks, sem comentá
 
   try {
     const result = await getAI().models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: GEMINI_MODEL_ANALISE,
       contents: prompt,
       config: {
-        temperature: 0.2,
-        maxOutputTokens: 8192
+        // v5.2: temperature removido (ignorado nos modelos 3.x)
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS
       }
     });
 
@@ -946,7 +951,7 @@ RESPONDA EM JSON (sem markdown, sem backticks):
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.5-flash', 
+      model: GEMINI_MODEL_ANALISE, 
       contents: prompt 
     });
     
@@ -1019,7 +1024,7 @@ RESPONDA APENAS EM JSON (sem markdown):
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.5-flash', 
+      model: GEMINI_MODEL_LITE, // v5.2: classificação simples 
       contents: prompt 
     });
     
@@ -1115,7 +1120,7 @@ RESPONDA APENAS EM JSON (sem markdown):
 
   try {
     const result = await getAI().models.generateContent({ 
-      model: 'gemini-2.5-flash', 
+      model: GEMINI_MODEL_LITE, // v5.2: classificação simples 
       contents: prompt 
     });
     
@@ -1284,7 +1289,7 @@ Responda APENAS com o JSON, sem texto adicional.`;
 
   try {
     const result = await getAI().models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: GEMINI_MODEL_ANALISE,
       contents: prompt
     });
 
@@ -1415,7 +1420,7 @@ Responda APENAS com o JSON, sem texto adicional.`;
 
   try {
     const result = await getAI().models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: GEMINI_MODEL_ANALISE,
       contents: prompt
     });
 
@@ -1577,14 +1582,14 @@ RESPONDA EXCLUSIVAMENTE em JSON válido (sem markdown, sem backticks):
 
   try {
     const result = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: GEMINI_MODEL_ANALISE,
       contents: prompt,
       config: {
-        temperature: 0.3,
+        // v5.2 — 2026-11-22: temperature removido (ignorado nos modelos 3.x).
         // v5.1 — 2026-11-17: 8192 → 32768. No Gemini 2.5 Flash os tokens de "thinking"
         //   consomem o MESMO limite de maxOutputTokens; com 8192 o raciocínio esgotava o
         //   orçamento e o JSON vinha cortado ("Unterminated string in JSON").
-        maxOutputTokens: 32768,
+        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
         responseMimeType: 'application/json'
       }
     });
