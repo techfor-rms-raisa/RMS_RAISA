@@ -6,18 +6,24 @@
 // v2.3 - 2026-11-22: migração Gemini 2.5 → 3.x (Commit 1). Modelo lido de ./_utils/gemini-model.ts;
 //        temperature removido (ignorado nos 3.x); maxOutputTokens 8192 → 32768 (tokens de thinking
 //        consomem o mesmo orçamento — causa raiz do JSON truncado tratado na recuperação parcial v2.1).
+// v2.4 - 2026-11-22: CONF-01 (governança de confiança). Uma análise degradada (JSON truncado, recuperação
+//        parcial ou fallback) NUNCA mais devolve 'ENTREVISTAR' com confiança 70% e arrays vazios de requisitos
+//        (que a tela lia como "Nenhum gap crítico"). Agora: detecção explícita de FinishReason.MAX_TOKENS,
+//        campos `analise_parcial`, `motivo_parcial`, `veredicto_confiavel` (= !parcial && confiança >= 80),
+//        `modelo_ia`; recuperação parcial com confiança 50 e recomendação REAVALIAR; fallback idem.
+//        maxDuration 60 → 300 (alinhado ao vercel.json; o 3.8 Flash levou ~45 s em teste de 22/11).
 // Análise profunda requisito a requisito entre Candidato × Vaga
 // ============================================================
 
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, FinishReason } from '@google/genai';
 import { GEMINI_MODEL_ANALISE, GEMINI_MAX_OUTPUT_TOKENS, logarModelosGemini } from './_utils/gemini-model.js';
 
 // ============================================================
 // CONFIGURAÇÃO VERCEL
 // ============================================================
 export const config = {
-  maxDuration: 60,
+  maxDuration: 300, // v2.4: alinhado ao vercel.json (antes 60)
   api: {
     bodyParser: {
       sizeLimit: '4mb',
@@ -47,6 +53,9 @@ function getAI(): GoogleGenAI {
 
 const GEMINI_MODEL = GEMINI_MODEL_ANALISE; // v2.3
 
+/** v2.4 — CONF-04: confiança mínima para a análise valer como veredicto. */
+const CONFIANCA_MINIMA_VEREDICTO = 80;
+
 // ============================================================
 // TIPOS
 // ============================================================
@@ -74,6 +83,11 @@ interface AnaliseAdequacaoPerfil {
   score_geral: number;
   nivel_adequacao_geral: 'MUITO_COMPATIVEL' | 'COMPATIVEL' | 'PARCIALMENTE_COMPATIVEL' | 'INCOMPATIVEL';
   confianca_analise: number;
+  // v2.4 — CONF-01: governança da confiança (preenchidos pelo backend, nunca pela IA)
+  analise_parcial?: boolean;        // true = JSON truncado/recuperado ou fallback
+  motivo_parcial?: string | null;   // ex.: 'JSON truncado (MAX_TOKENS)', 'Erro de parse', 'Fallback'
+  veredicto_confiavel?: boolean;    // = !analise_parcial && confianca_analise >= 80
+  modelo_ia?: string;               // modelo realmente usado
   requisitos_imprescindiveis: RequisitoAnalisado[];
   requisitos_muito_desejaveis: RequisitoAnalisado[];
   requisitos_desejaveis: RequisitoAnalisado[];
@@ -209,6 +223,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // Extrair resposta
     const responseText = response?.text || '';
+
+    // v2.4 — CONF-01: diagnóstico de tokens + detecção explícita de truncamento (mesmo padrão do gemini-analyze v5.1)
+    const finishReason = response?.candidates?.[0]?.finishReason;
+    const usage = response?.usageMetadata;
+    const respostaTruncada = finishReason === FinishReason.MAX_TOKENS;
+    console.log(`   Tokens → prompt: ${usage?.promptTokenCount ?? '?'} | thinking: ${usage?.thoughtsTokenCount ?? '?'} | resposta: ${usage?.candidatesTokenCount ?? '?'} | finishReason: ${finishReason ?? '?'} | texto: ${responseText.length} caracteres`);
+    if (respostaTruncada) {
+      console.warn('⚠️ [Gemini] Resposta interrompida por MAX_TOKENS — o JSON provavelmente está truncado');
+    }
     
     if (!responseText || responseText.trim().length < 50) {
       console.error('❌ Resposta vazia ou muito curta da API Gemini');
@@ -254,7 +277,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Tentar extrair dados parciais do JSON truncado
         const scoreMatch = responseText.match(/"score_geral"\s*:\s*(\d+)/);
         const nivelMatch = responseText.match(/"nivel_adequacao_geral"\s*:\s*"([^"]+)"/);
-        const recomendacaoMatch = responseText.match(/"recomendacao"\s*:\s*"([^"]+)"/);
+        // v2.4: recomendação da IA não é mais aproveitada na recuperação parcial (sempre REAVALIAR)
         
         if (scoreMatch && nivelMatch) {
           console.log('⚠️ Recuperando dados parciais do JSON truncado...');
@@ -287,7 +310,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             data_analise: new Date().toISOString(),
             score_geral: parseInt(scoreMatch[1]),
             nivel_adequacao_geral: nivelMatch[1] as any,
-            confianca_analise: 70,
+            // v2.4 — CONF-01: era 70 com recomendação 'ENTREVISTAR' e arrays vazios → a tela exibia
+            //   "Nenhum gap crítico identificado!" para uma análise que não avaliou requisito algum.
+            confianca_analise: 50,
+            analise_parcial: true,
+            motivo_parcial: respostaTruncada ? 'JSON truncado (MAX_TOKENS)' : 'JSON inválido — dados parciais recuperados por regex',
             requisitos_imprescindiveis: [],
             requisitos_muito_desejaveis: [],
             requisitos_desejaveis: [],
@@ -308,8 +335,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               }]
             }],
             avaliacao_final: {
-              recomendacao: (recomendacaoMatch?.[1] as any) || 'ENTREVISTAR',
-              justificativa: 'Análise parcial recuperada. Recomenda-se entrevista para validação completa.',
+              // v2.4 — CONF-01: análise parcial nunca gera veredicto de triagem; REAVALIAR obriga reprocessar
+              recomendacao: 'REAVALIAR',
+              justificativa: 'Análise parcial: a resposta da IA veio incompleta e os requisitos não foram avaliados individualmente. Reprocesse a análise antes de qualquer decisão.',
               proximos_passos: ['Agendar entrevista técnica'],
               riscos_identificados: ['Análise incompleta devido a limitação técnica'],
               pontos_atencao_entrevista: ['Validar requisitos principais']
@@ -331,12 +359,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const tempoMs = Date.now() - startTime;
     console.log(`✅ [Gemini] Análise concluída em ${tempoMs}ms - Score: ${result.score_geral}%`);
 
+    // v2.4 — CONF-01/CONF-04: campos de governança calculados no backend (fonte única da regra)
+    result.analise_parcial = result.analise_parcial === true;
+    result.motivo_parcial = result.analise_parcial ? (result.motivo_parcial || 'Análise parcial') : null;
+    result.confianca_analise = Number(result.confianca_analise) || 0;
+    result.veredicto_confiavel = !result.analise_parcial && result.confianca_analise >= CONFIANCA_MINIMA_VEREDICTO;
+    result.modelo_ia = GEMINI_MODEL;
+    if (!result.veredicto_confiavel) {
+      console.warn(`⚠️ [CONF-01] Veredicto NÃO confiável — parcial=${result.analise_parcial} | confiança=${result.confianca_analise}% (mín. ${CONFIANCA_MINIMA_VEREDICTO}%) | motivo=${result.motivo_parcial ?? '-'}`);
+    }
+
     // Adicionar metadados
     result.data_analise = new Date().toISOString();
     (result as any)._metadata = {
       modelo: GEMINI_MODEL,
       provider: 'Google Gemini',
-      tempo_ms: tempoMs
+      tempo_ms: tempoMs,
+      finish_reason: finishReason ?? null,          // v2.4
+      confianca_minima: CONFIANCA_MINIMA_VEREDICTO  // v2.4
     };
 
     return res.status(200).json({ 
@@ -399,6 +439,8 @@ function criarRespostaFallback(candidato: any, vaga: any): AnaliseAdequacaoPerfi
     score_geral: 50,
     nivel_adequacao_geral: 'PARCIALMENTE_COMPATIVEL',
     confianca_analise: 30,
+    analise_parcial: true,                       // v2.4 — CONF-01
+    motivo_parcial: 'Fallback — resposta da IA não pôde ser interpretada', // v2.4
     requisitos_imprescindiveis: [{
       requisito: 'Análise automática indisponível',
       tipo: 'HARD_SKILL',
@@ -432,8 +474,8 @@ function criarRespostaFallback(candidato: any, vaga: any): AnaliseAdequacaoPerfi
       }]
     }],
     avaliacao_final: {
-      recomendacao: 'ENTREVISTAR',
-      justificativa: 'A análise automática não pôde ser concluída devido a um erro técnico. Recomenda-se prosseguir com entrevista para avaliação manual.',
+      recomendacao: 'REAVALIAR', // v2.4 — CONF-01: fallback nunca recomenda entrevista
+      justificativa: 'A análise automática não pôde ser concluída devido a um erro técnico. Reprocesse a análise; se persistir, avalie o CV manualmente.',
       proximos_passos: ['Agendar entrevista técnica', 'Avaliar CV manualmente'],
       riscos_identificados: ['Análise incompleta - validar requisitos na entrevista'],
       pontos_atencao_entrevista: ['Validar todas as competências técnicas manualmente']

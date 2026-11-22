@@ -42,6 +42,15 @@
  *   • Badge informativo "Resultado em cache" no painel de resultado
  *   • Nova análise acontece automaticamente apenas quando CV ou Vaga mudam
  *   • Análise sempre salva (independente do score) para garantir cache futuro
+ * - v5.1 (22/11/2026): CONF-01 — governança de confiança da Análise de Adequação
+ *   • Caso real (11/11): backend devolveu análise parcial (confiança 70%, requisitos vazios) e a tela
+ *     exibiu Score 78% + "Entrevistar" + check verde "Nenhum gap crítico identificado!"
+ *   • Backend (analise-adequacao-perfil v2.4) passa a enviar analise_parcial / motivo_parcial /
+ *     veredicto_confiavel / modelo_ia; a tela respeita esses campos:
+ *     - veredicto_confiavel=false → score riscado, "Não avaliável", faixa âmbar com motivo e botão Reprocessar
+ *     - aba Gaps nunca mostra check verde sem veredicto confiável; Requisitos/Perguntas desabilitadas se vazias
+ *     - análise degradada NÃO entra no cache (analise_adequacao) e o cache ignora linhas com confiança < 80
+ *     - modelo_ia gravado com o modelo real (antes: 'claude-sonnet' fixo)
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -160,6 +169,12 @@ interface AnaliseAdequacaoResultado {
   pontos_fortes: string[];
   pontos_atencao: string[];
   resumo_executivo: string;
+  // v5.1 — CONF-01
+  veredicto_confiavel: boolean;
+  analise_parcial: boolean;
+  motivo_parcial: string | null;
+  requisitos_avaliados: number;
+  modelo_ia?: string;
 }
 
 // ============================================
@@ -221,6 +236,7 @@ const AnaliseRisco: React.FC = () => {
   
   // 🆕 v4.1: Score mínimo para salvamento automático (40%)
   const SCORE_MINIMO_SALVAR = 40;
+  const CONFIANCA_MINIMA_VEREDICTO = 80; // v5.1 — CONF-01/CONF-04 (mesmo valor do backend)
   
   // Estados da aba Alertas
   const [alertas, setAlertas] = useState<CandidaturaRisco[]>([]);
@@ -1161,6 +1177,7 @@ const AnaliseRisco: React.FC = () => {
         .eq('cv_hash', cvHash)
         .eq('vaga_id', vagaSelecionada.id)
         .eq('status', 'concluida')
+        .gte('confianca_analise', CONFIANCA_MINIMA_VEREDICTO) // v5.1 — CONF-01: cache nunca serve análise degradada
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -1186,7 +1203,13 @@ const AnaliseRisco: React.FC = () => {
             ...(d.resumo_executivo?.gaps_criticos || []),
             ...(d.avaliacao_final?.pontos_atencao_entrevista || [])
           ],
-          resumo_executivo: d.avaliacao_final?.justificativa || ''
+          resumo_executivo: d.avaliacao_final?.justificativa || '',
+          // v5.1 — CONF-01 (linhas antigas do cache não têm os campos → derivar da confiança)
+          veredicto_confiavel: d.veredicto_confiavel ?? ((cacheExistente.confianca_analise || 0) >= CONFIANCA_MINIMA_VEREDICTO && !d.analise_parcial),
+          analise_parcial: d.analise_parcial === true,
+          motivo_parcial: d.motivo_parcial ?? null,
+          requisitos_avaliados: (d.requisitos_imprescindiveis?.length || 0) + (d.requisitos_muito_desejaveis?.length || 0) + (d.requisitos_desejaveis?.length || 0),
+          modelo_ia: d.modelo_ia || cacheExistente.modelo_ia
         });
         setAnaliseDoCache(true);
         setAbaResultado('resumo');
@@ -1267,8 +1290,18 @@ const AnaliseRisco: React.FC = () => {
           ...(data.resumo_executivo?.gaps_criticos || []),
           ...(data.avaliacao_final?.pontos_atencao_entrevista || [])
         ],
-        resumo_executivo: data.avaliacao_final?.justificativa || ''
+        resumo_executivo: data.avaliacao_final?.justificativa || '',
+        // v5.1 — CONF-01: governança vinda do backend v2.4 (fallback defensivo se campo ausente)
+        veredicto_confiavel: data.veredicto_confiavel ?? ((data.confianca_analise || 0) >= CONFIANCA_MINIMA_VEREDICTO && data.analise_parcial !== true),
+        analise_parcial: data.analise_parcial === true,
+        motivo_parcial: data.motivo_parcial ?? null,
+        requisitos_avaliados: (data.requisitos_imprescindiveis?.length || 0) + (data.requisitos_muito_desejaveis?.length || 0) + (data.requisitos_desejaveis?.length || 0),
+        modelo_ia: data.modelo_ia
       };
+
+      if (!analiseFormatada.veredicto_confiavel) {
+        console.warn(`⚠️ [CONF-01] Análise sem veredicto confiável — parcial=${analiseFormatada.analise_parcial} | confiança=${analiseFormatada.nivel_confianca}% | motivo=${analiseFormatada.motivo_parcial ?? '-'}`);
+      }
 
       setAnaliseAdequacao(analiseFormatada);
       setAbaResultado('resumo');
@@ -1295,8 +1328,12 @@ const AnaliseRisco: React.FC = () => {
 
       // ========================================
       // PASSO 4 (v4.6): Persistir análise com cv_hash como chave de cache
+      // v5.1 — CONF-01: análise degradada NÃO é persistida — se entrasse no cache, o mesmo CV+vaga
+      //   devolveria o resultado ruim para sempre sem nova chamada à IA.
       // ========================================
-      try {
+      if (!analiseFormatada.veredicto_confiavel) {
+        console.warn('⚠️ [CONF-01] Análise não confiável — NÃO será salva em analise_adequacao (cache). Reprocesse.');
+      } else try {
         const dadosAnalise: Record<string, any> = {
           vaga_id: vagaSelecionada.id,
           cv_hash: cvHash,
@@ -1314,7 +1351,7 @@ const AnaliseRisco: React.FC = () => {
           resumo_executivo: data.resumo_executivo || {},
           avaliacao_final: data.avaliacao_final || {},
           resultado_completo: data,
-          modelo_ia: 'claude-sonnet',
+          modelo_ia: data.modelo_ia || data._metadata?.modelo || 'gemini', // v5.1: modelo real (antes 'claude-sonnet' fixo)
           status: 'concluida',
           updated_at: new Date().toISOString()
         };
@@ -1729,7 +1766,11 @@ const AnaliseRisco: React.FC = () => {
         setDadosParaSalvarManual(null);
 
         // 🆕 v4.5: Persistir análise de adequação no salvamento manual também
-        if (analiseAdequacao && vagaSelecionada?.id && analiseResult) {
+        // v5.1 — CONF-01: análise sem veredicto confiável não é persistida (evita cache envenenado)
+        if (analiseAdequacao && vagaSelecionada?.id && analiseResult && !analiseAdequacao.veredicto_confiavel) {
+          console.warn('⚠️ [Manual][CONF-01] Análise não confiável — candidato salvo, análise NÃO persistida. Reprocesse.');
+        }
+        if (analiseAdequacao && vagaSelecionada?.id && analiseResult && analiseAdequacao.veredicto_confiavel) {
           try {
             console.log('💾 [Manual] Persistindo análise de adequação...');
             
@@ -1758,7 +1799,7 @@ const AnaliseRisco: React.FC = () => {
               resumo_executivo: analiseResult.resumo_executivo || {},
               avaliacao_final: analiseResult.avaliacao_final || {},
               resultado_completo: analiseResult,
-              modelo_ia: 'claude-sonnet',
+              modelo_ia: analiseResult.modelo_ia || analiseResult._metadata?.modelo || 'gemini', // v5.1
               status: 'concluida',
               updated_at: new Date().toISOString()
             };
@@ -1933,6 +1974,7 @@ const AnaliseRisco: React.FC = () => {
       case 'entrevistar': return { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', icon: '🎯', label: 'Entrevistar' };
       case 'revisar': return { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-700', icon: '⚠️', label: 'Revisar' };
       case 'rejeitar': return { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-700', icon: '❌', label: 'Rejeitar' };
+      case 'nao_avaliavel': return { bg: 'bg-amber-50', border: 'border-amber-300', text: 'text-amber-700', icon: '⚠️', label: 'Não avaliável' }; // v5.1 — CONF-01
       default: return { bg: 'bg-gray-50', border: 'border-gray-200', text: 'text-gray-700', icon: '❓', label: rec };
     }
   };
@@ -2430,28 +2472,63 @@ const AnaliseRisco: React.FC = () => {
                 )}
 
                 {/* Header com Score e Recomendação */}
-                <div className={`p-4 rounded-xl border ${getRecomendacaoStyle(analiseAdequacao.recomendacao).bg} ${getRecomendacaoStyle(analiseAdequacao.recomendacao).border}`}>
+                {/* v5.1 — CONF-01: sem veredicto confiável, o estilo/recomendação exibidos são 'nao_avaliavel' (score riscado) */}
+                {(() => {
+                  const recExibida = analiseAdequacao.veredicto_confiavel ? analiseAdequacao.recomendacao : 'nao_avaliavel';
+                  const estilo = getRecomendacaoStyle(recExibida);
+                  return (
+                <div className={`p-4 rounded-xl border ${estilo.bg} ${estilo.border}`}>
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm text-gray-600">Score de Adequação</p>
                       <p className={`text-4xl font-bold ${
+                        !analiseAdequacao.veredicto_confiavel ? 'text-gray-400 line-through decoration-4' :
                         analiseAdequacao.score_geral >= 70 ? 'text-green-600' :
                         analiseAdequacao.score_geral >= 50 ? 'text-yellow-600' : 'text-red-600'
                       }`}>
                         {analiseAdequacao.score_geral}%
                       </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        Confiança: {analiseAdequacao.nivel_confianca}%
+                      <p className={`text-xs mt-1 ${analiseAdequacao.veredicto_confiavel ? 'text-gray-500' : 'text-amber-700 font-semibold'}`}>
+                        Confiança: {analiseAdequacao.nivel_confianca}%{!analiseAdequacao.veredicto_confiavel && analiseAdequacao.nivel_confianca < CONFIANCA_MINIMA_VEREDICTO ? ` — abaixo do mínimo (${CONFIANCA_MINIMA_VEREDICTO}%)` : ''}
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className={`text-lg font-medium px-4 py-2 rounded-full ${getRecomendacaoStyle(analiseAdequacao.recomendacao).bg} ${getRecomendacaoStyle(analiseAdequacao.recomendacao).text}`}>
-                        {getRecomendacaoStyle(analiseAdequacao.recomendacao).icon} {getRecomendacaoStyle(analiseAdequacao.recomendacao).label}
+                      <p className={`text-lg font-medium px-4 py-2 rounded-full ${estilo.bg} ${estilo.text}`}>
+                        {estilo.icon} {estilo.label}
                       </p>
                     </div>
                   </div>
                   <p className="text-sm text-gray-700 mt-3">{analiseAdequacao.justificativa_recomendacao}</p>
+
+                  {/* v5.1 — CONF-01: faixa âmbar com motivo + Reprocessar */}
+                  {!analiseAdequacao.veredicto_confiavel && (
+                    <div className="mt-3 p-3 bg-amber-100 border border-amber-400 rounded-lg text-sm text-amber-900">
+                      <p className="font-semibold flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4" /> Análise incompleta — resultado não confiável para decisão
+                      </p>
+                      <p className="mt-1">
+                        {analiseAdequacao.analise_parcial
+                          ? 'A resposta da IA veio incompleta e só parte dos dados foi recuperada. Os requisitos não foram avaliados individualmente, por isso o score e a recomendação originais foram suspensos.'
+                          : `A IA informou confiança de ${analiseAdequacao.nivel_confianca}%, abaixo do mínimo de ${CONFIANCA_MINIMA_VEREDICTO}% exigido para um veredicto.`}
+                      </p>
+                      <ul className="list-disc ml-5 mt-1 text-xs">
+                        {analiseAdequacao.motivo_parcial && <li>Motivo: <code className="bg-amber-50 px-1 rounded">{analiseAdequacao.motivo_parcial}</code></li>}
+                        <li>Requisitos avaliados: <b>{analiseAdequacao.requisitos_avaliados}</b></li>
+                        {analiseAdequacao.modelo_ia && <li>Modelo: {analiseAdequacao.modelo_ia}</li>}
+                      </ul>
+                      <button
+                        onClick={handleAnalisarAdequacao}
+                        disabled={isAnalisandoAdequacao}
+                        className="mt-3 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2"
+                      >
+                        {isAnalisandoAdequacao ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                        Reprocessar análise
+                      </button>
+                    </div>
+                  )}
                 </div>
+                  );
+                })()}
 
                 {/* Sub-abas de resultado */}
                 <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
@@ -2460,11 +2537,20 @@ const AnaliseRisco: React.FC = () => {
                     { key: 'requisitos', label: 'Requisitos', icon: CheckCircle },
                     { key: 'gaps', label: 'Gaps', icon: AlertTriangle },
                     { key: 'perguntas', label: 'Perguntas', icon: HelpCircle }
-                  ].map(({ key, label, icon: Icon }) => (
+                  ].map(({ key, label, icon: Icon }) => {
+                    // v5.1 — CONF-01: Requisitos/Perguntas desabilitadas quando vieram vazias por análise degradada
+                    const desabilitada = !analiseAdequacao.veredicto_confiavel && (
+                      (key === 'requisitos' && (analiseAdequacao.requisitos_analisados?.length ?? 0) === 0) ||
+                      (key === 'perguntas' && (analiseAdequacao.perguntas_entrevista?.length ?? 0) === 0)
+                    );
+                    return (
                     <button
                       key={key}
-                      onClick={() => setAbaResultado(key as any)}
+                      onClick={() => !desabilitada && setAbaResultado(key as any)}
+                      disabled={desabilitada}
+                      title={desabilitada ? 'Indisponível: análise incompleta — reprocesse' : undefined}
                       className={`flex-1 px-3 py-2 text-sm font-medium rounded-md flex items-center justify-center gap-1 transition ${
+                        desabilitada ? 'text-gray-300 cursor-not-allowed' :
                         abaResultado === key
                           ? 'bg-white text-purple-700 shadow-sm'
                           : 'text-gray-600 hover:text-gray-800'
@@ -2473,7 +2559,8 @@ const AnaliseRisco: React.FC = () => {
                       <Icon className="w-4 h-4" />
                       {label}
                     </button>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {/* Conteúdo das sub-abas */}
@@ -2567,11 +2654,25 @@ const AnaliseRisco: React.FC = () => {
                   {/* Gaps */}
                   {abaResultado === 'gaps' && (
                     <div className="space-y-3 max-h-96 overflow-y-auto">
+                      {/* v5.1 — CONF-01: sem veredicto confiável NUNCA exibir o check verde */}
+                      {!analiseAdequacao.veredicto_confiavel ? (
+                        <div className="text-center py-6 px-3 bg-amber-50 border border-dashed border-amber-400 rounded-lg text-amber-900">
+                          <AlertTriangle className="w-10 h-10 mx-auto mb-2 text-amber-500" />
+                          <p className="font-semibold">Não avaliável — reprocessar</p>
+                          <p className="text-xs mt-1">A IA não conseguiu avaliar os requisitos desta vaga ({analiseAdequacao.analise_parcial ? 'análise parcial' : 'confiança insuficiente'}, confiança {analiseAdequacao.nivel_confianca}%).</p>
+                          <p className="text-xs mt-1">Nenhum gap foi confirmado <u>nem descartado</u>. Não use este resultado para enviar o candidato ao cliente.</p>
+                          {analiseAdequacao.gaps_identificados?.length > 0 && (
+                            <p className="text-xs mt-2 text-amber-700">({analiseAdequacao.gaps_identificados.length} gap(s) parcialmente recuperado(s) abaixo — apenas informativo)</p>
+                          )}
+                        </div>
+                      ) : null}
                       {analiseAdequacao.gaps_identificados?.length === 0 ? (
+                        analiseAdequacao.veredicto_confiavel ? (
                         <div className="text-center py-8 text-gray-400">
                           <CheckCircle className="w-12 h-12 mx-auto mb-2 text-green-500" />
                           <p>Nenhum gap crítico identificado!</p>
                         </div>
+                        ) : null
                       ) : (
                         analiseAdequacao.gaps_identificados?.map((gap, i) => (
                           <div key={i} className="p-3 bg-gray-50 rounded-lg border">
