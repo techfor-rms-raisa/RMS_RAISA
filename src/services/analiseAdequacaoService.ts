@@ -5,6 +5,19 @@
 // Análise profunda requisito a requisito entre Candidato × Vaga
 // Integra com API /api/analise-adequacao-perfil
 // ============================================================
+// v1.1 — 2026-11-23: PARIDADE entre "Análise de Currículo AI" (AnaliseRisco)
+//   e "Candidaturas → Análise de Adequação" (DetalhesCandidaturaModal).
+//   Antes, as duas telas chamavam o mesmo endpoint mas montavam payloads
+//   diferentes (CV bruto × dados estruturados; vaga sem descrição × com
+//   descrição; requisitos "a,b,c" × "a\nb\nc") e gravavam em chaves
+//   diferentes (cv_hash+vaga_id × candidatura_id) → resultados divergentes
+//   e cache não compartilhado. Agora este serviço é a ÚNICA fonte de:
+//   • gerarHashCV            — chave de cache (mesmo algoritmo do AnaliseRisco v4.6)
+//   • resolverTextoCV        — prioridade das fontes do texto do CV
+//   • montarCandidatoAnalise — payload canônico do candidato
+//   • montarVagaAnalise      — payload canônico da vaga
+//   • CONFIANCA_MINIMA_VEREDICTO — gate CONF-01 (mesmo valor do backend v2.4)
+// ============================================================
 
 // ============================================================
 // TIPOS EXPORTADOS
@@ -119,6 +132,12 @@ export interface AnaliseAdequacaoPerfil {
     tokens_input: number;
     tokens_output: number;
   };
+
+  // v1.1 — Governança CONF-01 (enviada pelo backend analise-adequacao-perfil v2.4)
+  analise_parcial?: boolean;        // true = JSON truncado/recuperado ou fallback
+  motivo_parcial?: string | null;
+  veredicto_confiavel?: boolean;    // = !analise_parcial && confianca_analise >= 80
+  modelo_ia?: string;               // modelo realmente usado
 }
 
 // Dados de entrada
@@ -165,6 +184,155 @@ export interface DadosVagaAnalise {
 // ============================================================
 
 const API_URL = '/api/analise-adequacao-perfil';
+
+/** v1.1 — CONF-01: confiança mínima para um veredicto ser considerado confiável
+ *  e para a análise entrar/sair do cache (mesmo valor do backend v2.4). */
+export const CONFIANCA_MINIMA_VEREDICTO = 80;
+
+/** v1.1 — Tamanho mínimo para um texto de CV ser considerado utilizável. */
+export const TAMANHO_MINIMO_TEXTO_CV = 50;
+
+// ============================================================
+// v1.1 — PAYLOAD CANÔNICO (compartilhado pelas duas telas)
+// ============================================================
+
+/**
+ * Gera hash determinístico do texto do CV — chave de cache junto com vaga_id.
+ * ⚠️ Mesmo algoritmo do AnaliseRisco v4.6 (normaliza, corta em 5000 chars, djb2-like,
+ * base36) para que as linhas já existentes em analise_adequacao continuem válidas.
+ */
+export function gerarHashCV(texto: string): string {
+  const normalizado = (texto || '').trim().toLowerCase().replace(/\s+/g, ' ').substring(0, 5000);
+  let hash = 0;
+  for (let i = 0; i < normalizado.length; i++) {
+    const char = normalizado.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // 32-bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+/**
+ * Escolhe o texto do CV entre várias fontes, na ordem de prioridade informada.
+ * Retorna a primeira fonte com conteúdo utilizável (>= TAMANHO_MINIMO_TEXTO_CV).
+ * Uso típico: resolverTextoCV(textoExtraidoDoPDF, pessoa.cv_texto_original, candidatura.curriculo_texto)
+ */
+export function resolverTextoCV(...fontes: Array<string | null | undefined>): string {
+  for (const fonte of fontes) {
+    const t = typeof fonte === 'string' ? fonte.trim() : '';
+    if (t.length >= TAMANHO_MINIMO_TEXTO_CV) return t;
+  }
+  return '';
+}
+
+/** Fonte bruta do candidato — aceita o que cada tela tem disponível. */
+export interface FonteCandidatoAnalise {
+  nome?: string | null;
+  titulo_profissional?: string | null;
+  senioridade?: string | null;
+  resumo_profissional?: string | null;
+  skills?: DadosCandidatoAnalise['skills'] | null;
+  experiencias?: Array<Record<string, any>> | null;
+  formacoes?: Array<Record<string, any>> | null;
+  idiomas?: DadosCandidatoAnalise['idiomas'] | null;
+  certificacoes?: DadosCandidatoAnalise['certificacoes'] | null;
+  /** Texto do CV já resolvido (ver resolverTextoCV). */
+  cv_texto?: string | null;
+}
+
+/**
+ * Monta o payload canônico do candidato.
+ * Regras de paridade:
+ *  • curriculo_texto é SEMPRE enviado quando existe (é o que a IA lê com mais evidências);
+ *  • dados estruturados entram apenas quando realmente existem — nunca valores
+ *    "chutados" (ex.: senioridade 'pleno' fixa), que enviesavam o prompt;
+ *  • experiências são normalizadas para o formato que o backend formata.
+ */
+export function montarCandidatoAnalise(fonte: FonteCandidatoAnalise): DadosCandidatoAnalise {
+  const limpar = (v?: string | null) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+
+  const experiencias = (fonte.experiencias || [])
+    .filter(exp => exp && (exp.cargo || exp.empresa))
+    .map(exp => ({
+      empresa: exp.empresa || 'Não informada',
+      cargo: exp.cargo || 'Não informado',
+      periodo: exp.periodo || undefined,
+      data_inicio: exp.data_inicio || undefined,
+      data_fim: exp.data_fim || undefined,
+      descricao: exp.descricao || undefined,
+      tecnologias: Array.isArray(exp.tecnologias) ? exp.tecnologias : []
+    }));
+
+  const formacoes = (fonte.formacoes || [])
+    .filter(f => f && (f.curso || f.instituicao))
+    .map(f => ({
+      instituicao: f.instituicao || 'Não informada',
+      curso: f.curso || 'Não informado',
+      grau: f.grau || f.tipo || undefined,
+      ano_conclusao: f.ano_conclusao ? String(f.ano_conclusao) : undefined
+    }));
+
+  const cvTexto = limpar(fonte.cv_texto);
+
+  return {
+    nome: limpar(fonte.nome) || 'Candidato',
+    titulo_profissional: limpar(fonte.titulo_profissional),
+    senioridade: limpar(fonte.senioridade),
+    resumo_profissional: limpar(fonte.resumo_profissional),
+    skills: (fonte.skills || []).filter(Boolean),
+    experiencias,
+    formacoes,
+    idiomas: (fonte.idiomas || []).filter(Boolean),
+    certificacoes: (fonte.certificacoes || []).filter(Boolean),
+    curriculo_texto: cvTexto
+  };
+}
+
+/** Fonte bruta da vaga — aceita o registro de `vagas` como vem do Supabase. */
+export interface FonteVagaAnalise {
+  titulo?: string | null;
+  descricao?: string | null;
+  requisitos_obrigatorios?: string[] | string | null;
+  requisitos?: string[] | string | null;            // legado
+  requisitos_desejaveis?: string[] | string | null;
+  stack_tecnologica?: string[] | string | null;
+  tecnologias?: string[] | string | null;           // legado
+  senioridade?: string | null;
+  nivel_senioridade?: string | null;                // legado
+  modalidade?: string | null;
+  cliente_nome?: string | null;
+  cliente?: { nome?: string | null } | null;
+}
+
+/** Normaliza TEXT[] ou string para "um requisito por linha" (formato único nas duas telas). */
+function requisitosParaTexto(valor?: string[] | string | null): string | undefined {
+  if (Array.isArray(valor)) {
+    const itens = valor.map(v => String(v ?? '').trim()).filter(Boolean);
+    return itens.length ? itens.join('\n') : undefined;
+  }
+  const t = typeof valor === 'string' ? valor.trim() : '';
+  return t || undefined;
+}
+
+/**
+ * Monta o payload canônico da vaga — mesmo conteúdo e mesma formatação
+ * independentemente da tela de origem.
+ */
+export function montarVagaAnalise(vaga: FonteVagaAnalise): DadosVagaAnalise {
+  const limpar = (v?: string | null) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
+  const stack = vaga.stack_tecnologica ?? vaga.tecnologias;
+
+  return {
+    titulo: limpar(vaga.titulo) || 'Vaga',
+    descricao: limpar(vaga.descricao),
+    requisitos_obrigatorios: requisitosParaTexto(vaga.requisitos_obrigatorios ?? vaga.requisitos),
+    requisitos_desejaveis: requisitosParaTexto(vaga.requisitos_desejaveis),
+    stack_tecnologica: Array.isArray(stack) ? stack.filter(Boolean) : limpar(stack as string | null | undefined),
+    senioridade: limpar(vaga.senioridade ?? vaga.nivel_senioridade),
+    modalidade: limpar(vaga.modalidade),
+    cliente_nome: limpar(vaga.cliente_nome ?? vaga.cliente?.nome)
+  };
+}
 
 // ============================================================
 // FUNÇÃO PRINCIPAL: ANALISAR ADEQUAÇÃO
@@ -418,6 +586,10 @@ export function getLabelAdequacao(nivel: NivelAdequacao): string {
 
 const analiseAdequacaoService = {
   analisarAdequacaoPerfil,
+  gerarHashCV,
+  resolverTextoCV,
+  montarCandidatoAnalise,
+  montarVagaAnalise,
   calcularEstatisticas,
   filtrarPorAdequacao,
   obterTodasPerguntas,

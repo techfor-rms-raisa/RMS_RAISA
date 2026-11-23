@@ -51,6 +51,14 @@
  *     - aba Gaps nunca mostra check verde sem veredicto confiável; Requisitos/Perguntas desabilitadas se vazias
  *     - análise degradada NÃO entra no cache (analise_adequacao) e o cache ignora linhas com confiança < 80
  *     - modelo_ia gravado com o modelo real (antes: 'claude-sonnet' fixo)
+ * - v5.2 (23/11/2026): PARIDADE com "Candidaturas → Análise de Adequação" (DetalhesCandidaturaModal)
+ *   • Payload do candidato e da vaga montado pelo serviço compartilhado
+ *     (montarCandidatoAnalise / montarVagaAnalise em analiseAdequacaoService) — mesmo prompt nas duas telas
+ *   • Vaga passa a trazer descricao e modalidade (antes a IA recebia "Descrição: Não fornecida")
+ *   • Requisitos TEXT[] enviados "um por linha" (antes viravam "a,b,c" no template)
+ *   • senioridade 'pleno' fixa removida do payload (enviesava o prompt)
+ *   • gerarHashCV delega ao serviço (mesmo algoritmo — cache existente continua válido)
+ *   • Análise gravada já vinculada à candidatura pessoa×vaga quando ela existir
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -65,6 +73,11 @@ import {
   HelpCircle, MessageSquare, Shield, Zap, ChevronDown,
   Lightbulb
 } from 'lucide-react';
+import {
+  gerarHashCV as gerarHashCVCompartilhado,
+  montarCandidatoAnalise,
+  montarVagaAnalise
+} from '@/services/analiseAdequacaoService'; // v5.2: payload canônico compartilhado com Candidaturas
 
 // ============================================
 // TIPOS
@@ -125,10 +138,12 @@ interface VagaSimples {
   titulo: string;
   cliente_id?: number;
   cliente_nome?: string;
-  requisitos_obrigatorios?: string;
-  requisitos_desejaveis?: string;
+  requisitos_obrigatorios?: string[] | string;   // v5.2: TEXT[] no banco
+  requisitos_desejaveis?: string[] | string;
   stack_tecnologica?: string[];
   senioridade?: string;
+  descricao?: string;     // v5.2
+  modalidade?: string;    // v5.2
 }
 
 // Tipos para análise de adequação (do hook useAnaliseAdequacao)
@@ -300,6 +315,8 @@ const AnaliseRisco: React.FC = () => {
           requisitos_desejaveis,
           stack_tecnologica,
           senioridade,
+          descricao,
+          modalidade,
           clients (
             id,
             razao_social_cliente
@@ -319,7 +336,9 @@ const AnaliseRisco: React.FC = () => {
         requisitos_obrigatorios: v.requisitos_obrigatorios,
         requisitos_desejaveis: v.requisitos_desejaveis,
         stack_tecnologica: v.stack_tecnologica,
-        senioridade: v.senioridade
+        senioridade: v.senioridade,
+        descricao: v.descricao,     // v5.2
+        modalidade: v.modalidade    // v5.2
       }));
 
       setVagas(vagasFormatadas);
@@ -1133,16 +1152,9 @@ const AnaliseRisco: React.FC = () => {
   };
 
   // 🆕 v4.6: Gera hash determinístico do texto do CV (sem dependência externa)
-  const gerarHashCV = (texto: string): string => {
-    const normalizado = texto.trim().toLowerCase().replace(/\s+/g, ' ').substring(0, 5000);
-    let hash = 0;
-    for (let i = 0; i < normalizado.length; i++) {
-      const char = normalizado.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // 32-bit integer
-    }
-    return Math.abs(hash).toString(36);
-  };
+  // v5.2: implementação movida para analiseAdequacaoService (mesmo algoritmo) para que
+  //       Candidaturas use exatamente a mesma chave de cache.
+  const gerarHashCV = (texto: string): string => gerarHashCVCompartilhado(texto);
 
   // 🆕 v4.6: Análise de adequação com cache determinístico
   // Regra: mesmo CV + mesma Vaga → sempre mesmo resultado (sem chamar IA de novo)
@@ -1225,32 +1237,12 @@ const AnaliseRisco: React.FC = () => {
       // O endpoint /api/analise-adequacao-perfil lê curriculo_texto nativamente
       // via buildAnalysisPrompt → secaoCV, fazendo a análise com o texto bruto
       // ========================================
-      const candidato = {
-        nome: 'Candidato',
-        email: '',
-        telefone: '',
-        linkedin_url: '',
-        cidade: '',
-        estado: '',
-        titulo_profissional: '',
-        senioridade: 'pleno',
-        resumo_profissional: '',
-        skills: [],
-        experiencias: [],
-        formacao: [],
-        certificacoes: [],
-        idiomas: [],
-        curriculo_texto: textoExtraido   // ← campo lido por buildAnalysisPrompt
-      };
+      // v5.2: payload canônico compartilhado com Candidaturas (DetalhesCandidaturaModal).
+      // Sem senioridade 'pleno' fixa (enviesava o prompt); requisitos "um por linha";
+      // vaga com descricao/modalidade. curriculo_texto é o campo lido por buildAnalysisPrompt.
+      const candidato = montarCandidatoAnalise({ cv_texto: textoExtraido });
 
-      const vaga = {
-        titulo: vagaSelecionada.titulo,
-        senioridade: vagaSelecionada.senioridade,
-        requisitos_obrigatorios: vagaSelecionada.requisitos_obrigatorios,
-        requisitos_desejaveis: vagaSelecionada.requisitos_desejaveis,
-        stack_tecnologica: vagaSelecionada.stack_tecnologica,
-        cliente_nome: vagaSelecionada.cliente_nome
-      };
+      const vaga = montarVagaAnalise(vagaSelecionada);
 
       const response = await fetch('/api/analise-adequacao-perfil', {
         method: 'POST',
@@ -1356,7 +1348,23 @@ const AnaliseRisco: React.FC = () => {
           updated_at: new Date().toISOString()
         };
 
-        if (pessoaSalvaId) dadosAnalise.pessoa_id = pessoaSalvaId;
+        if (pessoaSalvaId) {
+          dadosAnalise.pessoa_id = pessoaSalvaId;
+
+          // v5.2: se já existe candidatura desta pessoa nesta vaga, grava a análise já vinculada
+          // (o modal de Candidaturas busca por candidatura_id e, agora, também por cv_hash+vaga_id)
+          const { data: candArr } = await supabase
+            .from('candidaturas')
+            .select('id')
+            .eq('pessoa_id', pessoaSalvaId)
+            .eq('vaga_id', vagaSelecionada.id)
+            .order('criado_em', { ascending: false })
+            .limit(1);
+          if (candArr?.[0]?.id) {
+            dadosAnalise.candidatura_id = candArr[0].id;
+            console.log(`🔗 [Cache] Análise vinculada à candidatura ${candArr[0].id}`);
+          }
+        }
 
         await supabase
           .from('analise_adequacao')

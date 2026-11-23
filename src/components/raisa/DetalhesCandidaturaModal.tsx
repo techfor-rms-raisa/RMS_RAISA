@@ -19,6 +19,14 @@
  * 
  * Versão: 2.4 - Corrigido duplo spinner "Analisando" + removido botão Reanalisar
  * Data: 31/03/2026
+ *
+ * Versão: 2.5 - 2026-11-23 — PARIDADE com "Análise de Currículo AI" (AnaliseRisco)
+ *   • Payload do candidato e da vaga montado pelo serviço compartilhado
+ *     (montarCandidatoAnalise / montarVagaAnalise) — mesmo prompt nas duas telas.
+ *   • Texto do CV resolvido por prioridade: pessoas.cv_texto_original → candidaturas.curriculo_texto
+ *     (antes só curriculo_texto, frequentemente NULL → IA analisava sem o CV).
+ *   • Cache compartilhado por cv_hash + vaga_id: análise feita no AnaliseRisco é reaproveitada
+ *     aqui (e vice-versa) sem nova chamada à IA; gate CONF-01 aplicado pelo hook.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -35,7 +43,12 @@ import { useAnaliseAdequacao } from '@/hooks/supabase/useAnaliseAdequacao';
 import { AnaliseAdequacaoPanel } from './AnaliseAdequacaoPanel';
 import { AnaliseAdequacaoBadge } from './AnaliseAdequacaoBadge';
 import CVGeneratorV2 from './CVGeneratorV2';  // 🆕 v57.2: Gerador de CV Padronizado
-import type { DadosCandidatoAnalise, DadosVagaAnalise } from '@/services/analiseAdequacaoService';
+import {
+  gerarHashCV,
+  resolverTextoCV,
+  montarCandidatoAnalise,
+  montarVagaAnalise
+} from '@/services/analiseAdequacaoService'; // v2.5: payload canônico compartilhado com AnaliseRisco
 
 // ============================================
 // TIPOS
@@ -76,6 +89,7 @@ interface DadosExtras {
   idiomas?: any[];
   certificacoes?: any[];
   resumo_profissional?: string;
+  cv_texto_original?: string;   // v2.5: texto do CV da pessoa (fonte prioritária da análise)
 }
 
 // ============================================
@@ -401,8 +415,25 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
         score_compatibilidade: pessoaData?.score_compatibilidade,
         idiomas: pessoaData?.idiomas || [],
         certificacoes: pessoaData?.certificacoes || [],
-        resumo_profissional: pessoaData?.resumo_profissional
+        resumo_profissional: pessoaData?.resumo_profissional,
+        cv_texto_original: pessoaData?.cv_texto_original   // v2.5
       });
+
+      // v2.5: com o texto do CV em mãos, tentar o cache compartilhado (cv_hash + vaga_id)
+      // — cobre a análise feita no AnaliseRisco para este mesmo CV × vaga.
+      const cvTextoCache = resolverTextoCV(
+        pessoaData?.cv_texto_original,
+        pessoa?.cv_texto_original,
+        (candidatura as any).curriculo_texto
+      );
+      if (cvTextoCache && vaga?.id) {
+        await carregarAnaliseAdequacao(
+          parseInt(candidatura.id),
+          candidatura.pessoa_id ? Number(candidatura.pessoa_id) : undefined,
+          parseInt(String(vaga.id)),
+          gerarHashCV(cvTextoCache)
+        );
+      }
     } catch (err) {
       console.warn('Erro ao carregar dados extras:', err);
     }
@@ -420,55 +451,63 @@ const DetalhesCandidaturaModal: React.FC<DetalhesCandidaturaModalProps> = ({
       return;
     }
 
-    // Preparar dados do candidato
-    const dadosCandidato: DadosCandidatoAnalise = {
-      nome: candidatura.candidato_nome || pessoa?.nome || 'Candidato',
+    // v2.5: Texto do CV por prioridade — pessoa (fonte canônica, igual ao AnaliseRisco) → candidatura
+    const cvTexto = resolverTextoCV(
+      dadosExtras.cv_texto_original,
+      pessoa?.cv_texto_original,
+      (candidatura as any).curriculo_texto
+    );
+    const cvHash = cvTexto ? gerarHashCV(cvTexto) : undefined;
+    const candidaturaId = parseInt(candidatura.id);
+    const pessoaId = candidatura.pessoa_id ? Number(candidatura.pessoa_id) : undefined;
+    const vagaId = vaga?.id ? parseInt(String(vaga.id)) : undefined;
+
+    if (!cvTexto) {
+      console.warn('⚠️ [Adequação] Nenhum texto de CV disponível (pessoas.cv_texto_original / candidaturas.curriculo_texto) — a análise usará apenas dados estruturados.');
+    }
+
+    // v2.5: PASSO 0 — cache compartilhado (cv_hash + vaga_id). Mesmo CV + mesma vaga = mesmo resultado,
+    // independentemente da tela em que a análise foi feita. Sem chamada à IA.
+    if (cvHash && vagaId) {
+      const emCache = await carregarAnaliseAdequacao(candidaturaId, pessoaId, vagaId, cvHash);
+      if (emCache) {
+        console.log('✅ [Adequação][Cache] Resultado reaproveitado — sem chamar a IA');
+        // Garante vínculo da linha de cache com esta candidatura (quando veio do AnaliseRisco)
+        await salvarAnaliseAdequacao(candidaturaId, pessoaId, vagaId, currentUserId, emCache, cvHash);
+        setMostrarAnaliseAdequacao(true);
+        return;
+      }
+    }
+
+    // v2.5: Payload canônico — mesma montagem usada pelo AnaliseRisco
+    const dadosCandidato = montarCandidatoAnalise({
+      nome: candidatura.candidato_nome || pessoa?.nome,
       titulo_profissional: dadosExtras.titulo_profissional,
       senioridade: dadosExtras.senioridade,
       resumo_profissional: dadosExtras.resumo_profissional || pessoa?.resumo_profissional,
       skills: dadosExtras.skills,
-      experiencias: dadosExtras.experiencias?.map(exp => ({
-        empresa: exp.empresa,
-        cargo: exp.cargo,
-        periodo: exp.periodo,
-        data_inicio: exp.data_inicio,
-        data_fim: exp.data_fim,
-        descricao: exp.descricao,
-        tecnologias: exp.tecnologias || []
-      })),
+      experiencias: dadosExtras.experiencias,
       formacoes: dadosExtras.formacoes,
       idiomas: dadosExtras.idiomas,
       certificacoes: dadosExtras.certificacoes,
-      curriculo_texto: (candidatura as any).curriculo_texto
-    };
+      cv_texto: cvTexto
+    });
 
-    // Preparar dados da vaga
-    const dadosVaga: DadosVagaAnalise = {
-      titulo: vaga?.titulo || 'Vaga',
-      descricao: vaga?.descricao,
-      requisitos_obrigatorios: Array.isArray((vaga as any)?.requisitos_obrigatorios) 
-        ? (vaga as any).requisitos_obrigatorios.join('\n') 
-        : (vaga as any)?.requisitos_obrigatorios || (vaga as any)?.requisitos,
-      requisitos_desejaveis: Array.isArray((vaga as any)?.requisitos_desejaveis)
-        ? (vaga as any).requisitos_desejaveis.join('\n')
-        : (vaga as any)?.requisitos_desejaveis,
-      stack_tecnologica: (vaga as any)?.stack_tecnologica || (vaga as any)?.tecnologias,
-      senioridade: (vaga as any)?.senioridade || (vaga as any)?.nivel_senioridade,
-      modalidade: (vaga as any)?.modalidade,
-      cliente_nome: (vaga as any)?.cliente_nome || (vaga as any)?.cliente?.nome
-    };
+    const dadosVaga = montarVagaAnalise(vaga as any);
 
     // Executar análise
     const resultado = await analisarAdequacao(dadosCandidato, dadosVaga);
-    
+
     if (resultado) {
       // Salvar no banco automaticamente - passando resultado diretamente
+      // (v2.5: com cv_hash → entra no cache compartilhado; hook aplica gate CONF-01)
       await salvarAnaliseAdequacao(
-        parseInt(candidatura.id),                                            // candidaturaId
-        candidatura.pessoa_id ? Number(candidatura.pessoa_id) : undefined,   // pessoaId
-        vaga?.id ? parseInt(String(vaga.id)) : undefined,                    // vagaId
-        currentUserId,                                                       // userId
-        resultado                                                            // resultado da análise
+        candidaturaId,   // candidaturaId
+        pessoaId,        // pessoaId
+        vagaId,          // vagaId
+        currentUserId,   // userId
+        resultado,       // resultado da análise
+        cvHash           // chave do cache compartilhado
       );
       // Expandir painel para mostrar resultado
       setMostrarAnaliseAdequacao(true);
